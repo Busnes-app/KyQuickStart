@@ -244,6 +244,9 @@ handover of admin and everyday logins.
   backup path: `docs/superpowers/specs/2026-10-06-third-party-catalog-design.md`.
 - Installer architecture (CLI, catalog format, targets, state, setup, offboarding bridge,
   upgrades, testing): `docs/superpowers/specs/2026-10-06-installer-architecture-design.md`.
+- Build sequence and product readiness gates: `docs/superpowers/plans/2026-10-06-kyquickstart-roadmap.md`.
+  Implementation waits until the suite products are further along; write each phase's detailed
+  plan when its gate opens.
 
 ## Local Contracts
 
