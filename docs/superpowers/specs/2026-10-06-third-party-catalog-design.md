@@ -75,9 +75,13 @@ Versions are the latest releases checked on 2026-10-06; the release set pins exa
 Two paths, split by size and sensitivity.
 
 **Sealed capsules (small, secret).** App configuration, OIDC client secrets, app encryption keys
-and the restic repository password are sealed with `ky-primitives/recoveryclient` and delivered
-to KyRecovery and the local backup directory under the suite KyRecovery contract. Restoring
-anything, bulk included, therefore needs k-of-n custodians.
+and a copy of each restic repository password are sealed with `ky-primitives/recoveryclient` and
+delivered to KyRecovery and the local backup directory under the suite KyRecovery contract.
+
+restic encryption is symmetric: the backup client needs the repository password to write, so the
+password also lives on the app's target. Custodians therefore protect recovery after the target
+is lost; whoever controls a live target can already read that app's data and its backup history.
+The rest-server host never holds a password and sees ciphertext only.
 
 **restic via K8up (bulk, app-aware).** Capsule caps (384 MiB per container) rule out bulk data,
 so:
@@ -87,15 +91,21 @@ so:
   writes a `Schedule` per app and a `k8up.io/backupcommand` annotation on the app pod; K8up runs
   the command in the pod and streams its output into restic, then backs up the app's volumes.
   Scheduled `check` runs verify the repository.
-- **Outside Kubernetes** (KyDrive on the NAS): plain restic on a timer against the same
-  repository.
-- **Target:** rest-server (BSD-2-Clause) with `--append-only --private-repos` and TLS, on a host
-  the NAS holds no credentials for. Backup clients get append-only credentials; `forget`/`prune`
-  runs from a separate admin credential with time-based retention (`--keep-within`). A
-  rest-server on the NAS is a NAS-local copy and must not be described as independent.
-- **Installer input:** the off-NAS backup host is required when any app with bulk data is
-  selected.
-- **Status:** backup and check results are reported to kyPulse.
+- **Outside Kubernetes** (KyDrive on the NAS): plain restic on a timer.
+- **One repository and password per app**, so a compromised target exposes only its own apps'
+  backups, and `--private-repos` keeps each client inside its repository.
+- **Target:** rest-server (BSD-2-Clause) as a separate container on the KyRecovery host, with
+  `--append-only --private-repos` and TLS. KyRecovery is already the independent store, so bulk
+  and sealed backups share one off-NAS host. Backup clients get append-only credentials;
+  `forget`/`prune` runs from a separate admin credential with time-based retention
+  (`--keep-within`).
+- **Independence:** the KyRecovery host and its storage must be off the NAS, on a host the NAS
+  holds no credentials for. Preflight refuses a rest-server data path on NAS storage; a NAS-local
+  copy must not be described as independent.
+- **Status:** KyRecovery mounts the repository directory read-only and shows, per app, the last
+  snapshot time, snapshot count and size, all readable from the repository layout without a
+  password. Backup and `check` results also reach kyPulse, which alerts on failed or stale
+  backups.
 
 | App | Backup command (streamed to restic) | Volumes | Skip |
 |---|---|---|---|
@@ -109,6 +119,22 @@ so:
 | Holm | SQLite `.backup` | `config.yml` | |
 
 Restore order per app: database first, then files (Immich's documented order).
+
+### Restore
+
+- **Start from either place.** KyRecovery's UI picks a product and a point in time and shows the
+  matching capsule and the restic snapshot nearest it, then gives the exact command; the CLI can
+  start the same restore directly.
+- **One executor:** `kyquickstart restore <app>` on the operator's workstation, which holds the
+  SSH and cluster access KyRecovery deliberately lacks.
+- **Decryption never happens in KyRecovery**, server or browser. Combining k shares rebuilds the
+  suite recovery private key; doing that in pages KyRecovery serves would let a compromised
+  KyRecovery capture it on any restore. Shares are typed into the product's `restore` command
+  or `kyquickstart restore` on stdin, never argv.
+- **Bulk data, target alive:** restic restores on the target with the password already there;
+  no password moves.
+- **Bulk data, target lost:** the password comes from the app's capsule, opened on the
+  operator's workstation with k custodians present, and is used for that restore only.
 
 Rejected engines: Kopia (repository server holds the key), Velero (one shared static key),
 Duplicati (proprietary parts, paid SSO), Borg 2 (beta, drops append-only), MinIO (archived).

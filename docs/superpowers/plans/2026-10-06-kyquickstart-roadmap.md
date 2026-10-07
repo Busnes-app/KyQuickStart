@@ -65,6 +65,7 @@ with tests, in a tagged release.
 | G7 | Each other Ky product in the release set | `apply-setup` for its own settings and recovery pairing |
 | G8 | Holm (upstream or fork) | Back-channel logout or session recheck |
 | G9 | KyNotes | OneNote-style notebooks (separate sub-project; not an installer blocker) |
+| G10 | kyrecovery-server | Backup status (capsules and restic repositories, read-only) and restore-start UI; `kyrecovery-server/docs/plans/2026-10-07-backup-restore-ui-handoff.md` |
 
 ## Phases
 
@@ -176,10 +177,12 @@ unverified items from the catalog spec first.
 
 ### Phase 8: Backups (after Phase 6)
 
-rest-server on the off-NAS host (`--append-only --private-repos`, TLS, separate prune
-credential); K8up `Schedule` and `k8up.io/backupcommand` per app; restic timers on Docker hosts;
-restic password sealed in KyRecovery capsules; check results to kyPulse; restore drill in
-`verify`.
+rest-server as a container on the KyRecovery host (`--append-only --private-repos`, TLS,
+separate prune credential; preflight refuses NAS storage); K8up `Schedule` and
+`k8up.io/backupcommand` per app; restic timers on Docker hosts; one repository and password per
+app, the password on the target with a copy sealed in KyRecovery; check results to kyPulse;
+`kyquickstart restore <app>`; restore drill in `verify`. KyRecovery status and restore-start UI
+is gate G10.
 
 ### Phase 9: Offboarding bridge (gate G2, after Phase 7)
 

@@ -37,6 +37,7 @@ is installed; this spec decides how.
 | `handover` | Prints URLs, admin and everyday logins, activation links, NPM admin credentials, and outstanding human steps |
 | `offboard <user>` | Runs every app's `Deprovision` for one user; fallback for the bridge |
 | `upgrade` | Runs the shared upgrade module against a newer release set |
+| `restore <app>` | Restores one app to a point in time: capsule through the product's `restore`, then the matching restic snapshot (database first, then files). Shares on stdin only. Started directly or from the command KyRecovery's UI shows (catalog spec, Restore) |
 | `uninstall <app>` | Removes workloads, keeps data. Data deletion is a separate command with typed confirmation |
 
 `plan` produces the file every other command consumes, so an unattended run is `apply` on an

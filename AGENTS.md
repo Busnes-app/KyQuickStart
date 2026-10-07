@@ -211,7 +211,7 @@ and retain their own identity, sealer label and collection adapters.
 
 - For drive implementation or deployment work, read `DRIVE_IMPLEMENTATION_PLAN.md` for the agreed scope, proposed phases and acceptance gates; unresolved implementation choices remain proposals.
 
-- KyDrive people and groups are managed in KyIdentity; group permissions belong to KyDrive. Initial development is build-and-test local: NAS target `unraid.urlxl.us` / KyYard `hluswcdata01`, recovery target `https://kyrecovery.urlxl.us/`. The user authorized the live deployment pilot on 2026-10-04. Internal HTTPS origins are `https://kydrive.urlxl.us` and `https://office.urlxl.us`; the latter replaces the proposed euro-office hostname. Independent bulk backups were deferred for the KyDrive pilot; the suite installer's bulk path is restic to an append-only rest-server on a host off the NAS (`KyQuickStart` catalog spec). NAS-local backup copies must not be described as independent. Preserve existing suite services and credentials; verify each pilot gate before declaring readiness.
+- KyDrive people and groups are managed in KyIdentity; group permissions belong to KyDrive. Initial development is build-and-test local: NAS target `unraid.urlxl.us` / KyYard `hluswcdata01`, recovery target `https://kyrecovery.urlxl.us/`. The user authorized the live deployment pilot on 2026-10-04. Internal HTTPS origins are `https://kydrive.urlxl.us` and `https://office.urlxl.us`; the latter replaces the proposed euro-office hostname. Independent bulk backups were deferred for the KyDrive pilot; the suite installer's bulk path is restic to an append-only rest-server beside KyRecovery, off the NAS; restores run on the operator workstation and nothing decrypts inside KyRecovery (`KyQuickStart` catalog spec). NAS-local backup copies must not be described as independent. Preserve existing suite services and credentials; verify each pilot gate before declaring readiness.
 
 - Nextcloud is excluded from document management and file storage. ONLYOFFICE products are excluded for geopolitical reasons. Evaluate Euro-Office's independent governance, build and release chain rather than rejecting it solely for inherited code; it is selected for the KyDrive local integration; production release requires source/build provenance verification. CryptPad's ONLYOFFICE-derived browser editors must remain explicit in comparisons.
 
@@ -256,8 +256,11 @@ handover of admin and everyday logins.
   and has an offboarding adapter. The installer builds no auth-proxy gate.
 - Reverse proxy is Nginx Proxy Manager. On an existing NPM, touch only installer-created hosts,
   through its API, never its database. NPM admin is LAN-only; its credentials go in the handover.
-- Bulk data goes to restic (K8up on Kubernetes) on an append-only rest-server off the NAS; the
-  restic password travels in KyRecovery sealed capsules.
+- Bulk data goes to restic (K8up on Kubernetes) on an append-only rest-server container on the
+  KyRecovery host, off the NAS, one repository and password per app. The password lives on the
+  app's target and a copy is sealed in KyRecovery; the rest-server host never holds one.
+- Restores start from KyRecovery's UI or the CLI and always run in `kyquickstart restore`.
+  Nothing decrypts inside KyRecovery, server or browser.
 - Secrets are generated once on their targets and read back on re-run; the workstation state
   directory never holds a secret.
 - The installer's only authority inside a Ky product is its container-local `apply-setup`
