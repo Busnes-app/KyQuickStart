@@ -187,7 +187,7 @@ and retain their own identity, sealer label and collection adapters.
 
 ## User Preferences
 
-- Deployment goal: an end-user stack installer guides requirements and connections to every target server, installs the selected suite software, and builds its initial configuration. Support the existing-Kubernetes goal plus external server connections required by the selected deployment. Script language remains unselected. When designing suite installation, read `SINGLE_PROMPT_STACK_RESEARCH.md` for the assessed gaps and proposed sequence; recommendations there are not selected implementation contracts.
+- Deployment goal: an end-user stack installer guides requirements and connections to every target server, installs the selected suite software, and builds its initial configuration. The installer is `KyQuickStart`, a Go binary run from the operator workstation: bring-your-own Docker hosts over SSH with Kubernetes optional; it never installs Docker or Kubernetes (see `KyQuickStart/docs/superpowers/specs/2026-10-06-installer-architecture-design.md`). When designing suite installation, read `SINGLE_PROMPT_STACK_RESEARCH.md` for the assessed gaps and proposed sequence; recommendations there are not selected implementation contracts.
 
 - Installer product selection: list available products with a short purpose and an explicit install/skip choice for each. Explain required dependencies and validate the selected combination before deployment; show every required component in the installation plan. Save selections for resume and configure and verify the selected products. Skipping an already installed product does not authorize uninstalling it or deleting its data.
 
@@ -211,11 +211,15 @@ and retain their own identity, sealer label and collection adapters.
 
 - For drive implementation or deployment work, read `DRIVE_IMPLEMENTATION_PLAN.md` for the agreed scope, proposed phases and acceptance gates; unresolved implementation choices remain proposals.
 
-- KyDrive people and groups are managed in KyIdentity; group permissions belong to KyDrive. Initial development is build-and-test local: NAS target `unraid.urlxl.us` / KyYard `hluswcdata01`, recovery target `https://kyrecovery.urlxl.us/`. The user authorized the live deployment pilot on 2026-10-04. Internal HTTPS origins are `https://kydrive.urlxl.us` and `https://office.urlxl.us`; the latter replaces the proposed euro-office hostname. Independent bulk backups are deferred by the user; NAS-local backup copies must not be described as independent. Preserve existing suite services and credentials; verify each pilot gate before declaring readiness.
+- KyDrive people and groups are managed in KyIdentity; group permissions belong to KyDrive. Initial development is build-and-test local: NAS target `unraid.urlxl.us` / KyYard `hluswcdata01`, recovery target `https://kyrecovery.urlxl.us/`. The user authorized the live deployment pilot on 2026-10-04. Internal HTTPS origins are `https://kydrive.urlxl.us` and `https://office.urlxl.us`; the latter replaces the proposed euro-office hostname. Independent bulk backups were deferred for the KyDrive pilot; the suite installer's bulk path is restic to an append-only rest-server on a host off the NAS (`KyQuickStart` catalog spec). NAS-local backup copies must not be described as independent. Preserve existing suite services and credentials; verify each pilot gate before declaring readiness.
 
 - Nextcloud is excluded from document management and file storage. ONLYOFFICE products are excluded for geopolitical reasons. Evaluate Euro-Office's independent governance, build and release chain rather than rejecting it solely for inherited code; it is selected for the KyDrive local integration; production release requires source/build provenance verification. CryptPad's ONLYOFFICE-derived browser editors must remain explicit in comparisons.
 
 - KyPasswords is replaced by Vaultwarden (decided 2026-10-06). KyAuth does not become a Bitwarden client and becomes authenticator-only (TOTP, Push MFA, KyIdentity sign-on and passkey); Android users use the official Bitwarden app against Vaultwarden for passwords and passkeys. See `kyauth-android/docs/superpowers/specs/2026-10-06-vaultwarden-replaces-kypasswords.md`.
+
+- Third-party apps installed with the suite must pass the admission rules in `KyQuickStart/docs/superpowers/specs/2026-10-06-third-party-catalog-design.md` (approved 2026-10-06): open source with SSO in the free edition, native OIDC against KyIdentity, admin from a claim or an unattended grant, and an offboarding path. No auth-proxy gate is built. Monitoring stays with kyPulse; forms, video calls and video streaming are out of scope.
+
+- KyNotes is retained: no off-the-shelf OneNote replacement passes the admission rules. It gains OneNote-style notebooks (notebooks, sections and pages, freeform canvas pages, ink) as its own sub-project.
 
 - Product branding uses the Busnes.app-site Systems stamp icon masters and platform-sized local exports. Busnes Light/Dark reached web and `kypost-android`, whose default is now Busnes Light; the remaining native clients keep their existing defaults until their own pass.
 
@@ -223,14 +227,42 @@ and retain their own identity, sealer label and collection adapters.
 
 When the user requests a durable behavior change, record it here or in the relevant child AGENTS.md
 
+# KyQuickStart
+
+Everything above this heading is the shared suite contract, copied from the busnes.app workspace
+root so this repository stands alone. Keep it in step with the workspace copy.
+
+## Purpose
+
+One command-line installer that stands up the Ky suite and selected third-party apps across the
+operator's servers: choices, prerequisite checks, installation, preconfiguration, and a printed
+handover of admin and everyday logins.
+
+## Ownership
+
+- Third-party catalog, admission rules, edge and reverse-proxy choices, and the app-aware bulk
+  backup path: `docs/superpowers/specs/2026-10-06-third-party-catalog-design.md`.
+- Installer architecture (CLI, catalog format, targets, state, setup, offboarding bridge,
+  upgrades, testing): `docs/superpowers/specs/2026-10-06-installer-architecture-design.md`.
+
+## Local Contracts
+
+- A third-party app enters the catalog only if it passes every admission rule in the catalog
+  spec. Record each rejection and its reason there.
+- Every installed app signs in through KyIdentity with native OIDC, uses *Assigned users only*,
+  and has an offboarding adapter. The installer builds no auth-proxy gate.
+- Reverse proxy is Nginx Proxy Manager. On an existing NPM, touch only installer-created hosts,
+  through its API, never its database. NPM admin is LAN-only; its credentials go in the handover.
+- Bulk data goes to restic (K8up on Kubernetes) on an append-only rest-server off the NAS; the
+  restic password travels in KyRecovery sealed capsules.
+- Secrets are generated once on their targets and read back on re-run; the workstation state
+  directory never holds a secret.
+- The installer's only authority inside a Ky product is its container-local `apply-setup`
+  command. Installer-managed workloads carry `ky.managed-by=kyquickstart`; only the shared upgrade
+  module changes them, from the CLI or KyYard, under a target-side lock.
+
+## Work Guidance
+
+## Verification
+
 ## Child DOX Index
-
-- `KyDrive-server/` — general drive backend, NAS/container packaging, Euro-Office integration and local acceptance evidence.
-
-- `ky-kubernetes/` — Ky stack migration from admin02 to K80/K81, isolated networking, persistent storage and HTTPS routing.
-
-- `kypost-site/` — KyPost marketing site, theme behavior, and generated reference pages.
-
-- `Busnes.app-site/` — public Busnes.app company and portfolio website.
-
-- `ky-ui/` — shared browser theme tokens, navigation state styles, and visual verification for suite web products.
