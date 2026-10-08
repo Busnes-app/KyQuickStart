@@ -63,8 +63,8 @@ func serveAgent(t *testing.T, dir string, key ed25519.PrivateKey) {
 func TestApply(t *testing.T) {
 	ctx := context.Background()
 	work := t.TempDir()
-	root, keys, state := filepath.Join(work, "root"), filepath.Join(work, "keys"), filepath.Join(work, "state")
-	for _, d := range []string{keys, state} {
+	keys, state, foreignState := filepath.Join(work, "keys"), filepath.Join(work, "state"), filepath.Join(work, "foreign")
+	for _, d := range []string{keys, state, foreignState} {
 		os.MkdirAll(d, 0o700)
 	}
 
@@ -86,27 +86,48 @@ func TestApply(t *testing.T) {
 	rand.Read(id)
 	name := "kyq-e2e-" + hex.EncodeToString(id)
 	docker(t, "build", "-q", "-t", "kyq-e2e-sshd", "sshd")
+
+	// The installer runs as uid 0 in the container and requires root-owned ancestors, so the
+	// root lives in a root-owned directory under /tmp, created and removed through Docker.
+	// The root path is shared with the host so Compose bind mounts resolve there.
+	base := "/tmp/" + name
+	root := filepath.Join(base, "root")
+	docker(t, "run", "--rm", "-v", "/tmp:/tmp", "--entrypoint", "mkdir", "kyq-e2e-sshd", "-m", "755", base)
+	t.Cleanup(func() {
+		exec.Command("docker", "run", "--rm", "-v", "/tmp:/tmp", "--entrypoint", "rm", "kyq-e2e-sshd", "-rf", base).Run()
+	})
 	docker(t, "run", "-d", "--name", name, "-p", "127.0.0.1::22",
 		"-v", "/var/run/docker.sock:/var/run/docker.sock",
-		"-v", keys+":/keys:ro", "-v", root+":"+root, "kyq-e2e-sshd")
+		"-v", keys+":/keys:ro", "-v", base+":"+base, "-v", work+":"+work, "kyq-e2e-sshd")
 	t.Cleanup(func() { exec.Command("docker", "rm", "-f", name).Run() })
 	t.Cleanup(func() {
 		exec.Command("docker", "compose", "-p", "kyq-hello", "down").Run()
-		exec.Command("docker", "exec", name, "rm", "-rf", root).Run()
+		exec.Command("docker", "exec", name, "rm", "-rf", filepath.Join(work, "root")).Run()
 	})
 	hostPort := docker(t, "port", name, "22")
 	_, port, _ := net.SplitHostPort(hostPort)
 	waitForSSH(t, port, hostFP)
 
-	stackYAML := fmt.Sprintf("version: 1\ntargets:\n  - name: e2e\n    host: 127.0.0.1\n    port: %s\n    user: root\n    root: %s\napps:\n  - name: hello\n    target: e2e\n", port, root)
-	os.WriteFile(filepath.Join(state, "stack.yaml"), []byte(stackYAML), 0o600)
+	stackYAML := "version: 1\ntargets:\n  - name: e2e\n    host: 127.0.0.1\n    port: %s\n    user: root\n    root: %s\napps:\n  - name: hello\n    target: e2e\n"
+	os.WriteFile(filepath.Join(state, "stack.yaml"), []byte(fmt.Sprintf(stackYAML, port, root)), 0o600)
+	os.WriteFile(filepath.Join(foreignState, "stack.yaml"), []byte(fmt.Sprintf(stackYAML, port, filepath.Join(work, "root"))), 0o600)
 
-	apply := func() (string, error) {
+	applyIn := func(dir string) (string, error) {
 		var out bytes.Buffer
 		o := cli.Options{Catalog: os.DirFS("../../internal/catalog/testdata/apps"), ReleaseSet: "e2e", Out: &out}
-		err := cli.Run(ctx, []string{"apply", "--state", state, "--trust-host-key", "e2e=" + hostFP}, o)
+		err := cli.Run(ctx, []string{"apply", "--state", dir, "--trust-host-key", "e2e=" + hostFP}, o)
 		t.Logf("apply:\n%s", out.String())
 		return out.String(), err
+	}
+	apply := func() (string, error) { return applyIn(state) }
+
+	// A root under a directory another user owns (the test user, not the container's uid 0)
+	// is refused before anything is written there.
+	if _, err := applyIn(foreignState); err == nil || !strings.Contains(err.Error(), "owned by another user") {
+		t.Fatalf("foreign-owned ancestor: err = %v", err)
+	}
+	if got := docker(t, "exec", name, "sh", "-c", "ls -A "+filepath.Join(work, "root")+" 2>/dev/null"); got != "" {
+		t.Fatalf("installer wrote under a foreign-owned ancestor: %s", got)
 	}
 
 	// First apply installs.
