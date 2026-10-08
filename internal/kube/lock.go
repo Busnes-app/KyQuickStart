@@ -60,14 +60,20 @@ func Acquire(ctx context.Context, c *Client, holder string) (release func(contex
 		Spec: coordinationv1.LeaseSpec{HolderIdentity: &holder, AcquireTime: &metav1.MicroTime{Time: time.Now()}},
 	}, metav1.CreateOptions{})
 	if apierrors.IsAlreadyExists(err) {
+		l, err := leases.Get(ctx, lockName, metav1.GetOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("cluster is locked; holder unreadable: %w", err)
+		}
+		// Our own create, landed by a retried request.
+		if l.Annotations[runAnnotation] == run {
+			return release, nil
+		}
 		le := &LockedError{}
-		if l, err := leases.Get(ctx, lockName, metav1.GetOptions{}); err == nil {
-			if l.Spec.HolderIdentity != nil {
-				le.Holder = *l.Spec.HolderIdentity
-			}
-			if l.Spec.AcquireTime != nil {
-				le.Started = l.Spec.AcquireTime.Time
-			}
+		if l.Spec.HolderIdentity != nil {
+			le.Holder = *l.Spec.HolderIdentity
+		}
+		if l.Spec.AcquireTime != nil {
+			le.Started = l.Spec.AcquireTime.Time
 		}
 		return nil, le
 	}
