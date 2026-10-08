@@ -33,6 +33,7 @@ var required = func() []authorizationv1.ResourceAttributes {
 	add("", "persistentvolumeclaims", "", "get", "create")
 	add("apps", "deployments", "", "get", "create", "update")
 	add("networking.k8s.io", "networkpolicies", "", "get", "create", "update")
+	add("storage.k8s.io", "storageclasses", "", "list")
 	add("coordination.k8s.io", "leases", lockNamespace, "get", "create", "delete")
 	return out
 }()
