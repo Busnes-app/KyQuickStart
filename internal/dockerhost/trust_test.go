@@ -54,6 +54,28 @@ func TestTrustedDir(t *testing.T) {
 			t.Fatal("accepted 0777 parent")
 		}
 	})
+	// The symlink's target is safe, but anyone can re-point the link: its directory is open.
+	t.Run("symlinked ancestor in a writable dir fails", func(t *testing.T) {
+		base := t.TempDir()
+		safe := mk(t, filepath.Join(base, "safe"), 0o700)
+		open := mk(t, filepath.Join(base, "open"), 0o777)
+		if err := os.Symlink(safe, filepath.Join(open, "link")); err != nil {
+			t.Fatal(err)
+		}
+		if err := trustedDir(ctx, remote.Local{}, filepath.Join(open, "link", "d")); err == nil {
+			t.Fatal("accepted a path through a link others can replace")
+		}
+	})
+	t.Run("symlinked ancestor in a private dir passes", func(t *testing.T) {
+		base := t.TempDir()
+		safe := mk(t, filepath.Join(base, "safe"), 0o700)
+		if err := os.Symlink(safe, filepath.Join(base, "link")); err != nil {
+			t.Fatal(err)
+		}
+		if err := trustedDir(ctx, remote.Local{}, filepath.Join(base, "link", "d")); err != nil {
+			t.Fatal(err)
+		}
+	})
 	t.Run("sticky parent passes", func(t *testing.T) {
 		parent := mk(t, filepath.Join(t.TempDir(), "p"), 0o777|os.ModeSticky)
 		if err := trustedDir(ctx, remote.Local{}, filepath.Join(parent, "d")); err != nil {
