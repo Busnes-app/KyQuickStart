@@ -285,7 +285,8 @@ handover of admin and everyday logins.
 - On a cluster each app lives in namespace `kyq-<app>` (Pod Security `restricted`, default-deny
   ingress) and the run lock is Lease `kyquickstart/kyquickstart-lock`. The installer never adopts
   a namespace or object without the managed label. A kubeconfig is referenced by path and may not
-  live inside the state directory.
+  live inside the state directory, symlinks resolved. One target per cluster; `apply` repairs
+  drift in an app namespace's labels and its default-deny policy.
 
 ## Work Guidance
 
