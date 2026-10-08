@@ -53,6 +53,9 @@ func TestPreflight(t *testing.T) {
 	if f := find(Preflight(ctx, New(cluster("37", "create deployments")), false), "permissions"); f.OK || !strings.Contains(f.Detail, "create deployments") {
 		t.Errorf("denied permission not reported: %+v", f)
 	}
+	if f := find(Preflight(ctx, New(cluster("37", "list storageclasses")), false), "permissions"); f.OK {
+		t.Errorf("denied storage class listing not reported: %+v", f)
+	}
 	if f := find(Preflight(ctx, New(cluster("37", "")), true), "storage"); f.OK {
 		t.Errorf("missing default StorageClass accepted: %+v", f)
 	}
