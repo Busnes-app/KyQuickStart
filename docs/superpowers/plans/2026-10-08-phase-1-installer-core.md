@@ -6,7 +6,7 @@
 
 **Architecture:** A step engine runs Inspect → Apply → Verify steps and records one result file per step. Each app is an embedded manifest plus a Compose template, rendered and checked at load. The Docker-host driver turns an app into three steps (secrets, deploy, health) over a `remote.Runner`, which is SSH in production and local `sh` in tests.
 
-**Tech Stack:** Go 1.26.6, `golang.org/x/crypto` v0.55.0 (`ssh`, `ssh/agent`, `ssh/knownhosts`), `go.yaml.in/yaml/v3` v3.0.5, standard library otherwise.
+**Tech Stack:** Go 1.26.6, `golang.org/x/crypto` v0.56.0 (`ssh`, `ssh/agent`, `ssh/knownhosts`), `go.yaml.in/yaml/v3` v3.0.5, standard library otherwise.
 
 **Spec:**
 - `docs/superpowers/plans/2026-10-06-kyquickstart-roadmap.md`, Phase 1 (fixed interfaces and behaviors)
@@ -2572,7 +2572,7 @@ git commit -m "feat: add read-only Docker host preflight"
 
 - [ ] **Step 1: Add the dependency**
 
-Run: `go get golang.org/x/crypto@v0.55.0`
+Run: `go get golang.org/x/crypto@v0.56.0`
 
 - [ ] **Step 2: Write the failing tests**
 
