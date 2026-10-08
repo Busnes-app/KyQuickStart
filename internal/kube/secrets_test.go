@@ -2,13 +2,18 @@ package kube
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/Busnes-app/kyquickstart/internal/engine"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 func testApp(t *testing.T, secrets ...string) (App, *fake.Clientset) {
@@ -103,5 +108,59 @@ func TestNoSecretsIsDone(t *testing.T) {
 	a, _ := testApp(t)
 	if done, err := (secretsStep{a}).Inspect(context.Background()); err != nil || !done {
 		t.Fatalf("Inspect = %v %v", done, err)
+	}
+}
+
+func conflictOn(cs *fake.Clientset, verb string) {
+	cs.PrependReactor(verb, "secrets", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewConflict(schema.GroupResource{Resource: "secrets"}, secretName, errors.New("changed"))
+	})
+}
+
+func TestSecretsConflictIsTransient(t *testing.T) {
+	ctx := context.Background()
+	t.Run("create", func(t *testing.T) {
+		a, cs := testApp(t, "token")
+		conflictOn(cs, "create")
+		if err := (secretsStep{a}).Apply(ctx); !errors.Is(err, engine.ErrTransient) {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("update", func(t *testing.T) {
+		a, cs := testApp(t, "token")
+		if err := a.ensureNamespace(ctx); err != nil {
+			t.Fatal(err)
+		}
+		cs.CoreV1().Secrets("kyq-hello").Create(ctx, &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: "kyq-hello", Labels: workloadLabels("rs-0")},
+		}, metav1.CreateOptions{})
+		conflictOn(cs, "update")
+		if err := (secretsStep{a}).Apply(ctx); !errors.Is(err, engine.ErrTransient) {
+			t.Fatalf("err = %v", err)
+		}
+	})
+}
+
+func TestSecretsRefusesForeignSecret(t *testing.T) {
+	ctx := context.Background()
+	a, cs := testApp(t, "token")
+	if err := a.ensureNamespace(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cs.CoreV1().Secrets("kyq-hello").Create(ctx, &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: "kyq-hello"},
+		Data:       map[string][]byte{"token": []byte("mine")},
+	}, metav1.CreateOptions{})
+	s := secretsStep{a}
+	if err := s.Apply(ctx); err == nil || !strings.Contains(err.Error(), "not managed by kyquickstart") {
+		t.Fatalf("Apply err = %v", err)
+	}
+	done, err := s.Inspect(ctx)
+	if done || err == nil || !strings.Contains(err.Error(), "not managed by kyquickstart") {
+		t.Fatalf("Inspect = %v, %v", done, err)
+	}
+	sec, _ := cs.CoreV1().Secrets("kyq-hello").Get(ctx, secretName, metav1.GetOptions{})
+	if string(sec.Data["token"]) != "mine" || owned(sec) {
+		t.Fatalf("foreign secret changed: %+v", sec)
 	}
 }
