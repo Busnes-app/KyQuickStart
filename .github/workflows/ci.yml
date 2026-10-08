@@ -32,3 +32,13 @@ jobs:
         with:
           go-version: 'stable'
       - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  e2e:
+    # sshd in a container on the runner's Docker socket; deploys the hello fixture.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+      - run: make e2e
