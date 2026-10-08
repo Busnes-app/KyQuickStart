@@ -77,3 +77,46 @@ func TestUsageAndVersion(t *testing.T) {
 		t.Errorf("version: %q %v", out.String(), err)
 	}
 }
+
+func TestPlacementAndKubeconfigChecks(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "")
+	outside := filepath.Join(t.TempDir(), "kubeconfig")
+	os.WriteFile(outside, []byte("not: a kubeconfig\n"), 0o600)
+	kubeStack := func(kc string) string {
+		return "version: 1\ntargets:\n  - name: k1\n    kubeconfig: " + kc + "\napps:\n  - name: hello\n    target: k1\n"
+	}
+
+	// Inside the state directory: refused before any connection.
+	_, err := runIn(t, kubeStack("kubeconfig"), "preflight")
+	if err == nil || !strings.Contains(err.Error(), "inside the state directory") {
+		t.Errorf("relative kubeconfig in state: %v", err)
+	}
+
+	// A Docker-only app on a cluster: refused before any connection.
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "apps", "dockeronly"), 0o700)
+	os.WriteFile(filepath.Join(dir, "apps", "dockeronly", "manifest.yaml"), []byte(
+		"name: dockeronly\ncategory: third-party\nimages:\n  web: traefik/whoami:v1.11.0@sha256:200689790a0a0ea48ca45992e0450bc26ccab5307375b41c84dfc4f2475937ab\nhealth:\n  timeout_seconds: 30\n"), 0o600)
+	os.WriteFile(filepath.Join(dir, "apps", "dockeronly", "compose.yaml.tmpl"), []byte(
+		"services:\n  web:\n    image: {{ .Images.web }}\n"), 0o600)
+	state := filepath.Join(dir, "state")
+	os.MkdirAll(state, 0o700)
+	os.WriteFile(filepath.Join(state, "stack.yaml"), []byte(strings.Replace(kubeStack(outside), "hello", "dockeronly", 1)), 0o600)
+	var out bytes.Buffer
+	err = Run(context.Background(), []string{"preflight", "--state", state}, Options{Catalog: os.DirFS(filepath.Join(dir, "apps")), Out: &out})
+	if err == nil || !strings.Contains(err.Error(), "no Kubernetes deployment") {
+		t.Errorf("docker-only app on a cluster: %v", err)
+	}
+
+	// --trust-host-key names a Kubernetes target.
+	_, err = runIn(t, kubeStack(outside), "preflight", "--trust-host-key", "k1=SHA256:abc")
+	if err == nil || !strings.Contains(err.Error(), "Kubernetes target") {
+		t.Errorf("trust flag on a cluster: %v", err)
+	}
+
+	// A kubeconfig outside the state dir passes load and fails at connect (it is not valid).
+	_, err = runIn(t, kubeStack(outside), "preflight")
+	if err == nil || !strings.Contains(err.Error(), "kubeconfig") || strings.Contains(err.Error(), "inside the state") {
+		t.Errorf("outside kubeconfig: %v", err)
+	}
+}
