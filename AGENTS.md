@@ -248,6 +248,7 @@ handover of admin and everyday logins.
   Implementation waits until the suite products are further along; write each phase's detailed
   plan when its gate opens.
 - Phase 1 installer core: `docs/superpowers/plans/2026-10-08-phase-1-installer-core.md`.
+- Phase 2 Kubernetes driver: `docs/superpowers/plans/2026-10-08-phase-2-kubernetes-driver.md`.
 
 ## Local Contracts
 
@@ -281,13 +282,17 @@ handover of admin and everyday logins.
   base64-encoded to `sh` (`remote.wrap`), so a non-POSIX login shell such as fish cannot alter
   it. Unit tests run commands for real through `remote.Local` and under sh, bash and fish.
 - Host keys are pinned in `<state>/known_hosts`; a changed key is never accepted, by flag or prompt.
+- On a cluster each app lives in namespace `kyq-<app>` (Pod Security `restricted`, default-deny
+  ingress) and the run lock is Lease `kyquickstart/kyquickstart-lock`. The installer never adopts
+  a namespace or object without the managed label. A kubeconfig is referenced by path and may not
+  live inside the state directory.
 
 ## Work Guidance
 
 ## Verification
 
 - `make ci`: tidy check, gofmt, vet (including the `e2e` tag), race tests.
-- `make e2e`: needs Docker; runs `apply` three times and a stale-lock case against an sshd
-  container on the local Docker socket.
+- `make e2e`: needs Docker; runs `apply` against an sshd container on the local Docker socket and
+  against a kind cluster (`go run sigs.k8s.io/kind@v0.33.0`), including drift and stale-lock cases.
 
 ## Child DOX Index

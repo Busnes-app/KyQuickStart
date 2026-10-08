@@ -148,7 +148,8 @@ requests and limits and a restricted security context, a `Lease` as the target l
 Preflight: RBAC, storage classes, Pod Security. Copy from `KyYard-Server/internal/runtime/kubernetes`
 (MIT, not importable): rollout wait, access review, Pod Security check, `upsert`, and pod exec for
 Phase 6; extract them to a shared module once both copies settle. Acceptance: Phase 1 e2e matrix
-on a kind cluster.
+on a kind cluster. Detailed plan:
+docs/superpowers/plans/2026-10-08-phase-2-kubernetes-driver.md.
 
 ### Phase 3: Identity (gates G1, G2)
 
