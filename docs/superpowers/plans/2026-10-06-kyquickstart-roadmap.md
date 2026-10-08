@@ -14,7 +14,7 @@ adapters; Ky products are configured through their container-local `apply-setup`
 bridge handles offboarding; a shared module runs upgrades from the CLI or KyYard.
 
 **Tech Stack:** Go 1.26.6 (suite floor), `golang.org/x/crypto/ssh` (+ `agent`, `knownhosts`),
-`go.yaml.in/yaml/v3`, Helm SDK and `client-go` (Kubernetes phase), `ky-primitives` (capsule,
+`go.yaml.in/yaml/v3`, `client-go` (Kubernetes phase), `ky-primitives` (capsule,
 recoveryclient, scim).
 
 **Spec:**
@@ -66,6 +66,7 @@ with tests, in a tagged release.
 | G8 | Holm (upstream or fork) | Back-channel logout or session recheck |
 | G9 | KyNotes | OneNote-style notebooks (separate sub-project; not an installer blocker) |
 | G10 | kyrecovery-server | Backup status (capsules and restic repositories, read-only) and restore-start UI; `kyrecovery-server/docs/plans/2026-10-07-backup-restore-ui-handoff.md` |
+| G11 | Each Ky product behind an edge | Forwarded-header self-check (client address and scheme it resolved, as KyPost `/api/status`); trusted-proxy handling in KyVault, kynotes, kyrecovery and kydns (installer spec, Work in other repositories) |
 
 ## Phases
 
@@ -139,10 +140,15 @@ the managed label, a pre-existing lock stops the run and survives untouched.
 
 ### Phase 2: Kubernetes driver (no gate)
 
-Helm SDK and `client-go` target driver implementing the same steps: one namespace per app,
-Secrets generated once and read back, charts with readiness probes, requests and limits and a
-restricted security context, a `Lease` as the target lock. Preflight: RBAC, storage classes,
-Pod Security. Acceptance: Phase 1 e2e matrix on a kind cluster.
+Ky products and edge components (cloudflared, Nginx Proxy Manager, frp client); third-party
+apps run on Docker hosts. A `client-go` driver implementing the
+same steps with typed objects built in Go, as KyYard builds them (no Helm): kubeconfig client,
+one namespace per app, Secrets generated once and read back, objects with readiness probes,
+requests and limits and a restricted security context, a `Lease` as the target lock.
+Preflight: RBAC, storage classes, Pod Security. Copy from `KyYard-Server/internal/runtime/kubernetes`
+(MIT, not importable): rollout wait, access review, Pod Security check, `upsert`, and pod exec for
+Phase 6; extract them to a shared module once both copies settle. Acceptance: Phase 1 e2e matrix
+on a kind cluster.
 
 ### Phase 3: Identity (gates G1, G2)
 
@@ -154,15 +160,18 @@ Acceptance: adapter integration harness (real app container + test KyIdentity) u
 
 NPM API driver (inspect, create disabled, verify, enable; forwarded-header override; never other
 hosts or the database), install NPM when absent with admin LAN-only, acme-dns DNS-01, BYO
-Cloudflare (two scoped tokens), frp on a VPS in `https` SNI mode. Resolve the two unverified frp
-questions first. Acceptance includes a scripted check that NPM's admin port is unreachable from
-the edge.
+Cloudflare (two scoped tokens), frp on a VPS in `https` SNI mode. cloudflared, NPM and the frp
+client deploy to a Docker host or, through the Phase 2 driver, the cluster; the cluster variants
+land after Phase 2. One edge per target, one owner per hostname, and each product's trusted-proxy value set by the
+installer (installer spec, Edge placement); `verify` checks the client address each product
+sees (KyPost now, the rest at G11). Resolve the two unverified frp questions first. Acceptance includes a
+scripted check that NPM's admin port is unreachable from the edge.
 
 ### Phase 5: Wizard, verify, handover (after Phase 3)
 
 `plan` wizard writing `stack.yaml` (products with purpose and dependencies, placement, edge,
-backup host, owner logins); `verify` acceptance framework; `handover` printout; `uninstall`
-keeping data.
+backup host, owner logins), as plain terminal prompts (command-line only, no GUI); `verify` acceptance framework; `handover` printout; `uninstall`
+keeping data; `unmanage` handing an app to its owner.
 
 ### Phase 6: Ky product setup (gates G3, G4, G5, G7)
 
@@ -171,7 +180,7 @@ dependent steps; in-container pairing; kyPulse registration; KyYard enrollment.
 
 ### Phase 7: Catalog apps (after Phase 3; Holm also G8)
 
-One detailed plan per app, each passing the adapter integration harness: Forgejo, BookStack,
+One detailed plan per app, Docker hosts only, each passing the adapter integration harness: Forgejo, BookStack,
 Vikunja, Immich, Home Assistant + hass-oidc-auth, Dolibarr, LibreChat, Holm. Each resolves its
 unverified items from the catalog spec first.
 
@@ -179,7 +188,8 @@ unverified items from the catalog spec first.
 
 rest-server as a container on the KyRecovery host (`--append-only --private-repos`, TLS,
 separate prune credential; preflight refuses NAS storage); K8up `Schedule` and
-`k8up.io/backupcommand` per app; restic timers on Docker hosts; one repository and password per
+`k8up.io/backupcommand` per Ky product on Kubernetes; restic timers on Docker hosts running each
+app's dump command; one repository and password per
 app, the password on the target with a copy sealed in KyRecovery; check results to kyPulse;
 `kyquickstart restore <app>`; restore drill in `verify`. KyRecovery status and restore-start UI
 is gate G10.

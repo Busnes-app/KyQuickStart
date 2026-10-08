@@ -12,6 +12,12 @@ is installed; this spec decides how.
   Kubernetes cluster through a kubeconfig. An install may be Docker-only, Kubernetes-only or
   mixed. The installer checks prerequisites and reports gaps; it never installs Docker or
   Kubernetes.
+- **Third-party apps run on Docker hosts only; Kubernetes hosts Ky products and the edge.** Most
+  catalog projects publish Compose themselves, so one format per app stays close to upstream. Ky
+  products are ours to package either way. The edge components (cloudflared, Nginx Proxy Manager,
+  frp client) deploy to a Docker host or the cluster; the frp server runs on the VPS.
+- **Catalog support has an exit.** An app leaving the catalog stops taking new installs after
+  notice in a release set; existing installs are handed to the owner with `unmanage`.
 - **Go**, one static binary run from the operator's workstation. It imports `ky-primitives`
   for sealing, pairing and key pinning.
 - **SSH bootstrap, then KyYard.** The installer deploys directly, then enrolls every target in
@@ -39,6 +45,7 @@ is installed; this spec decides how.
 | `upgrade` | Runs the shared upgrade module against a newer release set |
 | `restore <app>` | Restores one app to a point in time: capsule through the product's `restore`, then the matching restic snapshot (database first, then files). Shares on stdin only. Started directly or from the command KyRecovery's UI shows (catalog spec, Restore) |
 | `uninstall <app>` | Removes workloads, keeps data. Data deletion is a separate command with typed confirmation |
+| `unmanage <app>` | Hands an app to the owner: removes the `ky.managed-by` label so KyYard treats it as an ordinary workload, keeps its data and last backup, and records in the handover that the suite no longer upgrades it |
 
 `plan` produces the file every other command consumes, so an unattended run is `apply` on an
 existing `stack.yaml`. Placement is validated against dependencies (an app and its database must
@@ -48,9 +55,10 @@ be mutually reachable). Skipping an installed app never removes it.
 
 Per app, embedded in the binary:
 
-- **Manifest** (schema-checked): images by digest, Compose template, Helm chart, ports, env,
+- **Manifest** (schema-checked): images by digest, Compose template (third-party apps and Ky products), Kubernetes objects (Ky
+  products and edge components), ports, env,
   OIDC client (redirect, logout and back-channel URLs, role names), health endpoint, backup
-  declaration (K8up command, volumes, skips, capsule secrets, restore order), upgrade rules
+  declaration (dump command, volumes, skips, capsule secrets, restore order), upgrade rules
   (minimum from-version, versions that cannot be skipped, whether it migrates data).
 - **Go adapter** for what data cannot express: `Inspect`, `Apply`, `GrantAdmin`, `Deprovision`.
 
@@ -61,10 +69,36 @@ module importable by KyYard.
 
 - **Docker over SSH:** one Compose project per app under an installer-owned directory; secrets
   as mode-0600 files beside it. Host key pinned on first contact and shown for confirmation.
-- **Kubernetes:** Helm SDK and `client-go`; one namespace per app; secrets as Kubernetes Secrets.
-  Charts set readiness probes, resource requests and limits, and a restricted security context.
+- **Kubernetes (Ky products and edge components):** `client-go` with typed objects built in Go,
+  the way KyYard builds them; no Helm. One namespace per app; secrets as Kubernetes Secrets.
+  Objects set readiness probes, resource requests and limits, and a restricted security context.
 
 Every installer-managed workload carries `ky.managed-by=kyquickstart` and its release-set ID.
+
+### Edge placement
+
+Ky products believe forwarded headers (client IP, scheme) only from a trusted-proxy address list
+(`TRUSTED_PROXY_CIDRS`, `KY_TRUSTED_PROXIES` and kin). Behind NAT or on the wrong network every
+visitor shares the proxy's address: one lockout bucket, wrong audit IPs, cookies not Secure, and
+KyYard refuses to start. The installer therefore places proxies and sets those values itself.
+
+- **One edge per target.** Each target serving HTTP gets its own Nginx Proxy Manager, and with
+  Cloudflare its own tunnel (more connectors in one tunnel only for redundancy, since every
+  connector must reach every origin); with frp, one client per target behind the VPS server. An
+  existing NPM may serve as a target's edge when it meets the rules below.
+- **One owner per hostname.** `plan` rejects a hostname claimed by two edges.
+- **Trusted proxy, set by the installer, never `0.0.0.0/0` or a default bridge:**
+  - Docker host: NPM joins each app's Compose network with a pinned address; the app trusts that
+    /32.
+  - Proxy on another host: the app trusts that host's stable LAN /32, with no NAT on the path
+    (NodePort with `externalTrafficPolicy: Local`, source-restricted).
+  - Kubernetes: pod addresses move, so the app trusts the pod network and a NetworkPolicy admits
+    ingress to it only from the edge pods.
+- **Verified, not assumed.** `verify` requests each product through its edge and checks the
+  client address and scheme the product reports (KyPost `GET /api/status`: `clientIp`,
+  `proxyHeadersTrusted`; the other products through gate G11).
+- **Certificates per edge.** Each NPM issues its own by DNS-01 with its own acme-dns
+  registration. The handover lists every NPM admin login.
 
 ### Product setup
 
@@ -167,7 +201,7 @@ Running pods alone is not completion.
 ## Testing and CI
 
 - **Unit:** plan graph, manifest schema, release-set diff, secret redaction, as pure functions.
-- **Golden:** rendered Compose and Helm output for every app.
+- **Golden:** rendered Compose for every app and Kubernetes objects for every Ky product.
 - **Adapter integration, per app:** real app container against a test KyIdentity: OIDC sign-in,
   admin versus everyday role, `Deprovision`, then prove old sessions and tokens fail.
 - **End to end:** disposable kind cluster plus an SSH-reachable Docker host: full `apply`, a
@@ -185,6 +219,10 @@ Running pods alone is not completion.
 | KyYard-Server | Import the shared module; Upgrade action; refuse generic edits and update policies on labelled workloads |
 | kyPulse-server | Accept target and log-source registration through `apply-setup` |
 | Holm (upstream or fork) | Back-channel logout or session recheck (catalog spec) |
+| Every Ky product behind an edge | Forwarded-header self-check reporting the client address and scheme it resolved (as KyPost `/api/status`) |
+| KyVault-server, kynotes-server | Trust `X-Forwarded-Proto` only from trusted proxies; kynotes defaults to all RFC1918 ranges |
+| kyrecovery-server | Trusted-proxy support for its rate limiter (all clients share the proxy address today) |
+| kydns-server | Secure admin cookie behind a TLS proxy |
 
 ## Unverified
 
@@ -192,7 +230,7 @@ Running pods alone is not completion.
   account end date, and losing app assignment.
 - `kyrecovery pair generate` works unattended inside the container for a named service.
 - KyYard's agent can honor a target-side lock and labelled-workload refusal without broader RBAC.
-- Helm and `client-go` lock behavior with a Lease held across a long `apply`.
+- `client-go` lock behavior with a Lease held across a long `apply`.
 
 ## Out of scope
 
