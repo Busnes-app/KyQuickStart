@@ -1,0 +1,7 @@
+services:
+  whoami:
+    image: {{ .Images.whoami }}
+    secrets: [token]
+secrets:
+  token:
+    file: ./secrets/token
