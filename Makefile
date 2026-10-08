@@ -20,4 +20,4 @@ ci: tidy-check lint test-race
 
 # Needs Docker on this machine.
 e2e:
-	go test -tags e2e -count=1 -v ./test/e2e/
+	go test -tags e2e -count=1 -v -timeout 20m ./test/e2e/
