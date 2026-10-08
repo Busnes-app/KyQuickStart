@@ -49,6 +49,8 @@ func Acquire(ctx context.Context, r remote.Runner, root, holder string) (release
 	// mkdir is the atomic test-and-set; the final mkdir only repeats to report its error.
 	cmd := fmt.Sprintf("umask 077; mkdir -p %s && if mkdir %s 2>/dev/null; then cat > %s/holder; elif test -d %s; then cat %s/holder 2>/dev/null; exit %d; else mkdir %s; fi",
 		remote.Quote(root), lock, lock, lock, lock, lockedExit, lock)
+	held := fmt.Sprintf("cmp -s - %s/holder", lock)
+	unlock := fmt.Sprintf("rm %s/holder && rmdir %s", lock, lock)
 	out, err := r.Run(ctx, cmd, body)
 	var ee *remote.ExitError
 	if errors.As(err, &ee) && ee.Code == lockedExit {
@@ -60,11 +62,18 @@ func Acquire(ctx context.Context, r remote.Runner, root, holder string) (release
 		return nil, le
 	}
 	if err != nil {
-		return nil, fmt.Errorf("acquire lock: %w", err)
+		// A cancelled Run can return after the remote side took the lock; remove it only if
+		// it is ours. Not holding it exits 0.
+		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		err = fmt.Errorf("acquire lock: %w", err)
+		if _, rerr := r.Run(cctx, "if "+held+"; then "+unlock+"; fi", body); rerr != nil {
+			err = errors.Join(err, fmt.Errorf("release lock %s: %w", path.Join(root, ".lock"), rerr))
+		}
+		return nil, err
 	}
 	return func(ctx context.Context) error {
-		cmd := fmt.Sprintf("cmp -s - %s/holder && rm %s/holder && rmdir %s", lock, lock, lock)
-		if _, err := r.Run(ctx, cmd, body); err != nil {
+		if _, err := r.Run(ctx, held+" && "+unlock, body); err != nil {
 			return fmt.Errorf("release lock %s: not held by this run or not removable: %w", path.Join(root, ".lock"), err)
 		}
 		return nil

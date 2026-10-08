@@ -83,3 +83,40 @@ func TestAcquireUnwritableRoot(t *testing.T) {
 		t.Fatalf("err = %v, want a plain failure", err)
 	}
 }
+
+// cancelFirst runs every command for real but reports the first as cancelled, like an
+// SSH run interrupted after the remote side already finished.
+type cancelFirst struct{ calls int }
+
+func (c *cancelFirst) Run(ctx context.Context, cmd string, stdin []byte) ([]byte, error) {
+	out, err := remote.Local{}.Run(ctx, cmd, stdin)
+	if c.calls++; c.calls == 1 {
+		return out, context.Canceled
+	}
+	return out, err
+}
+
+func TestCancelledAcquireRemovesItsLock(t *testing.T) {
+	root := t.TempDir()
+	_, err := Acquire(context.Background(), &cancelFirst{}, root, "run-a")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".lock")); !os.IsNotExist(err) {
+		t.Fatalf("lock left behind: %v", err)
+	}
+}
+
+func TestCancelledAcquireLeavesSomeoneElsesLock(t *testing.T) {
+	root := t.TempDir()
+	holder := filepath.Join(root, ".lock", "holder")
+	os.Mkdir(filepath.Join(root, ".lock"), 0o700)
+	os.WriteFile(holder, []byte(`{"holder":"run-z"}`), 0o600)
+	_, err := Acquire(context.Background(), &cancelFirst{}, root, "run-a")
+	if !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "release") {
+		t.Fatalf("err = %v", err)
+	}
+	if b, _ := os.ReadFile(holder); string(b) != `{"holder":"run-z"}` {
+		t.Errorf("holder = %s", b)
+	}
+}
