@@ -251,12 +251,22 @@ handover of admin and everyday logins.
 
 ## Local Contracts
 
+- Command-line only: no GUI, web UI or full-screen terminal UI. `plan` asks its questions as
+  plain terminal prompts, and every command also runs unattended from `stack.yaml`.
 - A third-party app enters the catalog only if it passes every admission rule in the catalog
   spec. Record each rejection and its reason there.
+- Third-party apps run on Docker hosts only. Kubernetes hosts Ky products and the edge
+  components (cloudflared, Nginx Proxy Manager, frp client), deployed with `client-go` typed
+  objects (no Helm); the edge components also deploy to Docker hosts. An app leaving the catalog stops taking new installs after
+  notice, and existing installs are handed to their owner with `unmanage`.
 - Every installed app signs in through KyIdentity with native OIDC, uses *Assigned users only*,
   and has an offboarding adapter. The installer builds no auth-proxy gate.
 - Reverse proxy is Nginx Proxy Manager. On an existing NPM, touch only installer-created hosts,
   through its API, never its database. NPM admin is LAN-only; its credentials go in the handover.
+- One edge (NPM, and a tunnel or frp client) per target and one owner per hostname. The installer
+  sets each product's trusted-proxy value to exactly where its edge connects from (pinned /32 on
+  Docker, NAT-free LAN /32 across hosts, pod network plus an edge-only NetworkPolicy in the
+  cluster), never `0.0.0.0/0`, and `verify` checks the client address the product reports.
 - Bulk data goes to restic (K8up on Kubernetes) on an append-only rest-server container on the
   KyRecovery host, off the NAS, one repository and password per app. The password lives on the
   app's target and a copy is sealed in KyRecovery; the rest-server host never holds one.
