@@ -145,3 +145,13 @@ func TestKubeconfigSymlinkIntoState(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestTwoTargetsSameCluster(t *testing.T) {
+	kc := filepath.Join(t.TempDir(), "kubeconfig")
+	os.WriteFile(kc, []byte("not: a kubeconfig\n"), 0o600)
+	_, err := runIn(t, "version: 1\ntargets:\n  - name: k1\n    kubeconfig: "+kc+"\n  - name: k2\n    kubeconfig: "+kc+
+		"\napps:\n  - name: hello\n    target: k1\n", "preflight")
+	if err == nil || !strings.Contains(err.Error(), `targets "k1" and "k2" are the same cluster`) {
+		t.Fatalf("err = %v", err)
+	}
+}

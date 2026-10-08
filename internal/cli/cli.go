@@ -128,6 +128,7 @@ func load(state string, trust trustFlag, o Options) (*session, error) {
 	if err != nil {
 		return nil, err
 	}
+	clusters := map[[2]string]string{} // kubeconfig, context -> target
 	for i, t := range st.Targets {
 		if !t.Kubernetes() {
 			continue
@@ -146,6 +147,11 @@ func load(state string, trust trustFlag, o Options) (*session, error) {
 		if rel, err := filepath.Rel(stateAbs, kc); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return nil, fmt.Errorf("target %q: kubeconfig %s is inside the state directory, which must hold no secrets", t.Name, kc)
 		}
+		// Two targets on one cluster would contend for its single lock.
+		if other, ok := clusters[[2]string{kc, t.Context}]; ok {
+			return nil, fmt.Errorf("targets %q and %q are the same cluster; use one target per cluster", other, t.Name)
+		}
+		clusters[[2]string{kc, t.Context}] = t.Name
 		st.Targets[i].Kubeconfig = kc
 	}
 	s := &session{o: o, state: state, cat: cat, placed: map[string]stack.Target{}, drivers: map[string]driver{}}
