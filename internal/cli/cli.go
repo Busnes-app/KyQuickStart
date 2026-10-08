@@ -16,8 +16,8 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
-	"github.com/Busnes-app/kyquickstart/internal/dockerhost"
 	"github.com/Busnes-app/kyquickstart/internal/engine"
+	"github.com/Busnes-app/kyquickstart/internal/kube"
 	"github.com/Busnes-app/kyquickstart/internal/plan"
 	"github.com/Busnes-app/kyquickstart/internal/remote"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
@@ -102,7 +102,7 @@ type session struct {
 	order   []string
 	placed  map[string]stack.Target // app -> target
 	targets []stack.Target          // targets holding an app, by name
-	conns   map[string]*remote.SSH  // target name -> connection
+	drivers map[string]driver       // target name -> driver
 }
 
 // load validates everything that needs no connection.
@@ -120,7 +120,27 @@ func load(state string, trust trustFlag, o Options) (*session, error) {
 			return nil, fmt.Errorf("--trust-host-key names unknown target %q", name)
 		}
 	}
-	s := &session{o: o, state: state, cat: cat, placed: map[string]stack.Target{}, conns: map[string]*remote.SSH{}}
+	stateAbs, err := filepath.Abs(state)
+	if err != nil {
+		return nil, err
+	}
+	for i, t := range st.Targets {
+		if !t.Kubernetes() {
+			continue
+		}
+		if _, ok := trust[t.Name]; ok {
+			return nil, fmt.Errorf("--trust-host-key names %q, a Kubernetes target", t.Name)
+		}
+		kc := t.Kubeconfig
+		if !filepath.IsAbs(kc) {
+			kc = filepath.Join(stateAbs, kc)
+		}
+		if rel, err := filepath.Rel(stateAbs, kc); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return nil, fmt.Errorf("target %q: kubeconfig %s is inside the state directory, which must hold no secrets", t.Name, kc)
+		}
+		st.Targets[i].Kubeconfig = kc
+	}
+	s := &session{o: o, state: state, cat: cat, placed: map[string]stack.Target{}, drivers: map[string]driver{}}
 	var names []string
 	used := map[string]bool{}
 	for _, a := range st.Apps {
@@ -136,12 +156,29 @@ func load(state string, trust trustFlag, o Options) (*session, error) {
 	if s.order, err = plan.Order(names, cat); err != nil {
 		return nil, err
 	}
+	for name, t := range s.placed {
+		app := cat[name]
+		switch {
+		case t.Kubernetes() && app.Kubernetes == nil:
+			return nil, fmt.Errorf("app %q has no Kubernetes deployment; place it on a Docker host", name)
+		case !t.Kubernetes() && app.Compose == nil:
+			return nil, fmt.Errorf("app %q has no Compose deployment; place it on a Kubernetes target", name)
+		}
+	}
 	return s, nil
 }
 
 func (s *session) connect(ctx context.Context, trust trustFlag) error {
 	confirm := s.confirmer()
 	for _, t := range s.targets {
+		if t.Kubernetes() {
+			c, err := kube.Connect(t.Kubeconfig, t.Context)
+			if err != nil {
+				return fmt.Errorf("%s: %w", t.Name, err)
+			}
+			s.drivers[t.Name] = kubeDriver{c: c, needsStorage: s.needsStorage(t.Name)}
+			continue
+		}
 		c, err := remote.Dial(ctx, remote.SSHConfig{
 			Name: t.Name, Host: t.Host, Port: t.Port, User: t.User,
 			KnownHosts: filepath.Join(s.state, "known_hosts"),
@@ -151,9 +188,18 @@ func (s *session) connect(ctx context.Context, trust trustFlag) error {
 		if err != nil {
 			return err
 		}
-		s.conns[t.Name] = c
+		s.drivers[t.Name] = sshDriver{t: t, c: c}
 	}
 	return nil
+}
+
+func (s *session) needsStorage(target string) bool {
+	for name, t := range s.placed {
+		if k := s.cat[name].Kubernetes; t.Name == target && k != nil && len(k.Volumes) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *session) confirmer() func(name, fp string) bool {
@@ -170,15 +216,15 @@ func (s *session) confirmer() func(name, fp string) bool {
 }
 
 func (s *session) close() {
-	for _, c := range s.conns {
-		c.Close()
+	for _, d := range s.drivers {
+		d.close()
 	}
 }
 
 func (s *session) preflight(ctx context.Context) error {
 	failed := 0
 	for _, t := range s.targets {
-		for _, f := range dockerhost.Preflight(ctx, s.conns[t.Name], t) {
+		for _, f := range s.drivers[t.Name].preflight(ctx) {
 			mark := "ok  "
 			if !f.OK {
 				mark = "FAIL"
@@ -205,7 +251,7 @@ func (s *session) apply(ctx context.Context) (err error) {
 		}
 	}()
 	for _, t := range s.targets {
-		release, err := dockerhost.Acquire(ctx, s.conns[t.Name], t.Root, holder)
+		release, err := s.drivers[t.Name].acquire(ctx, holder)
 		if err != nil {
 			return fmt.Errorf("%s: %w", t.Name, err)
 		}
@@ -215,10 +261,7 @@ func (s *session) apply(ctx context.Context) (err error) {
 	var steps []engine.Step
 	for _, name := range s.order {
 		t := s.placed[name]
-		steps = append(steps, dockerhost.Steps(dockerhost.App{
-			Name: name, Root: t.Root, Runner: s.conns[t.Name],
-			Catalog: s.cat[name], ReleaseSet: s.o.ReleaseSet, Redact: redact,
-		})...)
+		steps = append(steps, s.drivers[t.Name].steps(name, s.cat[name], s.o.ReleaseSet, redact)...)
 	}
 	e := &engine.Engine{Dir: filepath.Join(s.state, "results"), Out: s.o.Out, Redact: redact}
 	return e.Run(ctx, steps)
