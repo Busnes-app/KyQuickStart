@@ -14,7 +14,7 @@ import (
 
 func TestAcquireReportsHolderAndKeepsLock(t *testing.T) {
 	ctx := context.Background()
-	root := filepath.Join(t.TempDir(), "it's root")
+	root := filepath.Join(realTemp(t), "it's root")
 	release, err := Acquire(ctx, remote.Local{}, root, "run-a")
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +49,7 @@ func TestAcquireReportsHolderAndKeepsLock(t *testing.T) {
 
 func TestReleaseLeavesSomeoneElsesLock(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := realTemp(t)
 	release, err := Acquire(ctx, remote.Local{}, root, "run-a")
 	if err != nil {
 		t.Fatal(err)
@@ -65,7 +65,7 @@ func TestReleaseLeavesSomeoneElsesLock(t *testing.T) {
 }
 
 func TestLockWithoutHolder(t *testing.T) {
-	root := t.TempDir()
+	root := realTemp(t)
 	os.Mkdir(filepath.Join(root, ".lock"), 0o700)
 	_, err := Acquire(context.Background(), remote.Local{}, root, "run-a")
 	var le *LockedError
@@ -75,7 +75,7 @@ func TestLockWithoutHolder(t *testing.T) {
 }
 
 func TestAcquireUnwritableRoot(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "file")
+	file := filepath.Join(realTemp(t), "file")
 	os.WriteFile(file, nil, 0o600)
 	_, err := Acquire(context.Background(), remote.Local{}, filepath.Join(file, "root"), "run-a")
 	var le *LockedError
@@ -97,7 +97,7 @@ func (c *cancelFirst) Run(ctx context.Context, cmd string, stdin []byte) ([]byte
 }
 
 func TestCancelledAcquireRemovesItsLock(t *testing.T) {
-	root := t.TempDir()
+	root := realTemp(t)
 	_, err := Acquire(context.Background(), &cancelFirst{}, root, "run-a")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v", err)
@@ -108,7 +108,7 @@ func TestCancelledAcquireRemovesItsLock(t *testing.T) {
 }
 
 func TestCancelledAcquireLeavesSomeoneElsesLock(t *testing.T) {
-	root := t.TempDir()
+	root := realTemp(t)
 	holder := filepath.Join(root, ".lock", "holder")
 	os.Mkdir(filepath.Join(root, ".lock"), 0o700)
 	os.WriteFile(holder, []byte(`{"holder":"run-z"}`), 0o600)

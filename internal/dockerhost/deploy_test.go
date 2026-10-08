@@ -75,7 +75,7 @@ func TestDeployApplyOrder(t *testing.T) {
 }
 
 func TestDeployRefusesSharedAppDir(t *testing.T) {
-	root := t.TempDir()
+	root := realTemp(t)
 	dir := filepath.Join(root, "hello")
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)

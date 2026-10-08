@@ -15,7 +15,7 @@ import (
 func localApp(t *testing.T, secrets ...string) App {
 	return App{
 		Name:    "hello",
-		Root:    filepath.Join(t.TempDir(), "it's root"),
+		Root:    filepath.Join(realTemp(t), "it's root"),
 		Runner:  remote.Local{},
 		Catalog: catalog.App{Manifest: catalog.Manifest{Name: "hello", Secrets: secrets}},
 		Redact:  &engine.Redactor{},
