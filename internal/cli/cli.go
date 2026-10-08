@@ -120,7 +120,11 @@ func load(state string, trust trustFlag, o Options) (*session, error) {
 			return nil, fmt.Errorf("--trust-host-key names unknown target %q", name)
 		}
 	}
+	// Resolve symlinks on both sides: a link outside the state directory may point into it.
 	stateAbs, err := filepath.Abs(state)
+	if err == nil {
+		stateAbs, err = filepath.EvalSymlinks(stateAbs)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -134,6 +138,10 @@ func load(state string, trust trustFlag, o Options) (*session, error) {
 		kc := t.Kubeconfig
 		if !filepath.IsAbs(kc) {
 			kc = filepath.Join(stateAbs, kc)
+		}
+		kc, err = filepath.EvalSymlinks(kc)
+		if err != nil {
+			return nil, fmt.Errorf("target %q: kubeconfig %s: %w", t.Name, t.Kubeconfig, err)
 		}
 		if rel, err := filepath.Rel(stateAbs, kc); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return nil, fmt.Errorf("target %q: kubeconfig %s is inside the state directory, which must hold no secrets", t.Name, kc)
