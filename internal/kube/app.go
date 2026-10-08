@@ -25,3 +25,9 @@ func hashOf(parts ...string) string {
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
+
+// Steps returns the app's install steps: secrets, deploy, health.
+func Steps(a App) []engine.Step {
+	hash := render(a.Name, a.Catalog, a.ReleaseSet).hash()
+	return []engine.Step{secretsStep{a}, deployStep{a: a, hash: hash}, healthStep{a: a, hash: hash}}
+}
