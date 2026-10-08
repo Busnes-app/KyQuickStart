@@ -86,8 +86,8 @@ func TestPlacementAndKubeconfigChecks(t *testing.T) {
 		return "version: 1\ntargets:\n  - name: k1\n    kubeconfig: " + kc + "\napps:\n  - name: hello\n    target: k1\n"
 	}
 
-	// Inside the state directory: refused before any connection.
-	_, err := runIn(t, kubeStack("kubeconfig"), "preflight")
+	// Inside the state directory (stack.yaml is a file there): refused before any connection.
+	_, err := runIn(t, kubeStack("stack.yaml"), "preflight")
 	if err == nil || !strings.Contains(err.Error(), "inside the state directory") {
 		t.Errorf("relative kubeconfig in state: %v", err)
 	}
@@ -114,9 +114,34 @@ func TestPlacementAndKubeconfigChecks(t *testing.T) {
 		t.Errorf("trust flag on a cluster: %v", err)
 	}
 
+	// A missing kubeconfig is refused before any connection, naming target and path.
+	missing := filepath.Join(t.TempDir(), "absent")
+	_, err = runIn(t, kubeStack(missing), "preflight")
+	if err == nil || !strings.Contains(err.Error(), `target "k1": kubeconfig `+missing) {
+		t.Errorf("missing kubeconfig: %v", err)
+	}
+
 	// A kubeconfig outside the state dir passes load and fails at connect (it is not valid).
 	_, err = runIn(t, kubeStack(outside), "preflight")
 	if err == nil || !strings.Contains(err.Error(), "kubeconfig") || strings.Contains(err.Error(), "inside the state") {
 		t.Errorf("outside kubeconfig: %v", err)
+	}
+}
+
+func TestKubeconfigSymlinkIntoState(t *testing.T) {
+	state := t.TempDir()
+	inside := filepath.Join(state, "kubeconfig")
+	os.WriteFile(inside, []byte("not: a kubeconfig\n"), 0o600)
+	link := filepath.Join(t.TempDir(), "kubeconfig")
+	if err := os.Symlink(inside, link); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(state, "stack.yaml"), []byte(
+		"version: 1\ntargets:\n  - name: k1\n    kubeconfig: "+link+"\napps:\n  - name: hello\n    target: k1\n"), 0o600)
+	var out bytes.Buffer
+	o := Options{Catalog: os.DirFS("../catalog/testdata/apps"), ReleaseSet: "test", Out: &out}
+	err := Run(context.Background(), []string{"preflight", "--state", state}, o)
+	if err == nil || !strings.Contains(err.Error(), "inside the state directory") {
+		t.Fatalf("err = %v", err)
 	}
 }
