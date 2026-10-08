@@ -39,6 +39,15 @@ func Dial(ctx context.Context, c SSHConfig) (*SSH, error) {
 	if sock == "" {
 		return nil, errors.New("SSH_AUTH_SOCK is not set: start an SSH agent and add your key")
 	}
+	var conn net.Conn
+	if confirm := c.Confirm; confirm != nil {
+		// The prompt waits outside the handshake deadline; sshd's LoginGraceTime still bounds it.
+		c.Confirm = func(name, fp string) bool {
+			conn.SetDeadline(time.Time{})
+			defer conn.SetDeadline(time.Now().Add(dialTimeout))
+			return confirm(name, fp)
+		}
+	}
 	hk, err := hostKeyCallback(c)
 	if err != nil {
 		return nil, err
@@ -48,7 +57,7 @@ func Dial(ctx context.Context, c SSHConfig) (*SSH, error) {
 		return nil, fmt.Errorf("ssh agent: %w", err)
 	}
 	addr := net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
-	conn, err := (&net.Dialer{Timeout: dialTimeout}).DialContext(ctx, "tcp", addr)
+	conn, err = (&net.Dialer{Timeout: dialTimeout}).DialContext(ctx, "tcp", addr)
 	if err != nil {
 		ac.Close()
 		return nil, fmt.Errorf("%s: %w", c.Name, err)
