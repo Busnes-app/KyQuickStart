@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+	"unicode/utf8"
 )
 
 type Step interface {
@@ -40,6 +41,9 @@ type Engine struct {
 
 const attempts = 3
 
+// maxDiagnostics bounds a failure message on screen and in the result file.
+const maxDiagnostics = 2048
+
 // Run runs steps in order and stops at the first failure. A step whose last result is ok
 // with the same input hash, and whose Verify still passes, is skipped.
 func (e *Engine) Run(ctx context.Context, steps []Step) error {
@@ -56,7 +60,7 @@ func (e *Engine) Run(ctx context.Context, steps []Step) error {
 	for _, s := range steps {
 		status, err := e.runStep(ctx, s)
 		if err != nil {
-			msg := e.Redact.Redact(err.Error())
+			msg := bound(e.Redact.Redact(err.Error()))
 			fmt.Fprintf(e.Out, "%-20s failed: %s\n", s.ID(), msg)
 			res := Result{Status: "failed", InputHash: s.InputHash(), Time: time.Now().UTC(), Diagnostics: msg}
 			return errors.Join(fmt.Errorf("%s: %s", s.ID(), msg), e.write(s.ID(), res))
@@ -98,6 +102,19 @@ func (e *Engine) runStep(ctx context.Context, s Step) (string, error) {
 		return "", fmt.Errorf("verify: %w", err)
 	}
 	return "ok", nil
+}
+
+// bound keeps the last maxDiagnostics bytes of an already redacted message, on a rune
+// boundary. Cutting before redacting could leave a secret's tail.
+func bound(msg string) string {
+	if len(msg) <= maxDiagnostics {
+		return msg
+	}
+	i := len(msg) - maxDiagnostics
+	for i < len(msg) && !utf8.RuneStart(msg[i]) {
+		i++
+	}
+	return msg[i:]
 }
 
 func (e *Engine) sleep(ctx context.Context, d time.Duration) error {

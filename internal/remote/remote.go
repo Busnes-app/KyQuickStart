@@ -14,18 +14,15 @@ type Runner interface {
 	Run(ctx context.Context, cmd string, stdin []byte) (stdout []byte, err error)
 }
 
-// ExitError is a command that ran and exited non-zero.
+// ExitError is a command that ran and exited non-zero. Error() holds all of stderr, so
+// callers redact it before showing or bounding it.
 type ExitError struct {
 	Code   int
 	Stderr []byte
 }
 
 func (e *ExitError) Error() string {
-	msg := bytes.TrimSpace(e.Stderr)
-	if len(msg) > 2048 {
-		msg = msg[len(msg)-2048:]
-	}
-	return fmt.Sprintf("exit status %d: %s", e.Code, msg)
+	return fmt.Sprintf("exit status %d: %s", e.Code, bytes.TrimSpace(e.Stderr))
 }
 
 // Quote returns s as a single POSIX shell word.

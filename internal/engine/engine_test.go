@@ -11,6 +11,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
+
+	"github.com/Busnes-app/kyquickstart/internal/remote"
 )
 
 type fakeStep struct {
@@ -215,5 +218,52 @@ func TestRedactorIgnoresShortValues(t *testing.T) {
 	r.Add("abc")
 	if got := r.Redact("abc"); got != "abc" {
 		t.Errorf("short value redacted: %q", got)
+	}
+}
+
+func TestLongFailureRedactsBeforeBounding(t *testing.T) {
+	e, out, _ := newEngine(t)
+	secret := "Zq7Kp2VwN9bRt4LmQ8sHc3JdF6gA1eUoT5iYk0nBvXa" // 43 bytes
+	e.Redact.Add(secret)
+	// The old 2048-byte cut of stderr fell 20 bytes into the secret.
+	stderr := strings.Repeat("x", 3000) + secret + strings.Repeat("y", 2048-20)
+	s := &fakeStep{id: "a.up", hash: "h", apply: func() error {
+		return &remote.ExitError{Code: 1, Stderr: []byte(stderr)}
+	}}
+	err := e.Run(context.Background(), []Step{s})
+	if err == nil {
+		t.Fatal("no error")
+	}
+	raw, _ := os.ReadFile(filepath.Join(e.Dir, "a.up.json"))
+	for where, text := range map[string]string{"error": err.Error(), "output": out.String(), "result": string(raw)} {
+		for i := 0; i+8 <= len(secret); i++ {
+			if strings.Contains(text, secret[i:i+8]) {
+				t.Fatalf("secret fragment %q in %s", secret[i:i+8], where)
+			}
+		}
+	}
+	if d := readResult(t, e, "a.up").Diagnostics; len(d) > maxDiagnostics {
+		t.Errorf("diagnostics are %d bytes", len(d))
+	}
+}
+
+func TestBoundedFailureIsValidUTF8(t *testing.T) {
+	e, out, _ := newEngine(t)
+	// "apply: " is 7 bytes, so the 2048-byte cut lands inside a 3-byte rune.
+	s := &fakeStep{id: "a.up", hash: "h", apply: func() error {
+		return errors.New(strings.Repeat("€", 1500))
+	}}
+	err := e.Run(context.Background(), []Step{s})
+	if err == nil {
+		t.Fatal("no error")
+	}
+	d := readResult(t, e, "a.up").Diagnostics
+	for where, text := range map[string]string{"error": err.Error(), "output": out.String(), "diagnostics": d} {
+		if !utf8.ValidString(text) || strings.ContainsRune(text, utf8.RuneError) {
+			t.Errorf("%s is not clean UTF-8", where)
+		}
+	}
+	if len(d) > maxDiagnostics || len(d) < maxDiagnostics-2 {
+		t.Errorf("diagnostics are %d bytes", len(d))
 	}
 }
