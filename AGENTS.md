@@ -247,6 +247,7 @@ handover of admin and everyday logins.
 - Build sequence and product readiness gates: `docs/superpowers/plans/2026-10-06-kyquickstart-roadmap.md`.
   Implementation waits until the suite products are further along; write each phase's detailed
   plan when its gate opens.
+- Phase 1 installer core: `docs/superpowers/plans/2026-10-08-phase-1-installer-core.md`.
 
 ## Local Contracts
 
@@ -266,9 +267,17 @@ handover of admin and everyday logins.
 - The installer's only authority inside a Ky product is its container-local `apply-setup`
   command. Installer-managed workloads carry `ky.managed-by=kyquickstart`; only the shared upgrade
   module changes them, from the CLI or KyYard, under a target-side lock.
+- Remote commands are POSIX `sh`, quoted with `remote.Quote`. The SSH runner sends each one
+  base64-encoded to `sh` (`remote.wrap`), so a non-POSIX login shell such as fish cannot alter
+  it. Unit tests run commands for real through `remote.Local` and under sh, bash and fish.
+- Host keys are pinned in `<state>/known_hosts`; a changed key is never accepted, by flag or prompt.
 
 ## Work Guidance
 
 ## Verification
+
+- `make ci`: tidy check, gofmt, vet (including the `e2e` tag), race tests.
+- `make e2e`: needs Docker; runs `apply` three times and a stale-lock case against an sshd
+  container on the local Docker socket.
 
 ## Child DOX Index
