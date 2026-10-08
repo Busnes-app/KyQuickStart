@@ -45,6 +45,9 @@ func Acquire(ctx context.Context, r remote.Runner, root, holder string) (release
 	if err != nil {
 		return nil, err
 	}
+	if err := trustedDir(ctx, r, root); err != nil {
+		return nil, fmt.Errorf("installer root: %w", err)
+	}
 	lock := remote.Quote(path.Join(root, ".lock"))
 	// mkdir is the atomic test-and-set; the final mkdir only repeats to report its error.
 	cmd := fmt.Sprintf("umask 077; mkdir -p %s && if mkdir %s 2>/dev/null; then cat > %s/holder; elif test -d %s; then cat %s/holder 2>/dev/null; exit %d; else mkdir %s; fi",

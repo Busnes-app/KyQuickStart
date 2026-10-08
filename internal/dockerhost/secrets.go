@@ -37,6 +37,11 @@ func (s secretsStep) Inspect(ctx context.Context) (bool, error) {
 }
 
 func (s secretsStep) Apply(ctx context.Context) error {
+	for _, d := range []string{s.a.dir(), path.Join(s.a.dir(), "secrets")} {
+		if err := trustedDir(ctx, s.a.Runner, d); err != nil {
+			return err
+		}
+	}
 	for _, n := range s.a.Catalog.Secrets {
 		ok, err := s.exists(ctx, n)
 		if err != nil {

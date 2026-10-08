@@ -64,7 +64,7 @@ func TestApply(t *testing.T) {
 	ctx := context.Background()
 	work := t.TempDir()
 	root, keys, state := filepath.Join(work, "root"), filepath.Join(work, "keys"), filepath.Join(work, "state")
-	for _, d := range []string{root, keys, state} {
+	for _, d := range []string{keys, state} {
 		os.MkdirAll(d, 0o700)
 	}
 

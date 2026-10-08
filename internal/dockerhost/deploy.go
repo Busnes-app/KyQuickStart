@@ -64,6 +64,9 @@ func (d deployStep) Inspect(ctx context.Context) (bool, error) {
 func (d deployStep) Apply(ctx context.Context) error {
 	dir := d.a.dir()
 	hash := remote.Quote(dir + "/.input-hash")
+	if err := trustedDir(ctx, d.a.Runner, dir); err != nil {
+		return err
+	}
 	// Removed first and written last: a deploy that dies halfway is a hash mismatch next
 	// run, so check() never reaches `docker compose ps` on a half-written compose.yaml.
 	if _, err := d.a.Runner.Run(ctx, "rm -f "+hash, nil); err != nil {
