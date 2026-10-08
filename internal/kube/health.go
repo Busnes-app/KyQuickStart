@@ -31,6 +31,8 @@ func (h healthStep) state(ctx context.Context) (string, bool, error) {
 		return "", false, err
 	case !found:
 		return "deployment missing", false, nil
+	case d.Spec.Replicas == nil || *d.Spec.Replicas != 1:
+		return "deployment is not at one replica", false, nil
 	case ready(d):
 		return "", false, nil
 	case failed(d):
