@@ -3,6 +3,7 @@ package remote
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -76,8 +77,7 @@ func (s *SSH) Run(ctx context.Context, cmd string, stdin []byte) ([]byte, error)
 	var out, errb bytes.Buffer
 	sess.Stdin, sess.Stdout, sess.Stderr = bytes.NewReader(stdin), &out, &errb
 	done := make(chan error, 1)
-	// The login shell may not be POSIX (fish, for one), so every command runs under sh.
-	go func() { done <- sess.Run("sh -c " + Quote(cmd)) }()
+	go func() { done <- sess.Run(wrap(cmd)) }()
 	select {
 	case <-ctx.Done():
 		sess.Close()
@@ -90,6 +90,12 @@ func (s *SSH) Run(ctx context.Context, cmd string, stdin []byte) ([]byte, error)
 		return out.Bytes(), &ExitError{Code: ee.ExitStatus(), Stderr: errb.Bytes()}
 	}
 	return out.Bytes(), err
+}
+
+// wrap hands cmd to sh through the login shell. The login shell may be fish or another
+// non-POSIX shell, so the line holds only characters every shell reads the same.
+func wrap(cmd string) string {
+	return `sh -c 'eval "$(echo ` + base64.StdEncoding.EncodeToString([]byte(cmd)) + ` | base64 -d)"'`
 }
 
 func (s *SSH) Close() error {

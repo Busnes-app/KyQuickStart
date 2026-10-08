@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -104,5 +105,26 @@ func TestChangedHostKeyIsRefused(t *testing.T) {
 	}
 	if after, _ := os.ReadFile(kh); string(after) != string(before) {
 		t.Error("known_hosts changed")
+	}
+}
+
+func TestWrapSurvivesLoginShells(t *testing.T) {
+	const cmd = `printf '%s|' 'a\b' "it's" '$HOME' 'x\'; cat`
+	const want = `a\b|it's|$HOME|x\|in`
+	for _, shell := range []string{"sh", "bash", "fish"} {
+		path, err := exec.LookPath(shell)
+		if err != nil {
+			t.Logf("%s not installed, skipping", shell)
+			continue
+		}
+		c := exec.Command(path, "-c", wrap(cmd))
+		c.Stdin = strings.NewReader("in")
+		out, err := c.Output()
+		if err != nil {
+			t.Fatalf("%s: %v", shell, err)
+		}
+		if string(out) != want {
+			t.Errorf("%s: got %q, want %q", shell, out, want)
+		}
 	}
 }
