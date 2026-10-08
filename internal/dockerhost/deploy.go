@@ -63,6 +63,12 @@ func (d deployStep) Inspect(ctx context.Context) (bool, error) {
 
 func (d deployStep) Apply(ctx context.Context) error {
 	dir := d.a.dir()
+	hash := remote.Quote(dir + "/.input-hash")
+	// Removed first and written last: a deploy that dies halfway is a hash mismatch next
+	// run, so check() never reaches `docker compose ps` on a half-written compose.yaml.
+	if _, err := d.a.Runner.Run(ctx, "rm -f "+hash, nil); err != nil {
+		return fmt.Errorf("remove input hash: %w", err)
+	}
 	for _, f := range []struct {
 		name string
 		body []byte
@@ -78,8 +84,7 @@ func (d deployStep) Apply(ctx context.Context) error {
 	if _, err := d.a.Runner.Run(ctx, d.a.compose("up -d --remove-orphans"), nil); err != nil {
 		return fmt.Errorf("docker compose up: %w", err)
 	}
-	// Written last: a run that dies before here redeploys next time.
-	_, err := d.a.Runner.Run(ctx, "umask 077; printf %s "+remote.Quote(d.hash)+" > "+remote.Quote(dir+"/.input-hash"), nil)
+	_, err := d.a.Runner.Run(ctx, "umask 077; printf %s "+remote.Quote(d.hash)+" > "+hash, nil)
 	return err
 }
 

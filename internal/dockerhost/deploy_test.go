@@ -52,7 +52,7 @@ func TestDeployApplyOrder(t *testing.T) {
 	if err := d.Apply(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"cat > '/opt/kyq/hello/compose.yaml'", "cat > '/opt/kyq/hello/compose.kyq.yaml'", "pull --quiet", "up -d --remove-orphans", "> '/opt/kyq/hello/.input-hash'"}
+	want := []string{"rm -f '/opt/kyq/hello/.input-hash'", "cat > '/opt/kyq/hello/compose.yaml'", "cat > '/opt/kyq/hello/compose.kyq.yaml'", "pull --quiet", "up -d --remove-orphans", "> '/opt/kyq/hello/.input-hash'"}
 	if len(f.calls) != len(want) {
 		t.Fatalf("calls = %v", f.calls)
 	}
@@ -61,14 +61,14 @@ func TestDeployApplyOrder(t *testing.T) {
 			t.Errorf("call %d = %q, want %q", i, f.calls[i].cmd, w)
 		}
 	}
-	if f.calls[0].stdin != string(a.Catalog.Compose) || !strings.Contains(f.calls[1].stdin, ManagedValue) {
-		t.Errorf("stdin: %q / %q", f.calls[0].stdin, f.calls[1].stdin)
+	if f.calls[1].stdin != string(a.Catalog.Compose) || !strings.Contains(f.calls[2].stdin, ManagedValue) {
+		t.Errorf("stdin: %q / %q", f.calls[1].stdin, f.calls[2].stdin)
 	}
-	if !strings.Contains(f.calls[3].cmd, "-p 'kyq-hello'") {
-		t.Errorf("project name missing: %q", f.calls[3].cmd)
+	if !strings.Contains(f.calls[4].cmd, "-p 'kyq-hello'") {
+		t.Errorf("project name missing: %q", f.calls[4].cmd)
 	}
-	if !strings.Contains(f.calls[4].cmd, d.hash) {
-		t.Errorf("hash not written: %q", f.calls[4].cmd)
+	if !strings.Contains(f.calls[5].cmd, d.hash) {
+		t.Errorf("hash not written: %q", f.calls[5].cmd)
 	}
 }
 
@@ -122,5 +122,36 @@ func TestDeployInspectSeesStoppedService(t *testing.T) {
 	f.reply = deployReplies("other", running)
 	if done, _ := d.Inspect(ctx); done {
 		t.Fatal("stale hash counted as deployed")
+	}
+}
+
+// A compose.yaml truncated by a failed write must not wedge re-runs: Inspect has to report
+// "not done" rather than fail on `docker compose ps`.
+func TestFailedComposeWriteLeavesDeployRetryable(t *testing.T) {
+	f := &fakeRunner{}
+	d := deployOf(fakeApp(f))
+	ctx := context.Background()
+	removed := false
+	f.reply = func(cmd string) ([]byte, error) {
+		switch {
+		case strings.HasPrefix(cmd, "rm -f ") && strings.Contains(cmd, ".input-hash"):
+			removed = true
+		case strings.Contains(cmd, "cat > ") && strings.Contains(cmd, "/compose.yaml"):
+			return nil, &remote.ExitError{Code: 1, Stderr: []byte("No space left on device")}
+		case strings.Contains(cmd, ".input-hash"):
+			if removed {
+				return nil, nil
+			}
+			return []byte(d.hash), nil
+		case strings.Contains(cmd, " ps "):
+			return nil, &remote.ExitError{Code: 15, Stderr: []byte("yaml: unexpected end of stream")}
+		}
+		return nil, nil
+	}
+	if err := d.Apply(ctx); err == nil {
+		t.Fatal("Apply succeeded with a failed write")
+	}
+	if done, err := d.Inspect(ctx); err != nil || done {
+		t.Fatalf("Inspect = %v, %v; want false, nil", done, err)
 	}
 }
