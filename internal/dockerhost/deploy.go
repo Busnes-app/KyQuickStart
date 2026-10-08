@@ -7,19 +7,14 @@ import (
 	"strings"
 
 	"github.com/Busnes-app/kyquickstart/internal/engine"
+	"github.com/Busnes-app/kyquickstart/internal/managed"
 	"github.com/Busnes-app/kyquickstart/internal/remote"
 	"go.yaml.in/yaml/v3"
 )
 
-const (
-	ManagedLabel    = "ky.managed-by"
-	ManagedValue    = "kyquickstart"
-	ReleaseSetLabel = "ky.release-set"
-)
-
 // override is compose.kyq.yaml: the managed labels on every service.
 func override(services []string, releaseSet string) []byte {
-	labels := map[string]string{ManagedLabel: ManagedValue, ReleaseSetLabel: releaseSet}
+	labels := map[string]string{managed.Label: managed.Value, managed.ReleaseSetLabel: releaseSet}
 	svcs := map[string]any{}
 	for _, s := range services {
 		svcs[s] = map[string]any{"labels": labels}

@@ -1,6 +1,20 @@
 name: hello
+category: ky
 images:
   whoami: traefik/whoami:v1.11.0@sha256:200689790a0a0ea48ca45992e0450bc26ccab5307375b41c84dfc4f2475937ab
 secrets: [token]
 health:
-  timeout_seconds: 60
+  timeout_seconds: 120
+kubernetes:
+  image: whoami
+  args: ["--port", "8080"]
+  ports: [8080]
+  readiness_path: /
+  run_as: 65532
+  resources:
+    cpu: 50m
+    memory: 32Mi
+  volumes:
+    - name: data
+      mount: /data
+      size: 16Mi
