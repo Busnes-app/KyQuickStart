@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
@@ -69,5 +70,59 @@ func TestSecretsVerifyRejectsOpenMode(t *testing.T) {
 	os.Chmod(filepath.Join(a.Root, "hello", "secrets", "token"), 0o644)
 	if err := s.Verify(ctx); err == nil {
 		t.Fatal("Verify accepted mode 644")
+	}
+}
+
+// Apply never produces an empty secret, so one found on disk fails Verify instead of being skipped.
+func TestEmptySecretFailsVerify(t *testing.T) {
+	ctx := context.Background()
+	a := localApp(t, "token")
+	dir := filepath.Join(a.Root, "hello", "secrets")
+	os.MkdirAll(dir, 0o700)
+	os.WriteFile(filepath.Join(dir, "token"), nil, 0o600)
+	if err := (secretsStep{a}).Verify(ctx); err == nil {
+		t.Fatal("Verify accepted an empty secret")
+	}
+}
+
+func TestApplyLeavesOnlySecretFiles(t *testing.T) {
+	ctx := context.Background()
+	a := localApp(t, "db_password", "token")
+	if err := (secretsStep{a}).Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(filepath.Join(a.Root, "hello", "secrets"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	if len(names) != 2 || names[0] != "db_password" || names[1] != "token" {
+		t.Errorf("secrets dir holds %v", names)
+	}
+}
+
+func TestApplyFailsWhenDirCannotBeCreated(t *testing.T) {
+	a := localApp(t, "token")
+	os.WriteFile(a.Root, nil, 0o600)
+	if err := (secretsStep{a}).Apply(context.Background()); err == nil {
+		t.Fatal("Apply succeeded without a secrets directory")
+	}
+}
+
+func TestVerifyRejectsWrongLengthWithoutValue(t *testing.T) {
+	ctx := context.Background()
+	a := localApp(t, "token")
+	dir := filepath.Join(a.Root, "hello", "secrets")
+	os.MkdirAll(dir, 0o700)
+	os.WriteFile(filepath.Join(dir, "token"), []byte("0123456789"), 0o600)
+	err := (secretsStep{a}).Verify(ctx)
+	if err == nil {
+		t.Fatal("Verify accepted a 10-byte secret")
+	}
+	if strings.Contains(err.Error(), "0123456789") || !strings.Contains(err.Error(), "token") {
+		t.Errorf("error %q must name the secret and not show its value", err)
 	}
 }

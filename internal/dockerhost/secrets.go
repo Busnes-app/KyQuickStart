@@ -11,6 +11,9 @@ import (
 	"github.com/Busnes-app/kyquickstart/internal/remote"
 )
 
+// secretLen is 32 random bytes in unpadded base64url.
+const secretLen = 43
+
 // secretsStep creates each declared secret once, on the target, and never overwrites it.
 type secretsStep struct{ a App }
 
@@ -47,8 +50,12 @@ func (s secretsStep) Apply(ctx context.Context) error {
 		v := base64.RawURLEncoding.EncodeToString(b)
 		s.a.Redact.Add(v)
 		f := s.file(n)
-		// set -C: the write fails rather than replace a secret that appeared meanwhile.
-		cmd := "umask 077; set -C; mkdir -p " + remote.Quote(path.Dir(f)) + " && cat > " + remote.Quote(f)
+		dir := path.Dir(f)
+		// The value goes to a temp file first; ln publishes it and fails if the secret exists,
+		// so a killed run never leaves a partial secret behind.
+		cmd := "umask 077; mkdir -p " + remote.Quote(dir) +
+			" && t=$(mktemp " + remote.Quote(path.Join(dir, ".tmp.XXXXXX")) + ")" +
+			" && { cat > \"$t\" && ln \"$t\" " + remote.Quote(f) + "; s=$?; rm -f \"$t\"; exit $s; }"
 		if _, err := s.a.Runner.Run(ctx, cmd, []byte(v)); err != nil {
 			return fmt.Errorf("write secret %s: %w", n, err)
 		}
@@ -64,10 +71,10 @@ func (s secretsStep) Verify(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("secret %s is missing or not mode 600: %w", n, err)
 		}
-		if len(out) == 0 {
-			return fmt.Errorf("secret %s is empty", n)
-		}
 		s.a.Redact.Add(string(out))
+		if len(out) != secretLen {
+			return fmt.Errorf("secret %s is %d bytes, want %d", n, len(out), secretLen)
+		}
 	}
 	return nil
 }
