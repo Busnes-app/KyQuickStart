@@ -6,6 +6,8 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -22,6 +24,19 @@ func (d deployStep) check(ctx context.Context) (string, error) {
 	ns := namespaceOf(d.a.Name)
 	cs := d.a.Client.cs
 	want := render(d.a.Name, d.a.Catalog, d.a.ReleaseSet)
+	// Pod security and the policy are security controls: drift in either is repaired.
+	n, err := cs.CoreV1().Namespaces().Get(ctx, ns, metav1.GetOptions{})
+	switch {
+	case apierrors.IsNotFound(err):
+		return "namespace missing", nil
+	case err != nil:
+		return "", fmt.Errorf("namespace %s: %w", ns, err)
+	}
+	for k, v := range d.a.namespaceLabels() {
+		if n.Labels[k] != v {
+			return "namespace label " + k + " differs", nil
+		}
+	}
 	dep, found, err := getOwned(ctx, cs.AppsV1().Deployments(ns), "deployment", appName)
 	switch {
 	case err != nil:
@@ -43,8 +58,14 @@ func (d deployStep) check(ctx context.Context) (string, error) {
 			return "claim " + c.Name + " missing", err
 		}
 	}
-	if _, found, err := getOwned(ctx, cs.NetworkingV1().NetworkPolicies(ns), "network policy", policyName); err != nil || !found {
-		return "network policy missing", err
+	pol, found, err := getOwned(ctx, cs.NetworkingV1().NetworkPolicies(ns), "network policy", policyName)
+	switch {
+	case err != nil:
+		return "", err
+	case !found:
+		return "network policy missing", nil
+	case !equality.Semantic.DeepEqual(pol.Spec, want.Policy.Spec):
+		return "network policy differs", nil
 	}
 	return "", nil
 }

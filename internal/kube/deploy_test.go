@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 )
@@ -132,5 +133,51 @@ func TestUpsertConflictIsTransient(t *testing.T) {
 	})
 	if err := d.Apply(ctx); !errors.Is(err, engine.ErrTransient) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestDeployRepairsNamespaceLabel(t *testing.T) {
+	ctx := context.Background()
+	a, cs := testApp(t, "token")
+	d := deployOf(a)
+	if err := d.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	nss := cs.CoreV1().Namespaces()
+	ns, _ := nss.Get(ctx, "kyq-hello", metav1.GetOptions{})
+	ns.Labels[podSecurity] = "privileged"
+	nss.Update(ctx, ns, metav1.UpdateOptions{})
+	if done, err := d.Inspect(ctx); err != nil || done {
+		t.Fatalf("Inspect with privileged namespace = %v %v", done, err)
+	}
+	if err := d.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ns, _ = nss.Get(ctx, "kyq-hello", metav1.GetOptions{})
+	if ns.Labels[podSecurity] != "restricted" {
+		t.Fatalf("enforce label = %q", ns.Labels[podSecurity])
+	}
+}
+
+func TestDeployRepairsPolicy(t *testing.T) {
+	ctx := context.Background()
+	a, cs := testApp(t, "token")
+	d := deployOf(a)
+	if err := d.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	pols := cs.NetworkingV1().NetworkPolicies("kyq-hello")
+	p, _ := pols.Get(ctx, policyName, metav1.GetOptions{})
+	p.Spec.Ingress = []networkingv1.NetworkPolicyIngressRule{{}}
+	pols.Update(ctx, p, metav1.UpdateOptions{})
+	if done, err := d.Inspect(ctx); err != nil || done {
+		t.Fatalf("Inspect with allow-all policy = %v %v", done, err)
+	}
+	if err := d.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	p, _ = pols.Get(ctx, policyName, metav1.GetOptions{})
+	if len(p.Spec.Ingress) != 0 {
+		t.Fatalf("ingress = %+v", p.Spec.Ingress)
 	}
 }

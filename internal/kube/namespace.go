@@ -10,10 +10,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func (a App) ensureNamespace(ctx context.Context) error {
+func (a App) namespaceLabels() map[string]string {
 	l := workloadLabels(a.ReleaseSet)
 	l[podSecurity] = "restricted"
-	return a.Client.ensureNamespace(ctx, namespaceOf(a.Name), l)
+	return l
+}
+
+func (a App) ensureNamespace(ctx context.Context) error {
+	return a.Client.ensureNamespace(ctx, namespaceOf(a.Name), a.namespaceLabels())
 }
 
 // ensureNamespace creates name with labels, or brings the installer's existing namespace up to
