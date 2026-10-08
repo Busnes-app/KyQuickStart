@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	"k8s.io/utils/ptr"
 	"strings"
 	"testing"
 	"time"
@@ -67,5 +68,31 @@ func TestHealthFailsOnStuckRollout(t *testing.T) {
 	err := Steps(a)[2].Apply(ctx)
 	if err == nil || !strings.Contains(err.Error(), "ProgressDeadlineExceeded") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestHealthRefusesZeroReplicas(t *testing.T) {
+	ctx := context.Background()
+	a, _ := testApp(t, "token")
+	if err := deployOf(a).Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	deps := a.Client.cs.AppsV1().Deployments("kyq-hello")
+	d, _ := deps.Get(ctx, appName, metav1.GetOptions{})
+	d.Spec.Replicas = ptr.To(int32(0))
+	d, err := deps.Update(ctx, d, metav1.UpdateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Status = appsv1.DeploymentStatus{}
+	if _, err := deps.UpdateStatus(ctx, d, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	h := Steps(a)[2]
+	if done, _ := h.Inspect(ctx); done {
+		t.Fatal("zero-replica deployment counted as healthy")
+	}
+	if err := h.Verify(ctx); err == nil || !strings.Contains(err.Error(), "one replica") {
+		t.Fatalf("Verify = %v", err)
 	}
 }
