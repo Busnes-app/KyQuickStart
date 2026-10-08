@@ -10,6 +10,7 @@ import (
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/engine"
+	"github.com/Busnes-app/kyquickstart/internal/managed"
 	"github.com/Busnes-app/kyquickstart/internal/remote"
 	"go.yaml.in/yaml/v3"
 )
@@ -41,7 +42,7 @@ func TestOverrideLabelsEveryService(t *testing.T) {
 	}
 	for _, svc := range []string{"web", "db"} {
 		l := o.Services[svc].Labels
-		if l[ManagedLabel] != ManagedValue || l[ReleaseSetLabel] != "rs-1" {
+		if l[managed.Label] != managed.Value || l[managed.ReleaseSetLabel] != "rs-1" {
 			t.Errorf("%s labels = %v", svc, l)
 		}
 	}
@@ -63,7 +64,7 @@ func TestDeployApplyOrder(t *testing.T) {
 			t.Errorf("call %d = %q, want %q", i, f.calls[i].cmd, w)
 		}
 	}
-	if f.calls[2].stdin != string(a.Catalog.Compose) || !strings.Contains(f.calls[3].stdin, ManagedValue) {
+	if f.calls[2].stdin != string(a.Catalog.Compose) || !strings.Contains(f.calls[3].stdin, managed.Value) {
 		t.Errorf("stdin: %q / %q", f.calls[2].stdin, f.calls[3].stdin)
 	}
 	if !strings.Contains(f.calls[5].cmd, "-p 'kyq-hello'") {
