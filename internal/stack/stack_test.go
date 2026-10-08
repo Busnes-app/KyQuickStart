@@ -85,3 +85,42 @@ func TestParseRejectsEmpty(t *testing.T) {
 		t.Fatal("empty stack.yaml accepted")
 	}
 }
+
+const kubeStack = `
+version: 1
+targets:
+  - name: k1
+    kubeconfig: /home/op/.kube/k1.yaml
+    context: admin@k1
+apps:
+  - name: hello
+    target: k1
+`
+
+func TestKubernetesTarget(t *testing.T) {
+	s, err := Parse([]byte(kubeStack))
+	if err != nil {
+		t.Fatal(err)
+	}
+	k, _ := s.Target("k1")
+	if !k.Kubernetes() || k.Port != 0 || k.Root != "" || k.Context != "admin@k1" {
+		t.Fatalf("k1 = %+v", k)
+	}
+}
+
+func TestKubernetesTargetRejects(t *testing.T) {
+	cases := map[string]struct{ old, new, want string }{
+		"ssh field":    {"context: admin@k1", "context: admin@k1\n    host: k1.lan", "ssh fields"},
+		"bad context":  {"context: admin@k1", "context: \"a b\"", "context"},
+		"newline path": {"kubeconfig: /home/op/.kube/k1.yaml", "kubeconfig: \"/a\\nb\"", "kubeconfig"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			in := strings.Replace(kubeStack, c.old, c.new, 1)
+			_, err := Parse([]byte(in))
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("err = %v, want %q", err, c.want)
+			}
+		})
+	}
+}
