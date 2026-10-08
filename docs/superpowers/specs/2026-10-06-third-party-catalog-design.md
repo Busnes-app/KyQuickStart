@@ -12,8 +12,10 @@ per-app integration work the installer owns. Installer architecture is a separat
 - Every app signs in through KyIdentity with native OIDC. No auth-proxy gate is built.
 - Monitoring is not a catalog category: kyPulse covers health, alerts and logs. The installer
   registers every installed app as a kyPulse target instead.
-- Third-party backups are app-aware: K8up runs each app's own dump command and backs up its
-  volumes into an encrypted restic repository on an append-only rest-server off the NAS. The
+- Third-party apps run on Docker hosts only, from Compose close to what upstream publishes. An
+  app that leaves the catalog is handed to its owner with `kyquickstart unmanage` (installer spec).
+- Third-party backups are app-aware: a restic timer runs each app's own dump command and backs up
+  its volumes into an encrypted restic repository on an append-only rest-server off the NAS. The
   restic password and app secrets travel in KyRecovery sealed capsules.
 - Mail hosting belongs to KyPost, not this catalog.
 - Notes: no third-party OneNote replacement passes the rules. KyNotes is retained and gains
@@ -67,7 +69,7 @@ Versions are the latest releases checked on 2026-10-06; the release set pins exa
 3. **Deprovision adapter** per app, triggered when KyIdentity ends a user's access; verified by
    disabling a test user and confirming sessions and tokens fail.
 4. **kyPulse registration** of each app's health endpoint and log source.
-5. **Backup declaration** per app: K8up backup command annotation, volumes to include and
+5. **Backup declaration** per app: dump command, volumes to include and
    exclude, secrets for the sealed capsule, and restore order (see Backups).
 
 ## Backups
@@ -83,15 +85,17 @@ password also lives on the app's target. Custodians therefore protect recovery a
 is lost; whoever controls a live target can already read that app's data and its backup history.
 The rest-server host never holds a password and sees ciphertext only.
 
-**restic via K8up (bulk, app-aware).** Capsule caps (384 MiB per container) rule out bulk data,
+**restic (bulk, app-aware).** Capsule caps (384 MiB per container) rule out bulk data,
 so:
 
 - **Engine:** restic (BSD-2-Clause) with client-side encryption; the target sees ciphertext only.
-- **Kubernetes:** K8up (Apache-2.0, restic-based operator; 4.10.0, 2026-07-17). The installer
+- **Kubernetes (Ky products):** K8up (Apache-2.0, restic-based operator; 4.10.0, 2026-07-17). The installer
   writes a `Schedule` per app and a `k8up.io/backupcommand` annotation on the app pod; K8up runs
   the command in the pod and streams its output into restic, then backs up the app's volumes.
   Scheduled `check` runs verify the repository.
-- **Outside Kubernetes** (KyDrive on the NAS): plain restic on a timer.
+- **Docker hosts** (every third-party app, and KyDrive on the NAS): restic on a timer runs the
+  app's dump command with `docker compose exec`, streams it into restic, then backs up the app's
+  volumes.
 - **One repository and password per app**, so a compromised target exposes only its own apps'
   backups, and `--private-repos` keeps each client inside its repository.
 - **Target:** rest-server (BSD-2-Clause) as a separate container on the KyRecovery host, with
@@ -147,7 +151,8 @@ Infrastructure, not catalog apps; the admission rules do not apply, but these do
 
 - **Reverse proxy: Nginx Proxy Manager** (MIT). If one exists, the installer adds and enables
   only its own hosts through NPM's API (create disabled, verify, enable) and never edits other
-  hosts or NPM's database. Otherwise it installs NPM. TLS terminates at NPM on the LAN.
+  hosts or NPM's database. Otherwise it installs one NPM per target (installer spec, Edge
+  placement). TLS terminates at NPM on the LAN.
 - **NPM admin (port 81):** LAN-only, never published at the edge. No SSO; generated admin
   credentials go in the printed handover.
 - **Forwarded headers:** each installer-created host overrides NPM's broad real-IP trust and
@@ -201,10 +206,10 @@ commercial-licensed features), NetBird reverse proxy (beta), rathole (unmaintain
 - Each app's behavior on KyIdentity back-channel logout, and which client sessions survive.
 - Official `linux/amd64` manifests for Forgejo (codeberg.org registry) and BookStack.
 - Runtime dependencies per app (database engine, cache, search) and Home Assistant's network
-  needs for device discovery inside Kubernetes.
+  needs for device discovery on a Docker host.
 - Holm upstream's willingness to accept a logout/session-recheck change.
 - Backup commands for every app except Immich, and each app's documented restore steps.
-- K8up restore flow for streamed dumps, and rest-server append-only behavior under K8up.
+- K8up restore flow for streamed dumps (Ky products), and rest-server append-only behavior under K8up.
 - One frp client carrying many hostnames on a shared 443, and real client IP reaching NPM
   (PROXY protocol).
 
