@@ -78,7 +78,7 @@ Deploys a catalog app to a Docker host over SSH, idempotently and resumably. No 
 | Path | Responsibility |
 |---|---|
 | `cmd/kyquickstart/main.go` | Subcommand dispatch: `preflight`, `apply`, `version` |
-| `internal/cli/` | Command wiring; `Options{State string; Catalog fs.FS; Trust map[string]string; Out io.Writer}` so tests inject a fixture catalog |
+| `internal/cli/` | Command wiring; `Options{Catalog fs.FS; ReleaseSet string; In io.Reader; Out io.Writer}` so tests inject a fixture catalog; `--state` and `--trust-host-key` are flags |
 | `internal/stack/` | `stack.yaml` schema v1, strict decode (unknown keys rejected), validation, defaults (port 22, root `/opt/kyquickstart`) |
 | `internal/catalog/` | Manifest schema, embedded catalog (`//go:embed all:apps`), compose template parsed at load with `missingkey=error` |
 | `internal/plan/` | `Order(apps, catalog)`: dependency order, missing-dependency and cycle errors, deterministic tie-break |
