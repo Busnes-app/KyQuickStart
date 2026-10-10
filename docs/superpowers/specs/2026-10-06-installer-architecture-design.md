@@ -43,7 +43,7 @@ is installed; this spec decides how.
 | `handover` | Prints URLs, admin and everyday logins, activation links, NPM admin credentials, and outstanding human steps |
 | `offboard <user>` | Runs every app's `Deprovision` for one user; fallback for the bridge |
 | `upgrade` | Runs the shared upgrade module against a newer release set |
-| `restore <app>` | Restores one app to a point in time: capsule through the product's `restore`, then the matching restic snapshot (database first, then files). Shares on stdin only. Started directly or from the command KyRecovery's UI shows (catalog spec, Restore) |
+| `restore <app> [--capsule <id>] [--repo <path> --snapshot <id>]` | Restores one app from the capsule and restic snapshot KyRecovery's restore plan selected: capsule through the product's `restore`, then the snapshot (database first, then files). Decrypts the snapshot, shows its real time, host and paths, and writes nothing until the operator confirms. Shares on stdin only. Contract pinned by `kyrecovery-server/docs/superpowers/specs/2026-10-07-backup-status-restore-ui-design.md` (Restore plan); started directly or from the command KyRecovery's UI shows (catalog spec, Restore) |
 | `uninstall <app>` | Removes workloads, keeps data. Data deletion is a separate command with typed confirmation |
 | `unmanage <app>` | Hands an app to the owner: removes the `ky.managed-by` label so KyYard treats it as an ordinary workload, keeps its data and last backup, and records in the handover that the suite no longer upgrades it |
 
