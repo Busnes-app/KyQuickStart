@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,6 +30,30 @@ import (
 
 func docker(t *testing.T, args ...string) string {
 	t.Helper()
+	if len(args) > 0 && args[0] == "run" {
+		value := func(flag string) string {
+			for i, arg := range args {
+				if arg == flag && i+1 < len(args) {
+					return args[i+1]
+				}
+				if strings.HasPrefix(arg, flag+"=") {
+					return strings.TrimPrefix(arg, flag+"=")
+				}
+			}
+			return ""
+		}
+		memory := value("--memory")
+		if memory == "" {
+			memory = "512m"
+		}
+		limits := []string{"run"}
+		for _, limit := range [][2]string{{"--memory", memory}, {"--memory-swap", memory}, {"--cpus", "1"}, {"--pids-limit", "128"}} {
+			if value(limit[0]) == "" {
+				limits = append(limits, limit[0], limit[1])
+			}
+		}
+		args = append(limits, args[1:]...)
+	}
 	out, err := exec.Command("docker", args...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("docker %s: %v\n%s", strings.Join(args, " "), err, out)
@@ -92,11 +117,11 @@ func TestApply(t *testing.T) {
 	// The root path is shared with the host so Compose bind mounts resolve there.
 	base := "/tmp/" + name
 	root := filepath.Join(base, "root")
-	docker(t, "run", "--rm", "-v", "/tmp:/tmp", "--entrypoint", "mkdir", "kyq-e2e-sshd", "-m", "755", base)
+	docker(t, "run", "--rm", "--memory", "64m", "--memory-swap", "64m", "--cpus", "1", "--pids-limit", "32", "-v", "/tmp:/tmp", "--entrypoint", "mkdir", "kyq-e2e-sshd", "-m", "755", base)
 	t.Cleanup(func() {
-		exec.Command("docker", "run", "--rm", "-v", "/tmp:/tmp", "--entrypoint", "rm", "kyq-e2e-sshd", "-rf", base).Run()
+		exec.Command("docker", "run", "--rm", "--memory", "64m", "--memory-swap", "64m", "--cpus", "1", "--pids-limit", "32", "-v", "/tmp:/tmp", "--entrypoint", "rm", "kyq-e2e-sshd", "-rf", base).Run()
 	})
-	docker(t, "run", "-d", "--name", name, "-p", "127.0.0.1::22",
+	docker(t, "run", "-d", "--name", name, "--memory", "256m", "--memory-swap", "256m", "--cpus", "1", "--pids-limit", "128", "-p", "127.0.0.1::22",
 		"-v", "/var/run/docker.sock:/var/run/docker.sock",
 		"-v", keys+":/keys:ro", "-v", base+":"+base, "-v", work+":"+work, "kyq-e2e-sshd")
 	t.Cleanup(func() { exec.Command("docker", "rm", "-f", name).Run() })
@@ -109,7 +134,12 @@ func TestApply(t *testing.T) {
 	waitForSSH(t, port, hostFP)
 
 	stackYAML := "version: 1\ntargets:\n  - name: e2e\n    host: 127.0.0.1\n    port: %s\n    user: root\n    root: %s\napps:\n  - name: hello\n    target: e2e\n"
-	os.WriteFile(filepath.Join(state, "stack.yaml"), []byte(fmt.Sprintf(stackYAML, port, root)), 0o600)
+	// Exercise the operator path: guided choices produce the plan used for actual SSH deployment.
+	var guidedOut bytes.Buffer
+	answers := strings.Join([]string{"yes", "1", "e2e", "docker", "127.0.0.1", "root", port, root, "install", "e2e", "0", "none", "yes", "finish", ""}, "\n")
+	if err := cli.Run(ctx, []string{"plan", "--demo", "--state", state}, cli.Options{Catalog: os.DirFS("../../internal/catalog/apps"), In: strings.NewReader(answers), Out: &guidedOut}); err != nil {
+		t.Fatalf("guided setup: %v\n%s", err, guidedOut.String())
+	}
 	os.WriteFile(filepath.Join(foreignState, "stack.yaml"), []byte(fmt.Sprintf(stackYAML, port, filepath.Join(work, "root"))), 0o600)
 
 	applyIn := func(dir string) (string, error) {
@@ -135,6 +165,16 @@ func TestApply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("apply: %v\n%s", err, out)
 	}
+	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{}}
+	defer client.CloseIdleConnections()
+	res, err := client.Get("http://127.0.0.1:18080")
+	if err != nil {
+		t.Fatalf("guided demo endpoint: %v", err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("guided demo endpoint: HTTP %d", res.StatusCode)
+	}
 	secretFile := filepath.Join(root, "hello", "secrets", "token")
 	if mode := docker(t, "exec", name, "stat", "-c", "%a", secretFile); mode != "600" {
 		t.Errorf("secret mode %s", mode)
@@ -156,6 +196,18 @@ func TestApply(t *testing.T) {
 	if labelled == "" {
 		t.Error("no container carries the managed labels")
 	}
+
+	testIdentityIntegration(t, ctx, state, hostFP)
+	testDriveIntegration(t, ctx, state, hostFP)
+	testNotesIntegration(t, ctx, state, hostFP)
+	testCredentialTransfer(t, ctx, state, hostFP)
+	testPostIntegration(t, ctx, state, hostFP)
+	testPulseIntegration(t, ctx, state, hostFP)
+	testDNSIntegration(t, ctx, state, hostFP)
+	testRecoveryIntegration(t, ctx, state, hostFP)
+	testMessageIntegration(t, ctx, state, hostFP)
+	testCalendarIntegration(t, ctx, state, hostFP)
+	testYardIntegration(t, ctx, state, hostFP)
 
 	// Second apply changes nothing.
 	out, err = apply()
