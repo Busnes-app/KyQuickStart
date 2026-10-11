@@ -1,6 +1,10 @@
 services:
   whoami:
     image: {{ .Images.whoami }}
+    mem_limit: 64m
+    memswap_limit: 64m
+    cpus: 1
+    pids_limit: 32
     secrets: [token]
 secrets:
   token:

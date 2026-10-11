@@ -63,3 +63,11 @@ func TestPreflight(t *testing.T) {
 		t.Errorf("storage checked when no app needs it: %+v", f)
 	}
 }
+
+func TestPreflightRequiresCredentialPodAndExecPermissions(t *testing.T) {
+	for _, permission := range []string{"create pods", "get pods", "delete pods", "create pods/exec"} {
+		if f := find(Preflight(context.Background(), New(cluster("37", permission)), false), "permissions"); f.OK || !strings.Contains(f.Detail, permission) {
+			t.Fatal("missing credential generation permission not reported", permission, f)
+		}
+	}
+}

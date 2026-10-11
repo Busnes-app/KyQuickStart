@@ -17,13 +17,14 @@ import (
 )
 
 type Manifest struct {
-	Name       string            `yaml:"name"`
-	Category   string            `yaml:"category"` // ky, edge or third-party
-	Images     map[string]string `yaml:"images"`
-	Secrets    []string          `yaml:"secrets"`
-	DependsOn  []string          `yaml:"depends_on"`
-	Health     Health            `yaml:"health"`
-	Kubernetes *Kubernetes       `yaml:"kubernetes"`
+	Description string            `yaml:"description,omitempty"`
+	Name        string            `yaml:"name"`
+	Category    string            `yaml:"category"` // ky, edge or third-party
+	Images      map[string]string `yaml:"images"`
+	Secrets     []string          `yaml:"secrets"`
+	DependsOn   []string          `yaml:"depends_on"`
+	Health      Health            `yaml:"health"`
+	Kubernetes  *Kubernetes       `yaml:"kubernetes"`
 }
 
 type Health struct {

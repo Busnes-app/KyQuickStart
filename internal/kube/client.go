@@ -2,14 +2,20 @@
 package kube
 
 import (
+	"context"
 	"fmt"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-type Client struct{ cs kubernetes.Interface }
+type Client struct {
+	cs          kubernetes.Interface
+	config      *rest.Config
+	execCommand func(context.Context, string, string, string, []string) ([]byte, error)
+}
 
 // New wraps a clientset; tests pass a fake one.
 func New(cs kubernetes.Interface) *Client { return &Client{cs: cs} }
@@ -29,5 +35,7 @@ func Connect(kubeconfig, context string) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("kubeconfig %s: %w", kubeconfig, err)
 	}
-	return New(cs), nil
+	c := New(cs)
+	c.config = cfg
+	return c, nil
 }

@@ -1,0 +1,69 @@
+package edge
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/netip"
+	"time"
+
+	"github.com/Busnes-app/kyquickstart/internal/stack"
+)
+
+// VerifyRoutes probes public HTTPS while injecting forged forwarding headers. A product
+// must report its resolved client address, trusted-proxy decision, and resolved scheme.
+func VerifyRoutes(ctx context.Context, e stack.Edge, expected netip.Addr) error {
+	client := &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	defer client.CloseIdleConnections()
+	for _, r := range e.Routes {
+		if err := verifyRoute(ctx, client, "https://"+r.Hostname+r.StatusPath, expected); err != nil {
+			return fmt.Errorf("route %s: %w", r.Hostname, err)
+		}
+	}
+	return nil
+}
+
+func verifyRoute(ctx context.Context, client *http.Client, endpoint string, expected netip.Addr) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return errors.New("invalid route status URL")
+	}
+	spoof := "198.51.100.66"
+	if expected.String() == spoof {
+		spoof = "203.0.113.66"
+	}
+	req.Header.Set("X-Forwarded-For", spoof)
+	req.Header.Set("X-Real-IP", spoof)
+	req.Header.Set("X-Forwarded-Proto", "http")
+	req.Header.Set("X-Forwarded-Scheme", "http")
+	req.Header.Set("Forwarded", "for="+spoof+";proto=http")
+	res, err := client.Do(req)
+	if err != nil {
+		return errors.New("public HTTPS status request failed")
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return fmt.Errorf("public status endpoint returned HTTP %d", res.StatusCode)
+	}
+	var status struct {
+		ClientIP string `json:"clientIp"`
+		Trusted  bool   `json:"proxyHeadersTrusted"`
+		Scheme   string `json:"scheme"`
+	}
+	b, err := io.ReadAll(io.LimitReader(res.Body, (64<<10)+1))
+	if err != nil || len(b) > 64<<10 || json.Unmarshal(b, &status) != nil {
+		return errors.New("product status response is invalid or exceeds 64 KiB")
+	}
+	ip, err := netip.ParseAddr(status.ClientIP)
+	if err != nil || status.Scheme == "" {
+		return errors.New("G11 requires clientIp, proxyHeadersTrusted and scheme in the product status endpoint")
+	}
+	if !status.Trusted || status.Scheme != "https" || ip.Unmap() != expected.Unmap() {
+		return errors.New("product does not report the expected client address, trusted proxy and HTTPS scheme with forged headers present")
+	}
+	return nil
+}
