@@ -1,0 +1,59 @@
+# KyQuickStart
+
+One command-line installer that stands up the Ky suite and selected third-party apps across
+your own servers: choices, prerequisite checks, installation, preconfiguration and a printed
+handover of administrator and everyday logins.
+
+**Status:** pre-release. The production catalog is empty; only a disposable demo app installs.
+`integrate-product` connects already-running Ky products to KyIdentity. See
+[the deployment plan](docs/superpowers/plans/2026-10-10-deployment-plan.md) for what remains.
+
+## Targets
+
+- Docker hosts over SSH (pinned host keys, SSH agent authentication).
+- Kubernetes clusters through an existing kubeconfig.
+
+Nothing is installed on your workstation beyond the binary. Secrets are generated on the
+target and never written to local state, logs or command output.
+
+## Build
+
+Requires Go 1.26.6 or later.
+
+```sh
+make build
+make ci    # tidy check, vet, race tests
+make e2e   # needs Docker; real SSH, kind and edge containers
+```
+
+## Try it
+
+```sh
+./kyquickstart plan --demo --state ./demo
+```
+
+`plan` is interactive and needs a terminal; running `./kyquickstart` with no arguments
+starts the same guided setup.
+Choosing `finish` saves the plan without touching any server.
+
+| Command | Purpose |
+| --- | --- |
+| `plan` | Guided questions; writes `stack.yaml` |
+| `preflight` | Read-only target checks |
+| `apply` | Install and verify the planned apps |
+| `verify-edge` | Check public routing and forwarded headers |
+| `integrate-identity`, `integrate-product`, `integrate-stack` | Configure existing Ky products against KyIdentity |
+| `review` | Show the saved plan |
+| `version` | Print the release set |
+
+## Documentation
+
+- [Guided setup](docs/guided-setup.md)
+- [Edge and reverse proxy](docs/edge.md)
+- [Offboarding bridge](docs/offboarding.md)
+- [Third-party catalog and admission rules](docs/superpowers/specs/2026-10-06-third-party-catalog-design.md)
+- [Installer architecture](docs/superpowers/specs/2026-10-06-installer-architecture-design.md)
+
+## License
+
+MIT. See [LICENSE.txt](LICENSE.txt).

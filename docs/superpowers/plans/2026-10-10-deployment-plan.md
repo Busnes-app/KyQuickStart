@@ -101,7 +101,7 @@ deprovision adapter, backup declaration, kyPulse probe, adapter harness pass.
 | Mealie | Approved candidate: admin from `roles` claim; prove offboarding |
 | Linkding | Approved candidate (bookmarks, replaces KyMark): OIDC links by email; installer pre-creates owner superuser |
 | Actual Budget | Approved candidate (personal finance; FlyBudget not adopted): owner-first login race; experimental OIDC multi-user; prove offboarding |
-| Mastodon | Approved candidate: owner grant via `tootctl`; public federation exposure; prove disable ends app tokens |
+| Mastodon | Approved candidate: owner grant via `tootctl`; public federation exposure; prove disable/suspend ends sessions and app tokens |
 | Task management | Closed (Yoshi, 2026-10-10): KyNotes checkbox tasks, KyCalendar VTODO, Forgejo issues/boards, Zammad tickets |
 
 Contacts are covered by KyPost (CardDAV with Android and iOS sync); no separate app.
