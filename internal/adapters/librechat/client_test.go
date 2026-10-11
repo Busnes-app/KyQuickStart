@@ -19,7 +19,7 @@ func TestNativeInspectionModule(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	output, err := exec.CommandContext(ctx, "node", "--max-old-space-size=256", "--test", "module/account.test.cjs").CombinedOutput()
+	output, err := exec.CommandContext(ctx, "node", "--max-old-space-size=256", "--test", "module/account.test.cjs", "module/writers.test.cjs").CombinedOutput()
 	if err != nil {
 		t.Fatalf("native inspection module: %v\n%s", err, output)
 	}

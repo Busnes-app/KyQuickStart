@@ -167,15 +167,16 @@ func (s *Store) applyGroupMembership(ctx context.Context, t *Target, id string, 
 		if j.Status == "attempting" || j.Status == "uncertain" {
 			return ErrGroupMembershipUncertain
 		}
-		// Retirement is final: a repeat delete must not overwrite the proof with a refusal.
-		if j.Status == "complete" && j.Scope.Deleted {
-			if p.Deleted {
-				return nil
-			}
-			return ErrGroupDeleted
-		}
 		if j.BindingDigest != groupDigest(g) {
 			return ErrState
+		}
+		// Retirement is final. A repeat delete re-verifies native emptiness read-only, so
+		// drift or a failed read never overwrites the proof.
+		if j.Status == "complete" && j.Scope.Deleted {
+			if !p.Deleted {
+				return ErrGroupDeleted
+			}
+			return s.verifyRetired(ctx, t, g, j.Scope.Owned)
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return ErrState
@@ -262,4 +263,23 @@ func (s *Store) applyGroupMembership(ctx context.Context, t *Target, id string, 
 		return ErrState
 	}
 	return err
+}
+
+// verifyRetired runs under the group lock. Native reads refuse foreign members.
+func (s *Store) verifyRetired(ctx context.Context, t *Target, g GroupBinding, ids []string) error {
+	if t.groupRead == nil {
+		return ErrState
+	}
+	owned := make([]Binding, 0, len(ids))
+	for _, id := range ids {
+		b, err := s.Binding(id)
+		if err != nil || !t.matches(b) || b.SetupID != g.SetupID {
+			return ErrState
+		}
+		owned = append(owned, b)
+	}
+	if _, members, err := t.groupRead(ctx, g, owned); err != nil || len(members) != 0 {
+		return ErrGroupMembershipUncertain
+	}
+	return nil
 }

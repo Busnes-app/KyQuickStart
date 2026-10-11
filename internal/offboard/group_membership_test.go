@@ -1,7 +1,9 @@
 package offboard
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
@@ -220,22 +222,51 @@ func TestDirectoryMembershipDerivesWithdrawalsFromTheLatestProof(t *testing.T) {
 	}
 }
 
-func TestRetiredGroupSurvivesRefusedRepeatDelete(t *testing.T) {
-	s := openStore(t, stateDir(t))
-	defer s.Close()
-	target, id, account := membershipFixture(t, s)
-	calls := 0
-	target.groupReplace = func(context.Context, GroupBinding, []Binding, []Binding) error { calls++; return nil }
-	p := GroupMembership{Owned: []string{account}, Members: []string{}, Deleted: true}
-	if err := s.ApplyGroupMembership(context.Background(), target, id, p, time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	target.groupReplace = func(context.Context, GroupBinding, []Binding, []Binding) error { calls++; return errors.New("refused") }
-	if err := s.ApplyGroupMembership(context.Background(), target, id, p, time.Now()); err != nil || calls != 1 {
-		t.Fatal("repeat delete of a retired group reached native I/O", err)
-	}
-	revive := GroupMembership{Owned: []string{account}, Members: []string{account}}
-	if err := s.ApplyGroupMembership(context.Background(), target, id, revive, time.Now()); !errors.Is(err, ErrGroupDeleted) || calls != 1 {
-		t.Fatal("retired group reactivated", err)
+func TestRetiredGroupRepeatDeleteReverifiesWithoutRewritingProof(t *testing.T) {
+	for _, mode := range []string{"clean", "drift", "read-error"} {
+		t.Run(mode, func(t *testing.T) {
+			s := openStore(t, stateDir(t))
+			defer s.Close()
+			target, id, account := membershipFixture(t, s)
+			calls, reads := 0, 0
+			target.groupReplace = func(context.Context, GroupBinding, []Binding, []Binding) error { calls++; return nil }
+			p := GroupMembership{Owned: []string{account}, Members: []string{}, Deleted: true}
+			if err := s.ApplyGroupMembership(context.Background(), target, id, p, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			var proof json.RawMessage
+			if s.read(id+".group-membership", &proof) != nil {
+				t.Fatal("retirement proof missing")
+			}
+			target.groupReplace = func(context.Context, GroupBinding, []Binding, []Binding) error { calls++; return errors.New("refused") }
+			target.groupRead = func(_ context.Context, _ GroupBinding, owned []Binding) (string, []Binding, error) {
+				reads++
+				if len(owned) != 1 || owned[0] != directoryBinding() {
+					t.Error("re-verification left the retired owned scope")
+				}
+				switch mode {
+				case "drift":
+					return "", owned, nil
+				case "read-error":
+					return "", nil, errors.New("unavailable")
+				}
+				return "", []Binding{}, nil
+			}
+			err := s.ApplyGroupMembership(context.Background(), target, id, p, time.Now())
+			if (mode == "clean") != (err == nil) || (mode != "clean" && !errors.Is(err, ErrGroupMembershipUncertain)) || calls != 1 || reads != 1 {
+				t.Fatal("repeat delete not re-verified read-only", err, calls, reads)
+			}
+			var after json.RawMessage
+			if s.read(id+".group-membership", &after) != nil || !bytes.Equal(proof, after) {
+				t.Fatal("repeat delete rewrote the retirement proof")
+			}
+			if j, err := s.membershipJob(id); err != nil || j.Status != "complete" || !j.Scope.Deleted || j.Attempt != 1 {
+				t.Fatal("retirement proof lost", err)
+			}
+			revive := GroupMembership{Owned: []string{account}, Members: []string{account}}
+			if err := s.ApplyGroupMembership(context.Background(), target, id, revive, time.Now()); !errors.Is(err, ErrGroupDeleted) || calls != 1 || reads != 1 {
+				t.Fatal("retired group reactivated", err)
+			}
+		})
 	}
 }

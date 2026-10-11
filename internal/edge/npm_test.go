@@ -90,7 +90,7 @@ func TestReconcileResumeDriftAndForeignOwnership(t *testing.T) {
 	if err := n.Preflight(ctx, e); err != nil {
 		t.Fatal(err)
 	}
-	s := n.Steps(e)[0]
+	s := hostStep{n: n, e: e, r: e.Routes[0]}
 	if err := s.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -129,6 +129,80 @@ func TestReconcileResumeDriftAndForeignOwnership(t *testing.T) {
 	hosts[1].Domains = []string{"*.example.com"}
 	if err := n.Preflight(ctx, e); err == nil {
 		t.Fatal("accepted a foreign wildcard collision")
+	}
+}
+
+func TestRemovedRouteIsDisabledOnlyWhenOwned(t *testing.T) {
+	ctx := context.Background()
+	e := testEdge()
+	owned := func(id int, name, target string) host {
+		r := e.Routes[0]
+		r.Hostname = name
+		c := config(stack.Edge{Target: target, Provider: e.Provider, ConnectorCIDR: e.ConnectorCIDR, ProxyPort: e.ProxyPort}, r)
+		c.Enabled = true
+		return host{ID: id, hostConfig: c}
+	}
+	hosts := []host{
+		owned(1, "hello.example.com", "nas"),       // configured route
+		owned(2, "removed.example.com", "nas"),     // removed from stack.yaml
+		owned(3, "other.example.com", "elsewhere"), // another target's host
+		{ID: 4, hostConfig: hostConfig{Domains: []string{"foreign.example.com"}, Enabled: true}},
+		owned(5, "unmarked.example.com", "nas"),
+		owned(6, "retargeted.example.com", "nas"),
+		owned(7, "unlabelled.example.com", "nas"),
+	}
+	// Each lacks one ownership mark.
+	hosts[4].Advanced = "# operator config"
+	hosts[5].Meta["ky.target"] = "elsewhere"
+	delete(hosts[6].Meta, "ky.managed-by")
+	var disabled []string
+	fail := true
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" && r.URL.Path == hostPath {
+			json.NewEncoder(w).Encode(hosts)
+			return
+		}
+		disabled = append(disabled, r.Method+" "+r.URL.Path)
+		if fail {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		hosts[1].Enabled = false
+		fmt.Fprint(w, `true`)
+	}))
+	defer srv.Close()
+	n, err := NewNPM(srv.URL, "secret-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	n.http.Transport.(*http.Transport).TLSClientConfig = srv.Client().Transport.(*http.Transport).TLSClientConfig
+	defer n.Close()
+	s := n.Steps(e)[0]
+	if err := s.Verify(ctx); err == nil || !strings.Contains(err.Error(), "removed.example.com") {
+		t.Fatalf("verify accepted an enabled removed host: %v", err)
+	}
+	// A failed disable leaves the step incomplete; the rerun finishes it.
+	if err := s.Apply(ctx); err == nil {
+		t.Fatal("failed disable reported success")
+	}
+	fail = false
+	if err := s.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Verify(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := s.Inspect(ctx); !ok || err != nil {
+		t.Fatalf("rerun isn't a no-op: %v %v", ok, err)
+	}
+	want := []string{"POST " + hostPath + "/2/disable", "POST " + hostPath + "/2/disable"}
+	if !reflect.DeepEqual(disabled, want) {
+		t.Fatalf("touched a configured or unowned host: %v", disabled)
+	}
+	for i, h := range hosts {
+		if h.Enabled == (i == 1) {
+			t.Fatalf("host %d enabled=%v", h.ID, h.Enabled)
+		}
 	}
 }
 

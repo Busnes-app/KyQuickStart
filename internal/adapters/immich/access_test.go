@@ -9,7 +9,7 @@ import (
 )
 
 func TestAccessProofRefusalAndUncertainWrites(t *testing.T) {
-	for _, mode := range []string{"version7-installation", "foreign-installation", "missing-counts", "negative-counts", "lost-write", "post-missing-counts", "post-not-revoked", "post-profile-drift"} {
+	for _, mode := range []string{"version7-installation", "foreign-installation", "missing-counts", "negative-counts", "lost-write", "post-missing-counts", "post-not-revoked", "post-profile-drift", "provider-disabled", "provider-rotated", "soft-deleted", "foreign-subject", "foreign-user"} {
 		t.Run(mode, func(t *testing.T) {
 			b := Binding{ID: "271333e2-c221-4601-b249-563b3d828530", Issuer: "https://identity.example.test", ClientID: "photos", Subject: "owned-subject"}
 			setupID := "371333e2-c221-4601-b249-563b3d828530"
@@ -28,13 +28,29 @@ func TestAccessProofRefusalAndUncertainWrites(t *testing.T) {
 				case "/api/server/version":
 					json.NewEncoder(w).Encode(map[string]int{"major": 3, "minor": 2, "patch": 0})
 				case "/api/system-config":
-					json.NewEncoder(w).Encode(map[string]any{"oauth": map[string]any{"enabled": true, "allowInsecureRequests": false, "issuerUrl": b.Issuer, "clientId": b.ClientID}})
+					oauth := map[string]any{"enabled": true, "allowInsecureRequests": false, "issuerUrl": b.Issuer, "clientId": b.ClientID}
+					switch mode {
+					case "provider-disabled":
+						oauth["enabled"] = false
+					case "provider-rotated":
+						oauth["issuerUrl"], oauth["clientId"] = "https://rotated.example.test", "rotated"
+					}
+					json.NewEncoder(w).Encode(map[string]any{"oauth": oauth})
 				case "/api/admin/users/" + b.ID:
 					name := "Everyday photos"
 					if mode == "post-profile-drift" && writes > 0 {
 						name = "changed"
 					}
-					json.NewEncoder(w).Encode(map[string]any{"id": b.ID, "oauthId": b.Subject, "name": name, "email": "daily@example.test", "status": "active", "isAdmin": false, "deletedAt": nil})
+					user := map[string]any{"id": b.ID, "oauthId": b.Subject, "name": name, "email": "daily@example.test", "status": "active", "isAdmin": false, "deletedAt": nil}
+					switch mode {
+					case "soft-deleted":
+						user["status"], user["deletedAt"] = "deleted", "2026-10-08T00:00:00.000Z"
+					case "foreign-subject":
+						user["oauthId"] = "other-subject"
+					case "foreign-user":
+						user["id"] = "371333e2-c221-4601-b249-563b3d828531"
+					}
+					json.NewEncoder(w).Encode(user)
 				case "/api/admin/users/" + b.ID + "/kyquickstart/revoke":
 					if r.Method != http.MethodPost {
 						t.Error("unexpected mutation method")
@@ -87,7 +103,14 @@ func TestAccessProofRefusalAndUncertainWrites(t *testing.T) {
 				if err != nil || writes != 1 || !revoked {
 					t.Fatal("installation UUID was confused with native account UUID", err, writes)
 				}
-			case "foreign-installation", "missing-counts", "negative-counts":
+			case "provider-disabled", "provider-rotated", "soft-deleted":
+				if err != nil || writes != 1 || !revoked {
+					t.Fatal("revocation depended on provider configuration or account activity", err, writes)
+				}
+				if _, err := c.InspectAccess(context.Background(), b, setupID); err == nil {
+					t.Fatal("strict access inspection accepted a disabled provider or inactive account")
+				}
+			case "foreign-installation", "missing-counts", "negative-counts", "foreign-subject", "foreign-user":
 				if err == nil || writes != 0 {
 					t.Fatal("invalid proof allowed mutation", err, writes)
 				}

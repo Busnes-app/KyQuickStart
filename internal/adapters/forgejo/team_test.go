@@ -34,7 +34,7 @@ func TestTeamMembershipScopeAndUncertainty(t *testing.T) {
 					}
 					json.NewEncoder(w).Encode(map[string]any{"id": 11, "name": "readers", "organization": map[string]any{"id": 12, "name": "org", "repo_admin_change_team_access": false}, "permission": permission, "units": []string{"repo.code"}, "units_map": b.Permissions, "includes_all_repositories": false, "can_create_org_repo": false})
 				case "/api/v1/teams/11/members":
-					if r.URL.Query().Get("limit") != "100" || r.URL.Query().Get("page") != "1" {
+					if r.URL.Query().Get("limit") != "50" || r.URL.Query().Get("page") != "1" {
 						t.Error("unbounded member read")
 					}
 					w.Header().Set("X-Total-Count", "0")

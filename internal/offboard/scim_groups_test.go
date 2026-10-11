@@ -96,6 +96,12 @@ func TestSCIMGroupCreateRenameDeleteRetainsOwnedReceipts(t *testing.T) {
 	if w := groupRequest(r, "DELETE", path, ""); w.Code != 204 {
 		t.Fatal("retired group repeat failed", w.Code)
 	}
+	target.groupRead = func(_ context.Context, _ GroupBinding, owned []Binding) (string, []Binding, error) {
+		return "", owned, nil
+	}
+	if w := groupRequest(r, "DELETE", path, ""); w.Code != 503 {
+		t.Fatal("native member drift acknowledged as retirement", w.Code)
+	}
 	if _, err := s.GroupBinding(created.ID); err != nil {
 		t.Fatal("logical deletion removed owned team receipt", err)
 	}

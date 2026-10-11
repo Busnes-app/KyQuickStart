@@ -116,6 +116,10 @@ Accepted risk (Yoshi, 2026-10-10): setup does not refuse pre-existing administra
 does not disable `passwordLogin`. An admin created through Immich's first-run sign-up
 before setup keeps password access. Run setup before Immich is reachable by anyone else.
 
+Known gap: the Go adapter revokes with OIDC disabled, a rotated issuer or a soft-deleted
+account, but this module's access inspection and revoke still refuse those states, so
+revocation holds until the module accepts them.
+
 The provider enables native first-login auto-registration, which requires Assigned users only
 in KyIdentity; it does not provide an ongoing directory lifecycle. Other native configuration
 and account writers must be coordinated before production deployment. Dedicated administrator

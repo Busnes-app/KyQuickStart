@@ -219,6 +219,8 @@ async function main() {
   await runAsSystem(async () => {
     assert.equal(await native.updateUser(request.user_id, { name: 'Forbidden update' }), null);
     assert.equal((await native.deleteUserById(request.user_id)).deletedCount, 0);
+    assert.equal(await models.User.findByIdAndDelete(id), null);
+    assert.equal(await models.User.findOneAndDelete({ _id: id }), null);
     assert.equal((await models.User.replaceOne({ _id: id }, { provider: 'local', email: 'replacement@example.test' })).matchedCount, 0);
     assert.equal((await models.User.updateMany({ _id: id }, { $set: { openidId: 'foreign' } })).matchedCount, 0);
     assert.equal((await models.User.bulkWrite([{ updateOne: { filter: { _id: id }, update: { $set: { name: 'Forbidden bulk' } } } }])).matchedCount, 0);

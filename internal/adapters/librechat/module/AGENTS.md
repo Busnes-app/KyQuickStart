@@ -120,7 +120,8 @@ Inspection alone proves neither installer ownership nor dedicated administrator 
 ## Verification
 
 - Parent `node --test module/account.test.cjs` checks native identity validation and actual
-  filesystem private-file boundaries. Parent real MongoDB fixture covers native model transport.
+  filesystem private-file boundaries; `module/writers.test.cjs` checks every Mongoose 8 query
+  write/delete op is fenced. Parent real MongoDB fixture covers native model transport.
 - Parent MongoDB fixture also runs `revocation.native.cjs`: actual lost publication/cleanup
   replies, duplicate identities, corrupt record refusal, generic lookup failures, scoped
   native credential removal, same-operation repeat and retained user/chat content.

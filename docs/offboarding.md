@@ -303,7 +303,9 @@ permissions. Stable native team names derive from group identity; human labels u
 the native description. Withdrawal scope derives from the latest group proof under its lock.
 Filtered GET proves native absence or returns the verified owned resource; held outcomes return
 503. Logical DELETE verifies empty membership, retains repositories/team/receipts and records
-permanent retirement. GET then returns 404 and later PUT/POST refuses reactivation. Group routes
+permanent retirement. GET then returns 404 and later PUT/POST refuses reactivation. Repeated
+DELETE re-reads native membership without rewriting that proof; any member or failed read
+returns 503. Group routes
 share the existing four-call/five-second bound. The native fixture proves TLS create, rename,
 read, retirement and content retention. Add `KYQ_TEST_FORGEJO_GROUPS=1` with
 `KYQ_TEST_FORGEJO_PRODUCER=1`, `KYQ_TEST_FORGEJO_TEAMS=1`, the actual identity binary and

@@ -37,5 +37,7 @@ func createReservedNetwork(t *testing.T, name string) {
 	half := uint32(1) << (31 - subnet.Bits())
 	n := uint32(base[0])<<24 | uint32(base[1])<<16 | uint32(base[2])<<8 | uint32(base[3]) + half
 	upper := netip.PrefixFrom(netip.AddrFrom4([4]byte{byte(n >> 24), byte(n >> 16), byte(n >> 8), byte(n)}), subnet.Bits()+1)
-	run("network", "create", "--subnet", subnet.String(), "--ip-range", upper.String(), name)
+	// Docker 28 omits an unconfigured gateway from inspect for a user subnet; pin it.
+	gateway := subnet.Masked().Addr().Next()
+	run("network", "create", "--subnet", subnet.String(), "--ip-range", upper.String(), "--gateway", gateway.String(), name)
 }

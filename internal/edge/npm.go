@@ -334,9 +334,72 @@ func (s hostStep) Verify(ctx context.Context) error {
 	return nil
 }
 
-// Steps requires an Edge already validated by stack.Parse.
+// removedStep disables this target's installer-owned hosts whose hostname left stack.yaml.
+// Disabling is reversible; deletion is left to the operator.
+type removedStep struct {
+	n *NPM
+	e stack.Edge
+}
+
+func (s removedStep) ID() string { return s.e.Target + ".edge.removed" }
+func (s removedStep) InputHash() string {
+	names := []string{s.n.base}
+	for _, r := range s.e.Routes {
+		names = append(names, r.Hostname)
+	}
+	sum := sha256.Sum256([]byte(strings.Join(names, "\n")))
+	return hex.EncodeToString(sum[:])
+}
+
+// enabled lists active hosts carrying every ownership mark for this target but no configured route.
+func (s removedStep) enabled(ctx context.Context) ([]host, error) {
+	var hosts []host
+	if err := s.n.request(ctx, http.MethodGet, hostPath, nil, &hosts); err != nil {
+		return nil, err
+	}
+	routed := map[string]bool{}
+	for _, r := range s.e.Routes {
+		routed[r.Hostname] = true
+	}
+	var out []host
+	for _, h := range hosts {
+		owned := h.Meta["ky.managed-by"] == "kyquickstart" && h.Meta["ky.target"] == s.e.Target && strings.HasPrefix(h.Advanced, "# kyquickstart:"+s.e.Target+":")
+		if h.Enabled && owned && !(len(h.Domains) == 1 && routed[h.Domains[0]]) {
+			out = append(out, h)
+		}
+	}
+	return out, nil
+}
+func (s removedStep) Inspect(ctx context.Context) (bool, error) {
+	hosts, err := s.enabled(ctx)
+	return len(hosts) == 0, err
+}
+func (s removedStep) Apply(ctx context.Context) error {
+	hosts, err := s.enabled(ctx)
+	if err != nil {
+		return err
+	}
+	for _, h := range hosts {
+		if err := s.n.request(ctx, http.MethodPost, fmt.Sprintf("%s/%d/disable", hostPath, h.ID), nil, nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func (s removedStep) Verify(ctx context.Context) error {
+	hosts, err := s.enabled(ctx)
+	if err != nil {
+		return err
+	}
+	if len(hosts) > 0 {
+		return fmt.Errorf("installer-owned NPM host %q is enabled but absent from stack.yaml", strings.Join(hosts[0].Domains, ","))
+	}
+	return nil
+}
+
+// Steps requires an Edge already validated by stack.Parse. Removed routes are disabled first.
 func (n *NPM) Steps(e stack.Edge) []engine.Step {
-	var out []engine.Step
+	out := []engine.Step{removedStep{n: n, e: e}}
 	for _, r := range e.Routes {
 		out = append(out, hostStep{n: n, e: e, r: r})
 	}
