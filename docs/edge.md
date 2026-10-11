@@ -98,7 +98,10 @@ kyquickstart verify-edge --state ./installation --expected-client-ip <workstatio
 Preflight checks ownership, hostname/listener conflicts, certificate coverage and expiry,
 and optional connector network/credentials without deploying. Apply uses the normal target
 lock and resumable steps. Existing foreign hosts and wildcard conflicts are refused; an
-unchanged second apply skips completed work.
+unchanged second apply skips completed work. Removing a route from `stack.yaml` makes the next
+apply disable that installer-owned NPM host, and `verify-edge` fails while it is enabled. The
+host is kept so the change is reversible; delete it in NPM yourself once it is no longer needed.
+Removing a whole edge from `stack.yaml` does not disable its hosts.
 
 The product must already trust its NPM peer according to the suite proxy contract. Product
 configuration through `apply-setup` is still pending. Its status endpoint must return:
@@ -117,7 +120,8 @@ does not grant administrator access, verify SSO, or certify the complete install
 `make e2e` uses disposable local Docker resources. It proves the real NPM API accepts generated
 configuration, real frps and generated frpc preserve client IP through two TLS hostnames,
 unknown SNI is rejected, forwarding headers are
-sanitized for frp and simulated Cloudflare traffic, and the second apply is a no-op.
+sanitized for frp and simulated Cloudflare traffic, the second apply is a no-op, and a removed
+route is disabled, stops serving and is re-enabled when restored.
 Separate connector tests prove authenticated frpc login with verified TLS and parse generated
 cloudflared ingress with the pinned image. No live Cloudflare account or operator server is
 used. A complete public frp/Cloudflare-to-product G11 pilot is still required.

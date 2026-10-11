@@ -17,6 +17,8 @@ Reconcile owned NPM routes, deploy Docker edge connectors, and verify product pr
 - NPM management uses verified private HTTPS with pinned address resolution and no redirects.
 - Reconcile only hosts carrying the expected installer marker and ownership metadata.
   Disable hosts before changing their configuration and enable only after persistence verification.
+- Apply disables, never deletes, this target's owned hosts whose hostname left `routes`; verification
+  fails while one is enabled. Deletion is the operator's choice.
 - Each route trusts exactly its connector IPv4 /32. frp uses a separate TLS listener accepting
   PROXY v2; Cloudflare uses its connecting-IP header. Sanitize forwarding headers before the product.
 - Optional connector deployment uses an existing Docker network and existing tunnel/server credentials.
