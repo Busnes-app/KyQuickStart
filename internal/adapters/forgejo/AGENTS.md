@@ -60,11 +60,16 @@ Set up native OIDC sources/accounts, verify owner administration and revoke user
   Only read/write teams without all-repository, repository-creation or repository-admin team
   control are supported. Create requires complete bounded native absence; collisions refuse
   adoption. Membership requires every current member to be in the supplied verified owned
-  scope and every desired member to be active and non-administrative. Remove before adding;
-  verify native membership and authority afterward. Keep repositories and permissions intact.
+  scope and every desired member to be active and non-administrative. Withdraw non-desired
+  members before validating or adding desired ones; an unfit desired member is a definite
+  refusal only after withdrawals verify natively, otherwise `ErrTeamUncertain`. Verify native
+  membership and authority afterward. Keep repositories and permissions intact.
+- Forgejo clamps `limit` to `[api] MAX_RESPONSE_ITEMS` (16.0.5 default 50). Team and member
+  listings page at 50 until `X-Total-Count`, refusing a changed total, short/oversized page,
+  duplicate ID, more than 1000 teams or more members than the owned scope.
 - Team callers own durable intent, receipts and serialization. Unknown creation/write or
   failed post-write verification returns `ErrTeamUncertain`; even a known refusal after an
-  earlier successful membership mutation requires a hold. Label updates PATCH description
+  earlier successful membership write requires a hold. Label updates PATCH description
   only and verify the label and all pinned authority. Native reads require complete bounded
   membership. The bridge owns explicit SCIM opt-in and durable group receipts/intents;
   automatic outcome reconciliation remains unqualified.
@@ -79,7 +84,8 @@ acceptance requirements; provider sign-in alone does not satisfy them.
 
 - `go test -race ./internal/adapters/forgejo`: trust-boundary checks, including ambiguous forms
   and refused credential-forwarding redirects; profile identity/field refusal, native drift,
-  authority preservation and lost-write reply resume without another mutation.
+  authority preservation and lost-write reply resume without another mutation; team/member
+  paging against a server that clamps to 50 and withdrawal before unfit-member refusal.
 - `KYQ_TEST_FORGEJO_IMAGE=<digest-pinned-rootless-image> go test -race -v ./internal/adapters/forgejo`:
   real source/account creation and inspection, repeat/conflict refusal, zero-restart activation,
   verified TLS/RSA/PKCE owner/everyday/unassigned sign-in, native owner administration/everyday
