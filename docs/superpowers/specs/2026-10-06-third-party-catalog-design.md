@@ -63,6 +63,7 @@ Versions are the latest releases checked on 2026-10-06; the release set pins exa
 | Mealie (approved candidate 2026-10-10; release unpinned) | Recipes, meal planning | AGPL-3.0 | `OIDC_ADMIN_GROUP` from `OIDC_GROUPS_CLAIM=roles`; `OIDC_USER_GROUP` for ordinary access | No back-channel logout; native user disable/token revocation unverified | v2 requires a client secret; `ALLOW_PASSWORD_LOGIN=false`, `OIDC_AUTO_REDIRECT` |
 | Linkding (approved candidate 2026-10-10; release unpinned) | Bookmarks (replaces KyMark) | MIT | Installer creates the owner superuser before first OIDC login | Django `is_active=false` (unverified: ends sessions and API tokens) | **OIDC links accounts by email**, conflicting with the no-email-adoption rule; KyIdentity must own emails and assigned-only access must hold. `LD_SUPERUSER_NAME` breaks OIDC (issue #988) |
 | Actual Budget (approved candidate 2026-10-10, replaces FlyBudget; release unpinned) | Personal finance | MIT | **Gated:** first OIDC login becomes the unchangeable server owner and admin; installer must ensure the dedicated administrator logs in first (or pre-creates users with `ACTUAL_USER_CREATION_MODE=manual`) | Native user disable in the User Directory; session/token revocation unverified | OIDC multi-user since 25.1.0 (marked experimental): `ACTUAL_OPENID_DISCOVERY_URL`, client secret, `ACTUAL_OPENID_ENFORCE=true`; roles Basic/Admin are not claim-driven |
+| Mastodon (candidate 2026-10-10; release unpinned) | Social, federated microblogging | AGPL-3.0 | Not claim-driven: installer grants Owner/Admin to the dedicated administrator with `tootctl accounts modify --role` | No back-channel logout (SLO issue #31722); `tootctl accounts modify --disable` or admin API suspend (unverified: ends sessions and app tokens) | Native OIDC (`OIDC_ENABLED`, discovery, client secret); `OMNIAUTH_ONLY=true`; `OIDC_UID_FIELD=sub`; keep `ALLOW_UNSAFE_AUTH_PROVIDER_REATTACH` off (email reattach). Federation requires public exposure and copies posts to other servers, so offboarding cannot recall federated content. Heavy: PostgreSQL, Redis, Sidekiq, streaming |
 
 Vaultwarden admin page, ACCEPTED RISK (Yoshi, 2026-10-10): instance administration stays
 `ADMIN_TOKEN`-only. The installer generates the token on the target, configures it as an
@@ -221,6 +222,7 @@ so:
 | Mealie | built-in backup (unverified) | data | |
 | Linkding | SQLite `.backup` | data | favicons, previews |
 | Actual Budget | SQLite `.backup` of server and budget files (unverified) | data | |
+| Mastodon | `pg_dump` plus Redis snapshot (unverified) | `public/system` media | cached remote media |
 | Holm | SQLite `.backup` | `config.yml` | |
 
 Restore order per app: database first, then files (Immich's documented order).
