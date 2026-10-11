@@ -17,7 +17,10 @@ import (
 func TestConnectorCredentialReplacementAndSecretFreeConfig(t *testing.T) {
 	e := testEdge()
 	e.Connector = &stack.Connector{Network: "npm-net", NPMHost: "npm", FRPServer: "vps.example.com", FRPPort: 7000}
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir()) // macOS /var is a symlink
+	if err != nil {
+		t.Fatal(err)
+	}
 	dir := filepath.Join(root, "edge", "secrets")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)

@@ -83,7 +83,10 @@ func TestInspectStagesPrivateInputAndCleansUp(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("Node required for native module unit transport")
 	}
-	dir := t.TempDir()
+	dir, err := filepath.EvalSymlinks(t.TempDir()) // macOS /var is a symlink
+	if err != nil {
+		t.Fatal(err)
+	}
 	module, err := filepath.Abs("module/account.cjs")
 	if err != nil {
 		t.Fatal(err)

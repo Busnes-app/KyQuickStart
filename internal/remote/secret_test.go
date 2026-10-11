@@ -8,7 +8,11 @@ import (
 )
 
 func TestReadSecretPermissionAndSymlinkBoundary(t *testing.T) {
-	dir := t.TempDir()
+	// macOS temp dirs sit under the /var symlink, which ReadSecret refuses.
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	f := filepath.Join(dir, "npm_token")
 	if err := os.WriteFile(f, []byte("secret-value"), 0o600); err != nil {
 		t.Fatal(err)

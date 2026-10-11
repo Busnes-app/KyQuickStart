@@ -38,7 +38,7 @@ test('exact native provider/source/subject/ID and bounded role inspection withou
 });
 
 test('private request boundaries, byte bounds, unknown input and nonmutation', t => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kyq-librechat-inspect.'));
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'kyq-librechat-inspect.'))); // macOS /var symlink
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   fs.chmodSync(dir, 0o700);
   const file = path.join(dir, 'request.json');
