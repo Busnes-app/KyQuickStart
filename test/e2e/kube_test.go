@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -19,6 +20,7 @@ import (
 	"github.com/Busnes-app/kyquickstart/internal/cli"
 	"github.com/Busnes-app/kyquickstart/internal/kube"
 	"github.com/Busnes-app/kyquickstart/internal/managed"
+	"github.com/Busnes-app/kyquickstart/internal/remote"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -45,10 +47,28 @@ func TestKubernetesApply(t *testing.T) {
 	id := make([]byte, 4)
 	rand.Read(id)
 	name := "kyq-e2e-" + hex.EncodeToString(id)
-	kind(t, "create", "cluster", "--name", name, "--image", kindNode, "--kubeconfig", kc, "--wait", "180s")
+	// Kind does not expose container resource flags. This fixture-only provider
+	// wrapper caps every node it creates before any control-plane process starts.
+	dockerBinary, err := exec.LookPath("docker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands := filepath.Join(work, "commands")
+	if err := os.Mkdir(commands, 0700); err != nil {
+		t.Fatal(err)
+	}
+	wrapper := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = run ]; then\n  shift\n  exec %s run --memory 2g --memory-swap 2g --cpus 2 --pids-limit 512 \"$@\"\nfi\nexec %s \"$@\"\n", remote.Quote(dockerBinary), remote.Quote(dockerBinary))
+	if err := os.WriteFile(filepath.Join(commands, "docker"), []byte(wrapper), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", commands+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Cleanup(func() {
 		exec.Command("go", "run", "sigs.k8s.io/kind@v0.33.0", "delete", "cluster", "--name", name).Run()
 	})
+	kind(t, "create", "cluster", "--name", name, "--image", kindNode, "--kubeconfig", kc, "--wait", "180s")
+	if limits := docker(t, "inspect", name+"-control-plane", "--format", "{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{.HostConfig.NanoCpus}} {{.HostConfig.PidsLimit}}"); limits != "2147483648 2147483648 2000000000 512" {
+		t.Fatal("kind node resource limits not applied", limits)
+	}
 
 	cfg, err := clientcmd.BuildConfigFromFlags("", kc)
 	if err != nil {
@@ -95,6 +115,26 @@ func TestKubernetesApply(t *testing.T) {
 	if err != nil || dep.Labels[managed.ReleaseSetLabel] != "e2e" || dep.Status.ReadyReplicas != 1 {
 		t.Fatalf("deployment = %+v, %v", dep.Status, err)
 	}
+
+	// Container-local setup transport works on a real cluster without adopting the pod.
+	connected, err := kube.Connect(kc, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pods, err := cs.CoreV1().Pods("kyq-hello").List(ctx, metav1.ListOptions{})
+	if err != nil || len(pods.Items) != 1 {
+		t.Fatalf("exec fixture pods: %v", err)
+	}
+	pod := pods.Items[0]
+	if _, err := connected.Exec(ctx, "kyq-hello", pod.Name, pod.Spec.Containers[0].Name, []string{"/whoami", "--help"}); err != nil {
+		t.Fatalf("real Kubernetes exec: %v", err)
+	}
+	if _, err := connected.Exec(ctx, "kyq-hello", pod.Name, pod.Spec.Containers[0].Name, []string{"/missing-product-cli"}); err == nil {
+		t.Fatal("missing container command accepted")
+	}
+	testNotesKubernetesPreparation(t, ctx, cs, connected, name, kc)
+	testIdentityKubernetesPreparation(t, ctx, cs, name, kc)
+	testCredentialKubernetesTransfer(t, ctx, cs, connected, name, kc)
 
 	// Second apply changes nothing.
 	out, err = apply()
