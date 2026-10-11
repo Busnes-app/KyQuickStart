@@ -93,7 +93,9 @@ Supply receipt-owned setup, ongoing native profile/role projection and retained-
   protected `KYQ_BOOKSTACK_DIRECTORY_TOKEN_FILE` with the same private-file/token format.
   Shared tokens disable directory access. It permits check/apply over already initialized
   owned receipts; initialization stays native. It has no creation, revocation or content
-  authority. Registered directory delivery is qualified by the parent actual-worker fixture;
+  authority. Apply promotes owned accounts to administrator on KyIdentity's instruction with
+  no fresh admin login (Yoshi, 2026-10-10), so this token is administrator-equivalent for
+  owned accounts. Registered directory delivery is qualified by the parent actual-worker fixture;
   single-product global disablement is qualified too; full lifecycle/deployment remain gated.
 - `kyquickstart:create` / `ky.bookstack-creation/1` accepts private bounded input with an
   installation UUID, immutable ordinary account spec, everyday alias and non-empty canonical
