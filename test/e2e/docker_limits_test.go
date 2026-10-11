@@ -13,6 +13,8 @@ import (
 // Inspect actual Docker configuration: host defaults must not leave old optional
 // native product fixtures unbounded or override a deliberately selected limit.
 func TestDockerFixtureLimits(t *testing.T) {
+	// Pull first: an uncached image's pull progress would corrupt `run -d`'s ID output.
+	docker(t, "pull", "-q", kube.CredentialGeneratorImage)
 	for _, tc := range []struct {
 		name         string
 		flags        []string

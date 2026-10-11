@@ -52,6 +52,10 @@ to reach each other there; the NPM hostname must resolve inside the container an
 certificate must cover each routed hostname. The management URL must resolve to private or
 loopback addresses and present a certificate trusted by the workstation. There is no TLS bypass.
 NPM administration stays on the LAN. Routes cannot forward to port 81 or their management URL.
+The network must have an explicit subnet and a dynamic `--ip-range` that excludes
+`connector_cidr`, so Docker never assigns NPM's trusted address to another container; for
+example `docker network create --subnet 172.30.0.0/24 --ip-range 172.30.0.128/25 npm-net`.
+Preflight refuses a network without one.
 
 Omit `connector` when a connector is already managed outside the installer. Its actual source
 address must match `connector_cidr`. External DNS and server-side frp settings must already

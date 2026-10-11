@@ -57,7 +57,7 @@ func TestNPMContainer(t *testing.T) {
 	}
 	name := fmt.Sprintf("kyq-edge-%d", time.Now().UnixNano())
 	network := name + "-net"
-	docker("network", "create", network)
+	createReservedNetwork(t, network)
 	t.Cleanup(func() { exec.Command("docker", "network", "rm", network).Run() })
 	var networks []struct {
 		IPAM struct {
