@@ -30,7 +30,10 @@ Verify exact native OIDC ownership, administrator projection and content-preserv
 - Source/API shapes are pinned to Immich v3.2.0, commit `1b6098c9dbfffe978bec2d414606ed7a4c8e019a`.
 - Require target-owned UUID, issuer, client ID and OIDC subject receipts. Email never authorizes adoption.
 - Recheck enabled native OAuth configuration with insecure requests disabled and exact identity before mutation; standalone grants change only `isAdmin`.
-- Missing identity/activity/administrator fields, provider drift and deleted accounts refuse mutation.
+- Missing identity/activity/administrator fields, provider drift and deleted accounts refuse mutation,
+  except revocation: it requires only the exact native UUID/subject and module fence binding, so a
+  disabled/rotated provider or inactive/soft-deleted account can still be fenced. The current module
+  still refuses those states server-side; end-to-end revocation for them remains a gate.
 - Unknown writes or failed verification return a reconciliation error; never claim successful access from a PUT alone.
 - Native DELETE schedules content deletion and is not offboarding. No deletion or restore call is implemented.
 - Native signed back-channel logout revokes OAuth sessions but preserves personal API keys;
@@ -39,7 +42,8 @@ Verify exact native OIDC ownership, administrator projection and content-preserv
   subject denial and socket disconnection. Require `ky.immich-access/1`, exact installation
   ownership, explicit nonnegative counts and valid revocation time; failed writes/readback
   require reconciliation. Stock servers cannot use this revocation path.
-- Provider configuration requires a protected full-configuration preflight fingerprint;
+- Provider configuration requires a protected full-configuration preflight fingerprint that
+  excludes `oauth.clientSecret` and `notifications.smtp.transport.password`;
   configure only a blank provider or repeat an exact match. Refuse migration and preflight
   drift; preserve every unrelated field and hold unknown writes/readback as uncertain.
   Upstream PUT has no conditional update: callers must serialize every configuration writer.
@@ -171,8 +175,9 @@ the fixture separately caps container memory (server 2 GiB, database 768 MiB, pr
 - `provider_test.go`: preflight/foreign-provider refusal, exact numeric/field preservation,
   repeat without writes and uncertain write/readback. The native fixture uses this adapter
   before signed login and verifies exact repeat plus stale/foreign intent refusal.
-- `access_test.go`: refuse missing/negative counts and foreign ownership before mutation;
-  hold lost writes, incomplete readback and post-write identity/profile drift.
+- `access_test.go`: refuse missing/negative counts and foreign ownership/subject before mutation;
+  revoke with disabled/rotated provider or soft-deleted account; hold lost writes, incomplete
+  readback and post-write identity/profile drift.
 
 ## Child DOX Index
 

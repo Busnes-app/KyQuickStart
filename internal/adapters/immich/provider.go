@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"reflect"
 	"regexp"
@@ -23,7 +24,28 @@ type ProviderSpec struct {
 var configDigest = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var claimName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,63}$`)
 
+// secretPaths are the v3.2.0 system-config credentials (server/src/dtos/config.dto.ts).
+// The stored fingerprint excludes them so it is not an offline guessing oracle.
+var secretPaths = [][]string{{"oauth", "clientSecret"}, {"notifications", "smtp", "transport", "password"}}
+
+// withoutSecret returns m with path removed, copying only the maps along it.
+func withoutSecret(m map[string]any, path []string) map[string]any {
+	if _, ok := m[path[0]]; !ok {
+		return m
+	}
+	out := maps.Clone(m)
+	if len(path) == 1 {
+		delete(out, path[0])
+	} else if child, ok := m[path[0]].(map[string]any); ok {
+		out[path[0]] = withoutSecret(child, path[1:])
+	}
+	return out
+}
+
 func providerDigest(config map[string]any) (string, error) {
+	for _, path := range secretPaths {
+		config = withoutSecret(config, path)
+	}
 	raw, err := json.Marshal(config)
 	if err != nil {
 		return "", errors.New("invalid Immich configuration")

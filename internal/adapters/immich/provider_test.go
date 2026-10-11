@@ -106,3 +106,30 @@ func TestProviderConfigurationIntent(t *testing.T) {
 		})
 	}
 }
+
+func TestProviderFingerprintExcludesSecrets(t *testing.T) {
+	config := func(secret, password, label string) map[string]any {
+		return map[string]any{
+			"oauth":         map[string]any{"enabled": true, "clientSecret": secret, "buttonText": label},
+			"notifications": map[string]any{"smtp": map[string]any{"transport": map[string]any{"host": "mail.example.test", "password": password}}},
+		}
+	}
+	base := config("client-secret-1", "smtp-password-1", "Sign in")
+	digest, err := providerDigest(base)
+	if err != nil || !configDigest.MatchString(digest) {
+		t.Fatal("invalid fingerprint", err)
+	}
+	if rotated, _ := providerDigest(config("client-secret-2", "smtp-password-2", "Sign in")); rotated != digest {
+		t.Fatal("fingerprint depends on a secret value")
+	}
+	if relabeled, _ := providerDigest(config("client-secret-1", "smtp-password-1", "Log in")); relabeled == digest {
+		t.Fatal("fingerprint ignores a non-secret field")
+	}
+	if base["oauth"].(map[string]any)["clientSecret"] != "client-secret-1" ||
+		base["notifications"].(map[string]any)["smtp"].(map[string]any)["transport"].(map[string]any)["password"] != "smtp-password-1" {
+		t.Fatal("fingerprinting removed secrets from the configuration that is written back")
+	}
+	if _, err := providerDigest(map[string]any{"notifications": "unexpected"}); err != nil {
+		t.Fatal("unexpected shape must still fingerprint", err)
+	}
+}
