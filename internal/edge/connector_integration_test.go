@@ -39,7 +39,7 @@ func TestFRPConnectorContainer(t *testing.T) {
 	}
 	name := fmt.Sprintf("kyq-frpc-%d", time.Now().UnixNano())
 	network := name + "-net"
-	docker("network", "create", network)
+	createReservedNetwork(t, network)
 	t.Cleanup(func() { exec.Command("docker", "network", "rm", network).Run() })
 	var networks []struct {
 		IPAM struct{ Config []struct{ Subnet string } }
@@ -88,7 +88,27 @@ func TestFRPConnectorContainer(t *testing.T) {
 	e := testEdge()
 	e.Target = name
 	e.ConnectorCIDR = ip.String() + "/32"
-	e.Connector = &stack.Connector{Network: network, NPMHost: "npm", FRPServer: name, FRPPort: 7000}
+	// Without a reserved range Docker could give the trusted address to another container.
+	plain := name + "-plain"
+	docker("network", "create", plain)
+	t.Cleanup(func() { exec.Command("docker", "network", "rm", plain).Run() })
+	var plainNet []struct {
+		IPAM struct{ Config []struct{ Subnet string } }
+	}
+	if err := json.Unmarshal([]byte(docker("network", "inspect", plain)), &plainNet); err != nil || len(plainNet) != 1 || len(plainNet[0].IPAM.Config) == 0 {
+		t.Fatal("invalid network response")
+	}
+	plainPrefix, err := netip.ParsePrefix(plainNet[0].IPAM.Config[0].Subnet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.ConnectorCIDR = plainPrefix.Masked().Addr().Next().Next().String() + "/32"
+	e.Connector = &stack.Connector{Network: plain, NPMHost: "npm", FRPServer: name, FRPPort: 7000}
+	if err := CheckConnector(ctx, remote.Local{}, root, e); err == nil || !strings.Contains(err.Error(), "ip-range") {
+		t.Fatal("connector address accepted without a reserved range", err)
+	}
+	e.ConnectorCIDR = ip.String() + "/32"
+	e.Connector.Network = network
 	if err := CheckConnector(ctx, remote.Local{}, root, e); err != nil {
 		t.Fatal(err)
 	}

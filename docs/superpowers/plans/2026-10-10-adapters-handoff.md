@@ -172,7 +172,7 @@ Confirmed open, highest first:
 3. BookStack ordinary-role policy is a denylist; `restrictions-manage-all` passes. Use an
    allowlist. Role middleware locks role rows on every request (availability).
 4. Immich `ConfigureProvider`/`SetAdministrator` are exported test-only bypasses; move to tests.
-5. Edge: connector fixed IP not checked against IPAM `IPRange`; NPM host ownership keyed
+5. Edge: (connector IP vs IPAM `IPRange` fixed in PR #7: preflight requires a reserved range); NPM host ownership keyed
    by target name only (two installs collide); removed routes are never disabled in NPM.
 6. Product: Identity export resolves owner by username after the ID check
    (`setup_export.go:73`); Notes SSO save and audit row are separate writes; Drive refusal

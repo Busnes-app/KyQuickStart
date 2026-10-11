@@ -114,7 +114,9 @@ func CheckConnector(ctx context.Context, r remote.Runner, root string, e stack.E
 		return errors.New("connector's existing Docker network is unavailable")
 	}
 	var networks []struct {
-		IPAM       struct{ Config []struct{ Subnet string } }
+		IPAM struct {
+			Config []struct{ Subnet, IPRange string }
+		}
 		Containers map[string]struct {
 			Name    string
 			Address string `json:"IPv4Address"`
@@ -124,14 +126,22 @@ func CheckConnector(ctx context.Context, r remote.Runner, root string, e stack.E
 		return errors.New("invalid Docker network response")
 	}
 	ip := netip.MustParsePrefix(e.ConnectorCIDR).Addr()
-	contains := false
+	// NPM trusts this address, so Docker must never hand it to another container:
+	// the network needs an explicit dynamic --ip-range that excludes it.
+	reserved := false
 	for _, c := range networks[0].IPAM.Config {
-		if p, err := netip.ParsePrefix(c.Subnet); err == nil && p.Contains(ip) {
-			contains = true
+		subnet, err := netip.ParsePrefix(c.Subnet)
+		if err != nil || !subnet.Contains(ip) {
+			continue
 		}
+		dynamic, err := netip.ParsePrefix(c.IPRange)
+		if err != nil {
+			return errors.New("connector network needs an explicit --subnet and --ip-range that excludes connector_cidr")
+		}
+		reserved = !dynamic.Contains(ip)
 	}
-	if !contains {
-		return errors.New("connector_cidr is outside the Docker network's subnet")
+	if !reserved {
+		return errors.New("connector_cidr must be inside the Docker network's subnet and outside its --ip-range")
 	}
 	for id, c := range networks[0].Containers {
 		p, err := netip.ParsePrefix(c.Address)
