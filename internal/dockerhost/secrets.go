@@ -2,7 +2,6 @@ package dockerhost
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/base64"
 	"fmt"
 	"path"
@@ -50,19 +49,29 @@ func (s secretsStep) Apply(ctx context.Context) error {
 		if ok {
 			continue
 		}
-		b := make([]byte, 32)
-		rand.Read(b)
-		v := base64.RawURLEncoding.EncodeToString(b)
-		s.a.Redact.Add(v)
 		f := s.file(n)
 		dir := path.Dir(f)
-		// The value goes to a temp file first; ln publishes it and fails if the secret exists,
-		// so a killed run never leaves a partial secret behind.
-		cmd := "umask 077; mkdir -p " + remote.Quote(dir) +
-			" && t=$(mktemp " + remote.Quote(path.Join(dir, ".tmp.XXXXXX")) + ")" +
-			" && { cat > \"$t\" && ln \"$t\" " + remote.Quote(f) + "; s=$?; rm -f \"$t\"; exit $s; }"
-		if _, err := s.a.Runner.Run(ctx, cmd, []byte(v)); err != nil {
-			return fmt.Errorf("write secret %s: %w", n, err)
+		// Generate on the target. Publish only a complete private file; ln refuses
+		// replacement and the trap removes both random and encoded scratch files.
+		cmd := fmt.Sprintf(`umask 077
+f=%s
+t=$(mktemp %s) || exit 1
+raw=
+trap 'rm -f "$t"; [ -z "$raw" ] || rm -f "$raw"' 0
+trap 'exit 1' HUP INT TERM
+raw=$(mktemp %s) || exit 1
+dd if=/dev/urandom of="$raw" bs=32 count=1 2>/dev/null || exit 1
+[ "$(wc -c < "$raw")" -eq 32 ] || exit 1
+base64 < "$raw" > "$t" || exit 1
+tr '+/' '-_' < "$t" > "$raw" || exit 1
+tr -d '=\n' < "$raw" > "$t" || exit 1
+[ "$(wc -c < "$t")" -eq 43 ] || exit 1
+ln "$t" "$f"`, remote.Quote(f), remote.Quote(path.Join(dir, ".tmp.XXXXXX")), remote.Quote(path.Join(dir, ".random.XXXXXX")))
+		if _, err := s.a.Runner.Run(ctx, cmd, nil); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return fmt.Errorf("generate target secret %s: target refused creation", n)
 		}
 	}
 	return nil
@@ -71,14 +80,16 @@ func (s secretsStep) Apply(ctx context.Context) error {
 // Verify reads every secret back, which also registers it for redaction on re-runs.
 func (s secretsStep) Verify(ctx context.Context) error {
 	for _, n := range s.a.Catalog.Secrets {
-		f := remote.Quote(s.file(n))
-		out, err := s.a.Runner.Run(ctx, `test -n "$(find `+f+` -prune -type f -perm 600)" && cat `+f, nil)
+		out, err := remote.ReadSecret(ctx, s.a.Runner, s.file(n))
 		if err != nil {
 			return fmt.Errorf("secret %s is missing or not mode 600: %w", n, err)
 		}
 		s.a.Redact.Add(string(out))
 		if len(out) != secretLen {
 			return fmt.Errorf("secret %s is %d bytes, want %d", n, len(out), secretLen)
+		}
+		if _, err := base64.RawURLEncoding.Strict().DecodeString(string(out)); err != nil {
+			return fmt.Errorf("secret %s is not canonical unpadded base64url", n)
 		}
 	}
 	return nil

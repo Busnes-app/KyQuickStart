@@ -66,7 +66,7 @@ with tests, in a tagged release.
 | G8 | Holm (upstream or fork) | Back-channel logout or session recheck |
 | G9 | KyNotes | OneNote-style notebooks (separate sub-project; not an installer blocker) |
 | G10 | kyrecovery-server | Backup status (capsules and restic repositories, read-only) and restore-start UI; `kyrecovery-server/docs/plans/2026-10-07-backup-restore-ui-handoff.md` |
-| G11 | Each Ky product behind an edge | Forwarded-header self-check (client address and scheme it resolved, as KyPost `/api/status`); trusted-proxy handling in KyVault, kynotes, kyrecovery and kydns (installer spec, Work in other repositories) |
+| G11 | Each Ky product behind an edge | Forwarded-header self-check (client address and scheme it resolved, as KyPost `/api/status`); trusted-proxy handling in kynotes, kyrecovery and kydns (installer spec, Work in other repositories) |
 
 ## Phases
 
@@ -182,8 +182,9 @@ dependent steps; in-container pairing; kyPulse registration; KyYard enrollment.
 ### Phase 7: Catalog apps (after Phase 3; Holm also G8)
 
 One detailed plan per app, Docker hosts only, each passing the adapter integration harness: Forgejo, BookStack,
-Vikunja, Immich, Home Assistant + hass-oidc-auth, Dolibarr, LibreChat, Holm. Each resolves its
-unverified items from the catalog spec first.
+Immich, Home Assistant + hass-oidc-auth, Dolibarr, LibreChat, Zammad (gated candidate), Holm. The task-management category is closed (2026-10-10): KyNotes, KyCalendar VTODO,
+Forgejo and Zammad cover it. Vikunja v2.7.0 fails free-edition administrator admission; preserve
+existing installations. Each admitted app resolves its unverified items from the catalog spec first.
 
 ### Phase 8: Backups (after Phase 6)
 

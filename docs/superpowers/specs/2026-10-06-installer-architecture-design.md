@@ -1,6 +1,6 @@
 # Installer architecture
 
-Date: 2026-10-06. Status: proposed, awaiting review.
+Date: 2026-10-06. Status: approved by Yoshi, 2026-10-10.
 
 How `kyquickstart` installs, configures, verifies, offboards and upgrades the Ky suite and the
 third-party catalog (`2026-10-06-third-party-catalog-design.md`). The catalog spec decides what
@@ -39,6 +39,7 @@ is installed; this spec decides how.
 | `plan` | Interactive wizard. Per product: purpose, install/skip, dependencies. Targets (SSH hosts, optional kubeconfig), placement of each app, edge (BYO Cloudflare or frp VPS), off-NAS backup host, owner's admin and everyday logins. Writes `stack.yaml` with no secrets. Re-running edits the saved plan |
 | `preflight` | Read-only checks per target: SSH, Docker and Compose versions, Kubernetes RBAC, storage classes and Pod Security, DNS, ports, disk, image pulls. Reports every gap before any change |
 | `apply` | Runs the plan as a dependency graph (see Install sequence). Resumable and idempotent |
+| `integrate-stack` | Runs explicit secret-free `integrations` selections through the implemented native product setup adapters; KyIdentity first, then saved order. `--check` is read-only. Typed KyNotes and KyIdentity settings prepare private native bundles through product-owned stdin and read-only comparison; Identity generates target-held credentials with immutable receipts. Other bundles are supplied separately; automatic graph construction and cross-target credential distribution remain pending |
 | `verify` | Acceptance checks (see Verification) |
 | `handover` | Prints URLs, admin and everyday logins, activation links, NPM admin credentials, and outstanding human steps |
 | `offboard <user>` | Runs every app's `Deprovision` for one user; fallback for the bridge |
@@ -72,6 +73,11 @@ module importable by KyYard.
 - **Kubernetes (Ky products and edge components):** `client-go` with typed objects built in Go,
   the way KyYard builds them; no Helm. One namespace per app; secrets as Kubernetes Secrets.
   Objects set readiness probes, resource requests and limits, and a restricted security context.
+  Missing Secret values are generated through exec in a unique restricted helper pod on the
+  cluster, with no service-account token or persistent/app-secret mounts. Delete that pod
+  with a UID precondition before publishing the Secret; resourceVersion conflicts are retried
+  without replacing existing values. Planning declares the pinned helper image. Operator
+  credentials require pod get/create/delete and pods/exec create in addition to Secret access.
 
 Every installer-managed workload carries `ky.managed-by=kyquickstart` and its release-set ID.
 
@@ -107,9 +113,13 @@ KyYard refuses to start. The installer therefore places proxies and sets those v
   writes one audit row per change, reports what it did as JSON, exposes no network credential.
   Container access already implies full control of the product, so it grants nothing new.
 - **KyIdentity's bundle:** owner's admin and everyday identities, groups, OIDC clients, app roles,
-  *Assigned users only* access, assignments, the bridge's SCIM connector.
+  *Assigned users only* access, assignments, the bridge's app-scoped SCIM connectors.
 - **Third-party apps:** their own CLIs and local APIs through the adapter (for example
-  `forgejo admin auth add-oauth`, `vikunja user set-admin`).
+  `vikunja user set-admin`). Forgejo's public REST API omits authentication sources:
+  its adapter uses release-qualified native administrator HTTP forms to create and inspect
+  sources, and its REST API for accounts/offboarding. Native CLI source creation requires
+  provider-cache activation before PKCE login; native source-form creation activates in the
+  serving process. Pin the release and verify actual login before counting either path ready.
 - **Human steps stay human:** the KyRecovery custodian ceremony. A pairing code is generated
   in-container with `kyrecovery pair generate` when the same operator runs KyRecovery; otherwise
   the code is entered by hand.
@@ -118,8 +128,30 @@ KyYard refuses to start. The installer therefore places proxies and sets those v
 
 A resident Go service built from this repository, deployed by the installer.
 
-- A generic SCIM 2.0 target registered in KyIdentity. On a user's deactivation it runs every
-  app's `Deprovision` adapter: disable the account, revoke sessions and app-issued tokens.
+- An app-scoped SCIM 2.0 target/connector per selected app, attached to that app's owned
+  KyIdentity OIDC application. Assignment loss runs only that app's `Deprovision`; global
+  disablement reaches every owning connector. Disable accounts and revoke sessions/app tokens.
+- Register exact native identity/source/subject bindings before connector delivery. Missing
+  registration is a conflict, not proof that the native account is absent. Never select a
+  target or native account from a directory event's username/email.
+- Persist intent, attempts and audits on the bridge target. A queued or partial revocation
+  stays pending; only native inspection/revocation/verification proves completion. Lost wire
+  outcomes preserve KyIdentity's normal uncertainty fencing. No activation can clear an
+  accepted permanent revocation intent.
+- Current app-scoped receiver groundwork supports exact identity lookup and `active=false`
+  PATCH only; active profile provisioning is explicitly refused. Its five-second synchronous
+  attempt returns retryable 429 for pending work and 204 only for proved completion. Complete
+  lifecycle composition, resident service orchestration, audit delivery, protected deployment
+  and restore must pass before registering it as an operational generic SCIM connector.
+- `kyoffboard` now loads protected target-local runtime JSON and distinct credentials/server
+  TLS files, checks without requests/writes, and serves the receiver with the independent
+  worker under one state lease. Optional protected kyPulse configuration runs an independent
+  ordered audit relay, with authenticated capability/source proof, persisted body/sequence
+  and verified durable receipts. Native tests cover lost replies and restart through the
+  actual executable without duplicate ingestion. Shutdown joins HTTP/native/audit calls
+  before state closes. Failure-alert creation remains unimplemented.
+  `docs/offboarding.md` owns this runtime contract; installer deployment and complete connector
+  lifecycle/audit/recovery qualification remain required before admission.
 - Holds one credential per app, the narrowest each app allows, stored on the bridge's own target.
 - Network policy: inbound only from KyIdentity; outbound only to the catalog apps' APIs and
   kyPulse. No other ingress.
@@ -220,7 +252,7 @@ Running pods alone is not completion.
 | kyPulse-server | Accept target and log-source registration through `apply-setup` |
 | Holm (upstream or fork) | Back-channel logout or session recheck (catalog spec) |
 | Every Ky product behind an edge | Forwarded-header self-check reporting the client address and scheme it resolved (as KyPost `/api/status`) |
-| KyVault-server, kynotes-server | Trust `X-Forwarded-Proto` only from trusted proxies; kynotes defaults to all RFC1918 ranges |
+| kynotes-server | Trust `X-Forwarded-Proto` only from trusted proxies; kynotes defaults to all RFC1918 ranges |
 | kyrecovery-server | Trusted-proxy support for its rate limiter (all clients share the proxy address today) |
 | kydns-server | Secure admin cookie behind a TLS proxy |
 

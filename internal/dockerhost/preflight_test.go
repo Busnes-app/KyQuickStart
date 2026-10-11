@@ -84,3 +84,15 @@ func TestPreflightRoot(t *testing.T) {
 		}
 	}
 }
+
+func TestPreflightTargetSecretTools(t *testing.T) {
+	if got := secretToolsCheck(context.Background(), remote.Local{}); !got.OK {
+		t.Fatal("local fixture lacks target secret prerequisites", got)
+	}
+	r := &fakeRunner{reply: func(cmd string) ([]byte, error) {
+		return (remote.Local{}).Run(context.Background(), "PATH=''\n"+cmd, nil)
+	}}
+	if got := secretToolsCheck(context.Background(), r); got.OK || !strings.Contains(got.Detail, "base64") {
+		t.Fatal("missing target tools were not reported", got)
+	}
+}

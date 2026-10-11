@@ -3,6 +3,9 @@ package kube
 import (
 	"context"
 	"errors"
+	"fmt"
+	"github.com/Busnes-app/kyquickstart/internal/remote"
+	"k8s.io/apimachinery/pkg/types"
 	"strings"
 	"testing"
 
@@ -21,7 +24,23 @@ func testApp(t *testing.T, secrets ...string) (App, *fake.Clientset) {
 	cs := fake.NewClientset()
 	c := fixture(t)
 	c.Secrets = secrets
-	return App{Name: "hello", Client: New(cs), Catalog: c, ReleaseSet: "rs-1", Redact: &engine.Redactor{}}, cs
+	client := New(cs)
+	cs.PrependReactor("create", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		pod := action.(k8stesting.CreateAction).GetObject().(*corev1.Pod).DeepCopy()
+		pod.Name = pod.GenerateName + "fixture"
+		pod.UID = types.UID("fixture-generator")
+		pod.Status.Phase = corev1.PodRunning
+		pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
+		err := cs.Tracker().Create(corev1.SchemeGroupVersion.WithResource("pods"), pod, pod.Namespace)
+		return true, pod, err
+	})
+	client.execCommand = func(ctx context.Context, namespace, pod, container string, args []string) ([]byte, error) {
+		if namespace != "kyq-hello" || !strings.HasPrefix(pod, "kyq-credentials-") || container != "generator" || len(args) != 3 || args[0] != "/bin/sh" || args[1] != "-c" {
+			return nil, fmt.Errorf("invalid fixture execution boundary")
+		}
+		return (remote.Local{}).Run(ctx, args[2], nil)
+	}
+	return App{Name: "hello", Client: client, Catalog: c, ReleaseSet: "rs-1", Redact: &engine.Redactor{}}, cs
 }
 
 func TestSecretsCreatedOnce(t *testing.T) {

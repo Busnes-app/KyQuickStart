@@ -28,6 +28,8 @@ var required = func() []authorizationv1.ResourceAttributes {
 		}
 	}
 	add("", "namespaces", "", "get", "create", "update")
+	add("", "pods", "", "get", "create", "delete")
+	add("", "pods/exec", "", "create")
 	add("", "secrets", "", "get", "create", "update")
 	add("", "services", "", "get", "create", "update")
 	add("", "persistentvolumeclaims", "", "get", "create")
