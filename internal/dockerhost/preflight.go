@@ -23,6 +23,7 @@ func Preflight(ctx context.Context, r remote.Runner, t stack.Target) []Finding {
 		versionCheck(ctx, r, "docker engine", "docker version --format '{{.Server.Version}}'", 24, 0),
 		versionCheck(ctx, r, "docker compose", "docker compose version --short", 2, 21),
 		rootCheck(ctx, r, t.Root),
+		secretToolsCheck(ctx, r),
 	}
 }
 
@@ -54,4 +55,16 @@ func rootCheck(ctx context.Context, r remote.Runner, root string) Finding {
 		return Finding{"root", false, root + " cannot be created or written by this user"}
 	}
 	return Finding{"root", true, root}
+}
+
+// The target, rather than the workstation, must create private random credentials.
+// Check the actual command prerequisites before any deployment mutation.
+func secretToolsCheck(ctx context.Context, r remote.Runner) Finding {
+	const requirements = "dd base64 tr mktemp wc ln rm find id dirname"
+	cmd := `test -c /dev/urandom && test -r /dev/urandom || exit 1
+for tool in ` + requirements + `; do command -v "$tool" >/dev/null 2>&1 || exit 1; done`
+	if _, err := r.Run(ctx, cmd, nil); err != nil {
+		return Finding{"target secrets", false, "requires readable /dev/urandom and " + requirements}
+	}
+	return Finding{"target secrets", true, "target random source and private-file tools available"}
 }

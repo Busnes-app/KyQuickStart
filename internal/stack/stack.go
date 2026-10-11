@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -17,9 +18,34 @@ import (
 const DefaultRoot = "/opt/kyquickstart"
 
 type Stack struct {
-	Version int      `yaml:"version"`
-	Targets []Target `yaml:"targets"`
-	Apps    []App    `yaml:"apps"`
+	Demo         bool          `yaml:"demo,omitempty"`
+	Version      int           `yaml:"version"`
+	Targets      []Target      `yaml:"targets"`
+	Apps         []App         `yaml:"apps"`
+	Edges        []Edge        `yaml:"edges,omitempty"`
+	Existing     []Existing    `yaml:"existing,omitempty"`
+	Integrations []Integration `yaml:"integrations,omitempty"`
+}
+
+// Integration explicitly selects product-owned setup, independently of references.
+// Bundle is a protected path inside the container, never bundle contents.
+type Integration struct {
+	Product        string               `yaml:"product"`
+	Target         string               `yaml:"target"`
+	Container      string               `yaml:"container"`
+	Namespace      string               `yaml:"namespace,omitempty"`
+	Pod            string               `yaml:"pod,omitempty"`
+	Bundle         string               `yaml:"bundle"`
+	Notes          *NotesPreparation    `yaml:"notes,omitempty"`
+	Identity       *IdentityPreparation `yaml:"identity,omitempty"`
+	IdentityClient string               `yaml:"identity_client,omitempty"`
+}
+
+// Existing is a reference, never permission to adopt or change a workload.
+type Existing struct {
+	Product string `yaml:"product"`
+	Target  string `yaml:"target"`
+	URL     string `yaml:"url"`
 }
 
 type Target struct {
@@ -152,7 +178,24 @@ func (s *Stack) validate() error {
 		}
 		apps[a.Name] = true
 	}
-	return nil
+	references := map[string]bool{}
+	for _, e := range s.Existing {
+		if references[e.Product] || apps[e.Product] {
+			return errors.New("an existing product must be unique and cannot also be selected for installation")
+		}
+		references[e.Product] = true
+		if !ValidName(e.Product) || !seen[e.Target] {
+			return errors.New("existing product needs a valid name and known target")
+		}
+		u, err := url.Parse(e.URL)
+		if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			return errors.New("existing product URL must be HTTPS without credentials, query or fragment")
+		}
+	}
+	if err := s.validateIntegrations(); err != nil {
+		return err
+	}
+	return s.validateEdges()
 }
 
 func validRoot(r string) bool {

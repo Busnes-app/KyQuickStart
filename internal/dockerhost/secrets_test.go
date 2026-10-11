@@ -2,6 +2,8 @@ package dockerhost
 
 import (
 	"context"
+	"encoding/base64"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -124,5 +126,152 @@ func TestVerifyRejectsWrongLengthWithoutValue(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "0123456789") || !strings.Contains(err.Error(), "token") {
 		t.Errorf("error %q must name the secret and not show its value", err)
+	}
+}
+
+// The target fixture controls random bytes. Workstation-generated credentials or
+// secret values passed as stdin/argv cannot satisfy this proof.
+type targetSecretRunner struct {
+	t        *testing.T
+	bin      string
+	commands []string
+}
+
+func (r *targetSecretRunner) Run(ctx context.Context, cmd string, stdin []byte) ([]byte, error) {
+	r.t.Helper()
+	if len(stdin) != 0 {
+		r.t.Fatal("credential generation sent workstation input")
+	}
+	r.commands = append(r.commands, cmd)
+	return (remote.Local{}).Run(ctx, "PATH="+remote.Quote(r.bin)+":$PATH\n"+cmd, nil)
+}
+
+func TestSecretsUseTargetRandomAndReadExisting(t *testing.T) {
+	a := localApp(t, "token")
+	bin := realTemp(t)
+	// A disposable target-side dd fixture, not a production random-source override.
+	script := `#!/bin/sh
+for arg; do
+  case "$arg" in of=*) file=${arg#of=};; esac
+done
+printf 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' > "$file"
+`
+	if err := os.WriteFile(filepath.Join(bin, "dd"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	r := &targetSecretRunner{t: t, bin: bin}
+	a.Runner = r
+	s := secretsStep{a}
+	if err := s.Apply(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(a.Root, "hello", "secrets", "token")
+	value, err := os.ReadFile(file)
+	want := base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("A", 32)))
+	if err != nil || string(value) != want {
+		t.Fatal("secret did not originate from the target random source", err)
+	}
+	for _, cmd := range r.commands {
+		if strings.Contains(cmd, want) {
+			t.Fatal("credential entered command arguments")
+		}
+	}
+	if err := os.WriteFile(filepath.Join(bin, "dd"), []byte("#!/bin/sh\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Apply(context.Background()); err != nil {
+		t.Fatal("resume regenerated an existing credential", err)
+	}
+	if err := s.Verify(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if a.Redact.Redact(want) != "[redacted]" {
+		t.Fatal("existing credential not registered for redaction")
+	}
+}
+
+func TestFailedTargetRandomDoesNotPublishOrLeaveScratch(t *testing.T) {
+	for _, length := range []int{0, 7} {
+		t.Run(fmt.Sprint(length), func(t *testing.T) {
+			a := localApp(t, "token")
+			bin := realTemp(t)
+			script := fmt.Sprintf(`#!/bin/sh
+for arg; do
+  case "$arg" in of=*) file=${arg#of=};; esac
+done
+printf '%%s' %s > "$file"
+`, remote.Quote(strings.Repeat("A", length)))
+			if err := os.WriteFile(filepath.Join(bin, "dd"), []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			a.Runner = &targetSecretRunner{t: t, bin: bin}
+			if err := (secretsStep{a}).Apply(context.Background()); err == nil {
+				t.Fatal("short random read was published")
+			}
+			entries, err := os.ReadDir(filepath.Join(a.Root, "hello", "secrets"))
+			if err != nil || len(entries) != 0 {
+				t.Fatal("failed generation left published/scratch credentials", err)
+			}
+		})
+	}
+}
+
+func TestVerifyRefusesCredentialSymlinksAndMalformedEncoding(t *testing.T) {
+	for _, kind := range []string{"symlink", "invalid-encoding"} {
+		t.Run(kind, func(t *testing.T) {
+			a := localApp(t, "token")
+			dir := filepath.Join(a.Root, "hello", "secrets")
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			file := filepath.Join(dir, "token")
+			if kind == "symlink" {
+				source := filepath.Join(realTemp(t), "source")
+				if err := os.WriteFile(source, []byte(strings.Repeat("A", 43)), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(source, file); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(file, []byte(strings.Repeat("!", 43)), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := (secretsStep{a}).Verify(context.Background()); err == nil {
+				t.Fatal("unsafe credential accepted")
+			}
+		})
+	}
+}
+
+func TestFailedTargetEncoderDoesNotPublishCompleteOutput(t *testing.T) {
+	a := localApp(t, "token")
+	bin := realTemp(t)
+	// Valid-looking output followed by failure must not survive a hidden pipeline exit.
+	script := "#!/bin/sh\nprintf '%s' " + remote.Quote(strings.Repeat("A", 43)) + "\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(bin, "base64"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	a.Runner = &targetSecretRunner{t: t, bin: bin}
+	if err := (secretsStep{a}).Apply(context.Background()); err == nil {
+		t.Fatal("failed encoder published a credential")
+	}
+	entries, err := os.ReadDir(filepath.Join(a.Root, "hello", "secrets"))
+	if err != nil || len(entries) != 0 {
+		t.Fatal("failed encoding left published/scratch credentials", err)
+	}
+}
+
+func TestTargetSecretCreationFailureNeverExposesOutput(t *testing.T) {
+	a := localApp(t, "token")
+	marker := "sensitive-target-value"
+	a.Runner = &fakeRunner{reply: func(cmd string) ([]byte, error) {
+		if strings.Contains(cmd, "dd if=/dev/urandom") {
+			return []byte(marker), &remote.ExitError{Code: 1, Stderr: []byte(marker)}
+		}
+		return nil, nil
+	}}
+	err := (secretsStep{a}).Apply(context.Background())
+	if err == nil || strings.Contains(err.Error(), marker) {
+		t.Fatal("target creation output escaped the credential boundary")
 	}
 }

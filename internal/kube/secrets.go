@@ -2,7 +2,6 @@ package kube
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/base64"
 	"fmt"
 
@@ -26,7 +25,11 @@ func (s secretsStep) read(ctx context.Context) (*corev1.Secret, bool, error) {
 func (s secretsStep) missing(sec *corev1.Secret) []string {
 	var out []string
 	for _, n := range s.a.Catalog.Secrets {
-		if sec == nil || len(sec.Data[n]) == 0 {
+		if sec == nil {
+			out = append(out, n)
+			continue
+		}
+		if _, present := sec.Data[n]; !present {
 			out = append(out, n)
 		}
 	}
@@ -59,12 +62,17 @@ func (s secretsStep) Apply(ctx context.Context) error {
 	if sec.Data == nil {
 		sec.Data = map[string][]byte{}
 	}
-	for _, n := range s.missing(sec) {
-		b := make([]byte, 32)
-		rand.Read(b)
-		v := base64.RawURLEncoding.EncodeToString(b)
-		s.a.Redact.Add(v)
-		sec.Data[n] = []byte(v)
+	missing := s.missing(sec)
+	if len(missing) == 0 {
+		return nil
+	}
+	values, err := s.a.Client.generateCredentials(ctx, sec.Namespace, s.a.ReleaseSet, len(missing))
+	if err != nil {
+		return err
+	}
+	for i, n := range missing {
+		s.a.Redact.Add(string(values[i]))
+		sec.Data[n] = values[i]
 	}
 	// Written against the resourceVersion just read: a concurrent writer is a conflict, retried
 	// by the engine after a fresh Inspect, never silently overwritten.
@@ -76,9 +84,9 @@ func (s secretsStep) Apply(ctx context.Context) error {
 	}
 	switch {
 	case apierrors.IsConflict(err) || apierrors.IsAlreadyExists(err):
-		return fmt.Errorf("secret %s: %w: %w", secretName, engine.ErrTransient, err)
+		return fmt.Errorf("secret %s: %w", secretName, engine.ErrTransient)
 	case err != nil:
-		return fmt.Errorf("secret %s: %w", secretName, err)
+		return fmt.Errorf("secret %s: cluster refused credential publication", secretName)
 	}
 	return nil
 }
@@ -95,6 +103,9 @@ func (s secretsStep) Verify(ctx context.Context) error {
 	for _, n := range s.a.Catalog.Secrets {
 		if len(sec.Data[n]) != 43 {
 			return fmt.Errorf("secret %s is %d bytes, want 43", n, len(sec.Data[n]))
+		}
+		if _, err := base64.RawURLEncoding.Strict().DecodeString(string(sec.Data[n])); err != nil {
+			return fmt.Errorf("secret %s is not canonical unpadded base64url", n)
 		}
 		s.a.Redact.Add(string(sec.Data[n]))
 	}
