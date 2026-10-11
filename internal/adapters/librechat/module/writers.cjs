@@ -28,11 +28,13 @@ function register(mongoose) {
     schema.add({ [field]: { type: mongoose.Schema.Types.Mixed, select: false, immutable: true } });
     schema.add({ [credentials.field]: { type: mongoose.Schema.Types.Mixed, select: false, immutable: true } });
     schema.add({ [credentials.recoveryField]: { type: mongoose.Schema.Types.Mixed, select: false, immutable: true } });
-    for (const method of ['updateOne', 'updateMany', 'findOneAndUpdate', 'replaceOne', 'findOneAndReplace', 'deleteOne', 'deleteMany']) {
+    // Mongoose 8 query deletes; findByIdAndDelete routes through findOneAndDelete.
+    const deletes = ['deleteOne', 'deleteMany', 'findOneAndDelete'];
+    for (const method of ['updateOne', 'updateMany', 'findOneAndUpdate', 'replaceOne', 'findOneAndReplace', ...deletes]) {
       schema.pre(method, { query: true, document: false }, function() {
-        if (!method.startsWith('delete')) { checkUpdate(this.getUpdate()); }
+        if (!deletes.includes(method)) { checkUpdate(this.getUpdate()); }
         this.setQuery(restrict(this.getQuery()));
-        if (method.startsWith('delete') || ['replaceOne', 'findOneAndReplace'].includes(method)) {
+        if (deletes.includes(method) || ['replaceOne', 'findOneAndReplace'].includes(method)) {
           this.setQuery({ $and: [this.getQuery(), { [credentials.recoveryField]: { $exists: false } }] });
         }
       });

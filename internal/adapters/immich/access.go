@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"reflect"
 	"time"
 )
 
@@ -19,11 +20,16 @@ type AccessState struct {
 // InspectAccess requires both native ownership and the community module's exact
 // installation-bound fence. A stock server or incomplete proof is refused.
 func (c *Client) InspectAccess(ctx context.Context, b Binding, setupID string) (AccessState, error) {
-	if !installationUUID.MatchString(setupID) {
-		return AccessState{}, errors.New("Immich requires an installation receipt")
-	}
 	if _, err := c.Inspect(ctx, b); err != nil {
 		return AccessState{}, err
+	}
+	return c.accessProof(ctx, b, setupID)
+}
+
+// accessProof reads the module fence; callers check the native account first.
+func (c *Client) accessProof(ctx context.Context, b Binding, setupID string) (AccessState, error) {
+	if !installationUUID.MatchString(setupID) {
+		return AccessState{}, errors.New("Immich requires an installation receipt")
 	}
 	var state struct {
 		Contract, UserID, Issuer, ClientID, Subject string
@@ -58,12 +64,14 @@ func (c *Client) InspectAccess(ctx context.Context, b Binding, setupID string) (
 // RevokeAccess is permanent and retains content. Callers persist intent before
 // mutation and reconcile uncertain writes; repeating removes late credentials
 // and disconnects subscribed sockets without changing the retained fence.
+// It requires only the exact account binding, not live provider configuration or
+// an active account: offboarding must not depend on the state it is cleaning up.
 func (c *Client) RevokeAccess(ctx context.Context, b Binding, setupID string) error {
-	before, err := c.Inspect(ctx, b)
+	before, err := c.boundAccount(ctx, b)
 	if err != nil {
 		return err
 	}
-	if _, err := c.InspectAccess(ctx, b, setupID); err != nil {
+	if _, err := c.accessProof(ctx, b, setupID); err != nil {
 		return err
 	}
 	body := struct {
@@ -76,12 +84,12 @@ func (c *Client) RevokeAccess(ctx context.Context, b Binding, setupID string) er
 	if c.call(ctx, http.MethodPost, "/admin/users/"+b.ID+"/kyquickstart/revoke", body, &reply) != nil {
 		return ErrUncertain
 	}
-	state, err := c.InspectAccess(ctx, b, setupID)
+	state, err := c.accessProof(ctx, b, setupID)
 	if err != nil || !state.Revoked || state.APIKeys != 0 || state.Sessions != 0 {
 		return ErrUncertain
 	}
-	after, err := c.Inspect(ctx, b)
-	if err != nil || after != before {
+	after, err := c.boundAccount(ctx, b)
+	if err != nil || !reflect.DeepEqual(after, before) {
 		return ErrUncertain
 	}
 	return nil

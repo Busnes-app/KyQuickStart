@@ -72,29 +72,71 @@ func (c *Client) TeamAbsent(ctx context.Context, spec TeamBinding) error {
 	if org.ID != spec.OrganizationID || org.Name != spec.Organization || org.ChangeAccess == nil || *org.ChangeAccess {
 		return errors.New("Forgejo organization authority conflicts with its retained receipt")
 	}
-	var teams []struct {
-		ID   int64  `json:"id"`
-		Name string `json:"name"`
-	}
-	var headers http.Header
-	if err := c.call(ctx, http.MethodGet, "/orgs/"+url.PathEscape(spec.Organization)+"/teams?limit=100&page=1", nil, &teams, &headers); err != nil {
+	teams, err := listAll(ctx, c, "/orgs/"+url.PathEscape(spec.Organization)+"/teams", maxListed, func(t namedEntry) int64 { return t.ID })
+	if err != nil {
 		return err
 	}
-	counts := headers.Values("X-Total-Count")
-	if teams == nil || len(teams) > 100 || len(counts) != 1 || counts[0] != strconv.Itoa(len(teams)) {
-		return errors.New("Forgejo team absence is not proven")
-	}
-	seen := make(map[int64]bool, len(teams))
 	for _, team := range teams {
 		if strings.EqualFold(team.Name, spec.Name) {
 			return ErrTeamConflict
 		}
-		if team.ID <= 0 || team.Name == "" || seen[team.ID] {
+		if team.Name == "" {
 			return errors.New("Forgejo team has conflicting identity")
 		}
-		seen[team.ID] = true
 	}
 	return nil
+}
+
+type namedEntry struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+type memberEntry struct {
+	ID    int64  `json:"id"`
+	Login string `json:"login"`
+}
+
+// Forgejo clamps limit to [api] MAX_RESPONSE_ITEMS (v16.0.5 default 50,
+// services/convert.ToCorrectPageSize), so completeness needs every page.
+const pageLimit, maxListed = 50, 1000
+
+// listAll reads every page and refuses an unstable total, a short or oversized
+// page, a duplicate or invalid ID, or a total above maxTotal.
+func listAll[T any](ctx context.Context, c *Client, path string, maxTotal int, id func(T) int64) ([]T, error) {
+	incomplete := errors.New("Forgejo listing is incomplete or inconsistent")
+	all, seen, total := []T{}, map[int64]bool{}, -1
+	// Every page must add an item and total <= maxTotal, so this ends within maxTotal+1 pages.
+	for page := 1; ; page++ {
+		var items []T
+		var headers http.Header
+		if err := c.call(ctx, http.MethodGet, path+"?limit="+strconv.Itoa(pageLimit)+"&page="+strconv.Itoa(page), nil, &items, &headers); err != nil {
+			return nil, err
+		}
+		counts := headers.Values("X-Total-Count")
+		if items == nil || len(items) > pageLimit || len(counts) != 1 {
+			return nil, incomplete
+		}
+		n, err := strconv.Atoi(counts[0])
+		if err != nil || n < 0 || n > maxTotal || strconv.Itoa(n) != counts[0] || (total >= 0 && n != total) {
+			return nil, incomplete
+		}
+		total = n
+		for _, item := range items {
+			k := id(item)
+			if k <= 0 || seen[k] {
+				return nil, incomplete
+			}
+			seen[k] = true
+		}
+		all = append(all, items...)
+		if len(all) == total {
+			return all, nil
+		}
+		if len(items) == 0 || len(all) > total {
+			return nil, incomplete
+		}
+	}
 }
 
 func validTeam(b TeamBinding) bool {
@@ -218,22 +260,15 @@ func (c *Client) InspectTeamMembers(ctx context.Context, b TeamBinding, owned []
 }
 
 func (c *Client) teamMembers(ctx context.Context, b TeamBinding, owned map[int64]Binding) (map[int64]bool, error) {
-	var wire []struct {
-		ID    int64  `json:"id"`
-		Login string `json:"login"`
-	}
-	var headers http.Header
-	if err := c.call(ctx, http.MethodGet, "/teams/"+strconv.FormatInt(b.ID, 10)+"/members?limit=100&page=1", nil, &wire, &headers); err != nil {
+	// More members than owned accounts means a foreign member: refuse before paging further.
+	wire, err := listAll(ctx, c, "/teams/"+strconv.FormatInt(b.ID, 10)+"/members", len(owned), func(m memberEntry) int64 { return m.ID })
+	if err != nil {
 		return nil, err
-	}
-	counts := headers.Values("X-Total-Count")
-	if wire == nil || len(wire) > 100 || len(counts) != 1 || counts[0] != strconv.Itoa(len(wire)) {
-		return nil, errors.New("Forgejo team membership listing is incomplete")
 	}
 	members := make(map[int64]bool, len(wire))
 	for _, member := range wire {
 		account, ok := owned[member.ID]
-		if !ok || account.Username != member.Login || members[member.ID] {
+		if !ok || account.Username != member.Login {
 			return nil, errors.New("Forgejo team contains foreign or conflicting members")
 		}
 		if _, err := c.Inspect(ctx, account); err != nil {
@@ -273,38 +308,55 @@ func (c *Client) ReplaceTeamMembers(ctx context.Context, b TeamBinding, owned, d
 	if err != nil {
 		return err
 	}
-	for _, account := range desired {
-		state, err := c.Inspect(ctx, account)
-		if err != nil {
-			return err
+	wrote := false
+	write := func(method string, account Binding) error {
+		path := "/teams/" + strconv.FormatInt(b.ID, 10) + "/members/" + url.PathEscape(account.Username)
+		if err := c.call(ctx, method, path, nil, nil); err != nil {
+			var refused *apiError
+			if !wrote && errors.As(err, &refused) && refused.status >= 400 && refused.status < 500 && refused.status != http.StatusRequestTimeout {
+				return err
+			}
+			return ErrTeamUncertain
 		}
-		if state.Admin || !state.Active || state.LoginProhibited {
-			return errors.New("Forgejo team access requires active ordinary accounts")
+		wrote = true
+		return nil
+	}
+	// Withdraw first: a partial replacement or an unfit desired member never retains withdrawn access.
+	kept := make(map[int64]bool, len(current))
+	for _, account := range owned {
+		if current[account.ID] && !want[account.ID] {
+			if err := write(http.MethodDelete, account); err != nil {
+				return err
+			}
+		} else if current[account.ID] {
+			kept[account.ID] = true
 		}
 	}
-	wrote := false
-	// Remove before adding so a partial replacement never retains withdrawn access.
-	for _, adding := range []bool{false, true} {
-		for _, account := range owned {
-			if current[account.ID] == want[account.ID] {
-				continue
+	for _, account := range desired {
+		state, err := c.Inspect(ctx, account)
+		if err == nil && (state.Admin || !state.Active || state.LoginProhibited) {
+			err = errors.New("Forgejo team access requires active ordinary accounts")
+		}
+		if err == nil {
+			continue
+		}
+		if !wrote {
+			return err
+		}
+		// A definite refusal requires verified withdrawals; otherwise hold.
+		if c.InspectTeam(ctx, b) != nil {
+			return ErrTeamUncertain
+		}
+		if after, verr := c.teamMembers(ctx, b, scope); verr != nil || !maps.Equal(after, kept) {
+			return ErrTeamUncertain
+		}
+		return err
+	}
+	for _, account := range owned {
+		if want[account.ID] && !current[account.ID] {
+			if err := write(http.MethodPut, account); err != nil {
+				return err
 			}
-			if want[account.ID] != adding {
-				continue
-			}
-			method := http.MethodDelete
-			if want[account.ID] {
-				method = http.MethodPut
-			}
-			path := "/teams/" + strconv.FormatInt(b.ID, 10) + "/members/" + url.PathEscape(account.Username)
-			if err := c.call(ctx, method, path, nil, nil); err != nil {
-				var refused *apiError
-				if !wrote && errors.As(err, &refused) && refused.status >= 400 && refused.status < 500 && refused.status != http.StatusRequestTimeout {
-					return err
-				}
-				return ErrTeamUncertain
-			}
-			wrote = true
 		}
 	}
 	if err := c.InspectTeam(ctx, b); err != nil {
