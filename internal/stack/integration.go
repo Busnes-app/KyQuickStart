@@ -1,0 +1,123 @@
+package stack
+
+import (
+	"errors"
+	"net/url"
+	"path"
+	"regexp"
+	"strings"
+)
+
+var containerRE = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,252}$`)
+var kubeObjectRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
+var kubeLabelRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+
+func (s *Stack) validateIntegrations() error {
+	if len(s.Integrations) > 64 {
+		return errors.New("at most 64 product integrations are supported")
+	}
+	products, workloads := map[string]bool{}, map[[4]string]bool{}
+	for _, i := range s.Integrations {
+		t, found := s.Target(i.Target)
+		selected := false
+		for _, e := range s.Existing {
+			selected = selected || e.Product == i.Product && e.Target == i.Target
+		}
+		for _, a := range s.Apps {
+			selected = selected || a.Name == i.Product && a.Target == i.Target
+		}
+		if !found || !ValidName(i.Product) || !selected || products[i.Product] {
+			return errors.New("integration must select one existing or installed product on its declared target")
+		}
+		if !containerRE.MatchString(i.Container) || !preparationPath(i.Bundle) {
+			return errors.New("integration needs a valid container and a clean absolute container-local bundle path")
+		}
+		if t.Kubernetes() {
+			if !kubeLabelRE.MatchString(i.Namespace) || len(i.Namespace) > 63 || !kubeObjectRE.MatchString(i.Pod) || len(i.Pod) > 253 || !kubeLabelRE.MatchString(i.Container) || len(i.Container) > 63 {
+				return errors.New("Kubernetes integration needs valid namespace, pod and container names")
+			}
+		} else if i.Namespace != "" || i.Pod != "" {
+			return errors.New("Docker integration takes no namespace or pod")
+		}
+		if i.Identity != nil {
+			if i.Product != "kyidentity" || i.Notes != nil {
+				return errors.New("Identity preparation requires only the KyIdentity product")
+			}
+			if err := i.Identity.validate(i.Bundle); err != nil {
+				return err
+			}
+		}
+		if i.Notes != nil {
+			if i.Product != "kynotes" || path.Base(i.Bundle) != "setup.json" || path.Base(path.Dir(i.Bundle)) != "installer" {
+				return errors.New("KyNotes preparation requires its product-owned installer/setup.json path")
+			}
+			if err := i.Notes.validate(i.Bundle); err != nil {
+				return err
+			}
+		}
+		workload := [4]string{i.Target, i.Namespace, i.Pod, i.Container}
+		if workloads[workload] {
+			return errors.New("a container can have only one product integration")
+		}
+		products[i.Product], workloads[workload] = true, true
+	}
+	for _, i := range s.Integrations {
+		if i.IdentityClient != "" {
+			if _, _, err := s.IdentitySource(i); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// IdentitySource validates the selected source/destination graph before any connection.
+// The canonical owner subject is resolved later from the source's native private export.
+func (s *Stack) IdentitySource(destination Integration) (Integration, IdentityClient, error) {
+	bad := errors.New("credential transfer requires a matching prepared KyIdentity client and KyNotes destination")
+	if destination.Product != "kynotes" || destination.Notes == nil || destination.Notes.SSO == nil || len(destination.Notes.Admins) != 0 {
+		return Integration{}, IdentityClient{}, bad
+	}
+	n := destination.Notes.SSO
+	dir := path.Dir(destination.Bundle)
+	if destination.IdentityClient != n.ClientID || n.ClientSecretFile != path.Join(dir, "client.secret") || n.DirectoryHMACSecretFile != "" && n.DirectoryHMACSecretFile != path.Join(dir, "directory.secret") {
+		return Integration{}, IdentityClient{}, bad
+	}
+	for _, source := range s.Integrations {
+		if source.Product != "kyidentity" || source.Identity == nil {
+			continue
+		}
+		for _, client := range source.Identity.Clients {
+			if client.ID != destination.IdentityClient {
+				continue
+			}
+			callback := false
+			for _, uri := range client.RedirectURIs {
+				callback = callback || uri == n.RedirectURI
+			}
+			if !callback || client.AdministratorRole != "kynotes.admin" || client.EverydayRole != "kynotes.user" || client.SCIM != nil {
+				return Integration{}, IdentityClient{}, bad
+			}
+			if n.DirectoryHMACSecretFile == "" {
+				if client.SuiteWebhook != nil {
+					return Integration{}, IdentityClient{}, bad
+				}
+			} else {
+				u, err := url.Parse(n.RedirectURI)
+				if err != nil {
+					return Integration{}, IdentityClient{}, bad
+				}
+				if client.SuiteWebhook == nil || client.SuiteWebhook.URL != "https://"+u.Host+"/api/v1/sync/events" {
+					return Integration{}, IdentityClient{}, bad
+				}
+			}
+			for _, existing := range s.Existing {
+				if existing.Product == "kyidentity" && existing.Target == source.Target && strings.TrimRight(existing.URL, "/") != n.IssuerURL {
+					return Integration{}, IdentityClient{}, bad
+				}
+			}
+			return source, client, nil
+		}
+	}
+	return Integration{}, IdentityClient{}, bad
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
 	"strings"
 
 	"github.com/Busnes-app/kyquickstart/internal/engine"
@@ -79,11 +80,32 @@ func (d deployStep) Apply(ctx context.Context) error {
 	if _, err := d.a.Runner.Run(ctx, d.a.compose("pull --quiet"), nil); err != nil {
 		return fmt.Errorf("docker compose pull: %w: %w", engine.ErrTransient, err)
 	}
-	if _, err := d.a.Runner.Run(ctx, d.a.compose("up -d --remove-orphans"), nil); err != nil {
+	up := "up -d --remove-orphans"
+	if d.a.ForceRecreate {
+		up += " --force-recreate"
+	}
+	if _, err := d.a.Runner.Run(ctx, d.a.compose(up), nil); err != nil {
 		return fmt.Errorf("docker compose up: %w", err)
 	}
 	_, err := d.a.Runner.Run(ctx, "umask 077; printf %s "+remote.Quote(d.hash)+" > "+hash, nil)
 	return err
+}
+
+// WriteConfig atomically publishes target-only configuration in an owned directory.
+func WriteConfig(ctx context.Context, r remote.Runner, file string, body []byte) error {
+	if !path.IsAbs(file) || path.Clean(file) != file || strings.ContainsAny(file, "\x00\r\n") {
+		return errors.New("target config requires a clean absolute path")
+	}
+	if err := trustedDir(ctx, r, path.Dir(file)); err != nil {
+		return err
+	}
+	cmd := "umask 077; rm -f " + remote.Quote(path.Join(path.Dir(file), ".input-hash")) +
+		" && t=$(mktemp " + remote.Quote(path.Join(path.Dir(file), ".config.XXXXXX")) + ")" +
+		" && { cat > \"$t\" && mv -f \"$t\" " + remote.Quote(file) + "; s=$?; rm -f \"$t\"; exit $s; }"
+	if _, err := r.Run(ctx, cmd, body); err != nil {
+		return fmt.Errorf("write target config: %w", err)
+	}
+	return nil
 }
 
 func (d deployStep) Verify(ctx context.Context) error {

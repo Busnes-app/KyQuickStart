@@ -15,12 +15,13 @@ import (
 
 // App is one catalog app placed on one Docker host.
 type App struct {
-	Name       string
-	Root       string // the target's installer root
-	Runner     remote.Runner
-	Catalog    catalog.App
-	ReleaseSet string
-	Redact     *engine.Redactor
+	Name          string
+	Root          string // the target's installer root
+	Runner        remote.Runner
+	Catalog       catalog.App
+	ReleaseSet    string
+	Redact        *engine.Redactor
+	ForceRecreate bool // connector credential replacement requires a fresh process
 }
 
 func (a App) dir() string { return path.Join(a.Root, a.Name) }

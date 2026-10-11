@@ -215,7 +215,7 @@ and retain their own identity, sealer label and collection adapters.
 
 - Nextcloud is excluded from document management and file storage. ONLYOFFICE products are excluded for geopolitical reasons. Evaluate Euro-Office's independent governance, build and release chain rather than rejecting it solely for inherited code; it is selected for the KyDrive local integration; production release requires source/build provenance verification. CryptPad's ONLYOFFICE-derived browser editors must remain explicit in comparisons.
 
-- KyPasswords is replaced by Vaultwarden (decided 2026-10-06). KyAuth does not become a Bitwarden client and becomes authenticator-only (TOTP, Push MFA, KyIdentity sign-on and passkey); Android users use the official Bitwarden app against Vaultwarden for passwords and passkeys. See `kyauth-android/docs/superpowers/specs/2026-10-06-vaultwarden-replaces-kypasswords.md`.
+- KyPasswords is replaced by Vaultwarden (decided 2026-10-06). Installer password selection is Vaultwarden only (confirmed 2026-10-09); exclude the older KeePass-based KyVault from new installs and adapters. Existing KyVault installations and data stay untouched. KyAuth does not become a Bitwarden client and becomes authenticator-only (TOTP, Push MFA, KyIdentity sign-on and passkey); Android users use the official Bitwarden app against Vaultwarden for passwords and passkeys. See `kyauth-android/docs/superpowers/specs/2026-10-06-vaultwarden-replaces-kypasswords.md`.
 
 - Third-party apps installed with the suite must pass the admission rules in `KyQuickStart/docs/superpowers/specs/2026-10-06-third-party-catalog-design.md` (approved 2026-10-06): open source with SSO in the free edition, native OIDC against KyIdentity, admin from a claim or an unattended grant, and an offboarding path. No auth-proxy gate is built. Monitoring stays with kyPulse; forms, video calls and video streaming are out of scope.
 
@@ -249,11 +249,41 @@ handover of admin and everyday logins.
   plan when its gate opens.
 - Phase 1 installer core: `docs/superpowers/plans/2026-10-08-phase-1-installer-core.md`.
 - Phase 2 Kubernetes driver: `docs/superpowers/plans/2026-10-08-phase-2-kubernetes-driver.md`.
+- All-product adapter implementation: `docs/superpowers/plans/2026-10-09-all-product-adapters.md`.
+- Phase 4 edge implementation plan: `docs/superpowers/plans/2026-10-08-phase-4-edge.md`.
+- Current edge configuration and supported deployment paths: `docs/edge.md`.
+- Guided planning, demo deployment, existing installation references and explicit KyIdentity setup: `docs/guided-setup.md`.
+- Resident offboarding runtime configuration, TLS, command behavior and remaining gates:
+  `docs/offboarding.md`.
 
 ## Local Contracts
 
+- `plan` supports an explicitly selected disposable demo catalog while product setup gates remain
+  closed. Saved existing-product references do not authorize adoption or imply completed integration.
+- `stack.yaml`'s `integrations` selects product-owned setup independently of `existing`
+  references. Each selection names a declared product/target, one container (namespace/pod
+  on Kubernetes) and a protected container-local bundle path, clean/absolute and free of
+  control characters. Validate the complete batch before connecting. No inline credentials are
+  accepted. Optional typed `notes` settings prepare KyNotes' secret-free native bundle
+  through `apply-setup --stage` stdin, restricted to its private `<data>/installer/setup.json`.
+  Inspect the retained bundle before configuring; never replace changed or unsafe input.
+  KyNotes credential references still require protected files on the target. Typed `identity`
+  metadata prepares KyIdentity's private `<data>/installer/<setup UUID>/setup.json` and
+  target-held credentials through its native staging interface. Immutable intent and
+  credential receipts refuse changes/loss; no credential enters local state. Destination
+  SCIM tokens remain existing protected target references. `integrate-stack` runs
+  these selections explicitly; `apply` retains deployment scope and does not configure
+  recorded existing products.
 - Command-line only: no GUI, web UI or full-screen terminal UI. `plan` asks its questions as
   plain terminal prompts, and every command also runs unattended from `stack.yaml`.
+- A Notes integration's explicit `identity_client` selects one declared prepared KyIdentity
+  client for private credential transfer. Validate the graph before connecting; export only
+  through native authority, resolve the dedicated owner subject, stage metadata and import
+  credentials in memory, inspect destination and recheck source before ordinary setup.
+  Saved plans hold no credential values or guessed owner subjects. Disposable SSH and kind
+  acceptance verify native TLS configuration, owner binding and transfer. SSH additionally
+  qualifies native HTTP sign-on and owner/everyday Notes access; browser UI, MFA, Kubernetes
+  sign-on and full lifecycle acceptance remain open.
 - A third-party app enters the catalog only if it passes every admission rule in the catalog
   spec. Record each rejection and its reason there.
 - Third-party apps run on Docker hosts only. Kubernetes hosts Ky products and the edge
@@ -262,6 +292,15 @@ handover of admin and everyday logins.
   notice, and existing installs are handed to their owner with `unmanage`.
 - Every installed app signs in through KyIdentity with native OIDC, uses *Assigned users only*,
   and has an offboarding adapter. The installer builds no auth-proxy gate.
+- Bridge SCIM connectors are app-scoped: assignment loss revokes only that app; global
+  disablement reaches every owning connector. Register verified native bindings first and
+  qualify the complete connector lifecycle before deployment. New-account creation requires
+  an explicit protected per-app opt-in and a verified durable native receipt; never adopt a
+  foreign account. A revocation-only receiver
+  does not satisfy active profile provisioning or resident-service acceptance.
+- Forgejo group delivery is a separate protected runtime opt-in: pin organization and unit
+  permissions, use verified account/team receipts, and retain native repositories on logical
+  group retirement. Qualify actual KyIdentity group event delivery before deployment.
 - Reverse proxy is Nginx Proxy Manager. On an existing NPM, touch only installer-created hosts,
   through its API, never its database. NPM admin is LAN-only; its credentials go in the handover.
 - One edge (NPM, and a tunnel or frp client) per target and one owner per hostname. The installer
@@ -275,6 +314,13 @@ handover of admin and everyday logins.
   Nothing decrypts inside KyRecovery, server or browser.
 - Secrets are generated once on their targets and read back on re-run; the workstation state
   directory never holds a secret.
+  Docker generation uses the target's `/dev/urandom` and private temporary files, with
+  complete-read checks and no-clobber publication; preflight checks its required tools.
+  Readback rejects unsafe ownership/paths, symlinks, non-0600 files and malformed base64url.
+  Kubernetes generates missing keys through exec in a uniquely named, digest-pinned,
+  restricted temporary pod without service-account credentials. Remove it by UID before
+  publishing; preserve existing keys (including invalid/empty ones, which inspection refuses).
+  `docs/guided-setup.md` owns its image provenance, resource bounds and required permissions.
 - The installer's only authority inside a Ky product is its container-local `apply-setup`
   command. Installer-managed workloads carry `ky.managed-by=kyquickstart`; only the shared upgrade
   module changes them, from the CLI or KyYard, under a target-side lock.
@@ -290,10 +336,60 @@ handover of admin and everyday logins.
 
 ## Work Guidance
 
+Continue adapter implementation across every supported server product; a first working adapter
+is a milestone, not completion of the all-product request. Product interfaces and local tests
+may be built before their production release gates open.
+
+Deployment-specific choices (existing or new NPM, domains, Cloudflare or VPS, and target
+connections) are installer runtime inputs. Build against disposable local fixtures; those
+choices do not block development. Live testing requires authorization for that deployment.
+
+On this workstation, run builds and test suites serially. Use disk-backed scratch under
+`/home/yoshi/.cache/kyquickstart-work`; `/tmp` is RAM-backed. Go commands use
+`GOMAXPROCS=2`, `GOMEMLIMIT=1GiB`, `GOFLAGS=-p=1` and that scratch directory as `TMPDIR`.
+Bound Node heaps and test workers, and give owned fixture containers explicit memory/CPU
+limits. Host builds/tests use a transient `systemd-run --user` unit with `MemoryMax=2G`,
+`MemorySwapMax=0`, `TasksMax=128` and `CPUQuota=200%`; the child fixture process shares the cap.
+The Go heap target is soft; it does not replace the hard cgroup limit or serial execution.
+The e2e Docker helper supplies missing owned `run` limits (512 MiB memory, swap equal to
+selected memory, one CPU, PID128), preserving explicit fixture overrides. Direct Docker
+calls and kind nodes must carry their own explicit bounds.
+
 ## Verification
 
+- `make build`: builds workstation `kyquickstart` and resident `kyoffboard` binaries.
 - `make ci`: tidy check, gofmt, vet (including the `e2e` tag), race tests.
 - `make e2e`: needs Docker; runs `apply` against an sshd container on the local Docker socket and
   against a kind cluster (`go run sigs.k8s.io/kind@v0.33.0`), including drift and stale-lock cases.
+  Also runs disposable NPM, frpc/frps and cloudflared container tests in `internal/edge`.
+  Set `KYQ_TEST_IDENTITY_BINARY` to a local static KyIdentity build to additionally test real
+  container-local identity setup over SSH and kind, including target-held preparation,
+  inspection/resume and changed-intent refusal; SSH additionally refuses lost credentials.
+  Its fixture also covers receipt-owned SCIM/group and signed
+  suite connectors with create/check/resume; this fixture never uses a live deployment.
+  `KYQ_TEST_NOTES_BINARY` additionally qualifies native secret-free bundle preparation,
+  inspection/resume and changed-intent preservation over actual SSH and kind transports.
+  Set both native binary variables to qualify private Identity-to-Notes transfer in `TestApply`:
+  named local TLS issuer, canonical owner, exact credential bytes, no workstation persistence,
+  apply/check/resume, changed-file refusal and unrelated-edge exclusion. It also signs in
+  installer-created owner/everyday accounts through native password/CSRF and Notes PKCE,
+  observes discovery/token/JWKS traffic, verifies reciprocal admin/ordinary access and
+  reinspects/resumes after login. Client secrets and bootstrap passwords stay out of reports
+  and final workstation state. This is native HTTP protocol acceptance, not browser UI or
+  MFA qualification. `TestKubernetesApply` additionally qualifies restricted
+  kind transfer with named, CA-verified TLS services, canonical owner/credential binding,
+  apply/check/resume, drift preservation and no workstation persistence. Its test-only TLS
+  helper uses the static test executable (`CGO_ENABLED=0`, set by `make e2e`); it proves no
+  production edge topology or NetworkPolicy enforcement.
 
 ## Child DOX Index
+
+- `cmd/kyoffboard/AGENTS.md`: resident bridge command flags, safe output and signal lifecycle;
+  the root retains deployment and credential provisioning.
+- `internal/cli/AGENTS.md`: guided questions, local plan persistence and command orchestration.
+- `internal/edge/AGENTS.md`: NPM reconciliation, connector deployment and public forwarded-header verification.
+  The root owns stack schema, CLI orchestration and target drivers.
+- `internal/adapters/AGENTS.md`: native third-party setup, administrator verification,
+  offboarding and disposable qualification; the root retains catalog admission and deployment.
+- `internal/offboard/AGENTS.md`: resident bridge account/group bindings, creation receipts, directory/membership intents, durable revocation jobs and audit
+  outbox; the root retains deployment, target secrets, network policy and admission.

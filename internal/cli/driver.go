@@ -2,9 +2,11 @@ package cli
 
 import (
 	"context"
+	"errors"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/dockerhost"
+	"github.com/Busnes-app/kyquickstart/internal/edge"
 	"github.com/Busnes-app/kyquickstart/internal/engine"
 	"github.com/Busnes-app/kyquickstart/internal/kube"
 	"github.com/Busnes-app/kyquickstart/internal/remote"
@@ -23,6 +25,9 @@ type driver interface {
 	preflight(ctx context.Context) []finding
 	acquire(ctx context.Context, holder string) (func(context.Context) error, error)
 	steps(name string, app catalog.App, releaseSet string, redact *engine.Redactor) []engine.Step
+	edgeToken(context.Context) ([]byte, error)
+	checkConnector(context.Context, stack.Edge) error
+	connectorSteps(context.Context, stack.Edge, string, *engine.Redactor) ([]engine.Step, error)
 	close() error
 }
 
@@ -49,6 +54,18 @@ func (d sshDriver) steps(name string, app catalog.App, releaseSet string, redact
 
 func (d sshDriver) close() error { return d.c.Close() }
 
+func (d sshDriver) edgeToken(ctx context.Context) ([]byte, error) {
+	return remote.ReadSecret(ctx, d.c, d.t.Root+"/edge/secrets/npm_token")
+}
+
+func (d sshDriver) checkConnector(ctx context.Context, e stack.Edge) error {
+	return edge.CheckConnector(ctx, d.c, d.t.Root, e)
+}
+
+func (d sshDriver) connectorSteps(ctx context.Context, e stack.Edge, release string, redact *engine.Redactor) ([]engine.Step, error) {
+	return edge.DockerConnector(ctx, d.c, d.t.Root, release, e, redact)
+}
+
 type kubeDriver struct {
 	c            *kube.Client
 	needsStorage bool
@@ -71,3 +88,13 @@ func (d kubeDriver) steps(name string, app catalog.App, releaseSet string, redac
 }
 
 func (d kubeDriver) close() error { return nil }
+
+func (d kubeDriver) edgeToken(ctx context.Context) ([]byte, error) { return d.c.EdgeToken(ctx) }
+
+func (d kubeDriver) checkConnector(context.Context, stack.Edge) error {
+	return errors.New("Kubernetes connector deployment is not implemented")
+}
+
+func (d kubeDriver) connectorSteps(context.Context, stack.Edge, string, *engine.Redactor) ([]engine.Step, error) {
+	return nil, errors.New("Kubernetes connector deployment is not implemented")
+}
