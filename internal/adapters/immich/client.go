@@ -101,11 +101,31 @@ func (c *Client) call(ctx context.Context, method, path string, body any, out an
 	return nil
 }
 
-func (c *Client) Inspect(ctx context.Context, b Binding) (Account, error) {
+type nativeAccount struct {
+	ID, OAuthID, Name, Email, Status string
+	IsAdmin                          *bool
+	DeletedAt                        json.RawMessage
+}
+
+// boundAccount checks only the native UUID/subject binding. Revocation uses it so a
+// disabled or rotated provider, or an inactive/soft-deleted account, can still be fenced.
+func (c *Client) boundAccount(ctx context.Context, b Binding) (nativeAccount, error) {
 	if !uuid.MatchString(b.ID) || !https(b.Issuer, false) || !visible(b.ClientID, 255) || strings.IndexFunc(b.ClientID, unicode.IsSpace) >= 0 || !visible(b.Subject, 255) {
-		return Account{}, errors.New("Immich requires exact native/provider/subject receipts")
+		return nativeAccount{}, errors.New("Immich requires exact native/provider/subject receipts")
 	}
 	if err := c.qualifiedVersion(ctx); err != nil {
+		return nativeAccount{}, err
+	}
+	var native nativeAccount
+	if c.call(ctx, http.MethodGet, "/admin/users/"+b.ID, nil, &native) != nil || native.ID != b.ID || native.OAuthID != b.Subject {
+		return nativeAccount{}, errors.New("Immich native account receipt conflicts")
+	}
+	return native, nil
+}
+
+func (c *Client) Inspect(ctx context.Context, b Binding) (Account, error) {
+	native, err := c.boundAccount(ctx, b)
+	if err != nil {
 		return Account{}, err
 	}
 	var config struct {
@@ -117,12 +137,7 @@ func (c *Client) Inspect(ctx context.Context, b Binding) (Account, error) {
 	if c.call(ctx, http.MethodGet, "/system-config", nil, &config) != nil || config.OAuth.Enabled == nil || !*config.OAuth.Enabled || config.OAuth.AllowInsecureRequests == nil || *config.OAuth.AllowInsecureRequests || config.OAuth.IssuerURL != b.Issuer || config.OAuth.ClientID != b.ClientID {
 		return Account{}, errors.New("Immich provider receipt conflicts")
 	}
-	var native struct {
-		ID, OAuthID, Name, Email, Status string
-		IsAdmin                          *bool
-		DeletedAt                        json.RawMessage
-	}
-	if c.call(ctx, http.MethodGet, "/admin/users/"+b.ID, nil, &native) != nil || native.ID != b.ID || native.OAuthID != b.Subject || native.IsAdmin == nil || native.Status != "active" || string(native.DeletedAt) != "null" || !visible(native.Name, 255) || !visible(native.Email, 254) {
+	if native.IsAdmin == nil || native.Status != "active" || string(native.DeletedAt) != "null" || !visible(native.Name, 255) || !visible(native.Email, 254) {
 		return Account{}, errors.New("Immich native account receipt conflicts")
 	}
 	return Account{Binding: b, Administrator: *native.IsAdmin, Name: native.Name, Email: native.Email}, nil
