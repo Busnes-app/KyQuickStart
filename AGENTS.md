@@ -240,6 +240,7 @@ handover of admin and everyday logins.
 
 ## Ownership
 
+- Public overview, build and command summary: `README.md`.
 - Third-party catalog, admission rules, edge and reverse-proxy choices, and the app-aware bulk
   backup path: `docs/superpowers/specs/2026-10-06-third-party-catalog-design.md`.
 - Installer architecture (CLI, catalog format, targets, state, setup, offboarding bridge,
