@@ -68,6 +68,9 @@ func TestNPMContainer(t *testing.T) {
 		t.Fatalf("network inspect: %v", err)
 	}
 	gateway := networks[0].IPAM.Config[0].Gateway
+	if gateway == "" {
+		t.Fatal("network inspect reported no gateway")
+	}
 	backend := name + "-backend"
 	t.Cleanup(func() { exec.Command("docker", "rm", "-f", backend).Run() })
 	docker("run", "--rm", "-d", "--name", backend, "--network", network, backendImage, "--port=8080")
@@ -199,7 +202,7 @@ func TestNPMContainer(t *testing.T) {
 	if err := en.Run(ctx, n.Steps(e)); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(out.String(), "skipped") != 2 {
+	if strings.Count(out.String(), "skipped") != 3 {
 		t.Fatal("second apply was not a no-op")
 	}
 	probe := func(address, sni, host string, proxy bool) (int, string) {
@@ -276,6 +279,52 @@ func TestNPMContainer(t *testing.T) {
 	if code, _ := probe(address("8443"), "unknown.example.test", e.Routes[0].Hostname, true); code != 421 {
 		t.Fatalf("unknown SNI accepted: %d", code)
 	}
+	// A route removed from stack.yaml is disabled, not deleted, and stops serving.
+	removed := e.Routes[1]
+	e.Routes = e.Routes[:1]
+	if err := en.Run(ctx, n.Steps(e)); err != nil {
+		t.Fatal(err)
+	}
+	removedID := 0
+	var hosts []host
+	request("GET", hostPath, nil, "application/json", &hosts)
+	for _, h := range hosts {
+		if len(h.Domains) == 1 && h.Domains[0] == removed.Hostname {
+			if h.Enabled {
+				t.Fatal("removed route is still enabled")
+			}
+			removedID = h.ID
+		}
+	}
+	if removedID == 0 {
+		t.Fatal("removed route was deleted")
+	}
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(100 * time.Millisecond) {
+		code, _ := probe(address("8443"), removed.Hostname, removed.Hostname, true)
+		if code == 421 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("removed route still served: HTTP %d", code)
+		}
+	}
+	// verify-edge fails while an owned, unconfigured host is enabled; apply disables it again.
+	request("POST", fmt.Sprintf("%s/%d/enable", hostPath, removedID), nil, "application/json", nil)
+	if err := n.Steps(e)[0].Verify(ctx); err == nil {
+		t.Fatal("verify accepted an enabled removed route")
+	}
+	if err := en.Run(ctx, n.Steps(e)); err != nil {
+		t.Fatal(err)
+	}
+	if err := n.Steps(e)[0].Verify(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Restoring the route re-enables the same host.
+	e.Routes = append(e.Routes, removed)
+	if err := en.Run(ctx, n.Steps(e)); err != nil {
+		t.Fatal(err)
+	}
+	checkRoute(address("8443"), removed.Hostname, true)
 	// Repeat with actual frps and the installer's generated frpc deployment. The
 	// workstation sends ordinary TLS; frpc must supply PROXY v2 to the real NPM.
 	frps := name + "-frps"
