@@ -96,7 +96,7 @@ func TestPlacementAndKubeconfigChecks(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "apps", "dockeronly"), 0o700)
 	os.WriteFile(filepath.Join(dir, "apps", "dockeronly", "manifest.yaml"), []byte(
-		"name: dockeronly\ncategory: third-party\nimages:\n  web: traefik/whoami:v1.11.0@sha256:200689790a0a0ea48ca45992e0450bc26ccab5307375b41c84dfc4f2475937ab\nhealth:\n  timeout_seconds: 30\n"), 0o600)
+		"name: dockeronly\ncategory: third-party\nversion: 1.11.0\noidc:\n  redirect_paths: [/callback]\n  roles: [admin, user]\nimages:\n  web: traefik/whoami:v1.11.0@sha256:200689790a0a0ea48ca45992e0450bc26ccab5307375b41c84dfc4f2475937ab\nhealth:\n  timeout_seconds: 30\n"), 0o600)
 	os.WriteFile(filepath.Join(dir, "apps", "dockeronly", "compose.yaml.tmpl"), []byte(
 		"services:\n  web:\n    image: {{ .Images.web }}\n"), 0o600)
 	state := filepath.Join(dir, "state")
