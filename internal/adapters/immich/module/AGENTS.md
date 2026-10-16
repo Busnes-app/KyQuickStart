@@ -61,6 +61,9 @@ Owned installation setup, native directory projection and content-preserving acc
   refuse managed identity changes before exchanging a code or updating sessions/accounts.
   Database/marker read failures deny access; stock installations retain upstream behavior.
 - Require a native administrator API key and exact issuer/client/subject; refuse self-revocation.
+- Bind access inspection/revocation to the stored fence, else the directory receipt (including
+  setup ID); only unreceipted accounts use live issuer/client. Never require enabled OIDC or an
+  active/undeleted account there. Grant, sign-in, creation and directory paths keep those checks.
 - Persist `ky.immich-access/1` in native user metadata, write-once to one installation binding.
 - Commit the fence and scoped session/key deletion together. Preserve native user/content fields.
 - Fence metadata presence denies all authenticated access; pin-based subject denial survives OAuth unlinking.
