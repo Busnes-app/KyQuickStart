@@ -448,14 +448,14 @@ orchestration and central identity composition remain acceptance gates.
 KyMessages console setup (`--product kymessage`, `/app/kymessages`) uses protected common
 inputs and one graceful activation. Its dedicated owner binding does not configure the
 Matrix stack: MAS assignments, domains/media prerequisites and full chat acceptance remain
-separate gates. Product contract: `KyMessage-installer-setup/docs/INSTALLER_SETUP.md`.
+separate gates. Product contract: [KyMessage `docs/INSTALLER_SETUP.md`](https://github.com/Busnes-app/KyMessage-Server/blob/master/docs/INSTALLER_SETUP.md).
 
 KyCalendar setup (`--product kycalendar`, `/app/kycalendar`) uses the protected common
 contract, exact issuer-bound subjects and `kycalendar.admin`. Configuration activates through
 a graceful restart and is checked afterward. Dedicated administrators cannot use calendars,
 app passwords or CalDAV. Installer-owned sign-in stays read-only in the product UI. Recovery
 enrollment, central group/client composition, existing mixed-use migration and real-device
-interop remain separate gates. Contract: `KyCalendar-installer-setup/docs/INSTALLER_SETUP.md`.
+interop remain separate gates. Contract: [KyCalendar `docs/INSTALLER_SETUP.md`](https://github.com/Busnes-app/KyCalendar/blob/main/docs/INSTALLER_SETUP.md).
 The optional `KYQ_TEST_CALENDAR_BINARY` fixture exercises actual SSH create/check/resume.
 
 KyYard setup (`--product kyyard`, `/app/kyyard-server`) uses the protected common
