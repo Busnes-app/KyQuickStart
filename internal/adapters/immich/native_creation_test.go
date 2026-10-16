@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"testing"
 )
@@ -87,10 +88,38 @@ func qualifyNativeCreation(t *testing.T, ctx context.Context, c *Client, provide
 			t.Fatal("native creation lost an existing account")
 		}
 	}
+	// Offboarding must not depend on the state it cleans up: revoke a soft-deleted account
+	// with OIDC disabled and the provider rotated, then restore both.
+	var config map[string]any
+	var ignored json.RawMessage
+	fingerprint, err := c.InspectProviderConfiguration(ctx)
+	if err != nil || c.call(ctx, http.MethodGet, "/system-config", nil, &config) != nil {
+		t.Fatal("native configuration readback unavailable", err)
+	}
+	oauth, _ := config["oauth"].(map[string]any)
+	original := maps.Clone(oauth)
+	oauth["enabled"], oauth["issuerUrl"], oauth["clientId"] = false, "https://rotated.example.test", "rotated"
+	if c.call(ctx, http.MethodDelete, "/admin/users/"+created.ID, map[string]any{}, &ignored) != nil || c.call(ctx, http.MethodPut, "/system-config", config, &ignored) != nil {
+		t.Fatal("native soft-deleted/disabled/rotated precondition failed")
+	}
+	rotated := map[string]string{"setupId": setupID, "issuer": "https://rotated.example.test", "clientId": "rotated", "subject": scope.Subject}
+	if c.call(ctx, http.MethodPost, "/admin/users/"+created.ID+"/kyquickstart/revoke", rotated, &ignored) == nil {
+		t.Fatal("rotated provider binding revoked a receipted account")
+	}
+	if err := c.RevokeAccess(ctx, created, setupID); err != nil {
+		t.Fatal("revocation depended on provider configuration or account activity", err)
+	}
+	config["oauth"] = original
+	if c.call(ctx, http.MethodPut, "/system-config", config, &ignored) != nil || c.call(ctx, http.MethodPost, "/admin/users/"+created.ID+"/restore", nil, &ignored) != nil {
+		t.Fatal("native provider/account restore failed")
+	}
+	if restored, err := c.InspectProviderConfiguration(ctx); err != nil || restored != fingerprint {
+		t.Fatal("native provider configuration was not restored", err)
+	}
+	// Restore must not reopen access; the repeat runs on the restored provider.
 	if c.RevokeAccess(ctx, created, setupID) != nil || c.SubjectAbsent(ctx, scope, setupID) == nil {
 		t.Fatal("revoked created account became an absence/adoption candidate")
 	}
-	var ignored json.RawMessage
 	if c.call(ctx, http.MethodPost, "/admin/users/kyquickstart/creation", body, &ignored) == nil {
 		t.Fatal("creation repeat reactivated permanently revoked account")
 	}

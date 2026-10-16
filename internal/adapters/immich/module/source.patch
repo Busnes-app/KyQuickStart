@@ -1077,10 +1077,10 @@ index 755dc4c..1f800c7 100644
      return readFile(filename, { encoding: 'utf8' });
    }
 diff --git a/server/src/repositories/user.repository.ts b/server/src/repositories/user.repository.ts
-index afe14fb..97e9c76 100644
+index afe14fb..9fb6759 100644
 --- a/server/src/repositories/user.repository.ts
 +++ b/server/src/repositories/user.repository.ts
-@@ -1,11 +1,12 @@
+@@ -1,11 +1,16 @@
 -import { Injectable } from '@nestjs/common';
 +import { ConflictException, Injectable } from '@nestjs/common';
  import { ExpressionBuilder, Insertable, Kysely, sql, Updateable } from 'kysely';
@@ -1090,12 +1090,16 @@ index afe14fb..97e9c76 100644
  import { columns } from 'src/database';
  import { DummyValue, GenerateSql } from 'src/decorators';
 -import { AssetType, AssetVisibility, UserStatus } from 'src/enum';
-+import { KyQuickStartFenceSchema, KyQuickStartRevokeDto } from 'src/dtos/kyquickstart.dto';
++import {
++  KyQuickStartDirectoryReceiptSchema,
++  KyQuickStartFenceSchema,
++  KyQuickStartRevokeDto,
++} from 'src/dtos/kyquickstart.dto';
 +import { AssetType, AssetVisibility, UserMetadataKey, UserStatus } from 'src/enum';
  import { DB } from 'src/schema';
  import { UserTable } from 'src/schema/tables/user.table';
  import { UserMetadata, UserMetadataItem } from 'src/types';
-@@ -57,6 +58,100 @@ export class UserRepository {
+@@ -57,6 +62,122 @@ export class UserRepository {
        .executeTakeFirst();
    }
  
@@ -1131,6 +1135,16 @@ index afe14fb..97e9c76 100644
 +    if (fence && !fence.success) {
 +      throw new ConflictException('KyQuickStart access proof is unavailable');
 +    }
++    const owned = await this.db
++      .selectFrom('user_metadata')
++      .select('value')
++      .where('userId', '=', userId)
++      .where('key', '=', UserMetadataKey.KyQuickStartDirectory)
++      .executeTakeFirst();
++    const directory = owned ? KyQuickStartDirectoryReceiptSchema.safeParse(owned.value) : undefined;
++    if (directory && !directory.success) {
++      throw new ConflictException('KyQuickStart directory proof is unavailable');
++    }
 +    const keys = await this.db
 +      .selectFrom('api_key')
 +      .select((eb) => eb.fn.countAll().as('count'))
@@ -1146,18 +1160,19 @@ index afe14fb..97e9c76 100644
 +    if (!Number.isSafeInteger(apiKeys) || apiKeys < 0 || !Number.isSafeInteger(sessionCount) || sessionCount < 0) {
 +      throw new ConflictException('KyQuickStart credential counts are unavailable');
 +    }
-+    return { fence: fence?.data ?? null, apiKeys, sessions: sessionCount };
++    return { fence: fence?.data ?? null, directory: directory?.data ?? null, apiKeys, sessions: sessionCount };
 +  }
 +
 +  async revokeKyQuickStartAccess(userId: string, dto: KyQuickStartRevokeDto) {
 +    await this.db.transaction().execute(async (tx) => {
++      // Soft-deleted and inactive accounts are fenced too: restore must not reopen access.
 +      const user = await tx
 +        .selectFrom('user')
-+        .select(['oauthId', 'deletedAt', 'status'])
++        .select(['oauthId'])
 +        .where('id', '=', userId)
 +        .forUpdate()
 +        .executeTakeFirst();
-+      if (!user || user.oauthId !== dto.subject || user.deletedAt !== null || user.status !== UserStatus.Active) {
++      if (!user || user.oauthId !== dto.subject) {
 +        throw new ConflictException('KyQuickStart account binding is unavailable');
 +      }
 +      const row = await tx
@@ -1166,18 +1181,29 @@ index afe14fb..97e9c76 100644
 +        .where('userId', '=', userId)
 +        .where('key', '=', UserMetadataKey.KyQuickStartAccess)
 +        .executeTakeFirst();
-+      if (row) {
-+        const fence = KyQuickStartFenceSchema.safeParse(row.value);
-+        if (
-+          !fence.success ||
-+          fence.data.setupId !== dto.setupId ||
-+          fence.data.issuer !== dto.issuer ||
-+          fence.data.clientId !== dto.clientId ||
-+          fence.data.subject !== dto.subject
-+        ) {
-+          throw new ConflictException('KyQuickStart access ownership conflicts');
-+        }
-+      } else {
++      // An existing fence, else the owned directory receipt, pins the exact binding.
++      const owned = row
++        ? undefined
++        : await tx
++            .selectFrom('user_metadata')
++            .select('value')
++            .where('userId', '=', userId)
++            .where('key', '=', UserMetadataKey.KyQuickStartDirectory)
++            .executeTakeFirst();
++      const pin = row
++        ? KyQuickStartFenceSchema.safeParse(row.value)
++        : owned && KyQuickStartDirectoryReceiptSchema.safeParse(owned.value);
++      if (
++        pin &&
++        (!pin.success ||
++          pin.data.setupId !== dto.setupId ||
++          pin.data.issuer !== dto.issuer ||
++          pin.data.clientId !== dto.clientId ||
++          pin.data.subject !== dto.subject)
++      ) {
++        throw new ConflictException('KyQuickStart access ownership conflicts');
++      }
++      if (!row) {
 +        await tx
 +          .insertInto('user_metadata')
 +          .values({
@@ -1488,7 +1514,7 @@ index 3229ae2..2128444 100644
      const hashed = this.cryptoRepository.hashSha256(token);
  
 diff --git a/server/src/services/user-admin.service.spec.ts b/server/src/services/user-admin.service.spec.ts
-index c52ae54..59086b4 100644
+index c52ae54..65f9190 100644
 --- a/server/src/services/user-admin.service.spec.ts
 +++ b/server/src/services/user-admin.service.spec.ts
 @@ -1,4 +1,9 @@
@@ -1502,7 +1528,7 @@ index c52ae54..59086b4 100644
  import { mapUserAdmin } from 'src/dtos/user.dto';
  import { JobName, UserStatus } from 'src/enum';
  import { UserAdminService } from 'src/services/user-admin.service';
-@@ -21,6 +26,44 @@ describe(UserAdminService.name, () => {
+@@ -21,6 +26,91 @@ describe(UserAdminService.name, () => {
      );
    });
  
@@ -1544,11 +1570,58 @@ index c52ae54..59086b4 100644
 +    });
 +  });
 +
++  describe('revokeKyQuickStartAccess', () => {
++    const pins = {
++      setupId: '271333e2-c221-4601-b249-563b3d828530',
++      issuer: 'https://identity.example.test',
++      clientId: 'photos',
++      subject: 'owned-subject',
++    };
++    const auth = AuthFactory.from({ isAdmin: true }).apiKey().build();
++    const receipt = {
++      ...pins,
++      contract: 'ky.immich-directory/1' as const,
++      revision: 0,
++      profile: { name: 'Daily', email: 'daily@example.test', administrator: false },
++    };
++    const access = (directory: typeof receipt | null) => ({ fence: null, directory, apiKeys: 1, sessions: 1 });
++    const user = UserFactory.create({ oauthId: pins.subject, status: UserStatus.Deleted, deletedAt: new Date() });
++    beforeEach(() => {
++      mocks.user.get.mockResolvedValue(user);
++      // OIDC disabled and rotated: revocation must not depend on live configuration.
++      mocks.systemMetadata.get.mockResolvedValue({
++        oauth: { enabled: false, issuerUrl: 'https://rotated.example.test', clientId: 'rotated' },
++      });
++    });
++    it('revokes a soft-deleted account on its stored receipt with OIDC disabled and rotated', async () => {
++      mocks.user.inspectKyQuickStartAccess.mockResolvedValue(access(receipt));
++      await sut.revokeKyQuickStartAccess(auth, user.id, pins);
++      expect(mocks.user.revokeKyQuickStartAccess).toHaveBeenCalledWith(user.id, pins);
++      expect(mocks.websocket.disconnectUser).toHaveBeenCalledWith(user.id);
++    });
++    it("refuses the rotated issuer's binding for a receipted account", async () => {
++      mocks.user.inspectKyQuickStartAccess.mockResolvedValue(access(receipt));
++      await expect(
++        sut.revokeKyQuickStartAccess(auth, user.id, {
++          ...pins,
++          issuer: 'https://rotated.example.test',
++          clientId: 'rotated',
++        }),
++      ).rejects.toBeInstanceOf(ForbiddenException);
++      expect(mocks.user.revokeKyQuickStartAccess).not.toHaveBeenCalled();
++    });
++    it('binds an unowned account only to the live provider', async () => {
++      mocks.user.inspectKyQuickStartAccess.mockResolvedValue(access(null));
++      await expect(sut.revokeKyQuickStartAccess(auth, user.id, pins)).rejects.toBeInstanceOf(ForbiddenException);
++      expect(mocks.user.revokeKyQuickStartAccess).not.toHaveBeenCalled();
++    });
++  });
++
    describe('create', () => {
      it('should not create a user if there is no local admin account', async () => {
        mocks.user.getAdmin.mockResolvedValueOnce(void 0);
 diff --git a/server/src/services/user-admin.service.ts b/server/src/services/user-admin.service.ts
-index f80a810..9bc0b14 100644
+index f80a810..c3d5890 100644
 --- a/server/src/services/user-admin.service.ts
 +++ b/server/src/services/user-admin.service.ts
 @@ -1,8 +1,20 @@
@@ -1573,7 +1646,7 @@ index f80a810..9bc0b14 100644
  import { SessionResponseDto, mapSession } from 'src/dtos/session.dto';
  import { UserPreferencesResponseDto, UserPreferencesUpdateDto, mapPreferences } from 'src/dtos/user-preferences.dto';
  import {
-@@ -96,6 +108,94 @@ export class UserAdminService extends BaseService {
+@@ -96,6 +108,92 @@ export class UserAdminService extends BaseService {
      return mapUserAdmin(updatedUser);
    }
  
@@ -1622,25 +1695,23 @@ index f80a810..9bc0b14 100644
 +    if (!auth.apiKey) {
 +      throw new ForbiddenException('KyQuickStart requires an administrator API key');
 +    }
-+    const user = await this.findOrFail(id, { withDeleted: false });
-+    const { oauth } = await this.getConfig({ withCache: false });
-+    if (!oauth.enabled || oauth.allowInsecureRequests || !user.oauthId || user.status !== UserStatus.Active) {
-+      throw new ForbiddenException('KyQuickStart provider or account is unavailable');
-+    }
++    // Revocation must survive disabled OIDC, issuer rotation and soft deletion, so the
++    // stored fence or directory receipt pins the provider. Only unowned accounts use live config.
++    const user = await this.findOrFail(id, { withDeleted: true });
 +    const state = await this.userRepository.inspectKyQuickStartAccess(id);
-+    if (
-+      state.fence &&
-+      (state.fence.issuer !== oauth.issuerUrl ||
-+        state.fence.clientId !== oauth.clientId ||
-+        state.fence.subject !== user.oauthId)
-+    ) {
++    let pin: { issuer: string; clientId: string; subject: string } | null = state.fence ?? state.directory;
++    if (!pin) {
++      const { oauth } = await this.getConfig({ withCache: false });
++      pin = { issuer: oauth.issuerUrl, clientId: oauth.clientId, subject: user.oauthId };
++    }
++    if (!user.oauthId || pin.subject !== user.oauthId) {
 +      throw new ForbiddenException('KyQuickStart provider or account binding conflicts');
 +    }
 +    return {
 +      contract: 'ky.immich-access/1',
 +      userId: id,
-+      issuer: oauth.issuerUrl,
-+      clientId: oauth.clientId,
++      issuer: pin.issuer,
++      clientId: pin.clientId,
 +      subject: user.oauthId,
 +      setupId: state.fence?.setupId ?? null,
 +      revokedAt: state.fence?.revokedAt ?? null,

@@ -32,8 +32,8 @@ Verify exact native OIDC ownership, administrator projection and content-preserv
 - Recheck enabled native OAuth configuration with insecure requests disabled and exact identity before mutation; standalone grants change only `isAdmin`.
 - Missing identity/activity/administrator fields, provider drift and deleted accounts refuse mutation,
   except revocation: it requires only the exact native UUID/subject and module fence binding, so a
-  disabled/rotated provider or inactive/soft-deleted account can still be fenced. The current module
-  still refuses those states server-side; end-to-end revocation for them remains a gate.
+  disabled/rotated provider or inactive/soft-deleted account can still be fenced. The module binds
+  that revocation to its stored fence or directory receipt; the creation fixture qualifies it.
 - Unknown writes or failed verification return a reconciliation error; never claim successful access from a PUT alone.
 - Native DELETE schedules content deletion and is not offboarding. No deletion or restore call is implemented.
 - Native signed back-channel logout revokes OAuth sessions but preserves personal API keys;
@@ -159,7 +159,8 @@ the fixture separately caps container memory (server 2 GiB, database 768 MiB, pr
 - `KYQ_TEST_IMMICH_CREATE=1` requires setup/module mode and qualifies native absence,
   session-only administrator refusal, installation/provider/subject/email/role conflicts,
   atomic ordinary creation, exact receipt repeat, later profile/administrator projection
-  without repeat rollback, existing-account retention and permanent revoked-account refusal.
+  without repeat rollback, existing-account retention, revocation while soft-deleted with OIDC
+  disabled/rotated (rotated binding refused, restore stays fenced) and permanent revoked-account refusal.
   Alone this is controlled native API qualification; with producer mode it also drives
   actual new-account assignment delivery through protected runtime creation.
 - `creation_test.go` refuses incomplete/foreign/contradictory absence and holds lost writes
