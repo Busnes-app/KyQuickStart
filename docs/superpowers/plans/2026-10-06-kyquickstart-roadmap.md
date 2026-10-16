@@ -11,7 +11,7 @@ installer, and record what each phase waits for.
 **Architecture:** A Go CLI drives bring-your-own Docker hosts over SSH (Kubernetes optional)
 through a step engine of Inspect → Apply → Verify steps. Apps are embedded manifests plus Go
 adapters; Ky products are configured through their container-local `apply-setup`; a resident
-bridge handles offboarding; a shared module runs upgrades from the CLI or KyYard.
+bridge handles offboarding; upgrades run from the CLI or from KyYard through the suite runner.
 
 **Tech Stack:** Go 1.26.6 (suite floor), `golang.org/x/crypto/ssh` (+ `agent`, `knownhosts`),
 `go.yaml.in/yaml/v3`, `client-go` (Kubernetes phase), `ky-primitives` (capsule,
@@ -61,7 +61,7 @@ with tests, in a tagged release.
 | G3 | kyrecovery-server | `apply-setup` plus unattended in-container `pair generate --service` |
 | G4 | kyPulse-server | `apply-setup` for targets and log sources |
 | G5 | KyYard-Server | `apply-setup` for enrollment; honors target lock and labelled-workload refusal |
-| G6 | KyYard-Server | Imports the shared upgrade module; Upgrade action |
+| G6 | KyYard-Server | Suite page over the suite runner (install, upgrade, uninstall, unmanage) |
 | G7 | Each other Ky product in the release set | `apply-setup` for its own settings and recovery pairing |
 | G8 | Holm (upstream or fork) | Back-channel logout or session recheck |
 | G9 | KyNotes | OneNote-style notebooks (separate sub-project; not an installer blocker) |
