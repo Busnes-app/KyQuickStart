@@ -29,7 +29,10 @@
    at a time, CI green, tagged release. Order: Identity, Notes, Recovery, Pulse, Drive, then
    the rest.
 4. Extend the catalog manifest schema (OIDC client, backup declaration, upgrade rules, ports,
-   env, release-set ID) with strict validation and tests.
+   env, release-set ID) with strict validation and tests. **Done 2026-10-16:** `version`,
+   `oidc`, `backup`, `upgrade` and `kubernetes.env`. No per-manifest release-set ID: the
+   binary is the release set and labels every workload. No top-level ports: Compose and
+   `kubernetes.ports` already declare them, and a third copy would drift.
 5. Rerun deferred proofs on the landed code: `make e2e` (Docker), restricted kind suite,
    shared-module race/macOS/vulnerability jobs.
 

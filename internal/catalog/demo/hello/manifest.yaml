@@ -1,6 +1,7 @@
 name: hello
 description: Disposable diagnostic HTTP service for testing deployment (no SSO)
 category: ky
+version: 1.11.0
 images:
   whoami: traefik/whoami:v1.11.0@sha256:200689790a0a0ea48ca45992e0450bc26ccab5307375b41c84dfc4f2475937ab
 secrets: [token]

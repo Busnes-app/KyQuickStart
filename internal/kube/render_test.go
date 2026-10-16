@@ -71,6 +71,17 @@ func TestRenderHashFollowsInputs(t *testing.T) {
 	}
 }
 
+func TestRenderEnvIsSorted(t *testing.T) {
+	app := fixture(t)
+	k := *app.Kubernetes
+	k.Env = map[string]string{"B": "2", "A": "1", "C": "3"}
+	app.Kubernetes = &k
+	env := render("hello", app, "rs-1").Deployment.Spec.Template.Spec.Containers[0].Env
+	if len(env) != 3 || env[0].Name != "A" || env[1].Value != "2" || env[2].Name != "C" {
+		t.Fatalf("env = %+v", env)
+	}
+}
+
 func TestRenderWithoutPortsOrSecrets(t *testing.T) {
 	app := fixture(t)
 	k := *app.Kubernetes
