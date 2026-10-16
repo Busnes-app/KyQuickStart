@@ -20,6 +20,7 @@ const DefaultRoot = "/opt/kyquickstart"
 type Stack struct {
 	Demo         bool          `yaml:"demo,omitempty"`
 	Version      int           `yaml:"version"`
+	Revision     int           `yaml:"revision,omitempty"` // +1 on every write; 0 only in files that predate it
 	Targets      []Target      `yaml:"targets"`
 	Apps         []App         `yaml:"apps"`
 	Edges        []Edge        `yaml:"edges,omitempty"`
@@ -125,6 +126,9 @@ func (s *Stack) Target(name string) (Target, bool) {
 func (s *Stack) validate() error {
 	if s.Version != 1 {
 		return fmt.Errorf("version %d: only version 1 is supported", s.Version)
+	}
+	if s.Revision < 0 {
+		return errors.New("revision must not be negative")
 	}
 	if len(s.Targets) == 0 {
 		return errors.New("no targets")
