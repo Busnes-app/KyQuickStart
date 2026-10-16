@@ -66,7 +66,7 @@ func testPulseIntegration(t *testing.T, ctx context.Context, state, hostFP strin
 	if err := os.WriteFile(filepath.Join(integrationState, "stack.yaml"), encoded, 0600); err != nil {
 		t.Fatal(err)
 	}
-	docker(t, "run", "-d", "--name", name, "--restart", "always", "-p", "127.0.0.1::8080", "--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()), "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "-v", binary+":/app/kypulse:ro", "-v", data+":/data", "-e", "KYPULSE_DATA_DIR=/data", "-e", "KYPULSE_APP_URL=https://pulse.example.test", "-e", "KYPULSE_SSO_AUTO_PROVISION=false", "-e", "KYPULSE_ADMIN_PASSWORD=disposable-bootstrap-password", "--entrypoint", "/app/kypulse", "kyq-e2e-sshd")
+	docker(t, "run", "-d", "--name", name, "--restart", "always", "-p", "127.0.0.1::8080", "--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()), "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "-v", binary+":/app/kypulse:ro", "-v", data+":/data", "-e", "KYPULSE_ENV=production", "-e", "KYPULSE_HOST=0.0.0.0", "-e", "KYPULSE_DATA_DIR=/data", "-e", "KYPULSE_APP_URL=https://pulse.example.test", "-e", "KYPULSE_SSO_AUTO_PROVISION=false", "-e", "KYPULSE_ADMIN_PASSWORD=disposable-bootstrap-password", "--entrypoint", "/app/kypulse", "kyq-e2e-sshd")
 	t.Cleanup(func() { exec.Command("docker", "rm", "-f", name).Run() })
 	deadline := time.Now().Add(30 * time.Second)
 	for {
