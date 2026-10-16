@@ -192,6 +192,20 @@ func guided(ctx context.Context, args []string, o Options) error {
 	previous, err := stack.Load(filepath.Join(*state, "stack.yaml"))
 	if err == nil && len(p.answers) == 0 {
 		seedAnswers(p.answers, previous)
+	} else if err == nil {
+		// stack.yaml owns preparation metadata the wizard never asks for, so hand edits beat the draft.
+		seed := map[string]string{}
+		seedAnswers(seed, previous)
+		for k := range p.answers {
+			if preparationKey(k) {
+				delete(p.answers, k)
+			}
+		}
+		for k, v := range seed {
+			if preparationKey(k) {
+				p.answers[k] = v
+			}
+		}
 	}
 	if previous != nil {
 		if len(previous.Integrations) > 0 {
@@ -564,6 +578,12 @@ func review(args []string, o Options) error {
 	}
 	showPlan(o.Out, st, cat)
 	return nil
+}
+
+// preparationKey reports an integration answer owned by stack.yaml: notes and identity are
+// never asked, and identity-client is asked only with stack.yaml's value as the default.
+func preparationKey(k string) bool {
+	return strings.HasPrefix(k, "integration.") && (strings.HasSuffix(k, ".notes") || strings.HasSuffix(k, ".identity") || strings.HasSuffix(k, ".identity-client"))
 }
 
 func seedAnswers(a map[string]string, st *stack.Stack) {
