@@ -21,6 +21,17 @@ type Step interface {
 	Verify(ctx context.Context) error
 }
 
+// Noter is a Step whose ok result records a note, such as an operator's acknowledgement.
+type Noter interface{ Note() string }
+
+// Event reports a step starting ("running") or finishing ("ok", "skipped" or "failed").
+type Event struct {
+	ID          string
+	Status      string
+	Time        time.Time
+	Diagnostics string
+}
+
 // ErrTransient marks an Apply error worth a bounded retry (image pulls, 429, 503).
 var ErrTransient = errors.New("transient")
 
@@ -33,10 +44,11 @@ type Result struct {
 }
 
 type Engine struct {
-	Dir    string // one <step-id>.json per step
-	Out    io.Writer
-	Redact *Redactor
-	Sleep  func(context.Context, time.Duration) error // nil sleeps for real
+	Dir      string // one <step-id>.json per step
+	Out      io.Writer
+	Redact   *Redactor
+	Sleep    func(context.Context, time.Duration) error // nil sleeps for real
+	Progress func(Event)                                // optional
 }
 
 const attempts = 3
@@ -58,21 +70,34 @@ func (e *Engine) Run(ctx context.Context, steps []Step) error {
 		return err
 	}
 	for _, s := range steps {
+		e.report(Event{ID: s.ID(), Status: "running", Time: time.Now().UTC()})
 		status, err := e.runStep(ctx, s)
 		if err != nil {
 			msg := bound(e.Redact.Redact(err.Error()))
 			fmt.Fprintf(e.Out, "%-20s failed: %s\n", s.ID(), msg)
 			res := Result{Status: "failed", InputHash: s.InputHash(), Time: time.Now().UTC(), Diagnostics: msg}
+			e.report(Event{s.ID(), res.Status, res.Time, msg})
 			return errors.Join(fmt.Errorf("%s: %s", s.ID(), msg), e.write(s.ID(), res))
 		}
+		res := Result{Status: "ok", InputHash: s.InputHash(), Time: time.Now().UTC()}
+		if n, ok := s.(Noter); ok {
+			res.Diagnostics = bound(e.Redact.Redact(n.Note()))
+		}
 		if status == "ok" {
-			if err := e.write(s.ID(), Result{Status: "ok", InputHash: s.InputHash(), Time: time.Now().UTC()}); err != nil {
+			if err := e.write(s.ID(), res); err != nil {
 				return err
 			}
 		}
 		fmt.Fprintf(e.Out, "%-20s %s\n", s.ID(), status)
+		e.report(Event{s.ID(), status, res.Time, res.Diagnostics})
 	}
 	return nil
+}
+
+func (e *Engine) report(ev Event) {
+	if e.Progress != nil {
+		e.Progress(ev)
+	}
 }
 
 func (e *Engine) runStep(ctx context.Context, s Step) (string, error) {
@@ -129,8 +154,11 @@ func (e *Engine) sleep(ctx context.Context, d time.Duration) error {
 	}
 }
 
-func (e *Engine) read(id string) (Result, bool) {
-	b, err := os.ReadFile(filepath.Join(e.Dir, id+".json"))
+func (e *Engine) read(id string) (Result, bool) { return Read(e.Dir, id) }
+
+// Read returns step id's last result in dir.
+func Read(dir, id string) (Result, bool) {
+	b, err := os.ReadFile(filepath.Join(dir, id+".json"))
 	if err != nil {
 		return Result{}, false
 	}
