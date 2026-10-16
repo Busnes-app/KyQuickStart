@@ -79,7 +79,7 @@ pairing (G7), kyPulse registration, edge G11, catalog entry, `verify`.
 | KyDNS | Backup enrollment |
 | KyMessage | Matrix provisioning; MAS assignment exclusion |
 | KyCalendar | Real-device interop; release provenance; VTODO task sync (iOS Reminders, Android) moved into scope |
-| KyYard (G5, G6) | Enrollment honoring locks; shared upgrade module; tenant/endpoint composition |
+| KyYard (G5, G6) | Enrollment honoring locks; Suite page and suite runner; tenant/endpoint composition |
 
 ### M4 — Third-party apps (Docker hosts; one detailed plan each)
 
@@ -111,7 +111,8 @@ Contacts are covered by KyPost (CardDAV with Android and iOS sync); no separate 
 1. Offboarding bridge (`kyoffboard`) resident deployment, network policy, kyPulse alerts;
    close offboard review lows.
 2. Fresh guided inputs, owner MFA, printable handover, `uninstall`/`unmanage`.
-3. Upgrades (Phase 10): shared module, pre-upgrade capsule + snapshot, KyYard action.
+3. Upgrades (Phase 10): `upgrade` command and suite runner (see
+   `../specs/2026-10-16-suite-runner-design.md`), pre-upgrade capsule + snapshot, KyYard Suite page.
 4. Full-stack pilot acceptance on `unraid.urlxl.us` / `hluswcdata01` /
    `kyrecovery.urlxl.us`, preserving existing services, credentials, KyVault and Vikunja data.
 
