@@ -128,6 +128,90 @@ func TestCreationProofPublicationAndInitialization(t *testing.T) {
 		t.Fatal("native diagnostic entered receipt")
 	}
 }
+func TestCreationRefusalRetriesCorrectedProfileOnly(t *testing.T) {
+	s := openStore(t, stateDir(t))
+	defer s.Close()
+	calls := 0
+	var target *Target
+	var scope Binding
+	var refused DirectoryProfile
+	target, scope, refused = creationFixture(t, s, func(_ context.Context, b Binding, p DirectoryProfile) (Binding, error) {
+		calls++
+		if calls == 1 {
+			return Binding{}, errors.New("native refusal")
+		}
+		// The job is attempting and the delivery lock is held: no concurrent overwrite.
+		other := p
+		other.Name = "Concurrent profile"
+		if _, err := s.CreateAccount(context.Background(), target, scope, other, time.Now()); !errors.Is(err, ErrPending) {
+			t.Error("concurrent retry entered an in-progress creation", err)
+		}
+		b.NativeID = 31
+		return b, nil
+	})
+	id := bindingID(scope)
+	if _, err := s.CreateAccount(context.Background(), target, scope, refused, time.Now()); err == nil {
+		t.Fatal("known refusal accepted")
+	}
+	foreign := scope
+	foreign.Username = "night"
+	corrected := refused
+	corrected.Name = "Corrected profile"
+	if _, err := s.CreateAccount(context.Background(), target, foreign, corrected, time.Now()); !errors.Is(err, ErrAccountConflict) || calls != 1 {
+		t.Fatal("refusal released a different scope", err)
+	}
+	if _, err := s.CreateAccount(context.Background(), target, scope, corrected, time.Now()); err != nil || calls != 2 {
+		t.Fatal("refused creation could not retry a corrected profile", err)
+	}
+	job, err := s.creationJob(id)
+	if err != nil || job.Status != "created" || job.Attempt != 2 || job.Profile != corrected {
+		t.Fatal("corrected attempt not retained", err, job)
+	}
+	var first creationAudit
+	if s.read(creationAuditName(id, 1, "result"), &first) != nil || first.Outcome != "failed" || first.Digest != creationDigest(scope, refused) {
+		t.Fatal("refused attempt audit lost")
+	}
+	later := corrected
+	later.Name = "Later profile"
+	if _, err := s.CreateAccount(context.Background(), target, scope, later, time.Now()); !errors.Is(err, ErrAccountConflict) {
+		t.Fatal("created account accepted a different digest", err)
+	}
+	if err := s.ApplyDirectory(context.Background(), target, id, corrected, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.completeCreation(id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateAccount(context.Background(), target, scope, later, time.Now()); !errors.Is(err, ErrAccountConflict) || calls != 2 {
+		t.Fatal("complete account accepted a different digest", err)
+	}
+}
+func TestCreationAttemptingHoldsCorrectedProfile(t *testing.T) {
+	s := openStore(t, stateDir(t))
+	defer s.Close()
+	calls := 0
+	target, scope, p := creationFixture(t, s, func(context.Context, Binding, DirectoryProfile) (Binding, error) {
+		calls++
+		return Binding{}, errors.New("native refusal")
+	})
+	if _, err := s.CreateAccount(context.Background(), target, scope, p, time.Now()); err == nil {
+		t.Fatal("known refusal accepted")
+	}
+	// An interrupted attempt is durable as attempting.
+	id := bindingID(scope)
+	job, err := s.creationJob(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job.Status = "attempting"
+	if err := s.write(id+".creation", job); err != nil {
+		t.Fatal(err)
+	}
+	p.Name = "Corrected profile"
+	if _, err := s.CreateAccount(context.Background(), target, scope, p, time.Now()); !errors.Is(err, ErrCreationUncertain) || calls != 1 {
+		t.Fatal("corrected profile replaced an interrupted creation", err)
+	}
+}
 func TestCreationReceiptBindingPublishFailureDoesNotRecreate(t *testing.T) {
 	path := stateDir(t)
 	s := openStore(t, path)
