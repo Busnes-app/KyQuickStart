@@ -24,6 +24,8 @@ type finding struct {
 type driver interface {
 	preflight(ctx context.Context) []finding
 	acquire(ctx context.Context, holder string) (func(context.Context) error, error)
+	marker(context.Context) (stack.Marker, error)
+	writeMarker(context.Context, stack.Marker) error
 	steps(name string, app catalog.App, releaseSet string, redact *engine.Redactor) []engine.Step
 	edgeToken(context.Context) ([]byte, error)
 	checkConnector(context.Context, stack.Edge) error
@@ -33,7 +35,10 @@ type driver interface {
 
 type sshDriver struct {
 	t stack.Target
-	c *remote.SSH
+	c interface {
+		remote.Runner
+		Close() error
+	}
 }
 
 func (d sshDriver) preflight(ctx context.Context) []finding {
@@ -46,6 +51,14 @@ func (d sshDriver) preflight(ctx context.Context) []finding {
 
 func (d sshDriver) acquire(ctx context.Context, holder string) (func(context.Context) error, error) {
 	return dockerhost.Acquire(ctx, d.c, d.t.Root, holder)
+}
+
+func (d sshDriver) marker(ctx context.Context) (stack.Marker, error) {
+	return dockerhost.ReadMarker(ctx, d.c, d.t.Root)
+}
+
+func (d sshDriver) writeMarker(ctx context.Context, m stack.Marker) error {
+	return dockerhost.WriteMarker(ctx, d.c, d.t.Root, m)
 }
 
 func (d sshDriver) steps(name string, app catalog.App, releaseSet string, redact *engine.Redactor) []engine.Step {
@@ -81,6 +94,12 @@ func (d kubeDriver) preflight(ctx context.Context) []finding {
 
 func (d kubeDriver) acquire(ctx context.Context, holder string) (func(context.Context) error, error) {
 	return kube.Acquire(ctx, d.c, holder)
+}
+
+func (d kubeDriver) marker(ctx context.Context) (stack.Marker, error) { return d.c.Marker(ctx) }
+
+func (d kubeDriver) writeMarker(ctx context.Context, m stack.Marker) error {
+	return d.c.WriteMarker(ctx, m)
 }
 
 func (d kubeDriver) steps(name string, app catalog.App, releaseSet string, redact *engine.Redactor) []engine.Step {

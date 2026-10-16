@@ -17,12 +17,14 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
+	"github.com/Busnes-app/kyquickstart/internal/dockerhost"
 	"github.com/Busnes-app/kyquickstart/internal/edge"
 	"github.com/Busnes-app/kyquickstart/internal/engine"
 	"github.com/Busnes-app/kyquickstart/internal/kube"
 	"github.com/Busnes-app/kyquickstart/internal/plan"
 	"github.com/Busnes-app/kyquickstart/internal/remote"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
+	"github.com/Busnes-app/kyquickstart/internal/suite"
 )
 
 // ErrUsage means the arguments name no command; main prints Usage.
@@ -151,6 +153,7 @@ func (t trustFlag) Set(v string) error {
 type session struct {
 	integrations []stack.Integration
 	allTargets   []stack.Target
+	revision     int // of the loaded plan; markers on targets record it
 	demo         bool
 	o            Options
 	state        string
@@ -215,7 +218,7 @@ func load(state string, trust trustFlag, o Options) (*session, error) {
 		clusters[[2]string{kc, t.Context}] = t.Name
 		st.Targets[i].Kubeconfig = kc
 	}
-	s := &session{allTargets: st.Targets, integrations: st.Integrations, o: o, state: state, demo: st.Demo, cat: cat, placed: map[string]stack.Target{}, drivers: map[string]driver{}, edges: st.Edges, npms: map[string]*edge.NPM{}}
+	s := &session{revision: st.Revision, allTargets: st.Targets, integrations: st.Integrations, o: o, state: state, demo: st.Demo, cat: cat, placed: map[string]stack.Target{}, drivers: map[string]driver{}, edges: st.Edges, npms: map[string]*edge.NPM{}}
 	var names []string
 	used := map[string]bool{}
 	for _, a := range st.Apps {
@@ -253,24 +256,11 @@ func load(state string, trust trustFlag, o Options) (*session, error) {
 func (s *session) connect(ctx context.Context, trust trustFlag) error {
 	confirm := s.confirmer()
 	for _, t := range s.targets {
-		if t.Kubernetes() {
-			c, err := kube.Connect(t.Kubeconfig, t.Context)
-			if err != nil {
-				return fmt.Errorf("%s: %w", t.Name, err)
-			}
-			s.drivers[t.Name] = kubeDriver{c: c, needsStorage: s.needsStorage(t.Name)}
-			continue
-		}
-		c, err := remote.Dial(ctx, remote.SSHConfig{
-			Name: t.Name, Host: t.Host, Port: t.Port, User: t.User,
-			KnownHosts: filepath.Join(s.state, "known_hosts"),
-			Trust:      trust[t.Name],
-			Confirm:    confirm,
-		})
+		d, err := dialTarget(ctx, t, filepath.Join(s.state, "known_hosts"), trust[t.Name], confirm, s.needsStorage(t.Name))
 		if err != nil {
 			return err
 		}
-		s.drivers[t.Name] = sshDriver{t: t, c: c}
+		s.drivers[t.Name] = d
 	}
 	for _, e := range s.edges {
 		token, err := s.drivers[e.Target].edgeToken(ctx)
@@ -284,6 +274,25 @@ func (s *session) connect(ctx context.Context, trust trustFlag) error {
 		s.npms[e.Target] = n
 	}
 	return nil
+}
+
+// dialTarget connects one target; tests replace it.
+var dialTarget = func(ctx context.Context, t stack.Target, knownHosts, trust string, confirm func(name, fp string) bool, needsStorage bool) (driver, error) {
+	if t.Kubernetes() {
+		c, err := kube.Connect(t.Kubeconfig, t.Context)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", t.Name, err)
+		}
+		return kubeDriver{c: c, needsStorage: needsStorage}, nil
+	}
+	c, err := remote.Dial(ctx, remote.SSHConfig{
+		Name: t.Name, Host: t.Host, Port: t.Port, User: t.User,
+		KnownHosts: knownHosts, Trust: trust, Confirm: confirm,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return sshDriver{t: t, c: c}, nil
 }
 
 func (s *session) needsStorage(target string) bool {
@@ -354,22 +363,11 @@ func (s *session) apply(ctx context.Context) (err error) {
 	if len(s.order) == 0 {
 		return errors.New("no installable apps selected; existing references do not authorize integration or deployment")
 	}
-	holder := holderName()
-	var releases []func(context.Context) error
-	defer func() {
-		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		defer cancel()
-		for _, release := range releases {
-			err = errors.Join(err, release(rctx))
-		}
-	}()
-	for _, t := range s.targets {
-		release, err := s.drivers[t.Name].acquire(ctx, holder)
-		if err != nil {
-			return fmt.Errorf("%s: %w", t.Name, err)
-		}
-		releases = append(releases, release)
+	done, err := s.lock(ctx, holderName(), s.targets)
+	if err != nil {
+		return err
 	}
+	defer func() { err = errors.Join(err, finish(ctx, done)) }()
 	redact := &engine.Redactor{}
 	var steps []engine.Step
 	for _, name := range s.order {
@@ -401,6 +399,69 @@ func (s *session) apply(ctx context.Context) (err error) {
 		}
 	}
 	return nil
+}
+
+// lock takes every target's lock and refuses a target whose plan marker is newer than this
+// plan. done writes this plan's revision to each target's marker, then releases the locks.
+func (s *session) lock(ctx context.Context, holder string, targets []stack.Target) (done func(context.Context) error, err error) {
+	var releases []func(context.Context) error
+	unlock := func(ctx context.Context) (err error) {
+		for _, release := range releases {
+			err = errors.Join(err, release(ctx))
+		}
+		return err
+	}
+	markers := map[string]stack.Marker{}
+	for _, t := range targets {
+		release, m, err := s.lockOne(ctx, holder, t)
+		if err != nil {
+			return nil, errors.Join(err, finish(ctx, unlock))
+		}
+		releases, markers[t.Name] = append(releases, release), m
+	}
+	return func(ctx context.Context) (err error) {
+		for _, t := range targets {
+			// Keep the owner: only handoff moves a plan between the CLI and the runner.
+			m := markers[t.Name]
+			if m.Owner == "" {
+				m.Owner = "cli"
+			}
+			m.Revision = s.revision
+			err = errors.Join(err, s.drivers[t.Name].writeMarker(ctx, m))
+		}
+		return errors.Join(err, unlock(ctx))
+	}, nil
+}
+
+// lockOne takes one target's lock and reads its marker, releasing the lock on refusal.
+func (s *session) lockOne(ctx context.Context, holder string, t stack.Target) (func(context.Context) error, stack.Marker, error) {
+	d := s.drivers[t.Name]
+	release, err := d.acquire(ctx, holder)
+	var dl *dockerhost.LockedError
+	var kl *kube.LockedError
+	if errors.As(err, &dl) || errors.As(err, &kl) {
+		return nil, stack.Marker{}, suite.Errorf(suite.TargetLocked, "%s: %w", t.Name, err)
+	}
+	if err != nil {
+		return nil, stack.Marker{}, fmt.Errorf("%s: %w", t.Name, err)
+	}
+	m, err := d.marker(ctx)
+	if err != nil {
+		err = fmt.Errorf("%s: %w", t.Name, err)
+	} else if m.Revision > s.revision {
+		err = suite.Errorf(suite.PlanStale, "%s holds plan revision %d (owner %s), newer than this plan's %d; run kyquickstart pull-plan", t.Name, m.Revision, m.Owner, s.revision)
+	}
+	if err != nil {
+		return nil, m, errors.Join(err, finish(ctx, release))
+	}
+	return release, m, nil
+}
+
+// finish runs a cleanup that must happen even after ctx is cancelled.
+func finish(ctx context.Context, f func(context.Context) error) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	return f(ctx)
 }
 
 func holderName() string {
