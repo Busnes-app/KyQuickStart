@@ -48,7 +48,7 @@ final class Roles
         return $data;
     }
 
-    private static function policy(array $request): array
+    private static function policy(array $request, bool $lock = true): array
     {
         $admin = Role::getSystemRole('admin');
         if (!$admin || in_array($admin->id, $request['ordinary_role_ids'], true)) {
@@ -58,7 +58,7 @@ final class Roles
         $proofs = [];
         $default = (int) setting('registration-role');
         foreach ($ids as $id) {
-            $role = Role::query()->whereKey($id)->lockForUpdate()->first();
+            $role = Role::query()->whereKey($id)->when($lock, fn ($query) => $query->lockForUpdate())->first();
             if (!$role) { throw new RuntimeException('Pinned native role missing'); }
             $permissions = $role->permissions()->pluck('name')->all(); sort($permissions, SORT_STRING);
             if ($id !== $admin->id && ($role->system_name === 'admin' ||
@@ -96,19 +96,21 @@ final class Roles
 
     public static function apply(array $request): array
     {
-        return DB::transaction(function () use ($request): array {
+        // Check never writes, so it reads one consistent snapshot without row locks.
+        $lock = $request['action'] !== 'check';
+        return DB::transaction(function () use ($request, $lock): array {
             $owned = Accounts::ownedUser($request['subject']);
-            $user = User::query()->whereKey($request['user_id'])->lockForUpdate()->first();
+            $user = User::query()->whereKey($request['user_id'])->when($lock, fn ($query) => $query->lockForUpdate())->first();
             $primary = Setting::query()->where('setting_key', 'kyquickstart-account:' . $request['setup_id'])->first();
             $ownership = $primary ? json_decode($primary->value, true, 8, JSON_THROW_ON_ERROR) : null;
             if (!$user || $owned->id !== $user->id || !is_array($ownership) ||
                 ($ownership['contract'] ?? '') !== Accounts::CONTRACT || ($ownership['user_id'] ?? null) !== $user->id) {
                 throw new RuntimeException('Owned role binding required');
             }
-            $policy = self::policy($request);
+            $policy = self::policy($request, $lock);
             $binding = hash('sha256', $request['issuer'] . "\0" . $request['client_id'] . "\0" . $request['subject']);
             $key = self::key($user->id);
-            $stored = Setting::query()->where('setting_key', $key)->lockForUpdate()->first();
+            $stored = Setting::query()->where('setting_key', $key)->when($lock, fn ($query) => $query->lockForUpdate())->first();
             $receipt = $stored ? json_decode($stored->value, true, 8, JSON_THROW_ON_ERROR) : null;
             $disabled = Revocations::denied($user);
             $desired = $request['ordinary_role_ids'];
@@ -127,7 +129,7 @@ final class Roles
                     $receipt['administrator'] !== in_array($policy['administrator_role_id'], self::ids($user), true)) {
                     throw new RuntimeException('Native role authority drift');
                 }
-                $audit = Setting::query()->where('setting_key', $key . ':audit:' . $receipt['revision'])->lockForUpdate()->first();
+                $audit = Setting::query()->where('setting_key', $key . ':audit:' . $receipt['revision'])->when($lock, fn ($query) => $query->lockForUpdate())->first();
                 if (!$audit || $audit->value !== $stored->value) { throw new RuntimeException('Native role audit required'); }
             } elseif ($request['action'] !== 'initialize' || $disabled || $request['expected_revision'] !== 0 || self::ids($user) !== $desired ||
                 ($request['administrator'] && !Accounts::verifiedLogin($user, true))) {

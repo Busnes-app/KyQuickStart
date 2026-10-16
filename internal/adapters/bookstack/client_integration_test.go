@@ -403,6 +403,9 @@ func TestNativeOIDCAccountVerification(t *testing.T) {
 			if checked, err := c.InspectRoles(ctx, scope); err != nil || checked != state {
 				t.Fatal("role refusal changed authority", err)
 			}
+			if check, apply := nativeRoleLocks(t, ctx, container, scope.ID); check != 0 || apply == 0 {
+				t.Fatal("per-request role check takes row locks", check, apply)
+			}
 		case "demote":
 			h := fixtureDirectoryHTTP(t, ctx, container, owner)
 			before, err := h.InspectDirectory(ctx, scope)
@@ -511,6 +514,30 @@ func faultNativeSetting(t *testing.T, ctx context.Context, container, key, value
 	if exec.CommandContext(ctx, "docker", "exec", "-u", "abc", container, "php", "-r", code).Run() != nil {
 		t.Fatal("owned native fault injection failed")
 	}
+}
+
+// Counts FOR UPDATE queries in the per-request check and, as a control, a no-op apply repeat.
+// Called only after the native helper has verified its disposable container and pin.
+func nativeRoleLocks(t *testing.T, ctx context.Context, container string, id int64) (int, int) {
+	t.Helper()
+	code := `require '/app/www/vendor/autoload.php'; $app=require '/app/www/bootstrap/app.php'; $app->make(\Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+use Illuminate\Support\Facades\DB; use KyQuickStart\BookStack\Roles;
+$locks = function (callable $run): int { DB::flushQueryLog(); DB::enableQueryLog(); $run(); DB::disableQueryLog();
+    return count(array_filter(DB::getQueryLog(), fn ($q): bool => stripos($q['query'], 'for update') !== false)); };
+$user = \BookStack\Users\Models\User::findOrFail(` + strconv.FormatInt(id, 10) + `);
+$r = Roles::inspectUser($user);
+$check = $locks(fn () => Roles::inspectUser($user));
+$apply = $locks(fn () => Roles::apply(Roles::validate(['contract' => Roles::CONTRACT, 'action' => 'apply', 'user_id' => $user->id,
+    'setup_id' => $r['setup_id'], 'issuer' => (string) config('oidc.issuer'), 'client_id' => (string) config('oidc.client_id'),
+    'subject' => (string) $user->external_auth_id, 'ordinary_role_ids' => $r['ordinary_role_ids'],
+    'everyday_role' => $r['everyday_role'], 'administrator' => $r['administrator'], 'expected_revision' => $r['revision']])));
+echo json_encode([$check, $apply]);`
+	out, err := exec.CommandContext(ctx, "docker", "exec", "-u", "abc", container, "php", "-r", code).Output()
+	var counts [2]int
+	if err != nil || json.Unmarshal(out, &counts) != nil {
+		t.Fatal("native role lock probe failed")
+	}
+	return counts[0], counts[1]
 }
 
 // Called only after the parent verifies this nonce-owned container and pinned image.
