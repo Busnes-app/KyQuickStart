@@ -116,9 +116,11 @@ Accepted risk (Yoshi, 2026-10-10): setup does not refuse pre-existing administra
 does not disable `passwordLogin`. An admin created through Immich's first-run sign-up
 before setup keeps password access. Run setup before Immich is reachable by anyone else.
 
-Known gap: the Go adapter revokes with OIDC disabled, a rotated issuer or a soft-deleted
-account, but this module's access inspection and revoke still refuse those states, so
-revocation holds until the module accepts them.
+Access inspection and revoke accept OIDC disabled, a rotated provider and inactive or
+soft-deleted accounts. The binding comes from the stored fence, else the account's directory
+receipt (setup, issuer, client, subject); live configuration is used only for accounts with
+neither, so a rotated provider cannot revoke a receipted account or match another issuer's
+subject. Restore keeps the fence. Unreceipted accounts still need the live issuer/client.
 
 The provider enables native first-login auto-registration, which requires Assigned users only
 in KyIdentity; it does not provide an ongoing directory lifecycle. Other native configuration
