@@ -13,6 +13,7 @@ import (
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
+	"go.yaml.in/yaml/v3"
 )
 
 func TestIntegrateStackValidatesAllAdaptersAndCancellationBeforeConnecting(t *testing.T) {
@@ -128,5 +129,60 @@ func TestGuidedExplicitIntegrationResumeAndDecline(t *testing.T) {
 	}
 	if err := Run(context.Background(), []string{"integrate-stack", "--state", dir}, Options{Catalog: catalog.Embedded(), Out: &out}); err == nil || !strings.Contains(err.Error(), "no product integrations") {
 		t.Fatal("reference-only plan reached integration", err)
+	}
+}
+
+func TestGuidedResumeKeepsHandEditedPreparation(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "stack.yaml")
+	first := "no\n1\nnas\ndocker\n192.0.2.1\nkyq\n22\n/opt/test\n2\n" +
+		"kyidentity\nnas\nhttps://identity.example.test\nyes\nidentity\n/data/installer/271333e2-c221-4601-b249-563b3d828530/setup.json\n" +
+		"kynotes\nnas\nhttps://notes.example.test\nyes\nnotes\n/data/installer/setup.json\nyes\nfinish\n"
+	var out bytes.Buffer
+	o := Options{Catalog: catalog.Embedded(), In: strings.NewReader(first), Out: &out}
+	if err := Run(context.Background(), []string{"plan", "--state", dir}, o); err != nil {
+		t.Fatal(err, out.String())
+	}
+	// Hand-edit the published plan; the saved draft still holds the original answers.
+	st, err := stack.Load(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, destination, _ := transferFixture()
+	identity := *source.Identity
+	identity.Schema, identity.Admin.Email = "kyidentity.setup/1", "admin@example.test"
+	identity.Everyday = stack.IdentityAccount{Username: "owner", Email: "owner@example.test"}
+	identity.Clients[0].Name = "KyNotes"
+	st.Integrations[0].Identity = &identity
+	st.Integrations[1].Notes, st.Integrations[1].IdentityClient = destination.Notes, destination.IdentityClient
+	edited, err := yaml.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stack.Parse(edited); err != nil {
+		t.Fatal("fixture edit invalid", err)
+	}
+	if err := os.WriteFile(file, edited, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Change only the SSH login; Enter keeps every other answer, including identity-client.
+	out.Reset()
+	o.In = strings.NewReader("\n\n\n\n\nops\n" + strings.Repeat("\n", 16) + "yes\nfinish\n")
+	if err := Run(context.Background(), []string{"plan", "--state", dir}, o); err != nil {
+		t.Fatal(err, out.String())
+	}
+	after, err := stack.Load(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Targets[0].User != "ops" {
+		t.Fatal("wizard answer not applied", after.Targets[0].User)
+	}
+	for i := range st.Integrations {
+		want, _ := yaml.Marshal(st.Integrations[i])
+		got, _ := yaml.Marshal(after.Integrations[i])
+		if !bytes.Equal(want, got) {
+			t.Fatalf("resume lost hand-edited preparation:\nwant %s\ngot %s", want, got)
+		}
 	}
 }
