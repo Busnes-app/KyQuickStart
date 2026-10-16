@@ -162,7 +162,8 @@ func (s *Store) CreateAccount(ctx context.Context, t *Target, scope Binding, p D
 		if j.Status == "attempting" || j.Status == "uncertain" {
 			return Binding{}, ErrCreationUncertain
 		}
-		if j.Scope != scope || j.Digest != creationDigest(scope, p) {
+		// A known refusal may retry the same scope with a corrected profile.
+		if j.Scope != scope || (j.Status != "refused" && j.Digest != creationDigest(scope, p)) {
 			return Binding{}, ErrAccountConflict
 		}
 		switch j.Status {
