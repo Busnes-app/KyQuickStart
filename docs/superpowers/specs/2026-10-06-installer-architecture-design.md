@@ -20,9 +20,11 @@ is installed; this spec decides how.
   notice in a release set; existing installs are handed to the owner with `unmanage`.
 - **Go**, one static binary run from the operator's workstation. It imports `ky-primitives`
   for sealing, pairing and key pinning.
-- **SSH bootstrap, then KyYard.** The installer deploys directly, then enrolls every target in
-  KyYard. KyYard starts upgrades through the shared upgrade module (see Upgrades); it does not
-  otherwise edit installer-managed workloads.
+- **SSH bootstrap, then KyYard.** The installer deploys directly, enrolls every target in
+  KyYard, then hands the plan to the suite runner beside KyYard. KyYard installs, upgrades,
+  uninstalls and unmanages suite apps only through the runner
+  ([suite runner](2026-10-16-suite-runner-design.md)); it does not otherwise edit
+  installer-managed workloads.
 - **Secrets live on their targets.** The workstation holds a secret-free plan and step results.
 - **Each app is a manifest plus a Go adapter**, embedded in the binary. A binary release is a
   tested release set.
@@ -43,7 +45,7 @@ is installed; this spec decides how.
 | `verify` | Acceptance checks (see Verification) |
 | `handover` | Prints URLs, admin and everyday logins, activation links, NPM admin credentials, and outstanding human steps |
 | `offboard <user>` | Runs every app's `Deprovision` for one user; fallback for the bridge |
-| `upgrade` | Runs the shared upgrade module against a newer release set |
+| `upgrade` | Upgrades installed apps to this release set under the upgrade rules |
 | `restore <app> [--capsule <id>] [--snapshot <repo-path>:<id>]` | Restores one app from the capsule and restic snapshot KyRecovery's restore plan selected: capsule through the product's `restore`, then the snapshot (database first, then files). Decrypts the snapshot, shows its real time, host and paths, and writes nothing until the operator confirms. Shares on stdin only. Contract pinned by `kyrecovery-server/docs/superpowers/specs/2026-10-07-backup-status-restore-ui-design.md` (Restore plan); started directly or from the command KyRecovery's UI shows (catalog spec, Restore) |
 | `uninstall <app>` | Removes workloads, keeps data. Data deletion is a separate command with typed confirmation |
 | `unmanage <app>` | Hands an app to the owner: removes the `ky.managed-by` label so KyYard treats it as an ordinary workload, keeps its data and last backup, and records in the handover that the suite no longer upgrades it |
@@ -63,8 +65,7 @@ Per app, embedded in the binary:
   (minimum from-version, versions that cannot be skipped, whether it migrates data).
 - **Go adapter** for what data cannot express: `Inspect`, `Apply`, `GrantAdmin`, `Deprovision`.
 
-Ky products and third-party apps use the same format. The catalog and upgrade module are a Go
-module importable by KyYard.
+Ky products and third-party apps use the same format.
 
 ### Target drivers
 
@@ -203,8 +204,8 @@ Nothing changes on a target until `plan` and `preflight` pass. `apply` then runs
 
 ## Upgrades
 
-The catalog and a gated upgrade procedure form a shared Go module, imported by `kyquickstart`
-and by KyYard.
+The upgrade procedure runs in `kyquickstart`, from the CLI or from the suite runner that KyYard
+drives ([suite runner](2026-10-16-suite-runner-design.md)). KyYard does not import it.
 
 - **Start points:** `kyquickstart upgrade`, and an **Upgrade** action in KyYard showing the
   installed release set against the newest one, for one app or the whole suite.
@@ -248,7 +249,7 @@ Running pods alone is not completion.
 |---|---|
 | Each Ky product | `apply-setup --file` command with the contract above |
 | KyIdentity-server | Bundle covering identities, groups, OIDC clients, roles, access, assignments, SCIM connector |
-| KyYard-Server | Import the shared module; Upgrade action; refuse generic edits and update policies on labelled workloads |
+| KyYard-Server | Suite page driving the suite runner; refuse generic edits and update policies on labelled workloads |
 | kyPulse-server | Accept target and log-source registration through `apply-setup` |
 | Holm (upstream or fork) | Back-channel logout or session recheck (catalog spec) |
 | Every Ky product behind an edge | Forwarded-header self-check reporting the client address and scheme it resolved (as KyPost `/api/status`) |
