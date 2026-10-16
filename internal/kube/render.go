@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	appsv1 "k8s.io/api/apps/v1"
@@ -59,6 +61,9 @@ func render(app string, c catalog.App, releaseSet string) objects {
 			SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 		},
 		VolumeMounts: []corev1.VolumeMount{{Name: "tmp", MountPath: "/tmp"}},
+	}
+	for _, name := range slices.Sorted(maps.Keys(k.Env)) { // sorted: the hash must be stable
+		container.Env = append(container.Env, corev1.EnvVar{Name: name, Value: k.Env[name]})
 	}
 	volumes := []corev1.Volume{{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}
 	if len(c.Secrets) > 0 {
