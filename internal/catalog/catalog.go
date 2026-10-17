@@ -322,6 +322,24 @@ func (u Upgrade) validate(version string) error {
 	return nil
 }
 
+// Allows checks an upgrade from the installed version to version against min_from and no_skip.
+func (u Upgrade) Allows(installed, version string) error {
+	switch {
+	case !versionRE.MatchString(installed):
+		return fmt.Errorf("installed version %q is not MAJOR.MINOR.PATCH", installed)
+	case compareVersions(installed, version) > 0:
+		return fmt.Errorf("installed %s is newer than %s; downgrades are refused", installed, version)
+	case u.MinFrom != "" && compareVersions(installed, u.MinFrom) < 0:
+		return fmt.Errorf("installed %s is older than min_from %s; upgrade through an earlier release set first", installed, u.MinFrom)
+	}
+	for _, v := range u.NoSkip {
+		if compareVersions(installed, v) < 0 {
+			return fmt.Errorf("upgrading %s to %s would skip %s (no_skip); upgrade through the release set that ships %s first", installed, version, v, v)
+		}
+	}
+	return nil
+}
+
 // validateBackup checks the backup against what the app deploys; c is nil without Compose.
 func (m Manifest) validateBackup(c *composeFile) error {
 	b := m.Backup

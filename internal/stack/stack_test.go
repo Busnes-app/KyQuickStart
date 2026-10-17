@@ -50,6 +50,7 @@ func TestParseRejects(t *testing.T) {
 		"bad port":         {"port: 2222", "port: 70000", "port"},
 		"bad user":         {"user: deploy", "user: Deploy", "user"},
 		"version 2":        {"version: 1", "version: 2", "version 2"},
+		"revision":         {"version: 1", "version: 1\nrevision: -1", "revision"},
 		"duplicate target": {"name: k1", "name: nas", `duplicate target "nas"`},
 	}
 	for name, c := range cases {

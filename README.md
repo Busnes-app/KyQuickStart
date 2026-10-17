@@ -41,6 +41,7 @@ Choosing `finish` saves the plan without touching any server.
 | `plan` | Guided questions; writes `stack.yaml` |
 | `preflight` | Read-only target checks |
 | `apply` | Install and verify the planned apps |
+| `install`, `uninstall`, `unmanage`, `upgrade`, `status` | Manage one app at a time after the first install ([guided setup](docs/guided-setup.md#managing-apps)) |
 | `verify-edge` | Check public routing and forwarded headers |
 | `integrate-identity`, `integrate-product`, `integrate-stack` | Configure existing Ky products against KyIdentity |
 | `review` | Show the saved plan |

@@ -27,8 +27,8 @@ func TestGuidedPlanResumeExistingAndReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !st.Demo || len(st.Apps) != 1 || len(st.Existing) != 1 || st.Existing[0].Product != "kyidentity" {
-		t.Fatal("plan lost selections or existing reference")
+	if !st.Demo || len(st.Apps) != 1 || len(st.Existing) != 1 || st.Existing[0].Product != "kyidentity" || st.Revision != 1 {
+		t.Fatal("plan lost selections or existing reference, or is not revision 1")
 	}
 	fi, _ := os.Stat(filepath.Join(dir, "stack.yaml"))
 	if fi.Mode().Perm() != 0600 {
@@ -43,6 +43,9 @@ func TestGuidedPlanResumeExistingAndReview(t *testing.T) {
 	o.In = strings.NewReader(strings.Repeat("\n", 17))
 	if err := Run(context.Background(), []string{"plan", "--state", dir}, o); err != nil {
 		t.Fatal(err, out.String())
+	}
+	if st, err := stack.Load(filepath.Join(dir, "stack.yaml")); err != nil || st.Revision != 2 {
+		t.Fatalf("edited plan revision: %v", err)
 	}
 	out.Reset()
 	o.In = nil

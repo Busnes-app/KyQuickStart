@@ -17,12 +17,14 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
+	"github.com/Busnes-app/kyquickstart/internal/dockerhost"
 	"github.com/Busnes-app/kyquickstart/internal/edge"
 	"github.com/Busnes-app/kyquickstart/internal/engine"
 	"github.com/Busnes-app/kyquickstart/internal/kube"
 	"github.com/Busnes-app/kyquickstart/internal/plan"
 	"github.com/Busnes-app/kyquickstart/internal/remote"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
+	"github.com/Busnes-app/kyquickstart/internal/suite"
 )
 
 // ErrUsage means the arguments name no command; main prints Usage.
@@ -35,22 +37,29 @@ commands:
   review      display and validate the saved plan without connecting
   preflight   check every target; changes nothing
   apply       preflight, then install the apps in stack.yaml
+  install APP --target T   add APP and its missing dependencies to the plan and deploy them
+  uninstall APP            remove APP's workloads; its data and secrets stay on the target
+  unmanage APP             hand APP to its owner: drop the managed labels, record it in handover.md
+  upgrade [APP...]         redeploy installed apps (default all) under their upgrade rules
+  status [--json]          per installed app: version, target, state, last results
   integrate-identity configure a selected existing KyIdentity container from a protected bundle
   integrate-product  configure a selected product through its container-local setup adapter
   integrate-stack    run explicitly selected product integrations saved in stack.yaml
   verify-edge check NPM and product forwarded headers through public HTTPS (read-only)
   version     print the release set
 
-flags for preflight, apply and verify-edge:
+flags for preflight, apply, verify-edge and the app commands:
   --state DIR                          state directory holding stack.yaml (default .)
   --trust-host-key NAME=SHA256:<fp>    accept this unknown host key for target NAME
-  --expected-client-ip ADDR           required for verify-edge: expected public client address`
+  --expected-client-ip ADDR           required for verify-edge: expected public client address
+  --acknowledge-no-backup             apply, install, upgrade: upgrade without a pre-upgrade backup`
 
 type Options struct {
 	Catalog    fs.FS
 	ReleaseSet string
 	In         io.Reader // answers host key prompts; nil when not interactive
 	Out        io.Writer
+	Progress   func(engine.Event) // optional: every step's start and end
 }
 
 func Run(ctx context.Context, args []string, o Options) error {
@@ -72,6 +81,8 @@ func Run(ctx context.Context, args []string, o Options) error {
 		return integrateStack(ctx, args[1:], o)
 	case "review":
 		return review(args[1:], o)
+	case "install", "uninstall", "unmanage", "upgrade", "status":
+		return suiteCommand(ctx, cmd, args[1:], o)
 	case "version":
 		_, err := fmt.Fprintln(o.Out, o.ReleaseSet)
 		return err
@@ -83,6 +94,7 @@ func Run(ctx context.Context, args []string, o Options) error {
 	fl.SetOutput(o.Out)
 	state := fl.String("state", ".", "state directory holding stack.yaml")
 	clientIP := fl.String("expected-client-ip", "", "verify-edge: this workstation's expected public client address")
+	ack := fl.Bool("acknowledge-no-backup", false, "apply: upgrade data without a pre-upgrade backup")
 	trust := trustFlag{}
 	fl.Var(trust, "trust-host-key", "accept an unknown host key: <target>=SHA256:<fingerprint>")
 	if err := fl.Parse(args[1:]); err != nil {
@@ -100,6 +112,9 @@ func Run(ctx context.Context, args []string, o Options) error {
 		}
 	} else if *clientIP != "" {
 		return errors.New("--expected-client-ip is only for verify-edge")
+	}
+	if *ack && cmd != "apply" {
+		return errors.New("--acknowledge-no-backup is only for apply, install and upgrade")
 	}
 	s, err := load(*state, trust, o)
 	if err != nil {
@@ -132,6 +147,7 @@ func Run(ctx context.Context, args []string, o Options) error {
 	if err := s.preflight(ctx); err != nil || cmd == "preflight" {
 		return err
 	}
+	s.ack = *ack
 	return s.apply(ctx)
 }
 
@@ -151,6 +167,10 @@ func (t trustFlag) Set(v string) error {
 type session struct {
 	integrations []stack.Integration
 	allTargets   []stack.Target
+	revision     int // of the loaded plan; markers on targets record it
+	trust        trustFlag
+	ack          bool // acknowledge upgrading without a pre-upgrade backup
+	redact       *engine.Redactor
 	demo         bool
 	o            Options
 	state        string
@@ -169,6 +189,10 @@ func load(state string, trust trustFlag, o Options) (*session, error) {
 	if err != nil {
 		return nil, err
 	}
+	return newSession(st, state, trust, o)
+}
+
+func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*session, error) {
 	cat, err := catalog.Load(o.Catalog)
 	if st.Demo {
 		cat, err = catalog.Load(catalog.Demo())
@@ -215,7 +239,7 @@ func load(state string, trust trustFlag, o Options) (*session, error) {
 		clusters[[2]string{kc, t.Context}] = t.Name
 		st.Targets[i].Kubeconfig = kc
 	}
-	s := &session{allTargets: st.Targets, integrations: st.Integrations, o: o, state: state, demo: st.Demo, cat: cat, placed: map[string]stack.Target{}, drivers: map[string]driver{}, edges: st.Edges, npms: map[string]*edge.NPM{}}
+	s := &session{revision: st.Revision, trust: trust, redact: &engine.Redactor{}, allTargets: st.Targets, integrations: st.Integrations, o: o, state: state, demo: st.Demo, cat: cat, placed: map[string]stack.Target{}, drivers: map[string]driver{}, edges: st.Edges, npms: map[string]*edge.NPM{}}
 	var names []string
 	used := map[string]bool{}
 	for _, a := range st.Apps {
@@ -253,24 +277,11 @@ func load(state string, trust trustFlag, o Options) (*session, error) {
 func (s *session) connect(ctx context.Context, trust trustFlag) error {
 	confirm := s.confirmer()
 	for _, t := range s.targets {
-		if t.Kubernetes() {
-			c, err := kube.Connect(t.Kubeconfig, t.Context)
-			if err != nil {
-				return fmt.Errorf("%s: %w", t.Name, err)
-			}
-			s.drivers[t.Name] = kubeDriver{c: c, needsStorage: s.needsStorage(t.Name)}
-			continue
-		}
-		c, err := remote.Dial(ctx, remote.SSHConfig{
-			Name: t.Name, Host: t.Host, Port: t.Port, User: t.User,
-			KnownHosts: filepath.Join(s.state, "known_hosts"),
-			Trust:      trust[t.Name],
-			Confirm:    confirm,
-		})
+		d, err := dialTarget(ctx, t, filepath.Join(s.state, "known_hosts"), trust[t.Name], confirm, s.needsStorage(t.Name))
 		if err != nil {
 			return err
 		}
-		s.drivers[t.Name] = sshDriver{t: t, c: c}
+		s.drivers[t.Name] = d
 	}
 	for _, e := range s.edges {
 		token, err := s.drivers[e.Target].edgeToken(ctx)
@@ -284,6 +295,25 @@ func (s *session) connect(ctx context.Context, trust trustFlag) error {
 		s.npms[e.Target] = n
 	}
 	return nil
+}
+
+// dialTarget connects one target; tests replace it.
+var dialTarget = func(ctx context.Context, t stack.Target, knownHosts, trust string, confirm func(name, fp string) bool, needsStorage bool) (driver, error) {
+	if t.Kubernetes() {
+		c, err := kube.Connect(t.Kubeconfig, t.Context)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", t.Name, err)
+		}
+		return kubeDriver{c: c, needsStorage: needsStorage}, nil
+	}
+	c, err := remote.Dial(ctx, remote.SSHConfig{
+		Name: t.Name, Host: t.Host, Port: t.Port, User: t.User,
+		KnownHosts: knownHosts, Trust: trust, Confirm: confirm,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return sshDriver{t: t, c: c}, nil
 }
 
 func (s *session) needsStorage(target string) bool {
@@ -350,44 +380,11 @@ func (s *session) preflight(ctx context.Context) error {
 }
 
 // apply locks every target before the first step and releases them at the end.
-func (s *session) apply(ctx context.Context) (err error) {
+func (s *session) apply(ctx context.Context) error {
 	if len(s.order) == 0 {
 		return errors.New("no installable apps selected; existing references do not authorize integration or deployment")
 	}
-	holder := holderName()
-	var releases []func(context.Context) error
-	defer func() {
-		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		defer cancel()
-		for _, release := range releases {
-			err = errors.Join(err, release(rctx))
-		}
-	}()
-	for _, t := range s.targets {
-		release, err := s.drivers[t.Name].acquire(ctx, holder)
-		if err != nil {
-			return fmt.Errorf("%s: %w", t.Name, err)
-		}
-		releases = append(releases, release)
-	}
-	redact := &engine.Redactor{}
-	var steps []engine.Step
-	for _, name := range s.order {
-		t := s.placed[name]
-		steps = append(steps, s.drivers[t.Name].steps(name, s.cat[name], s.o.ReleaseSet, redact)...)
-	}
-	for _, edge := range s.edges {
-		steps = append(steps, s.npms[edge.Target].Steps(edge)...)
-		if edge.Connector != nil {
-			connector, err := s.drivers[edge.Target].connectorSteps(ctx, edge, s.o.ReleaseSet, redact)
-			if err != nil {
-				return fmt.Errorf("edge %s: %w", edge.Target, err)
-			}
-			steps = append(steps, connector...)
-		}
-	}
-	e := &engine.Engine{Dir: filepath.Join(s.state, "results"), Out: s.o.Out, Redact: redact}
-	if err := e.Run(ctx, steps); err != nil {
+	if err := s.operate(ctx, "", s.deploySteps, nil); err != nil {
 		return err
 	}
 	if s.demo {
@@ -401,6 +398,130 @@ func (s *session) apply(ctx context.Context) (err error) {
 		}
 	}
 	return nil
+}
+
+// operate locks s.targets, runs the steps and, after they all pass, publishes the plan. The
+// markers then record the plan the targets were left in.
+func (s *session) operate(ctx context.Context, holder string, steps func(context.Context) ([]engine.Step, error), publish func() error) (err error) {
+	if holder == "" {
+		holder = holderName()
+	}
+	done, err := s.lock(ctx, holder, s.targets)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, finish(ctx, done)) }()
+	list, err := steps(ctx)
+	if err != nil {
+		return err
+	}
+	e := &engine.Engine{Dir: filepath.Join(s.state, "results"), Out: s.o.Out, Redact: s.redact, Progress: s.o.Progress}
+	if err := e.Run(ctx, list); err != nil {
+		return &suite.Error{Code: suite.StepFailed, Message: err.Error(), Err: err}
+	}
+	if publish == nil {
+		return nil
+	}
+	if err := publish(); err != nil {
+		return err
+	}
+	s.revision++
+	return nil
+}
+
+// deploySteps gates every app in s.order on its upgrade rules, then returns its install
+// steps and the edges'. Nothing has changed when a gate refuses.
+func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
+	var steps []engine.Step
+	for _, name := range s.order {
+		d := s.drivers[s.placed[name].Name]
+		deployed, err := d.deployed(ctx, name)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
+		note, err := gate(name, s.cat[name], deployed, s.o.ReleaseSet, s.ack)
+		if err != nil {
+			return nil, err
+		}
+		if note != "" {
+			steps = append(steps, noteStep{id: name + ".upgrade", note: note})
+		}
+		steps = append(steps, d.steps(name, s.cat[name], s.o.ReleaseSet, s.redact)...)
+	}
+	for _, edge := range s.edges {
+		steps = append(steps, s.npms[edge.Target].Steps(edge)...)
+		if edge.Connector != nil {
+			connector, err := s.drivers[edge.Target].connectorSteps(ctx, edge, s.o.ReleaseSet, s.redact)
+			if err != nil {
+				return nil, fmt.Errorf("edge %s: %w", edge.Target, err)
+			}
+			steps = append(steps, connector...)
+		}
+	}
+	return steps, nil
+}
+
+// lock takes every target's lock and refuses a target whose plan marker is newer than this
+// plan. done writes this plan's revision to each target's marker, then releases the locks.
+func (s *session) lock(ctx context.Context, holder string, targets []stack.Target) (done func(context.Context) error, err error) {
+	var releases []func(context.Context) error
+	unlock := func(ctx context.Context) (err error) {
+		for _, release := range releases {
+			err = errors.Join(err, release(ctx))
+		}
+		return err
+	}
+	markers := map[string]stack.Marker{}
+	for _, t := range targets {
+		release, m, err := s.lockOne(ctx, holder, t)
+		if err != nil {
+			return nil, errors.Join(err, finish(ctx, unlock))
+		}
+		releases, markers[t.Name] = append(releases, release), m
+	}
+	return func(ctx context.Context) (err error) {
+		for _, t := range targets {
+			// Keep the owner: only handoff moves a plan between the CLI and the runner.
+			m := markers[t.Name]
+			if m.Owner == "" {
+				m.Owner = "cli"
+			}
+			m.Revision = s.revision
+			err = errors.Join(err, s.drivers[t.Name].writeMarker(ctx, m))
+		}
+		return errors.Join(err, unlock(ctx))
+	}, nil
+}
+
+// lockOne takes one target's lock and reads its marker, releasing the lock on refusal.
+func (s *session) lockOne(ctx context.Context, holder string, t stack.Target) (func(context.Context) error, stack.Marker, error) {
+	d := s.drivers[t.Name]
+	release, err := d.acquire(ctx, holder)
+	var dl *dockerhost.LockedError
+	var kl *kube.LockedError
+	if errors.As(err, &dl) || errors.As(err, &kl) {
+		return nil, stack.Marker{}, suite.Errorf(suite.TargetLocked, "%s: %w", t.Name, err)
+	}
+	if err != nil {
+		return nil, stack.Marker{}, fmt.Errorf("%s: %w", t.Name, err)
+	}
+	m, err := d.marker(ctx)
+	if err != nil {
+		err = fmt.Errorf("%s: %w", t.Name, err)
+	} else if m.Revision > s.revision {
+		err = suite.Errorf(suite.PlanStale, "%s holds plan revision %d (owner %s), newer than this plan's %d; run kyquickstart pull-plan", t.Name, m.Revision, m.Owner, s.revision)
+	}
+	if err != nil {
+		return nil, m, errors.Join(err, finish(ctx, release))
+	}
+	return release, m, nil
+}
+
+// finish runs a cleanup that must happen even after ctx is cancelled.
+func finish(ctx context.Context, f func(context.Context) error) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	return f(ctx)
 }
 
 func holderName() string {

@@ -13,9 +13,17 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// override is compose.kyq.yaml: the managed labels on every service.
-func override(services []string, releaseSet string) []byte {
-	labels := map[string]string{managed.Label: managed.Value, managed.ReleaseSetLabel: releaseSet}
+// labels marks a deployment as ours, of this release set and catalog version.
+func labels(releaseSet, version string) map[string]string {
+	l := map[string]string{managed.Label: managed.Value, managed.ReleaseSetLabel: releaseSet}
+	if version != "" {
+		l[managed.VersionLabel] = version
+	}
+	return l
+}
+
+// override is compose.kyq.yaml: labels on every service.
+func override(services []string, labels map[string]string) []byte {
 	svcs := map[string]any{}
 	for _, s := range services {
 		svcs[s] = map[string]any{"labels": labels}
