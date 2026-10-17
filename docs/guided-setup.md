@@ -142,18 +142,24 @@ Docker installs from earlier builds are recreated once by their next `apply` to 
 ## Hand-off to KyYard
 
 After install, KyYard's Suite page can install, upgrade, uninstall and unmanage apps through the
-suite runner: `kyquickstart serve` in its own container on KyYard's host, reached only over a
+suite runner: `kyquickstart serve` in its own container beside KyYard, reached only over a
 private Unix socket. The runner holds its own SSH key and kubeconfigs; KyYard holds none.
 
-1. Run the runner beside KyYard with
+1. Run the runner beside KyYard. On a Docker host use
    [`kyyard-runner.compose.yaml`](kyyard-runner.compose.yaml): the two share only the socket
    directory, both as uid 10001; the runner has its own state volume, no ports, a read-only
    root, no capabilities and `no-new-privileges`. Set `KY_SUITE_RUNNER_SOCKET` in KyYard.
-2. KyYard's host must be a Docker target in `stack.yaml`, and its SSH user must be able to run
-   `docker exec`. From the workstation:
+   On a Kubernetes target use [`kyyard-runner.k8s.yaml`](kyyard-runner.k8s.yaml) after
+   editing its image digest, storage class and NetworkPolicy addresses. For now it runs the
+   runner alone in `kyq-runner`; KyYard joins that pod with its catalog entry.
+2. KyYard's target must be in `stack.yaml`. On a Docker target its SSH user must be able to run
+   `docker exec`; on a Kubernetes target the workstation's kubeconfig must allow list pods and
+   create `pods/exec` in the runner's namespace, which `handoff` checks before changing
+   anything. From the workstation:
 
    ```sh
    ./kyquickstart handoff --kyyard-target nas --state ./morning-test
+   ./kyquickstart handoff --kyyard-target k80 --runner-pod kyq-runner/app=runner --state ./morning-test
    ```
 
    This adds a `restrict`ed runner key to each Docker target's `authorized_keys` (replacing
@@ -161,14 +167,16 @@ private Unix socket. The runner holds its own SSH key and kubeconfigs; KyYard ho
    `kyquickstart-runner` ServiceAccount with exactly the installer's permissions, copies the
    plan, pinned host keys and step results into the runner, and records the runner as the
    plan's owner on every target. A rerun reconciles; `--runner-container` names a container
-   other than `kyquickstart-runner`. The runner reaches each Kubernetes API server at the
-   address in the workstation's kubeconfig, so that address must work from KyYard's host.
+   other than `kyquickstart-runner`, and `--runner-pod NAMESPACE/LABEL_SELECTOR` must match
+   exactly one Running pod with a container named `runner`. A runner pod reaches its own
+   cluster at `kubernetes.default.svc`; every other Kubernetes API server at the address in
+   the workstation's kubeconfig, so that address must work from where the runner runs.
 3. From now on the CLI refuses `plan`, `install`, `uninstall` and `unmanage`
    (`owned_by_runner`): use the Suite page. `apply`, `upgrade`, `status` and `integrate-*`
    still run from the runner's plan; copy it first:
 
    ```sh
-   ./kyquickstart pull-plan --kyyard-target nas --state ./morning-test   # keeps stack.yaml.bak
+   ./kyquickstart pull-plan --state ./morning-test   # the runner handoff used; keeps stack.yaml.bak
    ```
 
 To take the plan back, pull it, then run `./kyquickstart handoff --revoke --state
