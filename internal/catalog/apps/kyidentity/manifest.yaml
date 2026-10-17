@@ -29,6 +29,8 @@ kubernetes:
   run_as: 100
   resources:
     cpu: "1"
+    # Idle between Argon2id bursts: reserve little, burst to the limit.
+    cpu_request: 100m
     memory: 768Mi
   volumes:
     - name: data
