@@ -38,12 +38,11 @@ func kind(t *testing.T, args ...string) {
 	}
 }
 
-func TestKubernetesApply(t *testing.T) {
-	ctx := context.Background()
-	work := t.TempDir()
-	state := filepath.Join(work, "state")
-	os.MkdirAll(state, 0o700)
-	kc := filepath.Join(work, "kubeconfig") // outside the state directory
+// kindCluster creates a disposable kind cluster with capped nodes, deleted at cleanup, and
+// returns its name and a kubeconfig outside work's state directory.
+func kindCluster(t *testing.T, work string) (string, string) {
+	t.Helper()
+	kc := filepath.Join(work, "kubeconfig")
 	id := make([]byte, 4)
 	rand.Read(id)
 	name := "kyq-e2e-" + hex.EncodeToString(id)
@@ -69,6 +68,15 @@ func TestKubernetesApply(t *testing.T) {
 	if limits := docker(t, "inspect", name+"-control-plane", "--format", "{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{.HostConfig.NanoCpus}} {{.HostConfig.PidsLimit}}"); limits != "2147483648 2147483648 2000000000 512" {
 		t.Fatal("kind node resource limits not applied", limits)
 	}
+	return name, kc
+}
+
+func TestKubernetesApply(t *testing.T) {
+	ctx := context.Background()
+	work := t.TempDir()
+	state := filepath.Join(work, "state")
+	os.MkdirAll(state, 0o700)
+	name, kc := kindCluster(t, work)
 
 	cfg, err := clientcmd.BuildConfigFromFlags("", kc)
 	if err != nil {
