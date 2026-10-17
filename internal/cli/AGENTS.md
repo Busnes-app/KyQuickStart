@@ -21,6 +21,8 @@ Plain terminal planning and command orchestration for the operator-run installer
   directory makes `plan` refuse while the runner owns the plan. `session.guard` is the
   ownership rule for every locked command and CLI `status`.
 - Explicit existing KyIdentity container setup and capability checks: `identity.go`, documented in `../../docs/guided-setup.md`.
+  It also owns `identitySetupStep`, apply's staged setup for a catalog KyIdentity, reusing the same
+  staging and setup functions; `nativeProductExec` finds an installed app's pod per call.
 - `preparation.go` owns shared bounded native preparation receipts/readback and typed Identity
   staging; product-specific metadata and credentials remain native product responsibilities.
 - `credential_transfer.go` owns explicit Notes `identity_client` transfer: require both native
@@ -39,7 +41,8 @@ Plain terminal planning and command orchestration for the operator-run installer
   compare installation/UUID/subject readback, and render fixed labels/native UUIDs only.
   Pending initial setup is an error. This does not admit Immich or prove ongoing lifecycle,
   actual KyIdentity delivery or administrator ordinary-workflow separation.
-- `integration.go` owns guided setup selections and unattended `integrate-stack` dispatch.
+- `integration.go` owns guided setup selections and unattended `integrate-stack` dispatch,
+  which skips installed apps' entries (`apply` runs those).
   Validate every selection before connecting; run KyIdentity first and otherwise preserve
   saved order. Optional typed KyNotes and KyIdentity preparation settings are retained by guided resume,
   disclosed in plan/review and sent over bounded native CLI stdin. Verify the prepared

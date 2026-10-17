@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
+	"github.com/Busnes-app/kyquickstart/internal/kube"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
 	"go.yaml.in/yaml/v3"
 )
@@ -111,7 +112,7 @@ func TestExistingReferencesDoNotAuthorizeApply(t *testing.T) {
 func TestGuidedRejectsCredentialsBeforeSaving(t *testing.T) {
 	dir := t.TempDir()
 	var out bytes.Buffer
-	answers := "no\n1\nnas\ndocker\n192.0.2.1\nkyq\n22\n/opt/test\nskip\n1\nkyidentity\nnas\nhttps://user:private-password@id.example.test\nhttps://id.example.test\nno\nyes\nfinish\n"
+	answers := "no\n1\nnas\ndocker\n192.0.2.1\nkyq\n22\n/opt/test\nskip\nskip\n1\nkyidentity\nnas\nhttps://user:private-password@id.example.test\nhttps://id.example.test\nno\nyes\nfinish\n"
 	err := Run(context.Background(), []string{"plan", "--state", dir}, Options{Catalog: catalog.Embedded(), In: strings.NewReader(answers), Out: &out})
 	if err != nil {
 		t.Fatal(err, out.String())
@@ -211,10 +212,11 @@ func TestComputerDNSNamesAndSSHDefault(t *testing.T) {
 
 func TestPlanDeclaresClusterCredentialGenerator(t *testing.T) {
 	st := &stack.Stack{Targets: []stack.Target{{Name: "cluster", Kubeconfig: "/outside/kubeconfig"}}, Apps: []stack.App{{Name: "hello", Target: "cluster"}}}
-	cat := catalog.Catalog{"hello": {Manifest: catalog.Manifest{Name: "hello", Secrets: []string{"token"}}}}
+	cat := catalog.Catalog{"hello": {Manifest: catalog.Manifest{Name: "hello", Secrets: []string{"token"},
+		Kubernetes: &catalog.Kubernetes{RunAs: 100, Volumes: []catalog.Volume{{Name: "data"}}}}}}
 	var out bytes.Buffer
 	showPlan(&out, st, cat)
-	if !strings.Contains(out.String(), "Required temporary credential generator:") || !strings.Contains(out.String(), "@sha256:") {
+	if !strings.Contains(out.String(), "Required temporary credential generator:") || !strings.Contains(out.String(), "Required volume init: "+kube.CredentialGeneratorImage) {
 		t.Fatal("required helper image missing from installation plan")
 	}
 }

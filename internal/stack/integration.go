@@ -19,20 +19,24 @@ func (s *Stack) validateIntegrations() error {
 	products, workloads := map[string]bool{}, map[[4]string]bool{}
 	for _, i := range s.Integrations {
 		t, found := s.Target(i.Target)
-		selected := false
+		selected, installed := false, i.Installed(s)
 		for _, e := range s.Existing {
 			selected = selected || e.Product == i.Product && e.Target == i.Target
 		}
-		for _, a := range s.Apps {
-			selected = selected || a.Name == i.Product && a.Target == i.Target
-		}
-		if !found || !ValidName(i.Product) || !selected || products[i.Product] {
+		if !found || !ValidName(i.Product) || !(selected || installed) || products[i.Product] {
 			return errors.New("integration must select one existing or installed product on its declared target")
 		}
-		if !containerRE.MatchString(i.Container) || !preparationPath(i.Bundle) {
-			return errors.New("integration needs a valid container and a clean absolute container-local bundle path")
+		if !preparationPath(i.Bundle) {
+			return errors.New("integration needs a clean absolute container-local bundle path")
 		}
-		if t.Kubernetes() {
+		if installed {
+			// apply finds the installed app's own pod; a named workload could be another's.
+			if i.Container != "" || i.Namespace != "" || i.Pod != "" {
+				return errors.New("an installed app's integration names no container, namespace or pod")
+			}
+		} else if !containerRE.MatchString(i.Container) {
+			return errors.New("integration needs a valid container")
+		} else if t.Kubernetes() {
 			if !kubeLabelRE.MatchString(i.Namespace) || len(i.Namespace) > 63 || !kubeObjectRE.MatchString(i.Pod) || len(i.Pod) > 253 || !kubeLabelRE.MatchString(i.Container) || len(i.Container) > 63 {
 				return errors.New("Kubernetes integration needs valid namespace, pod and container names")
 			}
@@ -56,10 +60,10 @@ func (s *Stack) validateIntegrations() error {
 			}
 		}
 		workload := [4]string{i.Target, i.Namespace, i.Pod, i.Container}
-		if workloads[workload] {
+		if !installed && workloads[workload] {
 			return errors.New("a container can have only one product integration")
 		}
-		products[i.Product], workloads[workload] = true, true
+		products[i.Product], workloads[workload] = true, !installed
 	}
 	for _, i := range s.Integrations {
 		if i.IdentityClient != "" {
@@ -69,6 +73,16 @@ func (s *Stack) validateIntegrations() error {
 		}
 	}
 	return nil
+}
+
+// Installed reports whether i selects an app the plan installs on i's target.
+func (i Integration) Installed(s *Stack) bool {
+	for _, a := range s.Apps {
+		if a.Name == i.Product && a.Target == i.Target {
+			return true
+		}
+	}
+	return false
 }
 
 // IdentitySource validates the selected source/destination graph before any connection.

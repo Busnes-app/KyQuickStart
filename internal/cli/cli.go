@@ -345,6 +345,30 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 		app.Kubernetes = &k
 		cat[a.Name] = app
 	}
+	for name, t := range s.placed {
+		app := cat[name]
+		if !t.Kubernetes() || !app.Kubernetes.UsesHostname() {
+			continue
+		}
+		var hosts []string
+		for _, e := range st.Edges {
+			for _, r := range e.Routes {
+				if r.App == name {
+					hosts = append(hosts, r.Hostname)
+				}
+			}
+		}
+		if len(hosts) != 1 {
+			return nil, fmt.Errorf("app %q takes its URL from its route hostname; give it exactly one edge route", name)
+		}
+		app.Kubernetes = app.Kubernetes.WithHostname(hosts[0])
+		cat[name] = app
+	}
+	for _, i := range st.Integrations {
+		if i.Installed(st) && (i.Product != "kyidentity" || i.Identity == nil || !s.placed[i.Product].Kubernetes()) {
+			return nil, fmt.Errorf("integration %s: apply configures only an installed KyIdentity on Kubernetes, from its identity settings", i.Product)
+		}
+	}
 	return s, nil
 }
 
@@ -550,6 +574,15 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 			steps = append(steps, noteStep{id: name + ".upgrade", note: note})
 		}
 		steps = append(steps, d.steps(name, s.cat[name], s.o.ReleaseSet, s.redact)...)
+		for _, i := range s.integrations {
+			if i.Product == name && i.Target == s.placed[name].Name {
+				exec, input, err := nativeProductExec(d, i, productAdapters[name])
+				if err != nil {
+					return nil, err
+				}
+				steps = append(steps, identitySetupStep{i: i, exec: exec, input: input})
+			}
+		}
 	}
 	for _, edge := range s.edges {
 		steps = append(steps, s.npms[edge.Target].Steps(edge)...)

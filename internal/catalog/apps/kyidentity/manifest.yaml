@@ -1,0 +1,36 @@
+name: kyidentity
+description: KyIdentity, the suite's identity provider (OIDC, MFA, SCIM); every other app signs in through it
+category: ky
+version: 0.4.2
+# Release image of v0.4.2, attested by release-image.yml@refs/tags/v0.4.2 (gh attestation verify).
+images:
+  kyidentity: ghcr.io/busnes-app/kyidentity-server:0.4.2@sha256:37f55af96a8addda8804931ea83124b7e128f2b65653a7d34e981047958baec9
+health:
+  timeout_seconds: 300
+# Its signing, session and encryption keys are generated in the data directory on first start.
+backup:
+  volumes: [data]
+upgrade:
+  # Migrations run at startup; the release notes cover upgrades from 0.4.x only.
+  min_from: 0.4.0
+  migrates_data: true
+kubernetes:
+  image: kyidentity
+  env:
+    KYIDENTITY_ISSUER_URL: https://{{hostname}}
+    KYIDENTITY_DATA_DIR: /data
+    KYIDENTITY_PORT: "5867"
+    # The first-start administrator, kept apart from the owner's accounts apply-setup creates.
+    BOOTSTRAP_ADMIN_USER: kyq-bootstrap
+    # Argon2id takes 64 MiB per hash, up to 8 at once; stay under the limit.
+    GOMEMLIMIT: 640MiB
+  ports: [5867]
+  readiness_path: /readyz
+  run_as: 100
+  resources:
+    cpu: "1"
+    memory: 768Mi
+  volumes:
+    - name: data
+      mount: /data
+      size: 1Gi
