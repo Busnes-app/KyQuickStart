@@ -112,7 +112,7 @@ func TestExistingReferencesDoNotAuthorizeApply(t *testing.T) {
 func TestGuidedRejectsCredentialsBeforeSaving(t *testing.T) {
 	dir := t.TempDir()
 	var out bytes.Buffer
-	answers := "no\n1\nnas\ndocker\n192.0.2.1\nkyq\n22\n/opt/test\nskip\n1\nkyidentity\nnas\nhttps://user:private-password@id.example.test\nhttps://id.example.test\nno\nyes\nfinish\n"
+	answers := "no\n1\nnas\ndocker\n192.0.2.1\nkyq\n22\n/opt/test\nskip\nskip\n1\nkyidentity\nnas\nhttps://user:private-password@id.example.test\nhttps://id.example.test\nno\nyes\nfinish\n"
 	err := Run(context.Background(), []string{"plan", "--state", dir}, Options{Catalog: catalog.Embedded(), In: strings.NewReader(answers), Out: &out})
 	if err != nil {
 		t.Fatal(err, out.String())
