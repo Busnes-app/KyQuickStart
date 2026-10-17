@@ -49,3 +49,15 @@ Routes use `certificate: k80` and hostnames `<app>.k80.urlxl.us`. Open before re
   so a LAN client resolving `<app>.k80.urlxl.us` reaches HTTPS on 443 only if k81 forwards 443
   to 30543. Nothing in KyQuickStart sets that up.
 - KyDNS must hold `k80.urlxl.us` names inside its private zone; preflight reports the zone if not.
+
+**2026-10-17: runner pod hand-off (master 3c82cd6, runner image 1ac7972).** `k80-runner.yaml`
+runs the runner on k81 from an image imported into containerd by hand (`imagePullPolicy:
+Never`), with `--pod-volumes` on a `local-path` claim and an emptyDir. Cilium does not match the
+API server's node address with `ipBlock`, so a CiliumNetworkPolicy allows `kube-apiserver`.
+`handoff --kyyard-target k80 --runner-pod kyq-runner/app=runner` handed revision 2 to the
+runner. Through its socket (from an ephemeral curl container as uid 10001) `status` read the
+cluster in-cluster, and an `upgrade npm` operation succeeded; `npm.deploy` re-ran because the
+runner's release set (`0.0.0-pilot.1ac797238207`) differs from the local CLI build's (`dev`).
+`pull-plan` returned revision 2, a CLI `uninstall` was refused `owned_by_runner`, and
+`handoff --revoke` took revision 3 back, deleted the runner's ServiceAccount and bindings, and
+left the runner `Unauthorized`. The runner pod stays deployed with no cluster access.
