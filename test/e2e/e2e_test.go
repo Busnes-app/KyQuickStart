@@ -24,6 +24,7 @@ import (
 	"github.com/Busnes-app/kyquickstart/internal/cli"
 	"github.com/Busnes-app/kyquickstart/internal/dockerhost"
 	"github.com/Busnes-app/kyquickstart/internal/remote"
+	"github.com/Busnes-app/kyquickstart/internal/stack"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )
@@ -251,7 +252,12 @@ func testSuiteCommands(t *testing.T, ctx context.Context, demoState, hostFP, por
 	os.MkdirAll(cat, 0o700)
 	kh, _ := os.ReadFile(filepath.Join(demoState, "known_hosts"))
 	os.WriteFile(filepath.Join(state, "known_hosts"), kh, 0o600)
-	os.WriteFile(filepath.Join(state, "stack.yaml"), []byte(fmt.Sprintf("version: 1\ntargets:\n  - name: e2e\n    host: 127.0.0.1\n    port: %s\n    user: root\n    root: %s\nrevision: 1\napps: []\n", port, root)), 0o600)
+	// The same installation as the demo plan, whose marker the target holds.
+	demo, err := stack.Load(filepath.Join(demoState, "stack.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(state, "stack.yaml"), []byte(fmt.Sprintf("version: 1\ninstallation_id: %s\ntargets:\n  - name: e2e\n    host: 127.0.0.1\n    port: %s\n    user: root\n    root: %s\nrevision: 1\napps: []\n", demo.InstallationID, port, root)), 0o600)
 	manifest, _ := os.ReadFile("../../internal/catalog/testdata/apps/hello/manifest.yaml")
 	compose, _ := os.ReadFile("../../internal/catalog/testdata/apps/hello/compose.yaml.tmpl")
 	os.WriteFile(filepath.Join(cat, "compose.yaml.tmpl"), compose, 0o600)

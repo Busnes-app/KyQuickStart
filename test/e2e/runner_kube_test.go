@@ -108,7 +108,7 @@ func testRunnerPod(t *testing.T, ctx context.Context, cs kubernetes.Interface, c
 		_, err := cs.AppsV1().Deployments("kyq-hello").Get(ctx, "app", metav1.GetOptions{})
 		return err == nil
 	}
-	os.WriteFile(filepath.Join(state, "stack.yaml"), []byte("version: 1\ndemo: true\ntargets:\n  - name: k8s\n    kubeconfig: "+kc+"\napps: []\n"), 0o600)
+	os.WriteFile(filepath.Join(state, "stack.yaml"), []byte("version: 1\ndemo: true\ninstallation_id: "+kubeInstallation+"\ntargets:\n  - name: k8s\n    kubeconfig: "+kc+"\napps: []\n"), 0o600)
 
 	for range 2 { // a rerun reconciles
 		if err := run("handoff", "--kyyard-target", "k8s", "--runner-pod", "kyq-runner/app=runner"); err != nil {
