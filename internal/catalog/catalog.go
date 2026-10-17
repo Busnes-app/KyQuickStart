@@ -84,10 +84,12 @@ type Kubernetes struct {
 	NodePorts map[int]int `yaml:"node_ports"`
 }
 
-// Resources are both the requests and the limits.
+// Resources are both the requests and the limits, except that CPURequest, when set, is a
+// lower CPU request: an app idle between short bursts need not reserve a whole limit.
 type Resources struct {
-	CPU    string `yaml:"cpu"`
-	Memory string `yaml:"memory"`
+	CPU        string `yaml:"cpu"`
+	CPURequest string `yaml:"cpu_request,omitempty"`
+	Memory     string `yaml:"memory"`
 }
 
 type Volume struct {
@@ -315,6 +317,9 @@ func (k Kubernetes) validate(images map[string]string, baseline, edge bool) erro
 	if !cpuRE.MatchString(k.Resources.CPU) {
 		return fmt.Errorf("resources.cpu %q must look like 100m or 2", k.Resources.CPU)
 	}
+	if r := k.Resources.CPURequest; r != "" && (!cpuRE.MatchString(r) || cpuMilli(r) > cpuMilli(k.Resources.CPU)) {
+		return fmt.Errorf("resources.cpu_request %q must look like 100m and be at most resources.cpu", r)
+	}
 	if !sizeRE.MatchString(k.Resources.Memory) {
 		return fmt.Errorf("resources.memory %q must look like 64Mi or 1Gi", k.Resources.Memory)
 	}
@@ -518,4 +523,14 @@ func checkCompose(b []byte, images map[string]string) (composeFile, error) {
 		volumes[v] = true
 	}
 	return composeFile{services: names, volumes: volumes}, nil
+}
+
+// cpuMilli reads a quantity cpuRE accepted, such as 100m or 2, as millicores.
+func cpuMilli(s string) int {
+	if m, ok := strings.CutSuffix(s, "m"); ok {
+		n, _ := strconv.Atoi(m)
+		return n
+	}
+	n, _ := strconv.Atoi(s)
+	return n * 1000
 }

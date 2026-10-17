@@ -233,3 +233,17 @@ func TestRenderStorageClass(t *testing.T) {
 		t.Error("storage class does not change the hash")
 	}
 }
+
+func TestRenderCPURequestBelowLimit(t *testing.T) {
+	c := fixture(t)
+	k := *c.Kubernetes
+	k.Resources.CPURequest = "10m"
+	c.Kubernetes = &k
+	res := renderHello(c, "rs-1", "").Deployment.Spec.Template.Spec.Containers[0].Resources
+	if res.Requests.Cpu().String() != "10m" || res.Limits.Cpu().String() != "50m" || res.Requests.Memory().Cmp(*res.Limits.Memory()) != 0 {
+		t.Errorf("resources = %+v, want cpu request 10m under a 50m limit and memory request = limit", res)
+	}
+	if renderHello(fixture(t), "rs-1", "").Deployment.Spec.Template.Spec.Containers[0].Resources.Requests.Cpu().String() != "50m" {
+		t.Error("an app without cpu_request no longer requests its limit")
+	}
+}

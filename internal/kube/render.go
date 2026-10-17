@@ -67,6 +67,11 @@ func render(a App) objects {
 		corev1.ResourceCPU:    resource.MustParse(k.Resources.CPU),
 		corev1.ResourceMemory: resource.MustParse(k.Resources.Memory),
 	}
+	requests := res
+	if k.Resources.CPURequest != "" {
+		requests = res.DeepCopy()
+		requests[corev1.ResourceCPU] = resource.MustParse(k.Resources.CPURequest)
+	}
 	root := k.RunAs == 0 // only under baseline
 	caps := &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}
 	for _, name := range k.Capabilities {
@@ -76,7 +81,7 @@ func render(a App) objects {
 		Name:      appName,
 		Image:     c.Images[k.Image],
 		Args:      k.Args,
-		Resources: corev1.ResourceRequirements{Requests: res, Limits: res},
+		Resources: corev1.ResourceRequirements{Requests: requests, Limits: res},
 		SecurityContext: &corev1.SecurityContext{
 			AllowPrivilegeEscalation: ptr.To(false),
 			ReadOnlyRootFilesystem:   ptr.To(!k.WritableRoot),
