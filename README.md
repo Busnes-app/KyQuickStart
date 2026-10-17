@@ -42,6 +42,7 @@ Choosing `finish` saves the plan without touching any server.
 | `preflight` | Read-only target checks |
 | `apply` | Install and verify the planned apps |
 | `install`, `uninstall`, `unmanage`, `upgrade`, `status` | Manage one app at a time after the first install ([guided setup](docs/guided-setup.md#managing-apps)) |
+| `handoff`, `pull-plan` | Hand app management to KyYard's suite runner, or copy its plan back ([guided setup](docs/guided-setup.md#hand-off-to-kyyard)) |
 | `verify-edge` | Check public routing and forwarded headers |
 | `integrate-identity`, `integrate-product`, `integrate-stack` | Configure existing Ky products against KyIdentity |
 | `review` | Show the saved plan |
@@ -52,6 +53,7 @@ Choosing `finish` saves the plan without touching any server.
 - [Guided setup](docs/guided-setup.md)
 - [Edge and reverse proxy](docs/edge.md)
 - [Offboarding bridge](docs/offboarding.md)
+- [Suite runner (KyYard manages the suite)](docs/superpowers/specs/2026-10-16-suite-runner-design.md)
 - [Third-party catalog and admission rules](docs/superpowers/specs/2026-10-06-third-party-catalog-design.md)
 - [Installer architecture](docs/superpowers/specs/2026-10-06-installer-architecture-design.md)
 

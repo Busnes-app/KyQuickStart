@@ -42,6 +42,10 @@ commands:
   unmanage APP             hand APP to its owner: drop the managed labels, record it in handover.md
   upgrade [APP...]         redeploy installed apps (default all) under their upgrade rules
   status [--json]          per installed app: version, target, state, last results
+  handoff --kyyard-target T [--runner-container NAME] [--revoke]
+                           hand the plan and target access to the suite runner on T, or take them back
+  pull-plan --kyyard-target T [--runner-container NAME]
+                           copy the runner's plan here (stack.yaml.bak keeps the previous one)
   integrate-identity configure a selected existing KyIdentity container from a protected bundle
   integrate-product  configure a selected product through its container-local setup adapter
   integrate-stack    run explicitly selected product integrations saved in stack.yaml
@@ -60,6 +64,11 @@ type Options struct {
 	In         io.Reader // answers host key prompts; nil when not interactive
 	Out        io.Writer
 	Progress   func(engine.Event) // optional: every step's start and end
+	Redact     *engine.Redactor   // optional: shared with the caller, which redacts its own output
+	// The suite runner sets these: its ID, which it requires in every target's plan marker,
+	// and its SSH key file in place of the agent.
+	RunnerID string
+	SSHKey   string
 }
 
 func Run(ctx context.Context, args []string, o Options) error {
@@ -83,6 +92,8 @@ func Run(ctx context.Context, args []string, o Options) error {
 		return review(args[1:], o)
 	case "install", "uninstall", "unmanage", "upgrade", "status":
 		return suiteCommand(ctx, cmd, args[1:], o)
+	case "handoff", "pull-plan":
+		return handoffCommand(ctx, cmd, args[1:], o)
 	case "version":
 		_, err := fmt.Fprintln(o.Out, o.ReleaseSet)
 		return err
@@ -165,6 +176,8 @@ func (t trustFlag) Set(v string) error {
 }
 
 type session struct {
+	changesPlan  bool          // install, uninstall or unmanage; refused on a runner-owned target
+	owner        *stack.Marker // set by a published handoff: the owner markers now record
 	integrations []stack.Integration
 	allTargets   []stack.Target
 	revision     int // of the loaded plan; markers on targets record it
@@ -239,7 +252,11 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 		clusters[[2]string{kc, t.Context}] = t.Name
 		st.Targets[i].Kubeconfig = kc
 	}
-	s := &session{revision: st.Revision, trust: trust, redact: &engine.Redactor{}, allTargets: st.Targets, integrations: st.Integrations, o: o, state: state, demo: st.Demo, cat: cat, placed: map[string]stack.Target{}, drivers: map[string]driver{}, edges: st.Edges, npms: map[string]*edge.NPM{}}
+	redact := o.Redact
+	if redact == nil {
+		redact = &engine.Redactor{}
+	}
+	s := &session{revision: st.Revision, trust: trust, redact: redact, allTargets: st.Targets, integrations: st.Integrations, o: o, state: state, demo: st.Demo, cat: cat, placed: map[string]stack.Target{}, drivers: map[string]driver{}, edges: st.Edges, npms: map[string]*edge.NPM{}}
 	var names []string
 	used := map[string]bool{}
 	for _, a := range st.Apps {
@@ -277,7 +294,7 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 func (s *session) connect(ctx context.Context, trust trustFlag) error {
 	confirm := s.confirmer()
 	for _, t := range s.targets {
-		d, err := dialTarget(ctx, t, filepath.Join(s.state, "known_hosts"), trust[t.Name], confirm, s.needsStorage(t.Name))
+		d, err := dialTarget(ctx, t, remote.SSHConfig{KnownHosts: filepath.Join(s.state, "known_hosts"), Trust: trust[t.Name], Confirm: confirm, KeyFile: s.o.SSHKey}, s.needsStorage(t.Name))
 		if err != nil {
 			return err
 		}
@@ -297,8 +314,9 @@ func (s *session) connect(ctx context.Context, trust trustFlag) error {
 	return nil
 }
 
-// dialTarget connects one target; tests replace it.
-var dialTarget = func(ctx context.Context, t stack.Target, knownHosts, trust string, confirm func(name, fp string) bool, needsStorage bool) (driver, error) {
+// dialTarget connects one target; c holds the SSH settings that are not the target's own.
+// Tests replace it.
+var dialTarget = func(ctx context.Context, t stack.Target, c remote.SSHConfig, needsStorage bool) (driver, error) {
 	if t.Kubernetes() {
 		c, err := kube.Connect(t.Kubeconfig, t.Context)
 		if err != nil {
@@ -306,14 +324,12 @@ var dialTarget = func(ctx context.Context, t stack.Target, knownHosts, trust str
 		}
 		return kubeDriver{c: c, needsStorage: needsStorage}, nil
 	}
-	c, err := remote.Dial(ctx, remote.SSHConfig{
-		Name: t.Name, Host: t.Host, Port: t.Port, User: t.User,
-		KnownHosts: knownHosts, Trust: trust, Confirm: confirm,
-	})
+	c.Name, c.Host, c.Port, c.User = t.Name, t.Host, t.Port, t.User
+	sc, err := remote.Dial(ctx, c)
 	if err != nil {
 		return nil, err
 	}
-	return sshDriver{t: t, c: c}, nil
+	return sshDriver{t: t, c: sc}, nil
 }
 
 func (s *session) needsStorage(target string) bool {
@@ -481,8 +497,11 @@ func (s *session) lock(ctx context.Context, holder string, targets []stack.Targe
 	}
 	return func(ctx context.Context) (err error) {
 		for _, t := range targets {
-			// Keep the owner: only handoff moves a plan between the CLI and the runner.
+			// Keep the owner: only a published handoff moves a plan between the CLI and the runner.
 			m := markers[t.Name]
+			if s.owner != nil {
+				m.Owner, m.RunnerID = s.owner.Owner, s.owner.RunnerID
+			}
 			if m.Owner == "" {
 				m.Owner = "cli"
 			}
@@ -508,13 +527,30 @@ func (s *session) lockOne(ctx context.Context, holder string, t stack.Target) (f
 	m, err := d.marker(ctx)
 	if err != nil {
 		err = fmt.Errorf("%s: %w", t.Name, err)
-	} else if m.Revision > s.revision {
-		err = suite.Errorf(suite.PlanStale, "%s holds plan revision %d (owner %s), newer than this plan's %d; run kyquickstart pull-plan", t.Name, m.Revision, m.Owner, s.revision)
+	} else {
+		err = s.guard(t.Name, m)
 	}
 	if err != nil {
 		return nil, m, errors.Join(err, finish(ctx, release))
 	}
 	return release, m, nil
+}
+
+// guard refuses a target whose marker records a newer plan or another owner. The runner acts
+// only on targets handed to it; the CLI may not change a plan the runner owns, and runs
+// anything else only from a plan at least as new as every marker it locks (after pull-plan).
+func (s *session) guard(target string, m stack.Marker) error {
+	switch {
+	case m.Revision > s.revision:
+		return suite.Errorf(suite.PlanStale, "%s holds plan revision %d (owner %s), newer than this plan's %d; run kyquickstart pull-plan", target, m.Revision, m.Owner, s.revision)
+	case s.o.RunnerID != "" && m.Owner != "runner":
+		return suite.Errorf(suite.OwnedByCLI, "%s is managed from the kyquickstart CLI; hand it to this runner with kyquickstart handoff", target)
+	case s.o.RunnerID != "" && m.RunnerID != s.o.RunnerID:
+		return suite.Errorf(suite.OwnedByRunner, "%s is owned by runner %s, not this runner; rerun kyquickstart handoff to move it here", target, m.RunnerID)
+	case s.o.RunnerID == "" && m.Owner == "runner" && s.changesPlan:
+		return suite.Errorf(suite.OwnedByRunner, "%s is managed by the KyYard suite runner; change it from KyYard's Suite page, or run kyquickstart handoff --revoke", target)
+	}
+	return nil
 }
 
 // finish runs a cleanup that must happen even after ctx is cancelled.

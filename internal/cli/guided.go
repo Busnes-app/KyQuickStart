@@ -164,6 +164,9 @@ func guided(ctx context.Context, args []string, o Options) error {
 	if o.In == nil {
 		return errors.New("plan needs terminal input; use review/preflight/apply with a saved stack.yaml for unattended operation")
 	}
+	if err := runnerOwned(*state); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(*state, 0o700); err != nil {
 		return err
 	}

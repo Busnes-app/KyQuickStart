@@ -256,6 +256,11 @@ handover of admin and everyday logins.
 - Guided planning, demo deployment, existing installation references and explicit KyIdentity setup: `docs/guided-setup.md`.
 - Resident offboarding runtime configuration, TLS, command behavior and remaining gates:
   `docs/offboarding.md`.
+- Suite runner (KyYard manages the suite after install): ownership, hand-off, runner protocol v1,
+  HTTP status table and image: `docs/superpowers/specs/2026-10-16-suite-runner-design.md`;
+  operator steps in `docs/guided-setup.md` ("Hand-off to KyYard"); compose example
+  `docs/kyyard-runner.compose.yaml`; image `Dockerfile`, published by
+  `.github/workflows/release-image.yml`.
 
 ## Local Contracts
 
@@ -329,6 +334,12 @@ handover of admin and everyday logins.
   each target it locked (`<root>/.plan`; annotations on the `kyquickstart` namespace) and
   refuses a target whose marker is newer (`plan_stale`); it keeps the marker's owner. Plans are
   published only after every step passed, so each command reruns after interruption.
+- Only `handoff` changes a marker's owner. Under `owner: runner` the CLI refuses `plan`,
+  `install`, `uninstall` and `unmanage` (`owned_by_runner`); the runner acts only on targets
+  marked with its own ID (`owned_by_cli` otherwise). The runner's SSH key, kubeconfigs and
+  identity stay in its state volume beside its secret-free `plan/`; the workstation never
+  receives them. Runner access on targets is exactly the installer's: one `restrict`ed
+  authorized_keys line, or a ServiceAccount bound to the preflight permission list.
 - Deployments record their catalog version (`kyquickstart/version` in `compose.kyq.yaml` or on
   the app namespace), which outlives uninstall. `apply`, `install` and `upgrade` gate a version
   change on the manifest's upgrade rules: `migrates_data` is always `backup_required` until
@@ -369,7 +380,8 @@ calls and kind nodes must carry their own explicit bounds.
 ## Verification
 
 - `make build`: builds workstation `kyquickstart` and resident `kyoffboard` binaries.
-- `make ci`: tidy check, gofmt, vet (including the `e2e` tag), race tests.
+- `make ci`: tidy check, gofmt, vet (including the `e2e` tag), race tests. Runner tests decode
+  every answer with KyYard's client types (`internal/runner/kyyard_test.go`).
 - `make e2e`: needs Docker; runs `apply` against an sshd container on the local Docker socket and
   against a kind cluster (`go run sigs.k8s.io/kind@v0.33.0`), including drift and stale-lock cases.
   Also runs disposable NPM, frpc/frps and cloudflared container tests in `internal/edge`.
@@ -398,6 +410,8 @@ calls and kind nodes must carry their own explicit bounds.
 - `cmd/kyoffboard/AGENTS.md`: resident bridge command flags, safe output and signal lifecycle;
   the root retains deployment and credential provisioning.
 - `internal/cli/AGENTS.md`: guided questions, local plan persistence and command orchestration.
+- `internal/runner/AGENTS.md`: `kyquickstart serve` and the serve-* commands inside the runner
+  container; the root owns the ownership rule and the CLI owns handoff.
 - `internal/edge/AGENTS.md`: NPM reconciliation, connector deployment and public forwarded-header verification.
   The root owns stack schema, CLI orchestration and target drivers.
 - `internal/adapters/AGENTS.md`: native third-party setup, administrator verification,
