@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/Busnes-app/kyquickstart/internal/managed"
@@ -43,5 +44,28 @@ func TestEdgeCredentialRequiresOwnedObjectsAndOnlyReads(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestEdgeSecretNeedsTheManagedLabel(t *testing.T) {
+	owned := map[string]string{managed.Label: managed.Value}
+	cs := fake.NewClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "kyq-edge", Labels: owned}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-dns", Namespace: "kyq-edge", Labels: owned}, Data: map[string][]byte{"api_token": []byte("cf-value")}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "unlabelled", Namespace: "kyq-edge"}, Data: map[string][]byte{"api_token": []byte("cf-value")}},
+	)
+	c := New(cs)
+	if b, err := c.EdgeSecret(context.Background(), "cloudflare-dns", "api_token"); err != nil || string(b) != "cf-value" {
+		t.Fatalf("read %q %v", b, err)
+	}
+	for _, ref := range [][2]string{{"unlabelled", "api_token"}, {"cloudflare-dns", "other"}, {"absent", "api_token"}} {
+		if _, err := c.EdgeSecret(context.Background(), ref[0], ref[1]); err == nil || strings.Contains(err.Error(), "cf-value") {
+			t.Fatalf("%v: %v", ref, err)
+		}
+	}
+	for _, action := range cs.Actions() {
+		if action.GetVerb() != "get" {
+			t.Fatalf("credential read mutated the cluster: %s", action.GetVerb())
+		}
 	}
 }
