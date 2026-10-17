@@ -8,6 +8,10 @@
 # API server and SSH target addresses. The placeholders are documentation addresses, so an
 # unedited policy allows nothing but DNS.
 #
+# On Cilium (unless policy-cidr-match-mode includes nodes), ipBlock does not match node addresses,
+# so the API server rule below allows nothing; use a CiliumNetworkPolicy with
+# toEntities: [kube-apiserver] instead, as docs/pilot/k80-runner.yaml does.
+#
 # The workstation running handoff needs list pods and create pods/exec in kyq-runner.
 apiVersion: v1
 kind: Namespace
