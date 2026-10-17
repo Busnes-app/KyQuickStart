@@ -70,6 +70,8 @@ func TestLoadRejects(t *testing.T) {
 		"bad memory":         {manifest + strings.Replace(kube, "32Mi", "32MB", 1), compose, "memory"},
 		"bad volume size":    {manifest + kube + "  volumes:\n    - name: data\n      mount: /data\n      size: lots\n", compose, "size"},
 		"bad env name":       {manifest + kube + "  env:\n    lower: x\n", compose, "env"},
+		"other env template": {manifest + kube + "  env:\n    URL: https://{{.Name}}\n", compose, "the only reference"},
+		"split env template": {manifest + kube + "  env:\n    URL: https://{{host}}name}}\n", compose, "the only reference"},
 
 		"no version":            {strings.Replace(manifest, "version: 2.4.0\n", "", 1), compose, "version"},
 		"v-prefixed version":    {strings.Replace(manifest, "2.4.0", "v2.4.0", 1), compose, "MAJOR.MINOR.PATCH"},
@@ -185,6 +187,22 @@ func TestKubernetesBackup(t *testing.T) {
 	_, err = Load(fstest.MapFS{"a/manifest.yaml": {Data: []byte(m + "  restore_order: [app]\n")}})
 	if err == nil || !strings.Contains(err.Error(), "need compose.yaml.tmpl") {
 		t.Fatalf("restore_order without Compose: err = %v", err)
+	}
+}
+
+func TestWithHostname(t *testing.T) {
+	m := manifest + kube + "  env:\n    URL: https://{{hostname}}/a\n    MODE: x\n"
+	cat, err := Load(fstest.MapFS{"a/manifest.yaml": {Data: []byte(m)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	k := cat["a"].Kubernetes
+	got := k.WithHostname("id.example.com")
+	if !k.UsesHostname() || got.UsesHostname() || got.Env["URL"] != "https://id.example.com/a" || got.Env["MODE"] != "x" {
+		t.Fatalf("env = %v", got.Env)
+	}
+	if k.Env["URL"] != "https://{{hostname}}/a" {
+		t.Fatal("WithHostname changed the catalog's env")
 	}
 }
 
