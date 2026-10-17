@@ -1,9 +1,10 @@
 # Edge support
 
-This build adds edge configuration to `stack.yaml`, reconciles existing Nginx Proxy Manager
-(NPM) hosts through its API, and optionally deploys a Docker connector for an existing
-Cloudflare tunnel or frp server. It is one part of the installer, not a complete suite release:
-the embedded production app catalog is still empty and product setup interfaces remain gated.
+This build adds edge configuration to `stack.yaml`, reconciles Nginx Proxy Manager (NPM) hosts
+through its API, deploys and bootstraps NPM itself on a Kubernetes target, and optionally deploys
+a Docker connector for an existing Cloudflare tunnel or frp server. It is one part of the
+installer, not a complete suite release: NPM is the only production catalog app and product setup
+interfaces remain gated.
 
 ## Supported paths
 
@@ -12,9 +13,9 @@ the embedded production app catalog is still empty and product setup interfaces 
 | Existing NPM | Reuse existing certificates; create and repair installer-owned proxy hosts only |
 | Existing Cloudflare tunnel | Locally managed tunnel credentials; optional cloudflared deployment on Docker |
 | Existing frp server | Optional frpc deployment on Docker, verified server TLS and PROXY v2 |
-| Kubernetes target | Existing NPM API reconciliation; connector deployment is rejected |
+| Kubernetes target | NPM from the catalog (`npm` app) managed through `kube://`, or an existing NPM's API; connector deployment is rejected |
 
-Fresh NPM bootstrap, DNS-01 certificate provisioning, creating Cloudflare tunnels and DNS
+Fresh NPM on a Docker host, DNS-01 certificate provisioning, creating Cloudflare tunnels and DNS
 records, provisioning an frps server, remotely managed Cloudflare token tunnels, and Kubernetes
 connector isolation remain to be implemented. NPS is not implemented.
 
@@ -68,6 +69,88 @@ only the listed hostnames, verifies origin TLS using each hostname and ends with
 Use dedicated tunnel credentials: an existing tunnel may have connectors with different
 ingress configuration, and this build does not reconcile those other connectors.
 
+## NPM on Kubernetes
+
+Add the `npm` app to a Kubernetes target. NPM has no Docker deployment yet; placing it on a
+Docker host is refused.
+
+```yaml
+apps:
+  - name: npm
+    target: k80
+    node_ports: {80: 30080, 443: 30443}  # optional; these are the defaults
+```
+
+`apply` deploys it in namespace `kyq-npm`:
+
+- Two claims of the target's `storage_class`: `vol-data` (1Gi, `/data`, NPM's database and
+  configuration) and `vol-letsencrypt` (256Mi). Both are in the manifest's backup block.
+- Service `app-public`, a NodePort for 80 and 443 (default 30080/30443; `node_ports` overrides
+  them within 30000-32767). Its `externalTrafficPolicy: Local` keeps the client address, which
+  each route's `connector_cidr` check depends on: only the node running NPM answers.
+- Service `app`, ClusterIP, for the admin API on port 81 only. Port 81 can never be published:
+  the catalog refuses it in `node_ports`, and `apply` repairs a Service edited to expose other
+  ports.
+- A NetworkPolicy (`default-deny-ingress`) that admits ingress only to 80 and 443, from
+  anywhere, and no pod at all to 81. Egress is limited to DNS (kube-dns in `kube-system`), TCP
+  80/443 anywhere (ACME and HTTPS upstreams), and any port on pods in installer-managed
+  namespaces. That last rule is the simplest correct one for upstreams: each app's own policy
+  decides what NPM reaches, and on a cluster with NPM every other app's policy admits only NPM's
+  pods (by namespace name, which the API server sets) to its ports.
+
+### The baseline exception
+
+Every other app namespace enforces Pod Security `restricted`. `kyq-npm` enforces `baseline`
+(the manifest's `pod_security`), because NPM's s6-overlay init must start as root: it creates
+its service user, chowns `/data` and its nginx directories, and rewrites configuration in the
+image. nginx and the API then run as uid 1000 (`PUID`/`PGID`); only the s6 supervisors stay
+root. The container still drops every capability and adds back only what the init needs,
+measured in kind by removing one at a time:
+
+| Setting | Value | Why |
+| --- | --- | --- |
+| `runAsUser` | 0 | s6 init |
+| `capabilities` | drop `ALL`; add `CHOWN`, `DAC_OVERRIDE`, `SETUID`, `SETGID`, `KILL` | without CHOWN, `useradd` fails; without DAC_OVERRIDE, writes to files it chowned fail; without SETUID or SETGID, the drop to uid 1000 fails; without KILL, s6 cannot stop the uid-1000 processes, so a pod stop waits the full grace period and ends in SIGKILL |
+| `allowPrivilegeEscalation` | false | |
+| `readOnlyRootFilesystem` | false | the init edits `/etc/passwd` and `/etc/nginx` |
+| `seccompProfile` | RuntimeDefault | |
+| pod sysctl | `net.ipv4.ip_unprivileged_port_start=0` | lets uid 1000 bind 80, 443 and 81 without NET_BIND_SERVICE (a safe sysctl; containerd 2 already sets it) |
+
+No `privileged`, no host network, ports or paths, and no service-account token.
+
+### Bootstrap
+
+NPM 2.13 and later start with no user ("setup mode"): whoever reaches the API first creates the
+administrator. The `npm.bootstrap` step, after NPM is ready, does that through a port-forward,
+so no pod and no LAN client can race it. The administrator is `admin@kyquickstart.invalid`;
+its password is `admin_password` in Secret `kyq-npm/kyq-secrets`, generated on the cluster like
+every app secret. Data from an older NPM that still accepts the default
+`admin@example.com`/`changeme` login is rotated to the installer's login instead. The step then
+stores an API token as `npm_token` in Secret `kyq-edge/kyq-credentials` (both installer-owned).
+
+Reruns skip it while the stored token verifies and the default login is refused. NPM tokens
+expire after a day and are revoked by a password change; a later apply mints a fresh one, and
+until then every command signs in with the stored password and keeps that token in memory only.
+An NPM with another administrator, or one that rejects both logins, is refused, not reset.
+
+For the NPM web UI, forward the admin Service yourself:
+`kubectl -n kyq-npm port-forward svc/app 8181:81`, then open `http://127.0.0.1:8181`.
+
+### `kube://` management URLs
+
+For an NPM deployed by this installer, set `npm_url: kube://kyq-npm/app:81`. The Kubernetes
+driver reaches it through the API server's `pods/portforward` (SPDY), so the hop from the
+workstation is the kubeconfig's TLS connection; NPM's API is plain HTTP inside the tunnel, which
+ends in the pod. No local port is opened. The private-address rule for `https://` URLs does not
+apply to it, and `https://` URLs keep that rule and verified TLS. A `kube://` URL is accepted
+only on a Kubernetes target, must name the `npm` app's admin Service and port, and needs `pods`
+`list` and `pods/portforward` `create`, which preflight checks.
+
+Routes need an existing NPM certificate, so add the edge after NPM is running: apply once with
+the `npm` app and no edge, add a certificate in NPM, then add the edge and apply again. Inside
+the cluster, forward to an app's Service, for example
+`forward_host: app.kyq-hello.svc.cluster.local`.
+
 ## Credentials
 
 On a Docker target, place existing credentials beneath its configured root:
@@ -83,9 +166,23 @@ The installer makes protected runtime copies on the target. Credential changes i
 the connector deployment and recreate the container. Credentials do not enter workstation
 state, command arguments or configuration hashes. Keep their original source files for resume.
 
-For an existing Kubernetes edge, the NPM token is read from key `npm_token` in Secret
-`kyq-edge/kyq-credentials`. Both namespace and Secret must already carry
-`ky.managed-by=kyquickstart`; the installer will not adopt foreign objects.
+For an existing NPM reached over `https://` from a Kubernetes target, the token is read from
+key `npm_token` in Secret `kyq-edge/kyq-credentials`. Both namespace and Secret must already
+carry `ky.managed-by=kyquickstart`; the installer will not adopt foreign objects.
+
+## Host ownership
+
+`stack.yaml` holds an `installation_id`, a random UUID written once by `plan` or, for a plan with
+edges that lacks one, by the first `apply` (a plan change: it bumps `revision`, is saved only
+after every step passed, and is refused on a runner-owned target). A host is this
+installation's only if its `meta` holds `ky.managed-by`, `ky.target` and `ky.installation` and
+its advanced configuration starts with `# kyquickstart:<installation_id>:<target>:`. Two
+installations whose targets share a name therefore never touch each other's hosts.
+
+Hosts written by builds before installation IDs carry only the target marks. They are refused,
+not adopted, until you run `kyquickstart apply --adopt-edge-hosts` once: that claims every such
+host on the edge's target and rewrites it to the new marks, including disabled and removed ones.
+Use the flag only if no other installation shares that target name on the same NPM.
 
 ## Applying and verifying
 
@@ -117,7 +214,12 @@ does not grant administrator access, verify SSO, or certify the complete install
 
 ## Test scope
 
-`make e2e` uses disposable local Docker resources. It proves the real NPM API accepts generated
+`make e2e` uses disposable local Docker resources. On kind it deploys `npm` from the catalog
+with claims, bootstraps it, checks that the default login and a second unauthenticated
+administrator are refused and that pods reach 80 but not 81, routes the demo app through the
+NodePort with the client address preserved, reruns apply with every step skipped, and refreshes
+a rejected token. Rotation of a real default login is covered by unit tests only: NPM 2.16 no
+longer creates one. It proves the real NPM API accepts generated
 configuration, real frps and generated frpc preserve client IP through two TLS hostnames,
 unknown SNI is rejected, forwarding headers are
 sanitized for frp and simulated Cloudflare traffic, the second apply is a no-op, and a removed
