@@ -67,3 +67,22 @@ func TestIntegrationBoundary(t *testing.T) {
 		}
 	}
 }
+
+// An installed app's integration names no workload: apply finds the app's own pod.
+func TestInstalledIntegrationNamesNoWorkload(t *testing.T) {
+	plan := "version: 1\ntargets:\n- name: k8s\n  kubeconfig: /tmp/fixture-kubeconfig\napps:\n- name: kyidentity\n  target: k8s\n- name: kypulse\n  target: k8s\n" +
+		"integrations:\n- product: kyidentity\n  target: k8s\n  bundle: /data/a.json\n- product: kypulse\n  target: k8s\n  bundle: /data/b.json\n"
+	s, err := Parse([]byte(plan))
+	if err != nil {
+		t.Fatal("installed integrations rejected", err)
+	}
+	if !s.Integrations[0].Installed(s) || (Integration{Product: "kyidentity", Target: "other"}).Installed(s) {
+		t.Fatal("Installed misreports placement")
+	}
+	for _, field := range []string{"container: app", "namespace: kyq-kyidentity", "pod: app-1"} {
+		bad := strings.Replace(plan, "  bundle: /data/a.json\n", "  bundle: /data/a.json\n  "+field+"\n", 1)
+		if _, err := Parse([]byte(bad)); err == nil || !strings.Contains(err.Error(), "names no container") {
+			t.Errorf("%s accepted: %v", field, err)
+		}
+	}
+}

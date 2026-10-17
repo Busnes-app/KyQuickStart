@@ -19,6 +19,12 @@ import (
 	"k8s.io/utils/ptr"
 )
 
+// privateDir is the subdirectory of each claim a non-root app mounts.
+const privateDir = "private"
+
+// initResources bound the private-volumes init container: one mkdir.
+var initResources = corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("50m"), corev1.ResourceMemory: resource.MustParse("16Mi")}
+
 // objects is everything the deploy step writes for one app, in one namespace.
 type objects struct {
 	Deployment *appsv1.Deployment
@@ -97,6 +103,18 @@ func render(a App) objects {
 	if a.StorageClass != "" {
 		class = &a.StorageClass
 	}
+	// A claim's root may be group- or world-writable (fsGroup, hostPath provisioners), so a
+	// non-root app mounts a private subdirectory its own uid creates first. Root apps own theirs.
+	var inits []corev1.Container
+	if !root && len(k.Volumes) > 0 {
+		inits = append(inits, corev1.Container{
+			Name:            "private-volumes",
+			Image:           CredentialGeneratorImage,
+			Command:         []string{"mkdir", "-p", "-m", "700"},
+			Resources:       corev1.ResourceRequirements{Requests: initResources, Limits: initResources},
+			SecurityContext: container.SecurityContext,
+		})
+	}
 	for _, v := range k.Volumes {
 		claim := "vol-" + v.Name
 		o.Claims = append(o.Claims, &corev1.PersistentVolumeClaim{
@@ -110,7 +128,14 @@ func render(a App) objects {
 		volumes = append(volumes, corev1.Volume{Name: claim, VolumeSource: corev1.VolumeSource{
 			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: claim},
 		}})
-		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: claim, MountPath: v.Mount})
+		mount := corev1.VolumeMount{Name: claim, MountPath: v.Mount}
+		if inits != nil {
+			at := "/volumes/" + v.Name
+			inits[0].Command = append(inits[0].Command, at+"/"+privateDir)
+			inits[0].VolumeMounts = append(inits[0].VolumeMounts, corev1.VolumeMount{Name: claim, MountPath: at})
+			mount.SubPath = privateDir
+		}
+		container.VolumeMounts = append(container.VolumeMounts, mount)
 	}
 	if len(k.Ports) > 0 {
 		svc := &corev1.Service{ObjectMeta: meta(appName), Spec: corev1.ServiceSpec{Selector: selector(app)}}
@@ -155,6 +180,7 @@ func render(a App) objects {
 					AutomountServiceAccountToken: ptr.To(false),
 					EnableServiceLinks:           ptr.To(false),
 					SecurityContext:              podSecurityContext(k),
+					InitContainers:               inits,
 					Containers:                   []corev1.Container{container},
 					Volumes:                      volumes,
 				},

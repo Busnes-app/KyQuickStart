@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"slices"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -62,6 +66,27 @@ func (c *Client) stream(ctx context.Context, namespace, pod, container string, a
 		return err
 	}
 	return executor.StreamWithContext(ctx, o)
+}
+
+// AppPod names the one ready, installer-managed pod of a catalog app and its container.
+func (c *Client) AppPod(ctx context.Context, app string) (namespace, pod, container string, err error) {
+	ns := namespaceOf(app)
+	list, err := c.cs.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: labels.SelectorFromSet(selector(app)).String()})
+	if err != nil {
+		return "", "", "", fmt.Errorf("pods of %s: %w", app, err)
+	}
+	var ready []string
+	for _, p := range list.Items {
+		if owned(&p) && p.DeletionTimestamp == nil && p.Status.Phase == corev1.PodRunning && slices.ContainsFunc(p.Status.Conditions, func(c corev1.PodCondition) bool {
+			return c.Type == corev1.PodReady && c.Status == corev1.ConditionTrue
+		}) {
+			ready = append(ready, p.Name)
+		}
+	}
+	if len(ready) != 1 {
+		return "", "", "", fmt.Errorf("%s has %d ready pods, want one", app, len(ready))
+	}
+	return ns, ready[0], appName, nil
 }
 
 type boundedExecOutput struct {

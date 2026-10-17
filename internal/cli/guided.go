@@ -534,12 +534,21 @@ func showPlan(out io.Writer, st *stack.Stack, cat catalog.Catalog) {
 		if target, _ := st.Target(a.Target); target.Kubernetes() && len(cat[a.Name].Secrets) > 0 {
 			fmt.Fprintf(out, "  Required temporary credential generator: %s (cluster-local; removed after generation)\n", kube.CredentialGeneratorImage)
 		}
+		if target, _ := st.Target(a.Target); target.Kubernetes() {
+			if k := cat[a.Name].Kubernetes; k != nil && k.RunAs != 0 && len(k.Volumes) > 0 {
+				fmt.Fprintf(out, "  Required volume init: %s (creates each claim's private directory)\n", kube.CredentialGeneratorImage)
+			}
+		}
 	}
 	for _, e := range st.Existing {
 		fmt.Fprintf(out, "Existing %s on %s: %s — integration pending, no adoption or changes\n", e.Product, e.Target, e.URL)
 	}
 	for _, i := range st.Integrations {
-		fmt.Fprintf(out, "Selected setup %s on %s: container %s, protected bundle %s (run integrate-stack explicitly)\n", i.Product, i.Target, i.Container, i.Bundle)
+		if i.Installed(st) {
+			fmt.Fprintf(out, "Selected setup %s on %s: protected bundle %s (apply runs it after health)\n", i.Product, i.Target, i.Bundle)
+		} else {
+			fmt.Fprintf(out, "Selected setup %s on %s: container %s, protected bundle %s (run integrate-stack explicitly)\n", i.Product, i.Target, i.Container, i.Bundle)
+		}
 		if i.Identity != nil {
 			fmt.Fprintln(out, "    Prepare KyIdentity metadata and generate private owner/everyday/client credentials on target; resume preserves retained files.")
 		}

@@ -38,6 +38,27 @@ func TestEmbeddedLoads(t *testing.T) {
 	}
 }
 
+func TestKyIdentityEntry(t *testing.T) {
+	cat, err := Load(Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := cat["kyidentity"]
+	k := a.Kubernetes
+	if a.Category != "ky" || a.Version != "0.4.2" || a.PodSecurity != "restricted" || a.OIDC != nil || a.Compose != nil || len(a.Secrets) != 0 {
+		t.Fatalf("manifest = %+v", a.Manifest)
+	}
+	if !strings.HasPrefix(a.Images[k.Image], "ghcr.io/busnes-app/kyidentity-server:0.4.2@sha256:") || k.RunAs != 100 || k.WritableRoot || len(k.Capabilities) != 0 {
+		t.Fatalf("kubernetes = %+v", k)
+	}
+	if k.Env["KYIDENTITY_ISSUER_URL"] != "https://"+HostnameRef || k.ReadinessPath != "/readyz" || k.Ports[0] != 5867 || k.Volumes[0].Mount != k.Env["KYIDENTITY_DATA_DIR"] {
+		t.Fatalf("env %v, probe %s, volumes %+v", k.Env, k.ReadinessPath, k.Volumes)
+	}
+	if !a.Upgrade.MigratesData || a.Upgrade.MinFrom != "0.4.0" || a.Backup.Volumes[0] != "data" {
+		t.Fatalf("upgrade %+v, backup %+v", a.Upgrade, a.Backup)
+	}
+}
+
 const manifest = "name: a\ncategory: ky\nversion: 2.4.0\nimages:\n  web: " + digest + "\nhealth:\n  timeout_seconds: 30\n"
 
 const oidc = "oidc:\n  redirect_paths: [/auth/callback]\n  logout_paths: [/]\n  roles: [admin, user]\n"
@@ -70,6 +91,8 @@ func TestLoadRejects(t *testing.T) {
 		"bad memory":         {manifest + strings.Replace(kube, "32Mi", "32MB", 1), compose, "memory"},
 		"bad volume size":    {manifest + kube + "  volumes:\n    - name: data\n      mount: /data\n      size: lots\n", compose, "size"},
 		"bad env name":       {manifest + kube + "  env:\n    lower: x\n", compose, "env"},
+		"other env template": {manifest + kube + "  env:\n    URL: https://{{.Name}}\n", compose, "the only reference"},
+		"split env template": {manifest + kube + "  env:\n    URL: https://{{host}}name}}\n", compose, "the only reference"},
 
 		"no version":            {strings.Replace(manifest, "version: 2.4.0\n", "", 1), compose, "version"},
 		"v-prefixed version":    {strings.Replace(manifest, "2.4.0", "v2.4.0", 1), compose, "MAJOR.MINOR.PATCH"},
@@ -185,6 +208,22 @@ func TestKubernetesBackup(t *testing.T) {
 	_, err = Load(fstest.MapFS{"a/manifest.yaml": {Data: []byte(m + "  restore_order: [app]\n")}})
 	if err == nil || !strings.Contains(err.Error(), "need compose.yaml.tmpl") {
 		t.Fatalf("restore_order without Compose: err = %v", err)
+	}
+}
+
+func TestWithHostname(t *testing.T) {
+	m := manifest + kube + "  env:\n    URL: https://{{hostname}}/a\n    MODE: x\n"
+	cat, err := Load(fstest.MapFS{"a/manifest.yaml": {Data: []byte(m)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	k := cat["a"].Kubernetes
+	got := k.WithHostname("id.example.com")
+	if !k.UsesHostname() || got.UsesHostname() || got.Env["URL"] != "https://id.example.com/a" || got.Env["MODE"] != "x" {
+		t.Fatalf("env = %v", got.Env)
+	}
+	if k.Env["URL"] != "https://{{hostname}}/a" {
+		t.Fatal("WithHostname changed the catalog's env")
 	}
 }
 
