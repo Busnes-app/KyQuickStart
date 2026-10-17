@@ -149,3 +149,148 @@ func TestInstallationIDAndNodePorts(t *testing.T) {
 		}
 	}
 }
+
+const certEdgeStack = `version: 1
+targets:
+  - name: k8s
+    kubeconfig: /kc
+  - name: nas
+    host: 192.0.2.1
+    user: kyq
+apps:
+  - name: hello
+    target: k8s
+edges:
+  - target: k8s
+    provider: cloudflare
+    npm_url: kube://kyq-npm/app:81
+    connector_cidr: 172.18.0.2/32
+    certificates:
+      - name: k80
+        domains: ['*.k80.example.com', k80.example.com]
+        email: ops+acme@example.com
+        dns_provider: cloudflare
+        credentials: {secret: cloudflare-dns, key: api_token}
+    routes:
+      - app: hello
+        hostname: hello.k80.example.com
+        forward_host: app.kyq-hello.svc.cluster.local
+        forward_port: 8080
+        certificate: k80
+`
+
+func TestEdgeCertificates(t *testing.T) {
+	s, err := Parse([]byte(certEdgeStack))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := s.Edges[0].Certificates[0]; c.Credentials.Secret != "cloudflare-dns" || s.Edges[0].Routes[0].Certificate != "k80" {
+		t.Fatalf("parsed %+v", c)
+	}
+	for name, pair := range map[string][2]string{
+		"both certificate fields":   {"certificate: k80", "certificate: k80\n        certificate_id: 3"},
+		"no certificate":            {"        certificate: k80\n", ""},
+		"unknown certificate":       {"certificate: k80", "certificate: other"},
+		"not covered":               {"hostname: hello.k80.example.com", "hostname: hello.example.org"},
+		"wildcard covers one level": {"hostname: hello.k80.example.com", "hostname: a.hello.k80.example.com"},
+		"inner wildcard":            {"'*.k80.example.com'", "'a.*.example.com'"},
+		"double wildcard":           {"'*.k80.example.com'", "'*.*.example.com'"},
+		"wildcard tld":              {"'*.k80.example.com'", "'*.com'"},
+		"upper case domain":         {"k80.example.com]", "K80.example.com]"},
+		"duplicate domain":          {"k80.example.com]", "'*.k80.example.com']"},
+		"no domains":                {"['*.k80.example.com', k80.example.com]", "[]"},
+		"provider allowlist":        {"dns_provider: cloudflare", "dns_provider: route53"},
+		"no provider":               {"        dns_provider: cloudflare\n", ""},
+		"display-name email":        {"email: ops+acme@example.com", "email: 'Ops <ops@example.com>'"},
+		"bare email":                {"email: ops+acme@example.com", "email: ops"},
+		"dotless email domain":      {"email: ops+acme@example.com", "email: ops@example"},
+		"no email":                  {"        email: ops+acme@example.com\n", ""},
+		"bad name":                  {"name: k80\n", "name: K_80\n"},
+		"installer secret":          {"secret: cloudflare-dns", "secret: kyq-credentials"},
+		"no key":                    {"key: api_token", "key: ''"},
+		"bad key":                   {"key: api_token", "key: a/b"},
+		"docker target":             {"  - name: hello\n    target: k8s", "  - name: hello\n    target: nas"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := strings.Replace(certEdgeStack, pair[0], pair[1], 1)
+			if name == "docker target" {
+				bad = strings.Replace(bad, "  - target: k8s\n    provider: cloudflare\n    npm_url: kube://kyq-npm/app:81", "  - target: nas\n    provider: cloudflare\n    npm_url: https://npm.example.com", 1)
+			}
+			if bad == certEdgeStack {
+				t.Fatal("replacement did not apply")
+			}
+			_, err := Parse([]byte(bad))
+			if err == nil || name == "docker target" && !strings.Contains(err.Error(), "need a Kubernetes target") {
+				t.Fatalf("accepted invalid certificate configuration: %v", err)
+			}
+		})
+	}
+	dup := strings.Replace(certEdgeStack, "    routes:", `      - name: k80
+        domains: [k80.example.com]
+        email: ops@example.com
+        dns_provider: cloudflare
+        credentials: {secret: cloudflare-dns, key: api_token}
+    routes:`, 1)
+	if _, err := Parse([]byte(dup)); err == nil {
+		t.Fatal("accepted a duplicate certificate name")
+	}
+}
+
+func TestCovers(t *testing.T) {
+	for _, c := range []struct {
+		domain, host string
+		ok           bool
+	}{
+		{"a.example.com", "a.example.com", true},
+		{"*.example.com", "a.example.com", true},
+		{"*.example.com", "a.b.example.com", false},
+		{"*.example.com", "example.com", false},
+		{"*.b.example.com", "a.example.com", false},
+	} {
+		if Covers(c.domain, c.host) != c.ok {
+			t.Errorf("Covers(%q, %q) != %v", c.domain, c.host, c.ok)
+		}
+	}
+}
+
+func TestEdgeLANDNS(t *testing.T) {
+	good := strings.Replace(certEdgeStack, "    routes:", `    lan_dns:
+      provider: kydns
+      url: https://kydns.example.com/
+      credentials: {secret: kydns-api, key: token}
+      address: 192.168.1.81
+    routes:`, 1)
+	s, err := Parse([]byte(good))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := s.Edges[0].LANDNS; d == nil || d.Address != "192.168.1.81" || d.Credentials.Secret != "kydns-api" {
+		t.Fatalf("parsed %+v", d)
+	}
+	for name, pair := range map[string][2]string{
+		"provider":       {"provider: kydns", "provider: pihole"},
+		"plain http":     {"https://kydns.example.com/", "http://kydns.example.com/"},
+		"url path":       {"https://kydns.example.com/", "https://kydns.example.com/api"},
+		"url secret":     {"https://kydns.example.com/", "https://u:p@kydns.example.com/"},
+		"url query":      {"https://kydns.example.com/", "https://kydns.example.com/?x=1"},
+		"ipv6 address":   {"address: 192.168.1.81", "address: 'fd00::81'"},
+		"loopback":       {"address: 192.168.1.81", "address: 127.0.0.1"},
+		"unspecified":    {"address: 192.168.1.81", "address: 0.0.0.0"},
+		"not an address": {"address: 192.168.1.81", "address: k80"},
+		"secret":         {"secret: kydns-api", "secret: kyq-credentials"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := strings.Replace(good, pair[0], pair[1], 1)
+			if bad == good {
+				t.Fatal("replacement did not apply")
+			}
+			if _, err := Parse([]byte(bad)); err == nil {
+				t.Fatal("accepted invalid lan_dns")
+			}
+		})
+	}
+	docker := strings.Replace(edgeStack, "    routes:", "    lan_dns: {provider: kydns, url: 'https://kydns.example.com', credentials: {secret: kydns-api, key: token}, address: 192.168.1.81}\n    routes:", 1)
+	if _, err := Parse([]byte(docker)); err == nil || !strings.Contains(err.Error(), "needs a Kubernetes target") {
+		t.Fatalf("lan_dns on a Docker edge: %v", err)
+	}
+}

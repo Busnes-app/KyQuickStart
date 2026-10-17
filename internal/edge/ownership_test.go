@@ -82,7 +82,7 @@ func enabledHost(id int, installation, hostname string) host {
 	e := testEdge()
 	r := e.Routes[0]
 	r.Hostname = hostname
-	c := (&NPM{installation: installation}).config(e, r)
+	c := (&NPM{installation: installation}).config(e, r, r.CertificateID)
 	c.Enabled = true
 	c.Meta["nginx_online"] = true
 	return host{ID: id, hostConfig: c}

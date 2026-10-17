@@ -1,10 +1,13 @@
 package stack
 
 import (
+	"errors"
 	"fmt"
+	"net/mail"
 	"net/netip"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -20,6 +23,31 @@ type Edge struct {
 	ProxyPort     int        `yaml:"proxy_port,omitempty"` // separate PROXY-protocol TLS listener for frp
 	Routes        []Route    `yaml:"routes"`
 	Connector     *Connector `yaml:"connector,omitempty"`
+	// Certificates are requested by NPM from Let's Encrypt through a DNS-01 challenge.
+	Certificates []Certificate `yaml:"certificates,omitempty"`
+	LANDNS       *LANDNS       `yaml:"lan_dns,omitempty"`
+}
+
+// LANDNS publishes each route's hostname on the LAN as an A record for Address.
+type LANDNS struct {
+	Provider    string    `yaml:"provider"` // kydns
+	URL         string    `yaml:"url"`      // admin API origin, reached like an https:// npm_url
+	Credentials SecretRef `yaml:"credentials"`
+	Address     string    `yaml:"address"`
+}
+
+// SecretRef names a key of an operator-created Secret in namespace kyq-edge.
+type SecretRef struct {
+	Secret string `yaml:"secret"`
+	Key    string `yaml:"key"`
+}
+
+type Certificate struct {
+	Name        string    `yaml:"name"`
+	Domains     []string  `yaml:"domains"`
+	Email       string    `yaml:"email"` // Let's Encrypt account contact
+	DNSProvider string    `yaml:"dns_provider"`
+	Credentials SecretRef `yaml:"credentials"`
 }
 
 // Connector attaches to an existing Docker network shared with NPM. The server or
@@ -38,8 +66,15 @@ type Route struct {
 	ForwardHost   string `yaml:"forward_host"`
 	ForwardPort   int    `yaml:"forward_port"`
 	ForwardScheme string `yaml:"forward_scheme"`
-	CertificateID int    `yaml:"certificate_id"`
+	CertificateID int    `yaml:"certificate_id,omitempty"`
+	Certificate   string `yaml:"certificate,omitempty"` // an edge certificate's name, instead of an ID
 	StatusPath    string `yaml:"status_path,omitempty"`
+}
+
+// Covers reports whether certificate domain covers host: equal, or a wildcard for its parent.
+func Covers(domain, host string) bool {
+	_, parent, _ := strings.Cut(host, ".")
+	return domain == host || domain == "*."+parent
 }
 
 // Hostname accepts a concrete DNS name, not wildcards, URLs or nginx directives.
@@ -134,6 +169,13 @@ func (s *Stack) validateEdges() error {
 		if len(e.Routes) == 0 {
 			return fmt.Errorf("edge %s: no routes", e.Target)
 		}
+		certs, err := validateCertificates(*e, target)
+		if err != nil {
+			return err
+		}
+		if err := validateLANDNS(*e, target); err != nil {
+			return err
+		}
 		for j := range e.Routes {
 			r := &e.Routes[j]
 			if apps[r.App] != e.Target {
@@ -159,8 +201,11 @@ func (s *Stack) validateEdges() error {
 			if r.ForwardScheme != "http" && r.ForwardScheme != "https" {
 				return fmt.Errorf("edge %s: forward_scheme must be http or https", e.Target)
 			}
-			if r.CertificateID < 1 {
-				return fmt.Errorf("edge %s: certificate_id must reference an existing NPM certificate", e.Target)
+			if (r.CertificateID == 0) == (r.Certificate == "") || r.CertificateID < 0 {
+				return fmt.Errorf("edge %s: route %s needs exactly one of certificate_id (an existing NPM certificate) or certificate (one of the edge's certificates)", e.Target, r.Hostname)
+			}
+			if c, ok := certs[r.Certificate]; r.Certificate != "" && (!ok || !slices.ContainsFunc(c.Domains, func(d string) bool { return Covers(d, r.Hostname) })) {
+				return fmt.Errorf("edge %s: route %s: certificate %q must be one of the edge's certificates and cover the hostname", e.Target, r.Hostname, r.Certificate)
 			}
 			if r.StatusPath == "" {
 				r.StatusPath = "/api/status"
@@ -170,6 +215,77 @@ func (s *Stack) validateEdges() error {
 				return fmt.Errorf("edge %s: status_path must be an absolute request path without a query or fragment", e.Target)
 			}
 		}
+	}
+	return nil
+}
+
+// validateCertificates returns e's certificates by name.
+func validateCertificates(e Edge, target Target) (map[string]Certificate, error) {
+	certs := map[string]Certificate{}
+	if len(e.Certificates) > 0 && !target.Kubernetes() {
+		return nil, fmt.Errorf("edge %s: certificates read their DNS credential from a Secret in kyq-edge, so they need a Kubernetes target for now", e.Target)
+	}
+	for _, c := range e.Certificates {
+		if len(validation.IsDNS1123Label(c.Name)) > 0 || certs[c.Name].Name != "" {
+			return nil, fmt.Errorf("edge %s: certificate name %q must be a unique DNS label", e.Target, c.Name)
+		}
+		certs[c.Name] = c
+		seen := map[string]bool{}
+		for _, d := range c.Domains {
+			// A wildcard only as the whole leftmost label, as Let's Encrypt allows.
+			if !Hostname(strings.TrimPrefix(d, "*.")) || seen[d] {
+				return nil, fmt.Errorf("edge %s: certificate %s: domain %q must be a unique lowercase DNS name, a wildcard only as the leftmost label", e.Target, c.Name, d)
+			}
+			seen[d] = true
+		}
+		if len(c.Domains) == 0 || len(c.Domains) > 100 {
+			return nil, fmt.Errorf("edge %s: certificate %s needs 1-100 domains", e.Target, c.Name)
+		}
+		a, err := mail.ParseAddress(c.Email)
+		_, domain, _ := strings.Cut(c.Email, "@")
+		if err != nil || a.Address != c.Email || a.Name != "" || len(c.Email) > 254 || !Hostname(strings.ToLower(domain)) {
+			return nil, fmt.Errorf("edge %s: certificate %s: email must be a plain address for the Let's Encrypt account", e.Target, c.Name)
+		}
+		// NPM supports many DNS providers; each one added here needs its credential format.
+		if c.DNSProvider != "cloudflare" {
+			return nil, fmt.Errorf("edge %s: certificate %s: dns_provider must be cloudflare", e.Target, c.Name)
+		}
+		if err := c.Credentials.validate(); err != nil {
+			return nil, fmt.Errorf("edge %s: certificate %s: %w", e.Target, c.Name, err)
+		}
+	}
+	return certs, nil
+}
+
+func validateLANDNS(e Edge, target Target) error {
+	d := e.LANDNS
+	if d == nil {
+		return nil
+	}
+	if !target.Kubernetes() {
+		return fmt.Errorf("edge %s: lan_dns reads its token from a Secret in kyq-edge, so it needs a Kubernetes target for now", e.Target)
+	}
+	if d.Provider != "kydns" {
+		return fmt.Errorf("edge %s: lan_dns provider must be kydns", e.Target)
+	}
+	u, err := url.Parse(d.URL)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" || u.Path != "" && u.Path != "/" {
+		return fmt.Errorf("edge %s: lan_dns url must be an HTTPS origin with no credentials, path or query", e.Target)
+	}
+	a, err := netip.ParseAddr(d.Address)
+	if err != nil || !a.Is4() || a.IsUnspecified() || a.IsMulticast() || a.IsLoopback() {
+		return fmt.Errorf("edge %s: lan_dns address must be the IPv4 address LAN clients reach the edge on", e.Target)
+	}
+	if err := d.Credentials.validate(); err != nil {
+		return fmt.Errorf("edge %s: lan_dns: %w", e.Target, err)
+	}
+	return nil
+}
+
+// validate accepts an operator Secret in kyq-edge, never the installer's own kyq-credentials.
+func (r SecretRef) validate() error {
+	if len(validation.IsDNS1123Subdomain(r.Secret)) > 0 || r.Secret == "kyq-credentials" || len(validation.IsConfigMapKey(r.Key)) > 0 {
+		return errors.New("credentials need a Secret name (not kyq-credentials) and a key")
 	}
 	return nil
 }

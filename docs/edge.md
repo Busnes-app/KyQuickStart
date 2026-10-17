@@ -10,13 +10,13 @@ interfaces remain gated.
 
 | Connection | Current support |
 | --- | --- |
-| Existing NPM | Reuse existing certificates; create and repair installer-owned proxy hosts only |
+| Existing NPM | Reuse existing certificates or, on a Kubernetes edge, have NPM request Let's Encrypt certificates through Cloudflare DNS-01; create and repair installer-owned proxy hosts only |
 | Existing Cloudflare tunnel | Locally managed tunnel credentials; optional cloudflared deployment on Docker |
 | Existing frp server | Optional frpc deployment on Docker, verified server TLS and PROXY v2 |
 | Kubernetes target | NPM from the catalog (`npm` app) managed through `kube://`, or an existing NPM's API; connector deployment is rejected |
 
-Fresh NPM on a Docker host, DNS-01 certificate provisioning, creating Cloudflare tunnels and DNS
-records, provisioning an frps server, remotely managed Cloudflare token tunnels, and Kubernetes
+Fresh NPM on a Docker host, DNS-01 certificates on a Docker edge or through a DNS provider other
+than Cloudflare, creating Cloudflare tunnels and public DNS records, provisioning an frps server, remotely managed Cloudflare token tunnels, and Kubernetes
 connector isolation remain to be implemented. NPS is not implemented.
 
 ## Configuration
@@ -146,10 +146,118 @@ apply to it, and `https://` URLs keep that rule and verified TLS. A `kube://` UR
 only on a Kubernetes target, must name the `npm` app's admin Service and port, and needs `pods`
 `list` and `pods/portforward` `create`, which preflight checks.
 
-Routes need an existing NPM certificate, so add the edge after NPM is running: apply once with
-the `npm` app and no edge, add a certificate in NPM, then add the edge and apply again. Inside
-the cluster, forward to an app's Service, for example
+NPM must be running before an edge can use it: apply once with the `npm` app and no edge, then
+add the edge (with an existing certificate's ID, or a [managed certificate](#managed-certificates))
+and apply again. Inside the cluster, forward to an app's Service, for example
 `forward_host: app.kyq-hello.svc.cluster.local`.
+
+## Managed certificates
+
+On a Kubernetes edge, NPM can request a Let's Encrypt certificate through a DNS-01 challenge, so
+the names never need to be public on port 80. A route then names the certificate instead of
+giving `certificate_id`; each route has exactly one of the two.
+
+```yaml
+edges:
+  - target: k80
+    npm_url: kube://kyq-npm/app:81
+    certificates:
+      - name: k80                       # a DNS label, unique on the edge
+        domains: ['*.k80.example.com']  # a wildcard only as the whole leftmost label
+        email: ops+acme@example.com     # the Let's Encrypt account contact
+        dns_provider: cloudflare        # the only provider allowed for now
+        credentials: {secret: cloudflare-dns, key: api_token}
+    routes:
+      - app: hello
+        hostname: hello.k80.example.com
+        certificate: k80                # must cover the hostname
+        # ...forward_host, forward_port as usual
+```
+
+`apply` runs one step per certificate, before the routes. It reuses this installation's
+certificate with exactly those domains, and otherwise has NPM request it (certbot's
+`dns-cloudflare` plugin) and waits for the answer, up to 15 minutes. A failed request is not
+retried within the run, because each attempt counts against Let's Encrypt's rate limits; NPM's
+`/data/logs/letsencrypt.log` holds certbot's reason. NPM renews the certificate; later runs only
+check that it exists, is unexpired and has the configured domains, and fail if it has expired. A
+certificate removed from `stack.yaml` stays in NPM.
+
+**Ownership.** NPM 2.16 takes the Let's Encrypt contact from the NPM user who requests the
+certificate and accepts no extra certificate metadata. So for each `email` the installer keeps
+an NPM user with that email and nickname `kyquickstart:<installation_id>:<target>`, no password
+and no role: certificates `manage`, everything else `hidden`. It reaches that user only with the
+administrator's "sign in as". A certificate is this installation's only when that user owns it;
+certificates of any other owner, including the administrator, are never reused or changed. If
+another NPM user already has the email, apply refuses: NPM signs in by email, and a second user
+could shadow the operator's login. Use an address of its own, such as a `+acme` alias.
+
+**The Cloudflare token.** Create an API token in Cloudflare with only **Zone > DNS > Edit**,
+limited to **Include > Specific zone > `example.com`** (for the pilot, `urlxl.us`). Then store it
+in the cluster from a hidden prompt, so it never appears on a command line or in shell history:
+
+```sh
+# in bash; the namespace exists once the npm app has been applied
+read -rs CF_TOKEN && printf %s "$CF_TOKEN" | kubectl -n kyq-edge create secret generic cloudflare-dns --from-file=api_token=/dev/stdin; unset CF_TOKEN
+kubectl -n kyq-edge label secret cloudflare-dns ky.managed-by=kyquickstart
+```
+
+The installer reads only Secrets in `kyq-edge` that carry `ky.managed-by=kyquickstart`, never
+`kyq-credentials` through a certificate reference, and never writes them. The workstation does
+not store the token; it goes to NPM only in the certificate request body and is redacted from
+every message. NPM keeps it in its database on the `vol-data` claim (and as a 0600 file under
+`/etc/letsencrypt/credentials` while certbot runs) to renew the certificate. Changing the token
+in the Secret does not change the copy NPM renews with. Keep the old token valid until the
+certificate is reissued: delete the certificate in NPM, rerun apply (it requests a new one with
+the current token and moves the routes to it), then revoke the old token.
+
+## LAN DNS (KyDNS)
+
+LAN clients can reach the edge directly instead of through the public connection. With
+`lan_dns`, apply keeps one A record per route hostname in KyDNS,
+pointing at the address LAN clients reach the edge on (for in-cluster NPM, the node that answers
+its NodePorts). This is also a Kubernetes edge feature for now.
+
+```yaml
+edges:
+  - target: k80
+    lan_dns:
+      provider: kydns                       # the only provider
+      url: https://kydns.example.com/       # its admin API origin
+      credentials: {secret: kydns-api, key: token}
+      address: 192.168.1.81
+```
+
+The URL follows the `https://` `npm_url` rules: it must resolve to private or loopback
+addresses, present a certificate the workstation trusts, and is used without a proxy or
+redirects. KyDNS accepts records only strictly inside its private zone and supports no
+wildcards, so every route hostname must lie inside that zone (KyDNS's `private_domain`); apply
+and preflight refuse one outside it before writing anything, and report KyDNS's own refusal
+code if it still declines a name.
+
+**Ownership.** KyDNS records have no owner or comment field, so the installer keeps a ledger of
+the records it created (server, record ID, name and address) under key `kydns_records` of
+`kyq-edge/kyq-credentials`. A record is this installation's only while the ledger lists its ID
+with the same name and address; a record changed or recreated by anyone else drops out of the
+ledger and is never touched. Apply creates the missing records, deletes its own records for
+hostnames that left `routes` (KyDNS records cannot be disabled), replaces its own records when
+`address` changes, and refuses a hostname that any other record, service or service alias
+already publishes. If a run is interrupted after KyDNS created a record but before the ledger
+saved it, the next run refuses that record as foreign: delete it in KyDNS and rerun. Removing
+`lan_dns` leaves the records in place.
+
+**The KyDNS token.** KyDNS API tokens are not scoped: every token has full administrator access
+to that KyDNS. The least privilege available is a token of its own, labelled for this
+installation and revoked on its own with `kydns token rm <id>`:
+
+```sh
+kydns token add kyquickstart-k80   # prints the token once
+# in bash, paste it at the hidden prompt
+read -rs KYDNS_API_TOKEN && printf %s "$KYDNS_API_TOKEN" | kubectl -n kyq-edge create secret generic kydns-api --from-file=token=/dev/stdin; unset KYDNS_API_TOKEN
+kubectl -n kyq-edge label secret kydns-api ky.managed-by=kyquickstart
+```
+
+The token stays on the cluster and in memory, is sent only as KyDNS's bearer token, and is
+redacted from every message; KyDNS error bodies are never shown, only their error code.
 
 ## Credentials
 
@@ -227,3 +335,7 @@ route is disabled, stops serving and is re-enabled when restored.
 Separate connector tests prove authenticated frpc login with verified TLS and parse generated
 cloudflared ingress with the pinned image. No live Cloudflare account or operator server is
 used. A complete public frp/Cloudflare-to-product G11 pilot is still required.
+
+Managed certificates and LAN DNS are covered by unit tests against fake NPM 2.16 and KyDNS APIs
+written from their source (NPM `v2.16.0` `backend/schema` and `backend/internal/certificate.js`;
+KyDNS `internal/adminapi`). No test reaches Let's Encrypt, Cloudflare or a real KyDNS.
