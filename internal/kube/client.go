@@ -9,12 +9,14 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/remotecommand"
 )
 
 type Client struct {
 	cs          kubernetes.Interface
 	config      *rest.Config
 	execCommand func(context.Context, string, string, string, []string) ([]byte, error)
+	execStream  func(context.Context, string, string, string, []string, remotecommand.StreamOptions) error
 }
 
 // New wraps a clientset; tests pass a fake one.
