@@ -33,7 +33,7 @@ var required = func() []authorizationv1.ResourceAttributes {
 	add("", "pods/exec", "", "create")
 	add("", "pods/portforward", "", "create") // the in-cluster NPM's admin API
 	add("", "secrets", "", "get", "create", "update", "patch")
-	add("", "services", "", "get", "create", "update", "patch", "delete")
+	add("", "services", "", "get", "list", "create", "update", "patch", "delete") // list: preflight's NodePorts
 	add("", "persistentvolumeclaims", "", "get", "create", "patch")
 	add("apps", "deployments", "", "get", "create", "update", "patch", "delete")
 	add("networking.k8s.io", "networkpolicies", "", "get", "create", "update", "patch")
@@ -43,13 +43,38 @@ var required = func() []authorizationv1.ResourceAttributes {
 }()
 
 // Preflight checks a cluster and changes nothing. A named storageClass must exist; with none,
-// claims need a default class.
-func Preflight(ctx context.Context, c *Client, needsStorage bool, storageClass string) []Finding {
+// claims need a default class. nodePorts maps each NodePort the plan's apps publish to its app.
+func Preflight(ctx context.Context, c *Client, needsStorage bool, storageClass string, nodePorts map[int]string) []Finding {
 	out := []Finding{c.versionCheck(), c.accessCheck(ctx)}
 	if needsStorage {
 		out = append(out, c.storageCheck(ctx, storageClass))
 	}
+	if len(nodePorts) > 0 {
+		out = append(out, c.nodePortCheck(ctx, nodePorts))
+	}
 	return out
+}
+
+// nodePortCheck refuses a wanted NodePort held by any Service but its app's own, which a
+// rerun finds in place.
+func (c *Client) nodePortCheck(ctx context.Context, want map[int]string) Finding {
+	list, err := c.cs.CoreV1().Services("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return Finding{"nodeports", false, err.Error()}
+	}
+	var held []string
+	for _, svc := range list.Items {
+		for _, p := range svc.Spec.Ports {
+			app, ok := want[int(p.NodePort)]
+			if ok && !(svc.Namespace == namespaceOf(app) && svc.Name == publicName && owned(&svc)) {
+				held = append(held, fmt.Sprintf("%d (for %s) is held by Service %s/%s", p.NodePort, app, svc.Namespace, svc.Name))
+			}
+		}
+	}
+	if len(held) > 0 {
+		return Finding{"nodeports", false, strings.Join(held, "; ") + "; set the app's node_ports in stack.yaml"}
+	}
+	return Finding{"nodeports", true, fmt.Sprintf("%d free", len(want))}
 }
 
 func (c *Client) versionCheck() Finding {

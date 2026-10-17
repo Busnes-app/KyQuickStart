@@ -86,8 +86,10 @@ apps:
 - Two claims of the target's `storage_class`: `vol-data` (1Gi, `/data`, NPM's database and
   configuration) and `vol-letsencrypt` (256Mi). Both are in the manifest's backup block.
 - Service `app-public`, a NodePort for 80 and 443 (default 30080/30443; `node_ports` overrides
-  them within 30000-32767). Its `externalTrafficPolicy: Local` keeps the client address, which
-  each route's `connector_cidr` check depends on: only the node running NPM answers.
+  them within 30000-32767). Preflight lists the cluster's Services and refuses a port any
+  Service but this one already holds, naming it, before anything is created. Its
+  `externalTrafficPolicy: Local` keeps the client address, which each route's `connector_cidr`
+  check depends on: only the node running NPM answers.
 - Service `app`, ClusterIP, for the admin API on port 81 only. Port 81 can never be published:
   the catalog refuses it in `node_ports`, and `apply` repairs a Service edited to expose other
   ports.
@@ -172,8 +174,8 @@ carry `ky.managed-by=kyquickstart`; the installer will not adopt foreign objects
 
 ## Host ownership
 
-`stack.yaml` holds an `installation_id`, a random UUID written once by `plan` or, for a plan with
-edges that lacks one, by the first `apply` (a plan change: it bumps `revision`, is saved only
+`stack.yaml` holds an `installation_id`, a random UUID written once by `plan` or, for a plan
+that lacks one, by the first `apply` or plan change (a plan change: it bumps `revision`, is saved only
 after every step passed, and is refused on a runner-owned target). A host is this
 installation's only if its `meta` holds `ky.managed-by`, `ky.target` and `ky.installation` and
 its advanced configuration starts with `# kyquickstart:<installation_id>:<target>:`. Two

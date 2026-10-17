@@ -26,10 +26,11 @@ const (
 	BackupRequired   Code = "backup_required"
 	AckRequired      Code = "ack_required"
 	StepFailed       Code = "step_failed"
-	OwnedByRunner    Code = "owned_by_runner" // the CLI may not change a plan the runner owns
-	OwnedByCLI       Code = "owned_by_cli"    // the runner acts only on a plan handed to it
-	NotFound         Code = "not_found"       // runner protocol: no such operation or route
-	Internal         Code = "internal"        // runner protocol: any failure without a code above
+	OwnedByRunner    Code = "owned_by_runner"     // the CLI may not change a plan the runner owns
+	OwnedByCLI       Code = "owned_by_cli"        // the runner acts only on a plan handed to it
+	OwnedByOtherPlan Code = "owned_by_other_plan" // the target's marker names another installation_id
+	NotFound         Code = "not_found"           // runner protocol: no such operation or route
+	Internal         Code = "internal"            // runner protocol: any failure without a code above
 )
 
 type Error struct {
