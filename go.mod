@@ -3,6 +3,7 @@ module github.com/Busnes-app/kyquickstart
 go 1.26.6
 
 require (
+	github.com/Busnes-app/ky-primitives v0.10.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	go.yaml.in/yaml/v3 v3.0.5
