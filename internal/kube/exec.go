@@ -7,9 +7,13 @@ import (
 	"io"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
 )
+
+var errNotConnected = errors.New("container exec requires a connected Kubernetes client")
 
 // Exec invokes a container-local product CLI; it never changes workload ownership.
 func (c *Client) Exec(ctx context.Context, namespace, pod, container string, args []string) ([]byte, error) {
@@ -29,31 +33,51 @@ func (c *Client) exec(ctx context.Context, namespace, pod, container string, arg
 	if c.execCommand != nil && input == nil {
 		return c.execCommand(ctx, namespace, pod, container, args)
 	}
-	if c.config == nil {
-		return nil, errors.New("container exec requires a connected Kubernetes client")
-	}
-	req := c.cs.CoreV1().RESTClient().Post().Resource("pods").Name(pod).Namespace(namespace).SubResource("exec").VersionedParams(&corev1.PodExecOptions{Container: container, Command: args, Stdin: len(input) > 0, Stdout: true, Stderr: true}, scheme.ParameterCodec)
-	executor, err := remotecommand.NewSPDYExecutor(c.config, "POST", req.URL())
-	if err != nil {
-		return nil, errors.New("cannot prepare Kubernetes product command")
-	}
-	out := &boundedExecOutput{}
+	out := &boundedExecOutput{limit: 128 << 10}
 	var stdin io.Reader
 	if len(input) > 0 {
 		stdin = bytes.NewReader(input)
 	}
-	err = executor.StreamWithContext(ctx, remotecommand.StreamOptions{Stdin: stdin, Stdout: out, Stderr: io.Discard})
-	if err != nil {
+	if err := c.stream(ctx, namespace, pod, container, args, remotecommand.StreamOptions{Stdin: stdin, Stdout: out, Stderr: io.Discard}); err != nil {
+		if errors.Is(err, errNotConnected) {
+			return nil, err
+		}
 		return nil, errors.New("Kubernetes product command failed; inspect product logs locally")
 	}
 	return out.Bytes(), nil
 }
 
-type boundedExecOutput struct{ bytes.Buffer }
+// stream runs args in a container over pods/exec, without a TTY. Tests replace it with
+// execStream.
+func (c *Client) stream(ctx context.Context, namespace, pod, container string, args []string, o remotecommand.StreamOptions) error {
+	if c.execStream != nil {
+		return c.execStream(ctx, namespace, pod, container, args, o)
+	}
+	if c.config == nil {
+		return errNotConnected
+	}
+	req := c.cs.CoreV1().RESTClient().Post().Resource("pods").Name(pod).Namespace(namespace).SubResource("exec").VersionedParams(&corev1.PodExecOptions{Container: container, Command: args, Stdin: o.Stdin != nil, Stdout: true, Stderr: true}, scheme.ParameterCodec)
+	executor, err := remotecommand.NewSPDYExecutor(c.config, "POST", req.URL())
+	if err != nil {
+		return err
+	}
+	return executor.StreamWithContext(ctx, o)
+}
+
+type boundedExecOutput struct {
+	bytes.Buffer
+	limit int
+}
 
 func (b *boundedExecOutput) Write(p []byte) (int, error) {
-	if b.Len()+len(p) > 128*1024 {
-		return 0, errors.New("product command output exceeds limit")
+	if b.Len()+len(p) > b.limit {
+		return 0, errors.New("command output exceeds limit")
 	}
 	return b.Buffer.Write(p)
+}
+
+// Fake returns a client of cs that verifies host's certificate and sends every pods/exec to
+// stream. For tests outside this package.
+func Fake(cs kubernetes.Interface, host string, stream func(ctx context.Context, namespace, pod, container string, args []string, o remotecommand.StreamOptions) error) *Client {
+	return &Client{cs: cs, config: &rest.Config{Host: host}, execStream: stream}
 }

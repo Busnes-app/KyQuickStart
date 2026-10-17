@@ -9,7 +9,7 @@ import (
 )
 
 func TestExecOutputIsBounded(t *testing.T) {
-	var b boundedExecOutput
+	b := boundedExecOutput{limit: 128 * 1024}
 	if _, err := b.Write(bytes.Repeat([]byte("a"), 128*1024)); err != nil {
 		t.Fatal(err)
 	}

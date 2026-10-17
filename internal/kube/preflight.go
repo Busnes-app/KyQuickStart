@@ -67,22 +67,31 @@ func (c *Client) versionCheck() Finding {
 }
 
 func (c *Client) accessCheck(ctx context.Context) Finding {
-	var denied []string
-	for _, attrs := range required {
-		r, err := c.cs.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx,
-			&authorizationv1.SelfSubjectAccessReview{Spec: authorizationv1.SelfSubjectAccessReviewSpec{ResourceAttributes: &attrs}},
-			metav1.CreateOptions{})
-		if err != nil {
-			return Finding{"permissions", false, err.Error()}
-		}
-		if !r.Status.Allowed {
-			denied = append(denied, attrs.Verb+" "+attrs.Resource)
-		}
+	denied, err := c.denied(ctx, required)
+	if err != nil {
+		return Finding{"permissions", false, err.Error()}
 	}
 	if len(denied) > 0 {
 		return Finding{"permissions", false, "denied: " + strings.Join(denied, ", ")}
 	}
 	return Finding{"permissions", true, fmt.Sprintf("%d checks allowed", len(required))}
+}
+
+// denied returns the attributes this client may not use, as "verb resource".
+func (c *Client) denied(ctx context.Context, attrs []authorizationv1.ResourceAttributes) ([]string, error) {
+	var out []string
+	for _, a := range attrs {
+		r, err := c.cs.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx,
+			&authorizationv1.SelfSubjectAccessReview{Spec: authorizationv1.SelfSubjectAccessReviewSpec{ResourceAttributes: &a}},
+			metav1.CreateOptions{})
+		if err != nil {
+			return nil, err
+		}
+		if !r.Status.Allowed {
+			out = append(out, strings.TrimSuffix(a.Verb+" "+a.Resource+"/"+a.Subresource, "/"))
+		}
+	}
+	return out, nil
 }
 
 func (c *Client) storageCheck(ctx context.Context, named string) Finding {

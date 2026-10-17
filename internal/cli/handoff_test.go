@@ -12,9 +12,18 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Busnes-app/kyquickstart/internal/kube"
+	"github.com/Busnes-app/kyquickstart/internal/remote"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
 	"github.com/Busnes-app/kyquickstart/internal/suite"
 	"golang.org/x/crypto/ssh"
+	authorizationv1 "k8s.io/api/authorization/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	ktesting "k8s.io/client-go/testing"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/remotecommand"
 )
 
 const runnerID = "0b6c1f3e-2a1d-4f6e-9c3b-5d7e8f9a0b1c"
@@ -24,6 +33,7 @@ type fakeRunner struct {
 	key      string
 	imported map[string]string
 	export   string
+	ran      []string
 }
 
 func newFakeRunner(t *testing.T, f *fixture) *fakeRunner {
@@ -32,28 +42,200 @@ func newFakeRunner(t *testing.T, f *fixture) *fakeRunner {
 	sp, _ := ssh.NewPublicKey(pub)
 	r := &fakeRunner{key: strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sp)))}
 	f.h.exec = func(cmd string, stdin []byte) ([]byte, error) {
-		if !strings.HasPrefix(cmd, "docker exec -i 'kyquickstart-runner' kyquickstart ") || !strings.HasSuffix(cmd, " --state /state") {
+		serve, ok := strings.CutPrefix(cmd, "docker exec -i 'kyquickstart-runner' kyquickstart ")
+		serve, ok2 := strings.CutSuffix(serve, " --state /state")
+		if !ok || !ok2 {
 			t.Errorf("unexpected exec %q", cmd)
 		}
-		switch {
-		case strings.Contains(cmd, "serve-keygen"):
-			return []byte(r.key + " kyquickstart-runner " + runnerID + "\n"), nil
-		case strings.Contains(cmd, "serve-export"):
-			return []byte(r.export), nil
-		}
-		r.imported = map[string]string{}
-		tr := tar.NewReader(bytes.NewReader(stdin))
-		for {
-			h, err := tr.Next()
-			if err != nil {
-				break
-			}
-			b, _ := io.ReadAll(tr)
-			r.imported[h.Name] = string(b)
-		}
-		return nil, nil
+		return r.answer(strings.Trim(serve, "'"), stdin), nil
 	}
 	return r
+}
+
+func (r *fakeRunner) answer(serve string, stdin []byte) []byte {
+	r.ran = append(r.ran, serve)
+	switch serve {
+	case "serve-keygen":
+		return []byte(r.key + " kyquickstart-runner " + runnerID + "\n")
+	case "serve-export":
+		return []byte(r.export)
+	}
+	r.imported = map[string]string{}
+	tr := tar.NewReader(bytes.NewReader(stdin))
+	for {
+		h, err := tr.Next()
+		if err != nil {
+			break
+		}
+		b, _ := io.ReadAll(tr)
+		r.imported[h.Name] = string(b)
+	}
+	return nil
+}
+
+// runnerPod puts the fake runner in pod kyq-runner/runner-0 on Kubernetes target k1, whose
+// API server is at https://k1.lan:6443. allowExec decides pods/exec; everything else is allowed.
+func runnerPod(t *testing.T, f *fixture, r *fakeRunner, allowExec bool) {
+	t.Helper()
+	ctx := context.Background()
+	f.cs.PrependReactor("create", "selfsubjectaccessreviews", func(a ktesting.Action) (bool, runtime.Object, error) {
+		review := a.(ktesting.CreateAction).GetObject().(*authorizationv1.SelfSubjectAccessReview)
+		review.Status.Allowed = allowExec || review.Spec.ResourceAttributes.Subresource != "exec"
+		return true, review, nil
+	})
+	f.cs.PrependReactor("create", "secrets", func(a ktesting.Action) (bool, runtime.Object, error) {
+		if s := a.(ktesting.CreateAction).GetObject().(*corev1.Secret); s.Type == corev1.SecretTypeServiceAccountToken {
+			s.Data = map[string][]byte{"token": []byte("runner-token-" + s.Annotations["kyquickstart/runner-id"]), "ca.crt": []byte("CA")}
+		}
+		return false, nil, nil
+	})
+	f.cs.CoreV1().Pods("kyq-runner").Create(ctx, &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "runner-0", Namespace: "kyq-runner", Labels: map[string]string{"app": "runner"}},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "runner"}}},
+		Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+	}, metav1.CreateOptions{})
+	c := kube.Fake(f.cs, "https://k1.lan:6443", func(_ context.Context, ns, pod, container string, args []string, o remotecommand.StreamOptions) error {
+		if ns+"/"+pod+"/"+container != "kyq-runner/runner-0/runner" || len(args) != 5 || args[0] != "kyquickstart" || strings.Join(args[2:], " ") != "--state /state/runner --pod-volumes" {
+			t.Errorf("exec %s/%s/%s %q", ns, pod, container, args)
+		}
+		var in []byte
+		if o.Stdin != nil {
+			in, _ = io.ReadAll(o.Stdin)
+		}
+		_, err := o.Stdout.Write(r.answer(args[1], in))
+		return err
+	})
+	saved := dialTarget
+	dialTarget = func(ctx context.Context, tg stack.Target, sc remote.SSHConfig, needsStorage bool) (driver, error) {
+		if tg.Kubernetes() {
+			return kubeDriver{c: c}, nil
+		}
+		return saved(ctx, tg, sc, needsStorage)
+	}
+}
+
+// kubeFixture is suiteFixture's Docker target nas plus Kubernetes target k1.
+func kubeFixture(t *testing.T) *fixture {
+	t.Helper()
+	f, _ := suiteFixture(t)
+	kc := filepath.Join(t.TempDir(), "kubeconfig")
+	os.WriteFile(kc, nil, 0o600)
+	f.plan(t, "  - name: k1\n    kubeconfig: "+kc+"\napps: []\n")
+	t.Setenv("HOME", t.TempDir())
+	return f
+}
+
+func server(t *testing.T, kubeconfig string) string {
+	t.Helper()
+	cfg, err := clientcmd.Load([]byte(kubeconfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg.Clusters[cfg.Contexts[cfg.CurrentContext].Cluster].Server
+}
+
+func TestHandoffToARunnerPod(t *testing.T) {
+	f := kubeFixture(t)
+	r := newFakeRunner(t, f)
+	runnerPod(t, f, r, true)
+
+	// A runner on nas reaches k1 at the workstation's address.
+	if err := f.run("handoff", "--kyyard-target", "nas"); err != nil {
+		t.Fatal(err, f.out.String())
+	}
+	if got := server(t, r.imported["kubeconfigs/k1.yaml"]); got != "https://k1.lan:6443" {
+		t.Errorf("runner on nas reaches k1 at %s", got)
+	}
+	if err := f.run("handoff", "--revoke"); err != nil {
+		t.Fatal(err)
+	}
+
+	// A runner in k1 reaches it in-cluster.
+	r.ran = nil
+	if err := f.run("handoff", "--kyyard-target", "k1", "--runner-pod", "kyq-runner/app=runner"); err != nil {
+		t.Fatal(err, f.out.String())
+	}
+	if got := server(t, r.imported["kubeconfigs/k1.yaml"]); got != "https://kubernetes.default.svc" {
+		t.Errorf("runner in k1 reaches it at %s", got)
+	}
+	if strings.Join(r.ran, " ") != "serve-keygen serve-import" || !strings.Contains(f.out.String(), "pod kyq-runner/app=runner on k1") {
+		t.Errorf("ran %v\n%s", r.ran, f.out.String())
+	}
+	rec, _ := os.ReadFile(filepath.Join(f.state, handoffFile))
+	if string(rec) != `{"kyyard_target":"k1","runner_namespace":"kyq-runner","runner_selector":"app=runner"}` {
+		t.Errorf("handoff.json = %s", rec)
+	}
+	if m, _ := kube.New(f.cs).Marker(context.Background()); m.Owner != "runner" || m.RunnerID != runnerID || f.marker(t) == "" {
+		t.Errorf("k1 marker %+v", m)
+	}
+
+	// pull-plan and --revoke find the runner in handoff.json.
+	r.export = strings.Replace(r.imported["stack.yaml"], "revision: 3", "revision: 4", 1)
+	if err := f.run("pull-plan"); err != nil || f.stack(t).Revision != 4 || r.ran[len(r.ran)-1] != "serve-export" {
+		t.Fatalf("pull-plan: %v, revision %d", err, f.stack(t).Revision)
+	}
+	if rec2, _ := os.ReadFile(filepath.Join(f.state, handoffFile)); string(rec2) != string(rec) {
+		t.Errorf("pull-plan rewrote handoff.json as %s", rec2)
+	}
+	if err := f.run("handoff", "--revoke"); err != nil || !strings.Contains(f.out.String(), "runner in pod kyq-runner/app=runner on k1 keeps") {
+		t.Fatalf("revoke: %v\n%s", err, f.out.String())
+	}
+}
+
+func TestHandoffRefusesARunnerPodItCannotExec(t *testing.T) {
+	f := kubeFixture(t)
+	r := newFakeRunner(t, f)
+	runnerPod(t, f, r, false)
+	err := f.run("handoff", "--kyyard-target", "k1")
+	if err == nil || !strings.Contains(err.Error(), "denied create pods/exec") {
+		t.Fatalf("handoff without pods/exec: %v", err)
+	}
+	if len(r.ran) != 0 || f.stack(t).Revision != 0 {
+		t.Errorf("ran %v, revision %d", r.ran, f.stack(t).Revision)
+	}
+	if _, err := os.Stat(filepath.Join(f.state, handoffFile)); err == nil {
+		t.Error("handoff.json written")
+	}
+	if _, err := f.cs.CoreV1().ServiceAccounts("kyquickstart").Get(context.Background(), "kyquickstart-runner", metav1.GetOptions{}); err == nil {
+		t.Error("runner access granted")
+	}
+	if keys, _ := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".ssh", "authorized_keys")); len(keys) != 0 {
+		t.Errorf("authorized_keys = %q", keys)
+	}
+}
+
+func TestHandoffRunnerFlags(t *testing.T) {
+	f := kubeFixture(t)
+	for _, c := range []struct {
+		args []string
+		want suite.Code
+	}{
+		{[]string{"handoff", "--kyyard-target", "k1", "--runner-container", "x"}, suite.InvalidRequest},
+		{[]string{"handoff", "--kyyard-target", "nas", "--runner-pod", "kyq-runner/app=runner"}, suite.InvalidRequest},
+		{[]string{"handoff", "--kyyard-target", "k1", "--runner-pod", "kyq-runner"}, suite.InvalidRequest},
+		{[]string{"handoff", "--kyyard-target", "k1", "--runner-pod", "kyq-runner/app=("}, suite.InvalidRequest},
+		{[]string{"handoff", "--kyyard-target", "nas", "--runner-container", "-x"}, suite.InvalidRequest},
+		{[]string{"handoff", "--kyyard-target", "k9"}, suite.UnknownTarget},
+		{[]string{"pull-plan"}, suite.InvalidRequest}, // nothing was handed off
+	} {
+		if err := f.run(c.args...); code(err) != c.want {
+			t.Errorf("%v: %v", c.args, err)
+		}
+	}
+	for _, args := range [][]string{
+		{"handoff", "--kyyard-target", "nas", "--runner-container", "x", "--runner-pod", "a/b=c"},
+		{"pull-plan", "--runner-pod", "a/b=c"},
+		{"handoff"},
+	} {
+		if err := f.run(args...); err != ErrUsage {
+			t.Errorf("%v: %v", args, err)
+		}
+	}
+	// A hand-edited record is checked like the flags.
+	os.WriteFile(filepath.Join(f.state, handoffFile), []byte(`{"kyyard_target":"k1","runner_container":"kyquickstart-runner"}`), 0o600)
+	if err := f.run("pull-plan"); code(err) != suite.InvalidRequest {
+		t.Errorf("pull-plan from a Docker record on k1: %v", err)
+	}
 }
 
 func TestHandoffOwnershipAndRevoke(t *testing.T) {

@@ -57,7 +57,7 @@ current-context: runner
 
 func newState(t *testing.T) string {
 	t.Helper()
-	s, err := openState(filepath.Join(shortDir(t), "state"))
+	s, err := openState(filepath.Join(shortDir(t), "state"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,64 @@ func TestKeygenOnce(t *testing.T) {
 func TestStateMustBePrivate(t *testing.T) {
 	dir := filepath.Join(shortDir(t), "state")
 	os.Mkdir(dir, 0o755)
-	if _, err := openState(dir); err == nil {
+	if _, err := openState(dir, false); err == nil {
 		t.Fatal("accepted a state directory others can read")
+	}
+}
+
+// With --pod-volumes the volume root may be world-writable, but only as a mount point; the
+// subdirectory and every ancestor above the root are checked as without the flag.
+func TestPodVolumes(t *testing.T) {
+	root := filepath.Join(shortDir(t), "vol")
+	os.Mkdir(root, 0o777)
+	os.Chmod(root, 0o777)
+	dir := filepath.Join(root, "runner")
+	if _, err := openState(dir, false); err == nil {
+		t.Fatal("without the flag: accepted a world-writable parent")
+	}
+	if _, err := openState(dir, true); err == nil || !strings.Contains(err.Error(), "not a mount point") {
+		t.Fatalf("a root that is not a mount point: %v", err)
+	}
+	if fi, err := os.Stat("/dev/shm"); err == nil && fi.IsDir() {
+		if err := volumeRoot("/dev/shm"); err != nil {
+			t.Errorf("/dev/shm is a mount point: %v", err)
+		}
+	}
+	link := filepath.Join(shortDir(t), "link")
+	os.Symlink(root, link)
+	if err := volumeRoot(link); err == nil {
+		t.Error("a symlinked volume root")
+	}
+
+	saved := volumeRoot
+	t.Cleanup(func() { volumeRoot = saved })
+	volumeRoot = func(string) error { return nil } // root is a mount point
+	if _, err := openState(dir, true); err != nil {
+		t.Fatalf("a world-writable mount point: %v", err)
+	}
+	if fi, _ := os.Lstat(dir); fi.Mode().Perm() != 0o700 {
+		t.Errorf("state subdirectory mode %v", fi.Mode())
+	}
+	l, err := listen(filepath.Join(root, "sock", "runner.sock"), true)
+	if err != nil {
+		t.Fatalf("socket in a pod volume: %v", err)
+	}
+	l.Close()
+
+	os.Symlink(shortDir(t), filepath.Join(root, "linked"))
+	os.Mkdir(filepath.Join(root, "shared"), 0o755)
+	os.WriteFile(filepath.Join(root, "file"), nil, 0o600)
+	for _, sub := range []string{"linked", "shared", "file"} {
+		if _, err := openState(filepath.Join(root, sub), true); err == nil {
+			t.Errorf("accepted subdirectory %s", sub)
+		}
+	}
+
+	above := filepath.Join(shortDir(t), "above")
+	os.Mkdir(above, 0o777)
+	os.Chmod(above, 0o777)
+	os.Mkdir(filepath.Join(above, "vol"), 0o777)
+	if _, err := openState(filepath.Join(above, "vol", "runner"), true); err == nil || !strings.Contains(err.Error(), "ancestor") {
+		t.Errorf("an untrusted ancestor above the mount: %v", err)
 	}
 }
