@@ -259,7 +259,7 @@ handover of admin and everyday logins.
 - Suite runner (KyYard manages the suite after install): ownership, hand-off, runner protocol v1,
   HTTP status table and image: `docs/superpowers/specs/2026-10-16-suite-runner-design.md`;
   operator steps in `docs/guided-setup.md` ("Hand-off to KyYard"); compose example
-  `docs/kyyard-runner.compose.yaml`; image `Dockerfile`, published by
+  `docs/kyyard-runner.compose.yaml`, pod manifest `docs/kyyard-runner.k8s.yaml`; image `Dockerfile`, published by
   `.github/workflows/release-image.yml`.
 
 ## Local Contracts

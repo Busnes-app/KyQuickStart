@@ -1,19 +1,26 @@
 package kube
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/Busnes-app/kyquickstart/internal/managed"
+	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+	"k8s.io/client-go/tools/remotecommand"
 	"k8s.io/utils/ptr"
 )
 
@@ -22,7 +29,63 @@ import (
 const (
 	runnerName  = "kyquickstart-runner"
 	runnerToken = runnerName + "-token"
+	// runnerContainer is the runner pod's container that runs kyquickstart.
+	runnerContainer = "runner"
+	inClusterAPI    = "kubernetes.default.svc"
+	maxRunnerOutput = 1 << 20 // serve-export's plan limit
 )
+
+// ParseRunnerPod splits handoff's --runner-pod NAMESPACE/LABEL_SELECTOR.
+func ParseRunnerPod(s string) (namespace, selector string, err error) {
+	namespace, selector, _ = strings.Cut(s, "/")
+	if len(validation.IsDNS1123Label(namespace)) > 0 || strings.TrimSpace(selector) == "" {
+		return "", "", fmt.Errorf("--runner-pod %q is not NAMESPACE/LABEL_SELECTOR", s)
+	}
+	if _, err := labels.Parse(selector); err != nil {
+		return "", "", fmt.Errorf("--runner-pod %q: %w", s, err)
+	}
+	return namespace, selector, nil
+}
+
+// ExecRunner runs args in the runner container of the one Running pod in namespace that
+// selector matches, streaming stdin, and returns its stdout. Its errors hold the command's
+// stderr: redact them before showing them. The permissions it needs are checked first, so a
+// refusal changes nothing.
+func (c *Client) ExecRunner(ctx context.Context, namespace, selector string, args []string, stdin io.Reader) ([]byte, error) {
+	denied, err := c.denied(ctx, []authorizationv1.ResourceAttributes{
+		{Resource: "pods", Namespace: namespace, Verb: "list"},
+		{Resource: "pods", Subresource: "exec", Namespace: namespace, Verb: "create"},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(denied) > 0 {
+		return nil, fmt.Errorf("this kubeconfig may not reach the runner in namespace %s: denied %s", namespace, strings.Join(denied, ", "))
+	}
+	list, err := c.cs.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return nil, err
+	}
+	var pods []corev1.Pod
+	for _, p := range list.Items {
+		if p.Status.Phase == corev1.PodRunning && p.DeletionTimestamp == nil {
+			pods = append(pods, p)
+		}
+	}
+	if len(pods) != 1 {
+		return nil, fmt.Errorf("%d running pods in namespace %s match %s; the runner must be exactly one", len(pods), namespace, selector)
+	}
+	pod := pods[0]
+	if !slices.ContainsFunc(pod.Spec.Containers, func(k corev1.Container) bool { return k.Name == runnerContainer }) {
+		return nil, fmt.Errorf("pod %s/%s has no container %q", namespace, pod.Name, runnerContainer)
+	}
+	out, stderr := &boundedExecOutput{limit: maxRunnerOutput}, &boundedExecOutput{limit: 4 << 10}
+	err = c.stream(ctx, namespace, pod.Name, runnerContainer, args, remotecommand.StreamOptions{Stdin: stdin, Stdout: out, Stderr: stderr})
+	if err != nil {
+		return nil, fmt.Errorf("pod %s/%s: %w: %s", namespace, pod.Name, err, bytes.TrimSpace(stderr.Bytes()))
+	}
+	return out.Bytes(), nil
+}
 
 // RunnerRules is what an install needs (required), as RBAC rules: cluster-wide ones, and the
 // lock namespace's own.
@@ -50,8 +113,9 @@ func runnerMeta(ns string) metav1.ObjectMeta {
 
 // GrantRunner gives runner runnerID a ServiceAccount bound to RunnerRules and returns a
 // kubeconfig holding its token. A token issued to another runner is replaced, so it stops
-// working. The lock namespace exists: the caller holds the lock.
-func (c *Client) GrantRunner(ctx context.Context, runnerID string) ([]byte, error) {
+// working. The lock namespace exists: the caller holds the lock. A runner in this cluster
+// (inCluster) reaches the API server at its in-cluster address, others at the workstation's.
+func (c *Client) GrantRunner(ctx context.Context, runnerID string, inCluster bool) ([]byte, error) {
 	if c.config == nil || c.config.Insecure {
 		return nil, errors.New("the cluster connection must verify the API server's certificate")
 	}
@@ -86,8 +150,12 @@ func (c *Client) GrantRunner(ctx context.Context, runnerID string) ([]byte, erro
 	if err != nil {
 		return nil, fmt.Errorf("runner token: %w", err)
 	}
+	server := &clientcmdapi.Cluster{Server: c.config.Host, TLSServerName: c.config.TLSClientConfig.ServerName, CertificateAuthorityData: ca}
+	if inCluster {
+		server.Server, server.TLSServerName = "https://"+inClusterAPI, inClusterAPI
+	}
 	cfg := clientcmdapi.NewConfig()
-	cfg.Clusters["cluster"] = &clientcmdapi.Cluster{Server: c.config.Host, TLSServerName: c.config.TLSClientConfig.ServerName, CertificateAuthorityData: ca}
+	cfg.Clusters["cluster"] = server
 	cfg.AuthInfos[runnerName] = &clientcmdapi.AuthInfo{Token: string(token)}
 	cfg.Contexts[runnerName] = &clientcmdapi.Context{Cluster: "cluster", AuthInfo: runnerName}
 	cfg.CurrentContext = runnerName

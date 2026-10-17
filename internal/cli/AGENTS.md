@@ -11,8 +11,9 @@ Plain terminal planning and command orchestration for the operator-run installer
   take a context, state directory and `Options` (with `Progress`) so the suite runner calls
   them without flag parsing; they return `internal/suite` errors and status.
 - `handoff.go` owns `handoff` (grant, `--revoke`) and `pull-plan`: it reaches the runner only
-  through `docker exec` of serve-* over the KyYard target's SSH, holds every target lock while
-  granting, and publishes the plan before markers change owner. `handoff.json` in the state
+  through the KyYard target driver's `execRunner` (`docker exec` over SSH, or `pods/exec` into
+  the one runner pod `--runner-pod` selects, permission-checked first), holds every target lock
+  while granting, and publishes the plan before markers change owner. `handoff.json` in the state
   directory makes `plan` refuse while the runner owns the plan. `session.guard` is the
   ownership rule for every locked command and CLI `status`.
 - Explicit existing KyIdentity container setup and capability checks: `identity.go`, documented in `../../docs/guided-setup.md`.
