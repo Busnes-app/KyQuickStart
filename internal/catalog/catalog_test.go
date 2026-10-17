@@ -38,6 +38,27 @@ func TestEmbeddedLoads(t *testing.T) {
 	}
 }
 
+func TestKyIdentityEntry(t *testing.T) {
+	cat, err := Load(Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := cat["kyidentity"]
+	k := a.Kubernetes
+	if a.Category != "ky" || a.Version != "0.4.2" || a.PodSecurity != "restricted" || a.OIDC != nil || a.Compose != nil || len(a.Secrets) != 0 {
+		t.Fatalf("manifest = %+v", a.Manifest)
+	}
+	if !strings.HasPrefix(a.Images[k.Image], "ghcr.io/busnes-app/kyidentity-server:0.4.2@sha256:") || k.RunAs != 100 || k.WritableRoot || len(k.Capabilities) != 0 {
+		t.Fatalf("kubernetes = %+v", k)
+	}
+	if k.Env["KYIDENTITY_ISSUER_URL"] != "https://"+HostnameRef || k.ReadinessPath != "/readyz" || k.Ports[0] != 5867 || k.Volumes[0].Mount != k.Env["KYIDENTITY_DATA_DIR"] {
+		t.Fatalf("env %v, probe %s, volumes %+v", k.Env, k.ReadinessPath, k.Volumes)
+	}
+	if !a.Upgrade.MigratesData || a.Upgrade.MinFrom != "0.4.0" || a.Backup.Volumes[0] != "data" {
+		t.Fatalf("upgrade %+v, backup %+v", a.Upgrade, a.Backup)
+	}
+}
+
 const manifest = "name: a\ncategory: ky\nversion: 2.4.0\nimages:\n  web: " + digest + "\nhealth:\n  timeout_seconds: 30\n"
 
 const oidc = "oidc:\n  redirect_paths: [/auth/callback]\n  logout_paths: [/]\n  roles: [admin, user]\n"
