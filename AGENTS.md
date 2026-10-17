@@ -308,7 +308,8 @@ handover of admin and everyday logins.
   permissions, use verified account/team receipts, and retain native repositories on logical
   group retirement. Qualify actual KyIdentity group event delivery before deployment.
 - Reverse proxy is Nginx Proxy Manager. On an existing NPM, touch only installer-created hosts,
-  through its API, never its database. NPM admin is LAN-only; its credentials go in the handover.
+  certificates and certificate users, through its API, never its database. LAN DNS records in
+  KyDNS are touched only while listed in the installer's ledger (`docs/edge.md`). NPM admin is LAN-only; its credentials go in the handover.
   A host is this installation's only with `stack.yaml`'s `installation_id` in its marks; hosts
   with the older target-only marks change only under `apply --adopt-edge-hosts`, once. On
   Kubernetes the catalog's `npm` app keeps its admin API on a ClusterIP Service reached through

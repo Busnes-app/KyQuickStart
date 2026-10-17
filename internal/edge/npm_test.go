@@ -141,7 +141,7 @@ func TestRemovedRouteIsDisabledOnlyWhenOwned(t *testing.T) {
 	owned := func(id int, name, target string) host {
 		r := e.Routes[0]
 		r.Hostname = name
-		c := (&NPM{installation: testID}).config(stack.Edge{Target: target, Provider: e.Provider, ConnectorCIDR: e.ConnectorCIDR, ProxyPort: e.ProxyPort}, r)
+		c := (&NPM{installation: testID}).config(stack.Edge{Target: target, Provider: e.Provider, ConnectorCIDR: e.ConnectorCIDR, ProxyPort: e.ProxyPort}, r, r.CertificateID)
 		c.Enabled = true
 		return host{ID: id, hostConfig: c}
 	}
@@ -232,7 +232,7 @@ func TestRedirectNeverReceivesCredential(t *testing.T) {
 func TestHeadersAndDedicatedListener(t *testing.T) {
 	e := testEdge()
 	n := &NPM{installation: testID}
-	c := n.config(e, e.Routes[0])
+	c := n.config(e, e.Routes[0], 1)
 	for _, want := range []string{"listen 8443 ssl proxy_protocol;", "real_ip_header proxy_protocol;", "set_real_ip_from 172.30.0.3/32;", "location / {", `proxy_set_header Forwarded "";`, "proxy_set_header X-Forwarded-For $remote_addr;", "proxy_set_header X-Forwarded-Proto $scheme;"} {
 		if !strings.Contains(c.Advanced, want) {
 			t.Errorf("missing %s", want)
@@ -242,7 +242,7 @@ func TestHeadersAndDedicatedListener(t *testing.T) {
 		t.Fatal("untrusted forwarding header appended")
 	}
 	e.Provider, e.ProxyPort = "cloudflare", 0
-	cf := n.config(e, e.Routes[0]).Advanced
+	cf := n.config(e, e.Routes[0], 1).Advanced
 	if strings.Contains(cf, "proxy_protocol") || !strings.Contains(cf, "real_ip_header CF-Connecting-IP;") {
 		t.Fatal("wrong Cloudflare listener/trust")
 	}

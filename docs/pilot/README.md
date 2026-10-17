@@ -23,3 +23,29 @@ no NodePort. NPM's default login is refused, and the API token is in `kyq-edge/k
 No routes yet: a route needs a certificate in NPM first.
 
 The earlier demo plan's `hello` was uninstalled first (its namespace and retained volume remain).
+
+## Edge values (not yet applied)
+
+Certificates and LAN DNS for K80, per `docs/edge.md`. Both Secrets are created on the cluster
+by the operator with the commands there; nothing below is a credential.
+
+```yaml
+    certificates:
+      - name: k80
+        domains: ['*.k80.urlxl.us']
+        email: <an address of its own, not NPM's admin login; a +acme alias works>
+        dns_provider: cloudflare
+        credentials: {secret: cloudflare-dns, key: api_token}   # Zone:DNS:Edit on urlxl.us only
+    lan_dns:
+      provider: kydns
+      url: https://kydns.urlxl.us/
+      credentials: {secret: kydns-api, key: token}
+      address: 192.168.1.81
+```
+
+Routes use `certificate: k80` and hostnames `<app>.k80.urlxl.us`. Open before relying on them:
+
+- `192.168.1.81` is k81, the node running NPM; it answers only on the NodePorts 30180/30543,
+  so a LAN client resolving `<app>.k80.urlxl.us` reaches HTTPS on 443 only if k81 forwards 443
+  to 30543. Nothing in KyQuickStart sets that up.
+- KyDNS must hold `k80.urlxl.us` names inside its private zone; preflight reports the zone if not.

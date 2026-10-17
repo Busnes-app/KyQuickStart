@@ -34,6 +34,7 @@ type driver interface {
 	removeSteps(name string, app catalog.App) []engine.Step
 	unmanageSteps(name string, app catalog.App) []engine.Step
 	edgeAccess(context.Context, stack.Edge) ([]byte, edge.Dial, error) // NPM token, and tunnel for kube://
+	edgeSecrets() edge.Secrets                                         // referenced edge credentials; nil on Docker
 	checkConnector(context.Context, stack.Edge) error
 	connectorSteps(context.Context, stack.Edge, string, *engine.Redactor) ([]engine.Step, error)
 	execRunner(ctx context.Context, r handoffRecord, serve string, stdin io.Reader) ([]byte, error)
@@ -102,6 +103,9 @@ func (d sshDriver) execRunner(ctx context.Context, r handoffRecord, serve string
 	return d.c.Run(ctx, "docker exec -i "+remote.Quote(r.Container)+" kyquickstart "+remote.Quote(serve)+" --state "+runnerState, in)
 }
 
+// edgeSecrets is nil: stack validation keeps Secret references to Kubernetes edges.
+func (d sshDriver) edgeSecrets() edge.Secrets { return nil }
+
 func (d sshDriver) edgeAccess(ctx context.Context, _ stack.Edge) ([]byte, edge.Dial, error) {
 	token, err := remote.ReadSecret(ctx, d.c, d.t.Root+"/edge/secrets/npm_token")
 	return token, nil, err
@@ -162,6 +166,8 @@ func (d kubeDriver) close() error { return nil }
 func (d kubeDriver) execRunner(ctx context.Context, r handoffRecord, serve string, stdin io.Reader) ([]byte, error) {
 	return d.c.ExecRunner(ctx, r.Namespace, r.Selector, []string{"kyquickstart", serve, "--state", podRunnerState, "--pod-volumes"}, stdin)
 }
+
+func (d kubeDriver) edgeSecrets() edge.Secrets { return d.c }
 
 func (d kubeDriver) edgeAccess(ctx context.Context, e stack.Edge) ([]byte, edge.Dial, error) {
 	ns, svc, port, ok := stack.KubeService(e.NPMURL)

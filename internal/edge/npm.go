@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -55,9 +56,22 @@ type NPM struct {
 	token        string
 	installation string
 	http         *http.Client
+	lan          *http.Client // other LAN administration APIs: KyDNS
 	// Adopt claims this target's hosts marked by builds that predate installation IDs, and
 	// rewrites them to this installation's marks (apply --adopt-edge-hosts).
 	Adopt bool
+	// Secrets reads the edge's referenced credentials; set for a Kubernetes target.
+	Secrets Secrets
+	// Redact receives every credential read, before it is used.
+	Redact *engine.Redactor
+}
+
+// Secrets reads target-held edge credentials by reference, and keeps the LAN DNS ledger
+// (records carry no owner in KyDNS). Values stay in memory.
+type Secrets interface {
+	EdgeSecret(ctx context.Context, name, key string) ([]byte, error)
+	LANDNSLedger(ctx context.Context) ([]byte, error) // empty when none yet
+	SetLANDNSLedger(ctx context.Context, ledger []byte) error
 }
 
 // Dial opens one connection to NPM's API; for kube:// it is the Kubernetes driver's port-forward.
@@ -77,7 +91,7 @@ func NewNPM(origin, token, installation string, tunnel Dial) (*NPM, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &NPM{base: base, token: token, installation: installation, http: npmClient(transport)}, nil
+	return &NPM{base: base, token: token, installation: installation, http: npmClient(transport), lan: npmClient(lanTransport()), Redact: &engine.Redactor{}}, nil
 }
 
 func npmClient(t *http.Transport) *http.Client {
@@ -98,7 +112,12 @@ func npmTransport(origin string, tunnel Dial) (string, *http.Transport, error) {
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || tunnel != nil {
 		return "", nil, errors.New("NPM requires an HTTPS origin without credentials, path or query")
 	}
-	transport := &http.Transport{
+	return origin, lanTransport(), nil
+}
+
+// lanTransport verifies TLS and dials only private or loopback addresses, with no proxy.
+func lanTransport() *http.Transport {
+	return &http.Transport{
 		// No environment proxy: administration and its bearer token stay on the LAN.
 		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 			host, port, err := net.SplitHostPort(address)
@@ -112,7 +131,7 @@ func npmTransport(origin string, tunnel Dial) (string, *http.Transport, error) {
 			for _, ip := range ips {
 				ip = ip.Unmap()
 				if !ip.IsPrivate() && !ip.IsLoopback() {
-					return nil, errors.New("NPM administration must resolve only to private or loopback addresses")
+					return nil, errors.New("LAN administration must resolve only to private or loopback addresses")
 				}
 			}
 			var last error
@@ -124,15 +143,17 @@ func npmTransport(origin string, tunnel Dial) (string, *http.Transport, error) {
 				last = err
 			}
 			if last == nil {
-				last = errors.New("NPM hostname has no addresses")
+				last = errors.New("hostname has no addresses")
 			}
 			return nil, last
 		},
 	}
-	return origin, transport, nil
 }
 
-func (n *NPM) Close() { n.http.CloseIdleConnections() }
+func (n *NPM) Close() {
+	n.http.CloseIdleConnections()
+	n.lan.CloseIdleConnections()
+}
 
 func (n *NPM) request(ctx context.Context, method, path string, body any, result any) error {
 	_, err := call(ctx, n.http, n.base, n.token, method, path, body, result)
@@ -232,7 +253,8 @@ func (n *NPM) refuse(h host, e stack.Edge, rest, why string) error {
 	return errors.New(why)
 }
 
-func (n *NPM) config(e stack.Edge, r stack.Route) hostConfig {
+// config is r's host; cert is its resolved certificate ID.
+func (n *NPM) config(e stack.Edge, r stack.Route, cert int) hostConfig {
 	advanced := n.marker(e, r) + "set_real_ip_from " + e.ConnectorCIDR + ";\nreal_ip_recursive off;\n"
 	advanced += fmt.Sprintf("if ($realip_remote_addr != %s) { return 403; }\nif ($ssl_server_name != %s) { return 421; }\n", strings.TrimSuffix(e.ConnectorCIDR, "/32"), r.Hostname)
 	if e.Provider == "frp" {
@@ -261,7 +283,7 @@ func (n *NPM) config(e stack.Edge, r stack.Route) hostConfig {
 `
 	return hostConfig{
 		Domains: []string{r.Hostname}, Scheme: r.ForwardScheme, Host: r.ForwardHost,
-		Port: r.ForwardPort, Certificate: r.CertificateID, SSLForced: true,
+		Port: r.ForwardPort, Certificate: cert, SSLForced: true,
 		Websocket: true, HTTP2: true, Advanced: advanced, Locations: []any{},
 		Meta: map[string]any{"ky.managed-by": "kyquickstart", "ky.target": e.Target, "ky.installation": n.installation},
 	}
@@ -353,22 +375,36 @@ func (s hostStep) ID() string {
 }
 func (s hostStep) InputHash() string {
 	b, _ := json.Marshal(struct {
-		API    string
-		Config hostConfig
-	}{s.n.base, s.n.config(s.e, s.r)})
+		API         string
+		Config      hostConfig
+		Certificate string
+	}{s.n.base, s.n.config(s.e, s.r, s.r.CertificateID), s.r.Certificate})
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
+
+// want resolves the route's certificate and returns its host configuration.
+func (s hostStep) want(ctx context.Context) (hostConfig, error) {
+	cert, err := s.n.certificateID(ctx, s.e, s.r)
+	return s.n.config(s.e, s.r, cert), err
+}
 func (s hostStep) Inspect(ctx context.Context) (bool, error) {
+	want, err := s.want(ctx)
+	if err != nil {
+		return false, err
+	}
 	h, err := s.n.find(ctx, s.e, s.r)
-	return h != nil && matches(h, s.n.config(s.e, s.r)) && h.Enabled && h.Meta["nginx_online"] == true, err
+	return h != nil && matches(h, want) && h.Enabled && h.Meta["nginx_online"] == true, err
 }
 func (s hostStep) Apply(ctx context.Context) error {
+	want, err := s.want(ctx) // disabled until its API representation is verified
+	if err != nil {
+		return err
+	}
 	h, err := s.n.find(ctx, s.e, s.r)
 	if err != nil {
 		return err
 	}
-	want := s.n.config(s.e, s.r) // disabled until its API representation is verified
 	if h == nil {
 		if err = s.n.request(ctx, http.MethodPost, hostPath, want, &host{}); err != nil {
 			return err
@@ -498,42 +534,70 @@ func (s removedStep) Verify(ctx context.Context) error {
 	return nil
 }
 
-// Steps requires an Edge already validated by stack.Parse. Removed routes are disabled first.
+// Steps requires an Edge already validated by stack.Parse. Removed routes are disabled first,
+// then certificates are issued before the routes that use them.
 func (n *NPM) Steps(e stack.Edge) []engine.Step {
 	out := []engine.Step{removedStep{n: n, e: e}}
+	for _, c := range e.Certificates {
+		out = append(out, certStep{n: n, e: e, c: c})
+	}
 	for _, r := range e.Routes {
 		out = append(out, hostStep{n: n, e: e, r: r})
+	}
+	if e.LANDNS != nil {
+		out = append(out, dnsStep{n: n, e: e})
 	}
 	return out
 }
 
-// Preflight is read-only and checks ownership of every intended route before mutations.
+// Preflight is read-only and checks ownership of every intended route and certificate before
+// mutations. A named certificate not yet issued is checked by its credential and NPM user.
 func (n *NPM) Preflight(ctx context.Context, e stack.Edge) error {
+	for _, c := range e.Certificates {
+		if _, err := (certStep{n: n, e: e, c: c}).check(ctx); err != nil {
+			return err
+		}
+		if _, err := n.acmeUser(ctx, e, c.Email); err != nil {
+			return err
+		}
+		if _, err := n.dnsCredential(ctx, c); err != nil {
+			return err
+		}
+	}
 	for _, r := range e.Routes {
 		if _, err := n.find(ctx, e, r); err != nil {
 			return err
 		}
-		var cert struct {
-			Domains []string `json:"domain_names"`
-			Expires string   `json:"expires_on"`
+		if r.Certificate != "" {
+			continue // covered by validation; issued and checked by its step
 		}
+		var cert certificate
 		if err := n.request(ctx, http.MethodGet, fmt.Sprintf("/api/nginx/certificates/%d", r.CertificateID), nil, &cert); err != nil {
 			return err
 		}
-		covers := false
-		for _, name := range cert.Domains {
-			if name == r.Hostname || strings.HasPrefix(name, "*.") && strings.Join(strings.Split(r.Hostname, ".")[1:], ".") == name[2:] {
-				covers = true
-			}
-		}
-		expires, err := time.Parse(time.RFC3339, cert.Expires)
-		if err != nil {
-			// NPM's SQLite-backed API emits this UTC SQL timestamp format.
-			expires, err = time.Parse("2006-01-02 15:04:05", cert.Expires)
-		}
-		if !covers || err != nil || !expires.After(time.Now()) {
+		expires, err := expiry(cert.Expires)
+		if !slices.ContainsFunc(cert.Domains, func(d string) bool { return stack.Covers(d, r.Hostname) }) || err != nil || !expires.After(time.Now()) {
 			return fmt.Errorf("certificate %d must be unexpired and cover %s", r.CertificateID, r.Hostname)
 		}
 	}
+	if e.LANDNS != nil {
+		s := dnsStep{n: n, e: e}
+		k, err := s.client(ctx)
+		if err != nil {
+			return err
+		}
+		if _, err := s.plan(ctx, k); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// expiry parses NPM's expires_on: RFC 3339, or the UTC SQL timestamp its SQLite backend emits.
+func expiry(s string) (time.Time, error) {
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		t, err = time.Parse("2006-01-02 15:04:05", s)
+	}
+	return t, err
 }
