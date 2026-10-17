@@ -252,3 +252,45 @@ func TestCovers(t *testing.T) {
 		}
 	}
 }
+
+func TestEdgeLANDNS(t *testing.T) {
+	good := strings.Replace(certEdgeStack, "    routes:", `    lan_dns:
+      provider: kydns
+      url: https://kydns.example.com/
+      credentials: {secret: kydns-api, key: token}
+      address: 192.168.1.81
+    routes:`, 1)
+	s, err := Parse([]byte(good))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := s.Edges[0].LANDNS; d == nil || d.Address != "192.168.1.81" || d.Credentials.Secret != "kydns-api" {
+		t.Fatalf("parsed %+v", d)
+	}
+	for name, pair := range map[string][2]string{
+		"provider":       {"provider: kydns", "provider: pihole"},
+		"plain http":     {"https://kydns.example.com/", "http://kydns.example.com/"},
+		"url path":       {"https://kydns.example.com/", "https://kydns.example.com/api"},
+		"url secret":     {"https://kydns.example.com/", "https://u:p@kydns.example.com/"},
+		"url query":      {"https://kydns.example.com/", "https://kydns.example.com/?x=1"},
+		"ipv6 address":   {"address: 192.168.1.81", "address: 'fd00::81'"},
+		"loopback":       {"address: 192.168.1.81", "address: 127.0.0.1"},
+		"unspecified":    {"address: 192.168.1.81", "address: 0.0.0.0"},
+		"not an address": {"address: 192.168.1.81", "address: k80"},
+		"secret":         {"secret: kydns-api", "secret: kyq-credentials"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := strings.Replace(good, pair[0], pair[1], 1)
+			if bad == good {
+				t.Fatal("replacement did not apply")
+			}
+			if _, err := Parse([]byte(bad)); err == nil {
+				t.Fatal("accepted invalid lan_dns")
+			}
+		})
+	}
+	docker := strings.Replace(edgeStack, "    routes:", "    lan_dns: {provider: kydns, url: 'https://kydns.example.com', credentials: {secret: kydns-api, key: token}, address: 192.168.1.81}\n    routes:", 1)
+	if _, err := Parse([]byte(docker)); err == nil || !strings.Contains(err.Error(), "needs a Kubernetes target") {
+		t.Fatalf("lan_dns on a Docker edge: %v", err)
+	}
+}

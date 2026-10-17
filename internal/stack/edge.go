@@ -25,6 +25,15 @@ type Edge struct {
 	Connector     *Connector `yaml:"connector,omitempty"`
 	// Certificates are requested by NPM from Let's Encrypt through a DNS-01 challenge.
 	Certificates []Certificate `yaml:"certificates,omitempty"`
+	LANDNS       *LANDNS       `yaml:"lan_dns,omitempty"`
+}
+
+// LANDNS publishes each route's hostname on the LAN as an A record for Address.
+type LANDNS struct {
+	Provider    string    `yaml:"provider"` // kydns
+	URL         string    `yaml:"url"`      // admin API origin, reached like an https:// npm_url
+	Credentials SecretRef `yaml:"credentials"`
+	Address     string    `yaml:"address"`
 }
 
 // SecretRef names a key of an operator-created Secret in namespace kyq-edge.
@@ -164,6 +173,9 @@ func (s *Stack) validateEdges() error {
 		if err != nil {
 			return err
 		}
+		if err := validateLANDNS(*e, target); err != nil {
+			return err
+		}
 		for j := range e.Routes {
 			r := &e.Routes[j]
 			if apps[r.App] != e.Target {
@@ -243,6 +255,31 @@ func validateCertificates(e Edge, target Target) (map[string]Certificate, error)
 		}
 	}
 	return certs, nil
+}
+
+func validateLANDNS(e Edge, target Target) error {
+	d := e.LANDNS
+	if d == nil {
+		return nil
+	}
+	if !target.Kubernetes() {
+		return fmt.Errorf("edge %s: lan_dns reads its token from a Secret in kyq-edge, so it needs a Kubernetes target for now", e.Target)
+	}
+	if d.Provider != "kydns" {
+		return fmt.Errorf("edge %s: lan_dns provider must be kydns", e.Target)
+	}
+	u, err := url.Parse(d.URL)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" || u.Path != "" && u.Path != "/" {
+		return fmt.Errorf("edge %s: lan_dns url must be an HTTPS origin with no credentials, path or query", e.Target)
+	}
+	a, err := netip.ParseAddr(d.Address)
+	if err != nil || !a.Is4() || a.IsUnspecified() || a.IsMulticast() || a.IsLoopback() {
+		return fmt.Errorf("edge %s: lan_dns address must be the IPv4 address LAN clients reach the edge on", e.Target)
+	}
+	if err := d.Credentials.validate(); err != nil {
+		return fmt.Errorf("edge %s: lan_dns: %w", e.Target, err)
+	}
+	return nil
 }
 
 // validate accepts an operator Secret in kyq-edge, never the installer's own kyq-credentials.

@@ -7,6 +7,7 @@ Reconcile owned NPM routes, deploy Docker edge connectors, and verify product pr
 - NPM API client, host ownership and reconciliation: `npm.go`.
 - NPM's own administrator (setup-mode creation, login, verification, rotation) for bootstrap: `admin.go`.
 - Let's Encrypt DNS-01 certificates, their per-email NPM user and route name resolution: `certs.go`.
+- KyDNS LAN A records and their ownership ledger: `kydns.go`.
 - Target-held connector credentials, pinned images and configuration: `connector.go`.
 - Public HTTPS forwarded-header proof: `verify.go`.
 - Operator configuration and supported scope: `../../docs/edge.md`.
@@ -25,6 +26,9 @@ Reconcile owned NPM routes, deploy Docker edge connectors, and verify product pr
   `kyquickstart:<installation>:<target>` for its email; never reuse or change another owner's.
   The DNS credential goes to NPM only in the certificate request body, registered with the
   redactor first. A failed issuance is not retried within a run (Let's Encrypt rate limits).
+- KyDNS records carry no owner: a record is ours only while the ledger in
+  `kyq-edge/kyq-credentials` lists its ID, name and address. Save the ledger after every KyDNS
+  change; refuse any name another record or service publishes. Show KyDNS error codes, never bodies.
 - Apply disables, never deletes, this target's owned hosts whose hostname left `routes`; verification
   fails while one is enabled. Deletion is the operator's choice.
 - Each route trusts exactly its connector IPv4 /32. frp uses a separate TLS listener accepting

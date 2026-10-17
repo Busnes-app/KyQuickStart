@@ -210,6 +210,55 @@ in the Secret does not change the copy NPM renews with. Keep the old token valid
 certificate is reissued: delete the certificate in NPM, rerun apply (it requests a new one with
 the current token and moves the routes to it), then revoke the old token.
 
+## LAN DNS (KyDNS)
+
+LAN clients can reach the edge directly instead of through the public connection. With
+`lan_dns`, apply keeps one A record per route hostname in KyDNS,
+pointing at the address LAN clients reach the edge on (for in-cluster NPM, the node that answers
+its NodePorts). This is also a Kubernetes edge feature for now.
+
+```yaml
+edges:
+  - target: k80
+    lan_dns:
+      provider: kydns                       # the only provider
+      url: https://kydns.example.com/       # its admin API origin
+      credentials: {secret: kydns-api, key: token}
+      address: 192.168.1.81
+```
+
+The URL follows the `https://` `npm_url` rules: it must resolve to private or loopback
+addresses, present a certificate the workstation trusts, and is used without a proxy or
+redirects. KyDNS accepts records only strictly inside its private zone and supports no
+wildcards, so every route hostname must lie inside that zone (KyDNS's `private_domain`); apply
+and preflight refuse one outside it before writing anything, and report KyDNS's own refusal
+code if it still declines a name.
+
+**Ownership.** KyDNS records have no owner or comment field, so the installer keeps a ledger of
+the records it created (server, record ID, name and address) under key `kydns_records` of
+`kyq-edge/kyq-credentials`. A record is this installation's only while the ledger lists its ID
+with the same name and address; a record changed or recreated by anyone else drops out of the
+ledger and is never touched. Apply creates the missing records, deletes its own records for
+hostnames that left `routes` (KyDNS records cannot be disabled), replaces its own records when
+`address` changes, and refuses a hostname that any other record, service or service alias
+already publishes. If a run is interrupted after KyDNS created a record but before the ledger
+saved it, the next run refuses that record as foreign: delete it in KyDNS and rerun. Removing
+`lan_dns` leaves the records in place.
+
+**The KyDNS token.** KyDNS API tokens are not scoped: every token has full administrator access
+to that KyDNS. The least privilege available is a token of its own, labelled for this
+installation and revoked on its own with `kydns token rm <id>`:
+
+```sh
+kydns token add kyquickstart-k80   # prints the token once
+# in bash, paste it at the hidden prompt
+read -rs KYDNS_API_TOKEN && printf %s "$KYDNS_API_TOKEN" | kubectl -n kyq-edge create secret generic kydns-api --from-file=token=/dev/stdin; unset KYDNS_API_TOKEN
+kubectl -n kyq-edge label secret kydns-api ky.managed-by=kyquickstart
+```
+
+The token stays on the cluster and in memory, is sent only as KyDNS's bearer token, and is
+redacted from every message; KyDNS error bodies are never shown, only their error code.
+
 ## Credentials
 
 On a Docker target, place existing credentials beneath its configured root:
@@ -286,3 +335,7 @@ route is disabled, stops serving and is re-enabled when restored.
 Separate connector tests prove authenticated frpc login with verified TLS and parse generated
 cloudflared ingress with the pinned image. No live Cloudflare account or operator server is
 used. A complete public frp/Cloudflare-to-product G11 pilot is still required.
+
+Managed certificates and LAN DNS are covered by unit tests against fake NPM 2.16 and KyDNS APIs
+written from their source (NPM `v2.16.0` `backend/schema` and `backend/internal/certificate.js`;
+KyDNS `internal/adminapi`). No test reaches Let's Encrypt, Cloudflare or a real KyDNS.
