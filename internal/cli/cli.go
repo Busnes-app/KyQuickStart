@@ -364,7 +364,7 @@ func (s *session) connect(ctx context.Context, trust trustFlag) error {
 		if err != nil {
 			return fmt.Errorf("edge %s: %w", e.Target, err)
 		}
-		n.Adopt = s.adopt
+		n.Adopt, n.Secrets, n.Redact = s.adopt, s.drivers[e.Target].edgeSecrets(), s.redact
 		s.npms[e.Target] = n
 	}
 	return nil
