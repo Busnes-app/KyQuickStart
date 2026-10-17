@@ -24,7 +24,8 @@ import (
 
 const demoPlan = "version: 1\ndemo: true\nrevision: 2\ntargets:\n  - name: nas\n    host: 192.0.2.1\n    user: kyq\napps:\n  - name: hello\n    target: nas\n"
 
-// shortDir is a private temporary directory with a path short enough for a socket.
+// shortDir is a private temporary directory with a path short enough for a socket, symlinks
+// resolved (macOS's /var is one, which the ancestry check refuses).
 func shortDir(t *testing.T) string {
 	t.Helper()
 	d, err := os.MkdirTemp("", "kyq")
@@ -32,6 +33,10 @@ func shortDir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(d) })
+	d, err = filepath.EvalSymlinks(d)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return d
 }
 
