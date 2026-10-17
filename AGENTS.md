@@ -325,6 +325,16 @@ handover of admin and everyday logins.
 - The installer's only authority inside a Ky product is its container-local `apply-setup`
   command. Installer-managed workloads carry `ky.managed-by=kyquickstart`; only the shared upgrade
   module changes them, from the CLI or KyYard, under a target-side lock.
+- `stack.yaml`'s `revision` rises on every plan write. Every locked run writes a plan marker on
+  each target it locked (`<root>/.plan`; annotations on the `kyquickstart` namespace) and
+  refuses a target whose marker is newer (`plan_stale`); it keeps the marker's owner. Plans are
+  published only after every step passed, so each command reruns after interruption.
+- Deployments record their catalog version (`kyquickstart/version` in `compose.kyq.yaml` or on
+  the app namespace), which outlives uninstall. `apply`, `install` and `upgrade` gate a version
+  change on the manifest's upgrade rules: `migrates_data` is always `backup_required` until
+  KyRecovery backups land; any other upgrade needs an explicit, recorded acknowledgement.
+  Uninstall keeps data and secrets; unmanage drops the managed labels and the installer then
+  refuses to install over the app. Error codes are `internal/suite` codes.
 - Remote commands are POSIX `sh`, quoted with `remote.Quote`. The SSH runner sends each one
   base64-encoded to `sh` (`remote.wrap`), so a non-POSIX login shell such as fish cannot alter
   it. Unit tests run commands for real through `remote.Local` and under sh, bash and fish.
