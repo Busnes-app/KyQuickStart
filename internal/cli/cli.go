@@ -13,6 +13,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -39,6 +40,7 @@ commands:
   preflight   check every target; changes nothing
   apply       preflight, then install the apps in stack.yaml
               [--adopt-edge-hosts] once: claim this target's NPM hosts marked by builds without installation_id
+              [--take-over-target T] claim target T from the plan that last changed it
   install APP --target T   add APP and its missing dependencies to the plan and deploy them
   uninstall APP            remove APP's workloads; its data and secrets stay on the target
   unmanage APP             hand APP to its owner: drop the managed labels, record it in handover.md
@@ -109,6 +111,7 @@ func Run(ctx context.Context, args []string, o Options) error {
 	clientIP := fl.String("expected-client-ip", "", "verify-edge: this workstation's expected public client address")
 	ack := fl.Bool("acknowledge-no-backup", false, "apply: upgrade data without a pre-upgrade backup")
 	adopt := fl.Bool("adopt-edge-hosts", false, "apply: claim and re-mark this target's NPM hosts from builds without installation_id")
+	takeOver := fl.String("take-over-target", "", "apply: claim this target from the plan that last changed it")
 	trust := trustFlag{}
 	fl.Var(trust, "trust-host-key", "accept an unknown host key: <target>=SHA256:<fingerprint>")
 	if err := fl.Parse(args[1:]); err != nil {
@@ -130,15 +133,18 @@ func Run(ctx context.Context, args []string, o Options) error {
 	if *ack && cmd != "apply" {
 		return errors.New("--acknowledge-no-backup is only for apply, install and upgrade")
 	}
-	if *adopt && cmd != "apply" {
-		return errors.New("--adopt-edge-hosts is only for apply")
+	if (*adopt || *takeOver != "") && cmd != "apply" {
+		return errors.New("--adopt-edge-hosts and --take-over-target are only for apply")
 	}
 	s, err := load(*state, trust, o)
 	if err != nil {
 		return err
 	}
 	defer s.close()
-	s.adopt = *adopt
+	if *takeOver != "" && !slices.ContainsFunc(s.targets, func(t stack.Target) bool { return t.Name == *takeOver }) {
+		return suite.Errorf(suite.UnknownTarget, "--take-over-target %q is not a target this plan deploys to", *takeOver)
+	}
+	s.adopt, s.takeOver = *adopt, *takeOver
 	var publishPlan func() error
 	if cmd == "apply" {
 		if publishPlan, err = s.ensureInstallation(*state); err != nil {
@@ -175,18 +181,17 @@ func Run(ctx context.Context, args []string, o Options) error {
 	return s.apply(ctx, publishPlan)
 }
 
-// ensureInstallation gives a plan with edges its installation_id. That is a plan change,
-// refused on a runner-owned target like any other; publish saves it once apply passed.
+// ensureInstallation gives a plan its installation_id. That is a plan change, refused on a
+// runner-owned target like any other; publish saves it once apply passed.
 func (s *session) ensureInstallation(state string) (func() error, error) {
-	if len(s.edges) == 0 || s.installation != "" {
+	if s.installation != "" {
 		return nil, nil
 	}
-	id := stack.NewInstallationID()
-	_, data, err := changePlan(state, s.revision, func(st *stack.Stack) { st.InstallationID = id })
+	next, data, err := changePlan(state, s.revision, func(*stack.Stack) {})
 	if err != nil {
 		return nil, err
 	}
-	s.installation, s.changesPlan = id, true
+	s.installation, s.changesPlan = next.InstallationID, true
 	revision := s.revision
 	return func() error { return publish(state, revision, data) }, nil
 }
@@ -211,6 +216,8 @@ type session struct {
 	allTargets   []stack.Target
 	revision     int    // of the loaded plan; markers on targets record it
 	installation string // stack.yaml's installation_id; marks this installation's NPM hosts
+	saved        string // the published plan's installation_id, which markers record
+	takeOver     string // a target to claim from another plan (apply --take-over-target)
 	trust        trustFlag
 	ack          bool // acknowledge upgrading without a pre-upgrade backup
 	adopt        bool // claim legacy-marked NPM hosts (apply --adopt-edge-hosts)
@@ -287,7 +294,7 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 	if redact == nil {
 		redact = &engine.Redactor{}
 	}
-	s := &session{revision: st.Revision, installation: st.InstallationID, trust: trust, redact: redact, allTargets: st.Targets, integrations: st.Integrations, o: o, state: state, demo: st.Demo, cat: cat, placed: map[string]stack.Target{}, drivers: map[string]driver{}, edges: st.Edges, npms: map[string]*edge.NPM{}}
+	s := &session{revision: st.Revision, installation: st.InstallationID, saved: st.InstallationID, trust: trust, redact: redact, allTargets: st.Targets, integrations: st.Integrations, o: o, state: state, demo: st.Demo, cat: cat, placed: map[string]stack.Target{}, drivers: map[string]driver{}, edges: st.Edges, npms: map[string]*edge.NPM{}}
 	var names []string
 	used := map[string]bool{}
 	for _, a := range st.Apps {
@@ -508,7 +515,7 @@ func (s *session) operate(ctx context.Context, holder string, steps func(context
 	if err := publish(); err != nil {
 		return err
 	}
-	s.revision++
+	s.revision, s.saved = s.revision+1, s.installation
 	return nil
 }
 
@@ -569,6 +576,10 @@ func (s *session) lock(ctx context.Context, holder string, targets []stack.Targe
 			if s.owner != nil {
 				m.Owner, m.RunnerID = s.owner.Owner, s.owner.RunnerID
 			}
+			// An unpublished id stays off markers, so a failed run's rerun is not another plan.
+			if s.saved != "" {
+				m.InstallationID = s.saved
+			}
 			if m.Owner == "" {
 				m.Owner = "cli"
 			}
@@ -603,11 +614,25 @@ func (s *session) lockOne(ctx context.Context, holder string, t stack.Target) (f
 	return release, m, nil
 }
 
-// guard refuses a target whose marker records a newer plan or another owner. The runner acts
-// only on targets handed to it; the CLI may not change a plan the runner owns, and runs
-// anything else only from a plan at least as new as every marker it locks (after pull-plan).
+// guard refuses a target whose marker records another installation, a newer plan or another
+// owner. The runner acts only on targets handed to it; the CLI may not change a plan the
+// runner owns, and runs anything else only from a plan at least as new as every marker it
+// locks (after pull-plan). A marker without an installation_id predates them.
 func (s *session) guard(target string, m stack.Marker) error {
+	if target == s.takeOver && m.InstallationID != s.installation {
+		if m.Owner == "runner" {
+			return suite.Errorf(suite.OwnedByRunner, "%s is managed by the KyYard suite runner; run kyquickstart handoff --revoke from the plan that owns it first", target)
+		}
+		previous := m.InstallationID
+		if previous == "" {
+			previous = "with no installation id"
+		}
+		fmt.Fprintf(s.o.Out, "warning: taking %s over from installation %s (plan revision %d)\n", target, previous, m.Revision)
+		return nil
+	}
 	switch {
+	case m.InstallationID != "" && m.InstallationID != s.installation:
+		return suite.Errorf(suite.OwnedByOtherPlan, "target %s is managed by another plan (installation %s); run apply --take-over-target %s from this plan to claim it", target, m.InstallationID, target)
 	case m.Revision > s.revision:
 		return suite.Errorf(suite.PlanStale, "%s holds plan revision %d (owner %s), newer than this plan's %d; run kyquickstart pull-plan", target, m.Revision, m.Owner, s.revision)
 	case s.o.RunnerID != "" && m.Owner != "runner":

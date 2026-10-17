@@ -50,11 +50,11 @@ func TestInstallationIDIsAPlanChange(t *testing.T) {
 	if err := s.guard("nas", stack.Marker{Revision: 5, Owner: "runner", RunnerID: runnerID}); err != nil {
 		t.Fatalf("runner-owned target refused: %v", err)
 	}
-	// No edges: no id.
+	// Every plan gets one, edges or not.
 	f.plan(t, "apps:\n  - name: hello\n    target: nas\n")
 	s, _ = load(f.state, nil, f.o)
-	if pub, _ := s.ensureInstallation(f.state); pub != nil || s.installation != "" {
-		t.Fatal("id generated without edges")
+	if pub, _ := s.ensureInstallation(f.state); pub == nil || s.installation == "" {
+		t.Fatal("no id generated without edges")
 	}
 }
 

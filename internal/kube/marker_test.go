@@ -24,7 +24,7 @@ func TestMarkerRoundTrip(t *testing.T) {
 	if m, err := c.Marker(ctx); err != nil || m != (stack.Marker{}) {
 		t.Fatalf("unmarked namespace = %+v, %v", m, err)
 	}
-	want := stack.Marker{Revision: 3, Owner: "cli"}
+	want := stack.Marker{Revision: 3, Owner: "cli", InstallationID: "271333e2-c221-4601-b249-563b3d828530"}
 	if err := c.WriteMarker(ctx, want); err != nil {
 		t.Fatal(err)
 	}
@@ -32,6 +32,11 @@ func TestMarkerRoundTrip(t *testing.T) {
 		t.Fatalf("marker = %+v, %v", m, err)
 	}
 	ns, _ := cs.CoreV1().Namespaces().Get(ctx, lockNamespace, metav1.GetOptions{})
+	ns.Annotations[installAnnotation] = "not-a-uuid"
+	cs.CoreV1().Namespaces().Update(ctx, ns, metav1.UpdateOptions{})
+	if _, err := c.Marker(ctx); err == nil {
+		t.Error("accepted a malformed installation id")
+	}
 	ns.Annotations[revisionAnnotation] = "3x"
 	cs.CoreV1().Namespaces().Update(ctx, ns, metav1.UpdateOptions{})
 	if _, err := c.Marker(ctx); err == nil {
