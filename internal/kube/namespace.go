@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"maps"
 
+	"github.com/Busnes-app/kyquickstart/internal/managed"
+
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -13,6 +15,7 @@ import (
 func (a App) namespaceLabels() map[string]string {
 	l := workloadLabels(a.ReleaseSet)
 	l[podSecurity] = "restricted"
+	l[managed.VersionLabel] = a.Catalog.Version
 	return l
 }
 
