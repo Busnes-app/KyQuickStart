@@ -27,14 +27,15 @@ var required = func() []authorizationv1.ResourceAttributes {
 			out = append(out, authorizationv1.ResourceAttributes{Group: group, Resource: resource, Namespace: ns, Verb: v})
 		}
 	}
-	add("", "namespaces", "", "get", "create", "update")
+	// patch is unmanage's; delete of deployments and services is uninstall's.
+	add("", "namespaces", "", "get", "create", "update", "patch")
 	add("", "pods", "", "get", "create", "delete")
 	add("", "pods/exec", "", "create")
-	add("", "secrets", "", "get", "create", "update")
-	add("", "services", "", "get", "create", "update")
-	add("", "persistentvolumeclaims", "", "get", "create")
-	add("apps", "deployments", "", "get", "create", "update")
-	add("networking.k8s.io", "networkpolicies", "", "get", "create", "update")
+	add("", "secrets", "", "get", "create", "update", "patch")
+	add("", "services", "", "get", "create", "update", "patch", "delete")
+	add("", "persistentvolumeclaims", "", "get", "create", "patch")
+	add("apps", "deployments", "", "get", "create", "update", "patch", "delete")
+	add("networking.k8s.io", "networkpolicies", "", "get", "create", "update", "patch")
 	add("storage.k8s.io", "storageclasses", "", "list")
 	add("coordination.k8s.io", "leases", lockNamespace, "get", "create", "delete")
 	return out
