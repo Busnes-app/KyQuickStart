@@ -1,0 +1,143 @@
+# The suite runner as a pod (docs/guided-setup.md, "Hand-off to KyYard"). This phase runs it
+# alone, to prove hand-off with `kyquickstart handoff --kyyard-target <this cluster's target>
+# --runner-pod kyq-runner/app=runner`. The KyYard sidecar wiring (KyYard's container in this
+# pod, sharing the socket volume, with KY_SUITE_RUNNER_SOCKET=/run/kyquickstart/sock/runner.sock)
+# comes with KyYard's catalog entry.
+#
+# Edit before applying: the image digest, the claim's storage class, and the NetworkPolicy's
+# API server and SSH target addresses. The placeholders are documentation addresses, so an
+# unedited policy allows nothing but DNS.
+#
+# The workstation running handoff needs list pods and create pods/exec in kyq-runner.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kyq-runner
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: runner
+  namespace: kyq-runner
+# The runner's cluster access is the kubeconfig handoff gives it, never this account's token.
+automountServiceAccountToken: false
+---
+# The runner's SSH key, kubeconfigs, identity and plan.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: runner-state
+  namespace: kyq-runner
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runner
+  namespace: kyq-runner
+  labels:
+    app: runner
+spec:
+  replicas: 1
+  # One runner at a time: handoff refuses a selector matching more than one Running pod.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: runner
+  template:
+    metadata:
+      labels:
+        app: runner
+    spec:
+      serviceAccountName: runner
+      nodeSelector:
+        kubernetes.io/hostname: k81
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      # serve lets a running operation finish for up to 4 minutes after SIGTERM.
+      terminationGracePeriodSeconds: 300
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: runner
+          # Pin a digest after verifying its attestation:
+          #   gh attestation verify oci://ghcr.io/busnes-app/kyquickstart-runner:<version> --repo Busnes-app/KyQuickStart
+          # Pilot: built from master 1ac7972 and imported into k81's containerd by hand.
+          image: docker.io/kyq-pilot/kyquickstart-runner:1ac797238207
+          imagePullPolicy: Never
+          # Volume roots are the kubelet's, world-writable: the runner works in private
+          # subdirectories it creates (--pod-volumes).
+          command: [kyquickstart, serve, --state, /state/runner, --socket, /run/kyquickstart/sock/runner.sock, --pod-volumes]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: state
+              mountPath: /state
+            - name: socket
+              mountPath: /run/kyquickstart
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: runner-state
+        - name: socket
+          emptyDir: {}
+---
+# No ingress; egress only to DNS, the API server and the Docker targets' SSH.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: runner
+  namespace: kyq-runner
+spec:
+  podSelector:
+    matchLabels:
+      app: runner
+  policyTypes: [Ingress, Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+# Cilium matches the API server as an entity, not by ipBlock (policy-cidr-match-mode is unset).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: runner-apiserver
+  namespace: kyq-runner
+spec:
+  endpointSelector:
+    matchLabels:
+      app: runner
+  egress:
+    - toEntities: [kube-apiserver]
+      toPorts:
+        - ports:
+            - {port: "6443", protocol: TCP}
