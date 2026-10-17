@@ -6,8 +6,9 @@ Plain terminal planning and command orchestration for the operator-run installer
 
 - Guided questions, resume answers, plan review and publishing: `guided.go`.
 - CLI dispatch, target connections and locked deployment: `cli.go` and `driver.go`. `apply`
-  gives a plan with edges its `installation_id` as a plan change published after the steps
-  pass; `--adopt-edge-hosts` is apply-only. A `kube://` edge gets its token and tunnel from the
+  and every plan change give a plan its `installation_id`, published after the steps pass;
+  markers record it only once published. `--adopt-edge-hosts` and `--take-over-target` are
+  apply-only. A `kube://` edge gets its token and tunnel from the
   Kubernetes driver; an app's `node_ports` override the catalog's in the session only.
 - `suite.go` owns `install`, `uninstall`, `unmanage`, `upgrade` and `status`, the upgrade gate
   and plan publication. The exported `Install`, `Uninstall`, `Unmanage`, `Upgrade` and `Status`

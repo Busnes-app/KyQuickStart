@@ -14,6 +14,7 @@ const (
 	revisionAnnotation = "kyquickstart/plan-revision"
 	ownerAnnotation    = "kyquickstart/plan-owner"
 	runnerAnnotation   = "kyquickstart/runner-id"
+	installAnnotation  = "kyquickstart/installation-id"
 )
 
 // Marker reads the plan marker from the lock namespace; the zero Marker when there is none.
@@ -34,7 +35,7 @@ func (c *Client) Marker(ctx context.Context) (stack.Marker, error) {
 	if err != nil {
 		return stack.Marker{}, fmt.Errorf("plan marker revision %q is not a number", v)
 	}
-	m := stack.Marker{Revision: rev, Owner: a[ownerAnnotation], RunnerID: a[runnerAnnotation]}
+	m := stack.Marker{Revision: rev, Owner: a[ownerAnnotation], RunnerID: a[runnerAnnotation], InstallationID: a[installAnnotation]}
 	return m, m.Validate()
 }
 
@@ -54,6 +55,9 @@ func (c *Client) WriteMarker(ctx context.Context, m stack.Marker) error {
 	ns.Annotations[revisionAnnotation] = strconv.Itoa(m.Revision)
 	ns.Annotations[ownerAnnotation] = m.Owner
 	ns.Annotations[runnerAnnotation] = m.RunnerID
+	if m.InstallationID != "" {
+		ns.Annotations[installAnnotation] = m.InstallationID
+	}
 	if _, err := api.Update(ctx, ns, metav1.UpdateOptions{}); err != nil {
 		return fmt.Errorf("write plan marker: %w", err)
 	}

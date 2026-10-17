@@ -11,6 +11,7 @@ import (
 
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -57,6 +58,12 @@ func TestRunnerRulesAreTheInstallersOwn(t *testing.T) {
 	}
 	if n != len(required) {
 		t.Errorf("%d verbs granted, preflight requires %d", n, len(required))
+	}
+	// Preflight lists Services cluster-wide for NodePorts; the runner runs preflight too.
+	if !slices.ContainsFunc(cluster, func(r rbacv1.PolicyRule) bool {
+		return r.Resources[0] == "services" && slices.Contains(r.Verbs, "list")
+	}) {
+		t.Errorf("no cluster-wide list services in %+v", cluster)
 	}
 	if len(lock) != 1 || lock[0].Resources[0] != "leases" {
 		t.Errorf("lock namespace rules = %+v", lock)

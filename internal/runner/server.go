@@ -258,7 +258,7 @@ func httpStatus(c suite.Code) int {
 		return http.StatusBadRequest
 	case suite.NotFound:
 		return http.StatusNotFound
-	case suite.IDConflict, suite.Busy, suite.PlanStale, suite.TargetLocked, suite.OwnedByRunner, suite.OwnedByCLI:
+	case suite.IDConflict, suite.Busy, suite.PlanStale, suite.TargetLocked, suite.OwnedByRunner, suite.OwnedByCLI, suite.OwnedByOtherPlan:
 		return http.StatusConflict
 	case suite.UnknownApp, suite.UnknownTarget, suite.AlreadyInstalled, suite.NotInstalled, suite.Dependency,
 		suite.UpgradeRefused, suite.BackupRequired, suite.AckRequired:

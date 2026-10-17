@@ -73,7 +73,7 @@ func TestInstallAddsDependenciesThenPublishes(t *testing.T) {
 	if st.Revision != 1 || len(st.Apps) != 2 || st.Apps[0].Name != "db" || st.Apps[1].Name != "web" {
 		t.Fatalf("plan = %+v", st)
 	}
-	if f.marker(t) != `{"revision":1,"owner":"cli","runner_id":""}` {
+	if f.marker(t) != `{"revision":1,"owner":"cli","runner_id":"","installation_id":"`+st.InstallationID+`"}` {
 		t.Errorf("marker = %s", f.marker(t))
 	}
 	if !strings.Contains(f.h.up["kyq-web"], managed.VersionLabel+": 1.0.0") || f.h.up["kyq-db"] == "" {

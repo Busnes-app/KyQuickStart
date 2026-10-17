@@ -193,7 +193,7 @@ func install(ctx context.Context, state string, r Request, trust trustFlag, o Op
 		return suite.Errorf(suite.InvalidRequest, "%w", err)
 	}
 	defer ns.close()
-	ns.revision, ns.ack, ns.edges, ns.changesPlan = s.revision, r.AcknowledgeNoBackup, nil, true
+	ns.revision, ns.saved, ns.ack, ns.edges, ns.changesPlan = s.revision, s.saved, r.AcknowledgeNoBackup, nil, true
 	ns.order = slices.DeleteFunc(ns.order, func(a string) bool { return !added[a] })
 	ns.targets = []stack.Target{ns.placed[name]}
 	if err := ns.connect(ctx, trust); err != nil {
@@ -260,7 +260,7 @@ func remove(ctx context.Context, state string, r Request, trust trustFlag, o Opt
 		}
 	}
 	routed := func(r stack.Route) bool { return r.App == name }
-	_, data, err := changePlan(state, s.revision, func(st *stack.Stack) {
+	next, data, err := changePlan(state, s.revision, func(st *stack.Stack) {
 		st.Apps = slices.DeleteFunc(st.Apps, func(a stack.App) bool { return a.Name == name })
 		for i := range st.Edges {
 			st.Edges[i].Routes = slices.DeleteFunc(st.Edges[i].Routes, routed)
@@ -284,7 +284,7 @@ func remove(ctx context.Context, state string, r Request, trust trustFlag, o Opt
 			edges = append(edges, e)
 		}
 	}
-	s.targets, s.edges, s.changesPlan = []stack.Target{t}, edges, true
+	s.targets, s.edges, s.changesPlan, s.installation = []stack.Target{t}, edges, true, next.InstallationID
 	if err := s.connect(ctx, trust); err != nil {
 		return err
 	}
@@ -356,6 +356,9 @@ func changePlan(state string, revision int, change func(*stack.Stack)) (*stack.S
 		return nil, nil, suite.Errorf(suite.PlanStale, "stack.yaml changed to revision %d while this command ran; rerun it", st.Revision)
 	}
 	change(st)
+	if st.InstallationID == "" { // written once
+		st.InstallationID = stack.NewInstallationID()
+	}
 	st.Revision = revision + 1
 	data, err := yaml.Marshal(st)
 	if err != nil {
