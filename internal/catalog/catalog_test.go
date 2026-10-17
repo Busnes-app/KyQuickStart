@@ -95,6 +95,18 @@ func TestLoadRejects(t *testing.T) {
 		"capsule not a secret":  {manifest + strings.Replace(backup, "capsule_secrets: [db]", "capsule_secrets: [other]", 1), composeVol, "capsule_secrets"},
 		"restore unknown":       {manifest + strings.Replace(backup, "restore_order: [web]", "restore_order: [db]", 1), composeVol, "restore_order"},
 		"backup volume not k8s": {manifest + kube + backup, composeVol, "declared by every deployment"},
+
+		"pod_security unknown":    {manifest + "pod_security: privileged\n", compose, "pod_security"},
+		"pod_security case":       {manifest + "pod_security: Baseline\n", compose, "pod_security"},
+		"caps under restricted":   {manifest + kube + "  capabilities: [CHOWN]\n", compose, "need pod_security baseline"},
+		"writable under restrict": {manifest + kube + "  writable_root: true\n", compose, "need pod_security baseline"},
+		"cap outside baseline":    {manifest + "pod_security: baseline\n" + kube + "  capabilities: [NET_ADMIN]\n", compose, "capabilities"},
+		"cap repeated":            {manifest + "pod_security: baseline\n" + kube + "  capabilities: [KILL, KILL]\n", compose, "capabilities"},
+		"node_ports not edge":     {manifest + kube + "  node_ports: {8080: 30080}\n", compose, "only edge components"},
+		"node_port admin":         {edgeKube("ports: [81, 80]", "{81: 30081}"), compose, "admin API port"},
+		"node_port unknown port":  {edgeKube("ports: [81, 80]", "{443: 30443}"), compose, "not one of ports"},
+		"node_port out of range":  {edgeKube("ports: [81, 80]", "{80: 8080}"), compose, "30000-32767"},
+		"node_port repeated":      {edgeKube("ports: [81, 80, 443]", "{80: 30080, 443: 30080}"), compose, "unique"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -107,6 +119,33 @@ func TestLoadRejects(t *testing.T) {
 				t.Fatalf("err = %v, want it to mention %q", err, c.want)
 			}
 		})
+	}
+}
+
+// edgeKube is a baseline edge manifest with the given ports and node_ports.
+func edgeKube(ports, nodePorts string) string {
+	m := strings.Replace(manifest, "category: ky", "category: edge", 1) + "pod_security: baseline\n"
+	return m + strings.Replace(kube, "ports: [8080]", ports, 1) + "  node_ports: " + nodePorts + "\n"
+}
+
+func TestPodSecurity(t *testing.T) {
+	load := func(m string) (App, error) {
+		cat, err := Load(fstest.MapFS{"a/manifest.yaml": {Data: []byte(m)}, "a/compose.yaml.tmpl": {Data: []byte(compose)}})
+		return cat["a"], err
+	}
+	a, err := load(manifest + kube)
+	if err != nil || a.PodSecurity != "restricted" {
+		t.Fatalf("default = %q, %v", a.PodSecurity, err)
+	}
+	m := edgeKube("ports: [81, 80, 443]", "{80: 30080, 443: 30443}")
+	m = strings.Replace(m, "run_as: 65532", "run_as: 0", 1) + "  capabilities: [CHOWN, KILL]\n  writable_root: true\n  low_ports: true\n"
+	a, err = load(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k := a.Kubernetes
+	if a.PodSecurity != "baseline" || k.RunAs != 0 || len(k.Capabilities) != 2 || !k.WritableRoot || !k.LowPorts || k.NodePorts[443] != 30443 {
+		t.Fatalf("baseline app = %+v %+v", a.Manifest, k)
 	}
 }
 

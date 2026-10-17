@@ -82,6 +82,9 @@ var (
 // file names and Compose project names.
 func ValidName(s string) bool { return nameRE.MatchString(s) }
 
+// ValidNodePort is in the API server's default NodePort range.
+func ValidNodePort(n int) bool { return n >= 30000 && n <= 32767 }
+
 func Load(path string) (*Stack, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
