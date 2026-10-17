@@ -81,13 +81,15 @@ func (a *Admin) Login(ctx context.Context, email, password string) (string, erro
 	return res.Token, nil
 }
 
-// Verify reports whether NPM still accepts token; expired and revoked tokens are rejected.
+// Verify reports whether NPM still accepts token. Any answer but 2xx is a no: NPM rejects an
+// expired token with 400 but a malformed one, or one signed by another key, with 500. Only a
+// failure to reach NPM is an error.
 func (a *Admin) Verify(ctx context.Context, token string) (bool, error) {
 	status, err := call(ctx, a.http, a.base, token, http.MethodGet, "/api/users/me", nil, nil)
-	if rejected(status) {
-		return false, nil
+	if status != 0 {
+		return err == nil, nil
 	}
-	return err == nil, err
+	return false, err
 }
 
 // Rotate moves the signed-in account (token, current password) to email and password. NPM

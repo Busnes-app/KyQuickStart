@@ -69,6 +69,10 @@ func (f *fakeNPM) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.tokens[token] = str("identity")
 		reply(200, map[string]any{"token": token})
 	case "GET /api/users/me":
+		if strings.HasPrefix(r.Header.Get("Authorization"), "Bearer malformed") {
+			reply(500, nil) // NPM's answer to a token it cannot parse
+			return
+		}
 		if me == "" {
 			reply(400, nil)
 			return
@@ -260,6 +264,16 @@ func TestNPMBootstrapRefreshesRejectedToken(t *testing.T) {
 	stored, _, err := a.Client.NPMAccess(ctx, "kyq-npm", appName, 81)
 	if err != nil || string(stored) != storedToken(t, cs) {
 		t.Fatalf("NPMAccess did not reuse the stored token: %v", err)
+	}
+	// A token NPM cannot parse is answered with 500: still just a rejected token.
+	sec, _ := cs.CoreV1().Secrets(edgeNamespace).Get(ctx, edgeSecret, metav1.GetOptions{})
+	sec.Data[edgeTokenKey] = []byte("malformed-npm-token")
+	cs.CoreV1().Secrets(edgeNamespace).Update(ctx, sec, metav1.UpdateOptions{})
+	if done, err := b.Inspect(ctx); err != nil || done {
+		t.Fatalf("malformed token: %v %v", done, err)
+	}
+	if token, _, err := a.Client.NPMAccess(ctx, "kyq-npm", appName, 81); err != nil || f.tokens[string(token)] != npmEmail {
+		t.Fatalf("NPMAccess with a malformed stored token: %v", err)
 	}
 	for _, bad := range [][3]any{{"kyq-other", appName, 81}, {"kyq-npm", "other", 81}, {"kyq-npm", appName, 80}} {
 		if _, _, err := a.Client.NPMAccess(ctx, bad[0].(string), bad[1].(string), bad[2].(int)); err == nil {
