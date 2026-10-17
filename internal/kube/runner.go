@@ -29,8 +29,8 @@ import (
 const (
 	runnerName  = "kyquickstart-runner"
 	runnerToken = runnerName + "-token"
-	// RunnerContainer is the runner pod's container that runs kyquickstart.
-	RunnerContainer = "runner"
+	// runnerContainer is the runner pod's container that runs kyquickstart.
+	runnerContainer = "runner"
 	inClusterAPI    = "kubernetes.default.svc"
 	maxRunnerOutput = 1 << 20 // serve-export's plan limit
 )
@@ -76,11 +76,11 @@ func (c *Client) ExecRunner(ctx context.Context, namespace, selector string, arg
 		return nil, fmt.Errorf("%d running pods in namespace %s match %s; the runner must be exactly one", len(pods), namespace, selector)
 	}
 	pod := pods[0]
-	if !slices.ContainsFunc(pod.Spec.Containers, func(k corev1.Container) bool { return k.Name == RunnerContainer }) {
-		return nil, fmt.Errorf("pod %s/%s has no container %q", namespace, pod.Name, RunnerContainer)
+	if !slices.ContainsFunc(pod.Spec.Containers, func(k corev1.Container) bool { return k.Name == runnerContainer }) {
+		return nil, fmt.Errorf("pod %s/%s has no container %q", namespace, pod.Name, runnerContainer)
 	}
 	out, stderr := &boundedExecOutput{limit: maxRunnerOutput}, &boundedExecOutput{limit: 4 << 10}
-	err = c.stream(ctx, namespace, pod.Name, RunnerContainer, args, remotecommand.StreamOptions{Stdin: stdin, Stdout: out, Stderr: stderr})
+	err = c.stream(ctx, namespace, pod.Name, runnerContainer, args, remotecommand.StreamOptions{Stdin: stdin, Stdout: out, Stderr: stderr})
 	if err != nil {
 		return nil, fmt.Errorf("pod %s/%s: %w: %s", namespace, pod.Name, err, bytes.TrimSpace(stderr.Bytes()))
 	}
