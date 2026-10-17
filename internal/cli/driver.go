@@ -9,6 +9,7 @@ import (
 	"github.com/Busnes-app/kyquickstart/internal/edge"
 	"github.com/Busnes-app/kyquickstart/internal/engine"
 	"github.com/Busnes-app/kyquickstart/internal/kube"
+	"github.com/Busnes-app/kyquickstart/internal/managed"
 	"github.com/Busnes-app/kyquickstart/internal/remote"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
 )
@@ -27,6 +28,9 @@ type driver interface {
 	marker(context.Context) (stack.Marker, error)
 	writeMarker(context.Context, stack.Marker) error
 	steps(name string, app catalog.App, releaseSet string, redact *engine.Redactor) []engine.Step
+	deployed(ctx context.Context, name string) (managed.Deployed, error)
+	removeSteps(name string, app catalog.App) []engine.Step
+	unmanageSteps(name string, app catalog.App) []engine.Step
 	edgeToken(context.Context) ([]byte, error)
 	checkConnector(context.Context, stack.Edge) error
 	connectorSteps(context.Context, stack.Edge, string, *engine.Redactor) ([]engine.Step, error)
@@ -63,6 +67,22 @@ func (d sshDriver) writeMarker(ctx context.Context, m stack.Marker) error {
 
 func (d sshDriver) steps(name string, app catalog.App, releaseSet string, redact *engine.Redactor) []engine.Step {
 	return dockerhost.Steps(dockerhost.App{Name: name, Root: d.t.Root, Runner: d.c, Catalog: app, ReleaseSet: releaseSet, Redact: redact})
+}
+
+func (d sshDriver) app(name string, app catalog.App, releaseSet string) dockerhost.App {
+	return dockerhost.App{Name: name, Root: d.t.Root, Runner: d.c, Catalog: app, ReleaseSet: releaseSet}
+}
+
+func (d sshDriver) deployed(ctx context.Context, name string) (managed.Deployed, error) {
+	return dockerhost.Deployed(ctx, d.app(name, catalog.App{}, ""))
+}
+
+func (d sshDriver) removeSteps(name string, app catalog.App) []engine.Step {
+	return dockerhost.RemoveSteps(d.app(name, app, ""))
+}
+
+func (d sshDriver) unmanageSteps(name string, app catalog.App) []engine.Step {
+	return dockerhost.UnmanageSteps(d.app(name, app, ""))
 }
 
 func (d sshDriver) close() error { return d.c.Close() }
@@ -104,6 +124,18 @@ func (d kubeDriver) writeMarker(ctx context.Context, m stack.Marker) error {
 
 func (d kubeDriver) steps(name string, app catalog.App, releaseSet string, redact *engine.Redactor) []engine.Step {
 	return kube.Steps(kube.App{Name: name, Client: d.c, Catalog: app, ReleaseSet: releaseSet, Redact: redact})
+}
+
+func (d kubeDriver) deployed(ctx context.Context, name string) (managed.Deployed, error) {
+	return d.c.Deployed(ctx, name)
+}
+
+func (d kubeDriver) removeSteps(name string, app catalog.App) []engine.Step {
+	return kube.RemoveSteps(kube.App{Name: name, Client: d.c, Catalog: app})
+}
+
+func (d kubeDriver) unmanageSteps(name string, app catalog.App) []engine.Step {
+	return kube.UnmanageSteps(kube.App{Name: name, Client: d.c, Catalog: app})
 }
 
 func (d kubeDriver) close() error { return nil }
