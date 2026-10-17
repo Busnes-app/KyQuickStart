@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -37,6 +38,7 @@ commands:
   review      display and validate the saved plan without connecting
   preflight   check every target; changes nothing
   apply       preflight, then install the apps in stack.yaml
+              [--adopt-edge-hosts] once: claim this target's NPM hosts marked by builds without installation_id
   install APP --target T   add APP and its missing dependencies to the plan and deploy them
   uninstall APP            remove APP's workloads; its data and secrets stay on the target
   unmanage APP             hand APP to its owner: drop the managed labels, record it in handover.md
@@ -106,6 +108,7 @@ func Run(ctx context.Context, args []string, o Options) error {
 	state := fl.String("state", ".", "state directory holding stack.yaml")
 	clientIP := fl.String("expected-client-ip", "", "verify-edge: this workstation's expected public client address")
 	ack := fl.Bool("acknowledge-no-backup", false, "apply: upgrade data without a pre-upgrade backup")
+	adopt := fl.Bool("adopt-edge-hosts", false, "apply: claim and re-mark this target's NPM hosts from builds without installation_id")
 	trust := trustFlag{}
 	fl.Var(trust, "trust-host-key", "accept an unknown host key: <target>=SHA256:<fingerprint>")
 	if err := fl.Parse(args[1:]); err != nil {
@@ -127,11 +130,21 @@ func Run(ctx context.Context, args []string, o Options) error {
 	if *ack && cmd != "apply" {
 		return errors.New("--acknowledge-no-backup is only for apply, install and upgrade")
 	}
+	if *adopt && cmd != "apply" {
+		return errors.New("--adopt-edge-hosts is only for apply")
+	}
 	s, err := load(*state, trust, o)
 	if err != nil {
 		return err
 	}
 	defer s.close()
+	s.adopt = *adopt
+	var publishPlan func() error
+	if cmd == "apply" {
+		if publishPlan, err = s.ensureInstallation(*state); err != nil {
+			return err
+		}
+	}
 	if cmd == "preflight" && len(s.order) == 0 {
 		return errors.New("no installable apps selected; existing references are planning records and cannot be preflighted by this build")
 	}
@@ -159,7 +172,23 @@ func Run(ctx context.Context, args []string, o Options) error {
 		return err
 	}
 	s.ack = *ack
-	return s.apply(ctx)
+	return s.apply(ctx, publishPlan)
+}
+
+// ensureInstallation gives a plan with edges its installation_id. That is a plan change,
+// refused on a runner-owned target like any other; publish saves it once apply passed.
+func (s *session) ensureInstallation(state string) (func() error, error) {
+	if len(s.edges) == 0 || s.installation != "" {
+		return nil, nil
+	}
+	id := stack.NewInstallationID()
+	_, data, err := changePlan(state, s.revision, func(st *stack.Stack) { st.InstallationID = id })
+	if err != nil {
+		return nil, err
+	}
+	s.installation, s.changesPlan = id, true
+	revision := s.revision
+	return func() error { return publish(state, revision, data) }, nil
 }
 
 type trustFlag map[string]string
@@ -184,6 +213,7 @@ type session struct {
 	installation string // stack.yaml's installation_id; marks this installation's NPM hosts
 	trust        trustFlag
 	ack          bool // acknowledge upgrading without a pre-upgrade backup
+	adopt        bool // claim legacy-marked NPM hosts (apply --adopt-edge-hosts)
 	redact       *engine.Redactor
 	demo         bool
 	o            Options
@@ -289,6 +319,25 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 			return nil, fmt.Errorf("app %q has no Compose deployment; place it on a Kubernetes target", name)
 		}
 	}
+	for _, a := range st.Apps {
+		if len(a.NodePorts) == 0 {
+			continue
+		}
+		app := cat[a.Name]
+		if !s.placed[a.Name].Kubernetes() {
+			return nil, fmt.Errorf("app %q: node_ports are for a Kubernetes target", a.Name)
+		}
+		k := *app.Kubernetes
+		k.NodePorts = maps.Clone(k.NodePorts)
+		for port, node := range a.NodePorts {
+			if _, ok := k.NodePorts[port]; !ok {
+				return nil, fmt.Errorf("app %q: node_ports %d is not one of its published ports", a.Name, port)
+			}
+			k.NodePorts[port] = node
+		}
+		app.Kubernetes = &k
+		cat[a.Name] = app
+	}
 	return s, nil
 }
 
@@ -299,17 +348,23 @@ func (s *session) connect(ctx context.Context, trust trustFlag) error {
 		if err != nil {
 			return err
 		}
+		if k, ok := d.(kubeDriver); ok {
+			k.edge = s.edgeApp(t.Name)
+			d = k
+		}
 		s.drivers[t.Name] = d
 	}
 	for _, e := range s.edges {
-		token, err := s.drivers[e.Target].edgeToken(ctx)
+		token, tunnel, err := s.drivers[e.Target].edgeAccess(ctx, e)
 		if err != nil {
 			return fmt.Errorf("edge %s: %w", e.Target, err)
 		}
-		n, err := edge.NewNPM(e.NPMURL, strings.TrimSpace(string(token)), s.installation, nil)
+		s.redact.Add(strings.TrimSpace(string(token)))
+		n, err := edge.NewNPM(e.NPMURL, strings.TrimSpace(string(token)), s.installation, tunnel)
 		if err != nil {
 			return fmt.Errorf("edge %s: %w", e.Target, err)
 		}
+		n.Adopt = s.adopt
 		s.npms[e.Target] = n
 	}
 	return nil
@@ -331,6 +386,16 @@ var dialTarget = func(ctx context.Context, t stack.Target, c remote.SSHConfig, n
 		return nil, err
 	}
 	return sshDriver{t: t, c: sc}, nil
+}
+
+// edgeApp names the edge component placed on target, "" if none.
+func (s *session) edgeApp(target string) string {
+	for name, t := range s.placed {
+		if t.Name == target && s.cat[name].Category == "edge" {
+			return name
+		}
+	}
+	return ""
 }
 
 func (s *session) needsStorage(target string) bool {
@@ -396,12 +461,13 @@ func (s *session) preflight(ctx context.Context) error {
 	return nil
 }
 
-// apply locks every target before the first step and releases them at the end.
-func (s *session) apply(ctx context.Context) error {
+// apply locks every target before the first step and releases them at the end; publish, if
+// any, saves the plan once every step passed.
+func (s *session) apply(ctx context.Context, publish func() error) error {
 	if len(s.order) == 0 {
 		return errors.New("no installable apps selected; existing references do not authorize integration or deployment")
 	}
-	if err := s.operate(ctx, "", s.deploySteps, nil); err != nil {
+	if err := s.operate(ctx, "", s.deploySteps, publish); err != nil {
 		return err
 	}
 	if s.demo {

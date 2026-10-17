@@ -251,9 +251,12 @@ func guided(ctx context.Context, args []string, o Options) error {
 	if err != nil {
 		return err
 	}
-	st := &stack.Stack{Version: 1, Revision: 1, Demo: mode == "yes"}
+	st := &stack.Stack{Version: 1, Revision: 1, Demo: mode == "yes", InstallationID: stack.NewInstallationID()}
 	if previous != nil {
 		st.Revision = previous.Revision + 1
+		if previous.InstallationID != "" { // written once
+			st.InstallationID = previous.InstallationID
+		}
 	}
 	if previous != nil && previous.Demo != st.Demo {
 		return errors.New("use a separate state directory when changing between demo and production")

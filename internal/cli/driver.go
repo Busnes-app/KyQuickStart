@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
@@ -32,7 +33,7 @@ type driver interface {
 	deployed(ctx context.Context, name string) (managed.Deployed, error)
 	removeSteps(name string, app catalog.App) []engine.Step
 	unmanageSteps(name string, app catalog.App) []engine.Step
-	edgeToken(context.Context) ([]byte, error)
+	edgeAccess(context.Context, stack.Edge) ([]byte, edge.Dial, error) // NPM token, and tunnel for kube://
 	checkConnector(context.Context, stack.Edge) error
 	connectorSteps(context.Context, stack.Edge, string, *engine.Redactor) ([]engine.Step, error)
 	execRunner(ctx context.Context, r handoffRecord, serve string, stdin io.Reader) ([]byte, error)
@@ -101,8 +102,9 @@ func (d sshDriver) execRunner(ctx context.Context, r handoffRecord, serve string
 	return d.c.Run(ctx, "docker exec -i "+remote.Quote(r.Container)+" kyquickstart "+remote.Quote(serve)+" --state "+runnerState, in)
 }
 
-func (d sshDriver) edgeToken(ctx context.Context) ([]byte, error) {
-	return remote.ReadSecret(ctx, d.c, d.t.Root+"/edge/secrets/npm_token")
+func (d sshDriver) edgeAccess(ctx context.Context, _ stack.Edge) ([]byte, edge.Dial, error) {
+	token, err := remote.ReadSecret(ctx, d.c, d.t.Root+"/edge/secrets/npm_token")
+	return token, nil, err
 }
 
 func (d sshDriver) checkConnector(ctx context.Context, e stack.Edge) error {
@@ -117,6 +119,7 @@ type kubeDriver struct {
 	c            *kube.Client
 	needsStorage bool
 	storageClass string
+	edge         string // the edge app on this cluster, admitted to the other apps' ports
 }
 
 func (d kubeDriver) preflight(ctx context.Context) []finding {
@@ -138,7 +141,7 @@ func (d kubeDriver) writeMarker(ctx context.Context, m stack.Marker) error {
 }
 
 func (d kubeDriver) steps(name string, app catalog.App, releaseSet string, redact *engine.Redactor) []engine.Step {
-	return kube.Steps(kube.App{Name: name, Client: d.c, Catalog: app, ReleaseSet: releaseSet, Redact: redact, StorageClass: d.storageClass})
+	return kube.Steps(kube.App{Name: name, Client: d.c, Catalog: app, ReleaseSet: releaseSet, Redact: redact, StorageClass: d.storageClass, Edge: d.edge})
 }
 
 func (d kubeDriver) deployed(ctx context.Context, name string) (managed.Deployed, error) {
@@ -160,7 +163,18 @@ func (d kubeDriver) execRunner(ctx context.Context, r handoffRecord, serve strin
 	return d.c.ExecRunner(ctx, r.Namespace, r.Selector, []string{"kyquickstart", serve, "--state", podRunnerState, "--pod-volumes"}, stdin)
 }
 
-func (d kubeDriver) edgeToken(ctx context.Context) ([]byte, error) { return d.c.EdgeToken(ctx) }
+func (d kubeDriver) edgeAccess(ctx context.Context, e stack.Edge) ([]byte, edge.Dial, error) {
+	ns, svc, port, ok := stack.KubeService(e.NPMURL)
+	if !ok {
+		token, err := d.c.EdgeToken(ctx)
+		return token, nil, err
+	}
+	token, dial, err := d.c.NPMAccess(ctx, ns, svc, port)
+	if err != nil {
+		return nil, nil, fmt.Errorf("in-cluster NPM is not reachable or not bootstrapped (%w); apply it once without this edge, then add its certificate", err)
+	}
+	return token, dial, nil
+}
 
 func (d kubeDriver) checkConnector(context.Context, stack.Edge) error {
 	return errors.New("Kubernetes connector deployment is not implemented")
