@@ -237,6 +237,84 @@ func TestApply(t *testing.T) {
 	if got := docker(t, "exec", name, "cat", root+"/.lock/holder"); got != stale {
 		t.Errorf("lock holder changed: %s", got)
 	}
+	docker(t, "exec", name, "rm", "-r", root+"/.lock")
+	testSuiteCommands(t, ctx, state, hostFP, port, root, name)
+}
+
+// testSuiteCommands drives install, upgrade, uninstall and unmanage over SSH, from a
+// non-demo plan whose catalog version can be raised.
+func testSuiteCommands(t *testing.T, ctx context.Context, demoState, hostFP, port, root, sshd string) {
+	work := t.TempDir()
+	state, cat := filepath.Join(work, "state"), filepath.Join(work, "apps", "hello")
+	os.MkdirAll(state, 0o700)
+	os.MkdirAll(cat, 0o700)
+	kh, _ := os.ReadFile(filepath.Join(demoState, "known_hosts"))
+	os.WriteFile(filepath.Join(state, "known_hosts"), kh, 0o600)
+	os.WriteFile(filepath.Join(state, "stack.yaml"), []byte(fmt.Sprintf("version: 1\ntargets:\n  - name: e2e\n    host: 127.0.0.1\n    port: %s\n    user: root\n    root: %s\nrevision: 1\napps: []\n", port, root)), 0o600)
+	manifest, _ := os.ReadFile("../../internal/catalog/testdata/apps/hello/manifest.yaml")
+	compose, _ := os.ReadFile("../../internal/catalog/testdata/apps/hello/compose.yaml.tmpl")
+	os.WriteFile(filepath.Join(cat, "compose.yaml.tmpl"), compose, 0o600)
+	version := func(v string) {
+		os.WriteFile(filepath.Join(cat, "manifest.yaml"), bytes.Replace(manifest, []byte("version: 1.11.0"), []byte("version: "+v), 1), 0o600)
+	}
+	run := func(args ...string) error {
+		var out bytes.Buffer
+		err := cli.Run(ctx, append(args, "--state", state), cli.Options{Catalog: os.DirFS(filepath.Dir(cat)), ReleaseSet: "e2e", Out: &out})
+		t.Logf("%s:\n%s", strings.Join(args, " "), out.String())
+		return err
+	}
+	labelled := func(label string) string {
+		return docker(t, "ps", "--filter", "label=com.docker.compose.project=kyq-hello", "--filter", "label="+label, "--format", "{{.Names}}")
+	}
+
+	version("1.11.0")
+	if err := run("install", "hello", "--target", "e2e"); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	if labelled("kyquickstart/version=1.11.0") == "" || labelled("ky.managed-by=kyquickstart") == "" {
+		t.Error("installed container lacks its version or managed label")
+	}
+	secret := docker(t, "exec", sshd, "cat", root+"/hello/secrets/token")
+
+	version("1.12.0")
+	if err := run("upgrade", "hello"); err == nil || !strings.Contains(err.Error(), "ack_required") {
+		t.Fatalf("upgrade without acknowledgement: %v", err)
+	}
+	if err := run("upgrade", "hello", "--acknowledge-no-backup"); err != nil {
+		t.Fatalf("upgrade: %v", err)
+	}
+	if labelled("kyquickstart/version=1.12.0") == "" {
+		t.Error("upgraded container lacks its new version label")
+	}
+
+	if err := run("uninstall", "hello"); err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+	if got := docker(t, "ps", "-a", "--filter", "label=com.docker.compose.project=kyq-hello", "--format", "{{.Names}}"); got != "" {
+		t.Errorf("containers left after uninstall: %s", got)
+	}
+	if got := docker(t, "exec", sshd, "cat", root+"/hello/secrets/token"); got != secret {
+		t.Error("uninstall did not keep the app's secret")
+	}
+	if err := run("install", "hello", "--target", "e2e"); err != nil {
+		t.Fatalf("reinstall: %v", err)
+	}
+
+	if err := run("unmanage", "hello"); err != nil {
+		t.Fatalf("unmanage: %v", err)
+	}
+	if labelled("ky.managed-by") != "" || labelled("kyquickstart/version=1.12.0") == "" {
+		t.Error("unmanaged container still managed, or lost its version")
+	}
+	if running := docker(t, "ps", "--filter", "label=com.docker.compose.project=kyq-hello", "--filter", "status=running", "--format", "{{.Names}}"); running == "" {
+		t.Error("unmanage stopped the app")
+	}
+	if b, err := os.ReadFile(filepath.Join(state, "handover.md")); err != nil || !strings.Contains(string(b), "hello 1.12.0 on e2e is no longer managed") {
+		t.Errorf("handover: %v\n%s", err, b)
+	}
+	if err := run("install", "hello", "--target", "e2e"); err == nil || !strings.Contains(err.Error(), "already_installed") {
+		t.Errorf("install over an unmanaged app: %v", err)
+	}
 }
 
 // status returns the engine's status word for step id in apply output.
