@@ -185,6 +185,40 @@ func TestKubernetesNPMEdge(t *testing.T) {
 		t.Fatal("rerun did not report the bootstrap and edge steps")
 	}
 
+	// lan: the client reaches NPM directly, only allow_cidrs is served, no forwarding header
+	// is trusted. kind's network is inside the private ranges NPM's http block trusts.
+	allowed := ip(client)
+	st.Edges[0].Provider, st.Edges[0].ConnectorCIDR = "lan", ""
+	st.Edges[0].AllowCIDRs, st.Edges[0].ClientPort = []string{allowed + "/32"}, 30443
+	b, _ = yaml.Marshal(st)
+	os.WriteFile(plan, b, 0o600)
+	apply("lan")
+	lan := func(from string, headers ...string) string {
+		args := []string{"exec", from, "curl", "-sk", "-m", "10", "--resolve", "hello.example.test:30443:" + nodeIP}
+		for _, h := range headers {
+			args = append(args, "-H", h)
+		}
+		return docker(t, append(args, "https://hello.example.test:30443/")...)
+	}
+	header := func(page, name string) string {
+		for _, line := range strings.Split(page, "\n") {
+			if v, ok := strings.CutPrefix(strings.TrimSpace(line), name+": "); ok {
+				return v
+			}
+		}
+		return ""
+	}
+	page = lan(client, "X-Forwarded-For: 198.51.100.9", "X-Real-IP: 198.51.100.10", "Forwarded: for=198.51.100.11")
+	if header(page, "X-Forwarded-For") != allowed || header(page, "X-Real-Ip") != allowed || header(page, "X-Forwarded-Port") != "30443" || strings.Contains(page, "198.51.100") {
+		t.Fatalf("lan client through the edge:\n%s", page)
+	}
+	// Outside allow_cidrs, with and without a forged allowed address.
+	for _, forged := range []string{"X-Lan-Test: none", "X-Real-IP: " + allowed, "X-Forwarded-For: " + allowed} {
+		if page := lan(node, forged); !strings.Contains(page, "403 Forbidden") {
+			t.Fatalf("lan served a client outside allow_cidrs (%s):\n%s", forged, page)
+		}
+	}
+
 	// A rejected token (expired or revoked): connect mints one in memory, bootstrap stores a fresh one.
 	sec, _ := cs.CoreV1().Secrets("kyq-edge").Get(ctx, "kyq-credentials", metav1.GetOptions{})
 	sec.Data["npm_token"] = []byte("rejected-npm-token")

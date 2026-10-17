@@ -131,6 +131,7 @@ func TestGuidedExistingEdgeChoicesRoundTrip(t *testing.T) {
 	}{
 		{"frp", []string{"frp", "https://npm.example.test", "172.30.0.10/32", "8443", "yes", "npm-net", "npm", "frp.example.test", "7000", "yes", "hello.example.test", "hello", "8080", "http", "12", "/api/status"}},
 		{"cloudflare", []string{"cloudflare", "https://npm.example.test", "172.30.0.10/32", "yes", "npm-net", "npm", "12345678-1234-1234-1234-123456789012", "yes", "hello.example.test", "hello", "8080", "http", "12", "/api/status"}},
+		{"lan", []string{"lan", "https://npm.example.test", "192.168.1.0/24, fd00:1::/48", "30543", "yes", "hello.example.test", "hello", "8080", "http", "12", "/api/status"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st, err := stack.Parse([]byte(stackYAML))

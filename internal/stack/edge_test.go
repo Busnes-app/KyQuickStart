@@ -1,6 +1,7 @@
 package stack
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -292,5 +293,57 @@ func TestEdgeLANDNS(t *testing.T) {
 	docker := strings.Replace(edgeStack, "    routes:", "    lan_dns: {provider: kydns, url: 'https://kydns.example.com', credentials: {secret: kydns-api, key: token}, address: 192.168.1.81}\n    routes:", 1)
 	if _, err := Parse([]byte(docker)); err == nil || !strings.Contains(err.Error(), "needs a Kubernetes target") {
 		t.Fatalf("lan_dns on a Docker edge: %v", err)
+	}
+}
+
+func TestLANEdge(t *testing.T) {
+	lan := strings.Replace(kubeEdgeStack, "provider: cloudflare\n    npm_url: kube://kyq-npm/app:81\n    connector_cidr: 172.18.0.2/32\n",
+		"provider: lan\n    npm_url: kube://kyq-npm/app:81\n    allow_cidrs: [192.168.1.0/24, 'fd00:1::/48']\n", 1)
+	s, err := Parse([]byte(lan))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e := s.Edges[0]; e.ClientPort != 443 || len(e.AllowCIDRs) != 2 || e.ProxyPort != 0 {
+		t.Fatalf("parsed %+v", e)
+	}
+	for name, pair := range map[string][2]string{
+		"no allow_cidrs":      {"    allow_cidrs: [192.168.1.0/24, 'fd00:1::/48']\n", ""},
+		"empty allow_cidrs":   {"[192.168.1.0/24, 'fd00:1::/48']", "[]"},
+		"v4 default":          {"192.168.1.0/24", "0.0.0.0/0"},
+		"v6 default":          {"'fd00:1::/48'", "'::/0'"},
+		"v4 too wide":         {"192.168.1.0/24", "128.0.0.0/7"},
+		"v6 too wide":         {"'fd00:1::/48'", "'fd00::/31'"},
+		"host bits":           {"192.168.1.0/24", "192.168.1.5/24"},
+		"bare address":        {"192.168.1.0/24", "192.168.1.5"},
+		"not canonical":       {"'fd00:1::/48'", "'FD00:1::/48'"},
+		"mapped v4":           {"'fd00:1::/48'", "'::ffff:192.168.1.0/120'"},
+		"duplicate":           {"'fd00:1::/48'", "192.168.1.0/24"},
+		"directive injection": {"'fd00:1::/48'", "'10.0.0.0/8; allow all'"},
+		"connector_cidr":      {"provider: lan\n", "provider: lan\n    connector_cidr: 172.18.0.2/32\n"},
+		"proxy_port":          {"provider: lan\n", "provider: lan\n    proxy_port: 8443\n"},
+		"connector":           {"provider: lan\n", "provider: lan\n    connector: {network: edge, npm_host: npm}\n"},
+		"client_port range":   {"provider: lan\n", "provider: lan\n    client_port: 70000\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Parse([]byte(strings.Replace(lan, pair[0], pair[1], 1))); err == nil {
+				t.Fatal("accepted")
+			}
+		})
+	}
+	many := "["
+	for i := range 33 {
+		many += fmt.Sprintf("10.%d.0.0/16,", i)
+	}
+	if _, err := Parse([]byte(strings.Replace(lan, "[192.168.1.0/24, 'fd00:1::/48']", strings.TrimSuffix(many, ",")+"]", 1))); err == nil {
+		t.Fatal("accepted 33 prefixes")
+	}
+	// Tunnel edges take no lan fields and are otherwise unchanged.
+	for _, extra := range []string{"    allow_cidrs: [192.168.1.0/24]\n", "    client_port: 30543\n"} {
+		if _, err := Parse([]byte(strings.Replace(kubeEdgeStack, "    connector_cidr: 172.18.0.2/32\n", "    connector_cidr: 172.18.0.2/32\n"+extra, 1))); err == nil {
+			t.Fatalf("cloudflare accepted %s", extra)
+		}
+	}
+	if _, err := Parse([]byte(strings.Replace(kubeEdgeStack, "    connector_cidr: 172.18.0.2/32\n", "", 1))); err == nil {
+		t.Fatal("cloudflare accepted no connector_cidr")
 	}
 }

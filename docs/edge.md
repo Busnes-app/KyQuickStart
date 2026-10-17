@@ -13,6 +13,7 @@ interfaces remain gated.
 | Existing NPM | Reuse existing certificates or, on a Kubernetes edge, have NPM request Let's Encrypt certificates through Cloudflare DNS-01; create and repair installer-owned proxy hosts only |
 | Existing Cloudflare tunnel | Locally managed tunnel credentials; optional cloudflared deployment on Docker |
 | Existing frp server | Optional frpc deployment on Docker, verified server TLS and PROXY v2 |
+| LAN clients only (`lan`) | Clients connect to NPM directly, no tunnel; NPM serves only `allow_cidrs` |
 | Kubernetes target | NPM from the catalog (`npm` app) managed through `kube://`, or an existing NPM's API; connector deployment is rejected |
 
 Fresh NPM on a Docker host, DNS-01 certificates on a Docker edge or through a DNS provider other
@@ -69,6 +70,58 @@ only the listed hostnames, verifies origin TLS using each hostname and ends with
 Use dedicated tunnel credentials: an existing tunnel may have connectors with different
 ingress configuration, and this build does not reconcile those other connectors.
 
+## LAN clients (`provider: lan`)
+
+Use `lan` when the clients are on your own network and connect to NPM directly, with no tunnel
+or connector: an in-cluster NPM reached on its NodePort, or an NPM on the LAN. It is not
+internet-facing. Do not forward a public port to it; use `cloudflare` or `frp` for that.
+
+```yaml
+edges:
+  - target: k80
+    provider: lan
+    npm_url: kube://kyq-npm/app:81
+    allow_cidrs: [192.168.1.0/24]   # 1-32 prefixes NPM serves; everyone else gets 403
+    client_port: 30543              # the port clients reach NPM's HTTPS on (default 443)
+    routes: [...]                   # as for any edge
+```
+
+`connector_cidr`, `connector` and `proxy_port` are refused. Each `allow_cidrs` entry must be a
+canonical prefix (host bits zero, as `netip` prints it) no wider than /8 for IPv4 or /32 for
+IPv6, so `0.0.0.0/0` and `::/0` are refused. Validation does not check that a prefix is
+private: a public prefix is accepted, but then the edge is reachable from it. Keep the list to
+the networks your clients are on.
+
+**What it trusts.** Only the TCP peer address. NPM's own `nginx.conf` trusts `X-Real-IP` from
+every private range (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), so any LAN host could
+claim another address. Each lan host overrides that with `set_real_ip_from unix:;` (NPM never
+listens on a unix socket), so nginx's `$remote_addr` is the real peer. The host then allows
+each prefix, denies everyone else, keeps the SNI check and replaces every forwarding header
+before the product:
+
+```nginx
+# kyquickstart:<installation_id>:k80:<app>:<hostname>
+set_real_ip_from unix:;
+if ($ssl_server_name != <hostname>) { return 421; }
+allow 192.168.1.0/24;
+deny all;
+location / {
+  proxy_set_header X-Forwarded-For $remote_addr;   # set, never appended
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-Port 30543;          # client_port
+  ...                                               # the same location as every edge
+}
+```
+
+The product therefore sees the client's own address in `X-Forwarded-For` and `X-Real-IP`; a
+client's forged forwarding headers are dropped. This needs NPM to see the real client
+address: on Kubernetes the `npm` app's NodePort uses `externalTrafficPolicy: Local`, so it
+does. A Docker NPM behind `docker-proxy` or any NAT sees the gateway instead, which makes the
+allow-list meaningless; `verify-edge` then fails because the product reports the wrong
+address. NPM's ACME challenge location (`/.well-known/acme-challenge/`, Let's Encrypt
+certificates only) keeps NPM's own `allow all`; it serves only challenge files, never the
+product.
+
 ## NPM on Kubernetes
 
 Add the `npm` app to a Kubernetes target. NPM has no Docker deployment yet; placing it on a
@@ -89,7 +142,7 @@ apps:
   them within 30000-32767). Preflight lists the cluster's Services and refuses a port any
   Service but this one already holds, naming it, before anything is created. Its
   `externalTrafficPolicy: Local` keeps the client address, which each route's `connector_cidr`
-  check depends on: only the node running NPM answers.
+  check, or a lan edge's `allow_cidrs`, depends on: only the node running NPM answers.
 - Service `app`, ClusterIP, for the admin API on port 81 only. Port 81 can never be published:
   the catalog refuses it in `node_ports`, and `apply` repairs a Service edited to expose other
   ports.
@@ -302,6 +355,9 @@ kyquickstart apply --state ./installation
 kyquickstart verify-edge --state ./installation --expected-client-ip <workstation-public-IP>
 ```
 
+For a lan edge, run `verify-edge` from a workstation inside `allow_cidrs` and pass its LAN
+address; it is refused otherwise. It probes each route on `client_port`.
+
 Preflight checks ownership, hostname/listener conflicts, certificate coverage and expiry,
 and optional connector network/credentials without deploying. Apply uses the normal target
 lock and resumable steps. Existing foreign hosts and wildcard conflicts are refused; an
@@ -334,6 +390,10 @@ configuration, real frps and generated frpc preserve client IP through two TLS h
 unknown SNI is rejected, forwarding headers are
 sanitized for frp and simulated Cloudflare traffic, the second apply is a no-op, and a removed
 route is disabled, stops serving and is re-enabled when restored.
+The same kind test switches the route to `lan`: the allowed client is served with its own
+address in `X-Forwarded-For` and `X-Real-IP` despite forged ones, and a client outside
+`allow_cidrs` is refused, also when it forges an allowed address in `X-Real-IP` or
+`X-Forwarded-For` from inside NPM's trusted private ranges.
 Separate connector tests prove authenticated frpc login with verified TLS and parse generated
 cloudflared ingress with the pinned image. No live Cloudflare account or operator server is
 used. A complete public frp/Cloudflare-to-product G11 pilot is still required.

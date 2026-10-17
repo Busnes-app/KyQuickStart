@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -652,7 +653,7 @@ func guidedEdges(p *prompts, st *stack.Stack) error {
 			continue
 		}
 		key := "edge." + t.Name + "."
-		provider, err := p.ask(key+"provider", "Public connection for "+t.Name+": none/cloudflare/frp", "none", oneOf("none", "cloudflare", "frp"))
+		provider, err := p.ask(key+"provider", "Public connection for "+t.Name+": none/cloudflare/frp/lan (LAN clients only, no tunnel)", "none", oneOf("none", "cloudflare", "frp", "lan"))
 		if err != nil {
 			return err
 		}
@@ -665,73 +666,13 @@ func guidedEdges(p *prompts, st *stack.Stack) error {
 		if err != nil {
 			return err
 		}
-		e.ConnectorCIDR, err = p.ask(key+"cidr", "Connector's fixed source IPv4 /32", "", func(s string) bool {
-			ip, err := netip.ParsePrefix(s)
-			return err == nil && ip.Addr().Is4() && ip.Bits() == 32 && !ip.Addr().IsUnspecified() && !ip.Addr().IsMulticast()
-		})
+		if provider == "lan" {
+			err = askLAN(p, key, &e)
+		} else {
+			err = askConnector(p, key, t, &e)
+		}
 		if err != nil {
 			return err
-		}
-		if provider == "frp" {
-			port, err := p.ask(key+"proxy_port", "Dedicated private NPM PROXY-protocol TLS port", "8443", integer(1024, 65535))
-			if err != nil {
-				return err
-			}
-			e.ProxyPort, _ = strconv.Atoi(port)
-		}
-		deploy := "no"
-		if !t.Kubernetes() {
-			deploy, err = p.ask(key+"deploy", "Deploy connector on this Docker target? yes/no", "no", oneOf("yes", "no"))
-			if err != nil {
-				return err
-			}
-		} else {
-			fmt.Fprintln(p.out, "Kubernetes connector deployment is unavailable. Only an externally managed connector can be referenced.")
-		}
-		if deploy == "yes" {
-			c := &stack.Connector{}
-			c.Network, err = p.ask(key+"network", "Existing shared Docker network", "", stack.ValidName)
-			if err != nil {
-				return err
-			}
-			c.NPMHost, err = p.ask(key+"npm_host", "NPM hostname reachable inside that network", "", host)
-			if err != nil {
-				return err
-			}
-			if provider == "frp" {
-				c.FRPServer, err = p.ask(key+"frp_server", "Existing frp server TLS hostname", "", host)
-				if err != nil {
-					return err
-				}
-				port, err := p.ask(key+"frp_port", "frp control port", "7000", integer(1, 65535))
-				if err != nil {
-					return err
-				}
-				c.FRPPort, _ = strconv.Atoi(port)
-			} else {
-				c.TunnelID, err = p.ask(key+"tunnel_id", "Existing locally managed Cloudflare tunnel UUID", "", func(s string) bool {
-					parts := strings.Split(s, "-")
-					if len(parts) != 5 {
-						return false
-					}
-					sizes := []int{8, 4, 4, 4, 12}
-					for i, v := range parts {
-						if len(v) != sizes[i] {
-							return false
-						}
-						for _, ch := range v {
-							if !strings.ContainsRune("0123456789abcdef", ch) {
-								return false
-							}
-						}
-					}
-					return true
-				})
-				if err != nil {
-					return err
-				}
-			}
-			e.Connector = c
 		}
 		for _, name := range apps {
 			rk := key + "route." + name + "."
@@ -783,10 +724,108 @@ func guidedEdges(p *prompts, st *stack.Stack) error {
 	return nil
 }
 
+// askLAN asks which LAN clients NPM serves directly.
+func askLAN(p *prompts, key string, e *stack.Edge) error {
+	split := func(s string) []string {
+		out := strings.Split(s, ",")
+		for i := range out {
+			out[i] = strings.TrimSpace(out[i])
+		}
+		return out
+	}
+	cidrs, err := p.ask(key+"allow_cidrs", "LAN client prefixes NPM serves, comma-separated (for example 192.168.1.0/24)", "", func(s string) bool {
+		return !slices.ContainsFunc(split(s), func(c string) bool { return !stack.AllowCIDR(c) })
+	})
+	if err != nil {
+		return err
+	}
+	e.AllowCIDRs = split(cidrs)
+	port, err := p.ask(key+"client_port", "Port LAN clients reach NPM's HTTPS on (a NodePort, or 443)", "443", integer(1, 65535))
+	e.ClientPort, _ = strconv.Atoi(port)
+	return err
+}
+
+// askConnector asks for a tunnel edge's connector.
+func askConnector(p *prompts, key string, t stack.Target, e *stack.Edge) error {
+	var err error
+	e.ConnectorCIDR, err = p.ask(key+"cidr", "Connector's fixed source IPv4 /32", "", func(s string) bool {
+		ip, err := netip.ParsePrefix(s)
+		return err == nil && ip.Addr().Is4() && ip.Bits() == 32 && !ip.Addr().IsUnspecified() && !ip.Addr().IsMulticast()
+	})
+	if err != nil {
+		return err
+	}
+	if e.Provider == "frp" {
+		port, err := p.ask(key+"proxy_port", "Dedicated private NPM PROXY-protocol TLS port", "8443", integer(1024, 65535))
+		if err != nil {
+			return err
+		}
+		e.ProxyPort, _ = strconv.Atoi(port)
+	}
+	deploy := "no"
+	if !t.Kubernetes() {
+		deploy, err = p.ask(key+"deploy", "Deploy connector on this Docker target? yes/no", "no", oneOf("yes", "no"))
+		if err != nil {
+			return err
+		}
+	} else {
+		fmt.Fprintln(p.out, "Kubernetes connector deployment is unavailable. Only an externally managed connector can be referenced.")
+	}
+	if deploy == "yes" {
+		c := &stack.Connector{}
+		c.Network, err = p.ask(key+"network", "Existing shared Docker network", "", stack.ValidName)
+		if err != nil {
+			return err
+		}
+		c.NPMHost, err = p.ask(key+"npm_host", "NPM hostname reachable inside that network", "", host)
+		if err != nil {
+			return err
+		}
+		if e.Provider == "frp" {
+			c.FRPServer, err = p.ask(key+"frp_server", "Existing frp server TLS hostname", "", host)
+			if err != nil {
+				return err
+			}
+			port, err := p.ask(key+"frp_port", "frp control port", "7000", integer(1, 65535))
+			if err != nil {
+				return err
+			}
+			c.FRPPort, _ = strconv.Atoi(port)
+		} else {
+			c.TunnelID, err = p.ask(key+"tunnel_id", "Existing locally managed Cloudflare tunnel UUID", "", func(s string) bool {
+				parts := strings.Split(s, "-")
+				if len(parts) != 5 {
+					return false
+				}
+				sizes := []int{8, 4, 4, 4, 12}
+				for i, v := range parts {
+					if len(v) != sizes[i] {
+						return false
+					}
+					for _, ch := range v {
+						if !strings.ContainsRune("0123456789abcdef", ch) {
+							return false
+						}
+					}
+				}
+				return true
+			})
+			if err != nil {
+				return err
+			}
+		}
+		e.Connector = c
+	}
+	return nil
+}
+
 func seedEdges(a map[string]string, edges []stack.Edge) {
 	for _, e := range edges {
 		k := "edge." + e.Target + "."
 		a[k+"provider"], a[k+"npm"], a[k+"cidr"], a[k+"proxy_port"] = e.Provider, e.NPMURL, e.ConnectorCIDR, strconv.Itoa(e.ProxyPort)
+		if e.Provider == "lan" {
+			a[k+"allow_cidrs"], a[k+"client_port"] = strings.Join(e.AllowCIDRs, ","), strconv.Itoa(e.ClientPort)
+		}
 		if c := e.Connector; c != nil {
 			a[k+"deploy"] = "yes"
 			a[k+"network"], a[k+"npm_host"], a[k+"frp_server"], a[k+"frp_port"], a[k+"tunnel_id"] = c.Network, c.NPMHost, c.FRPServer, strconv.Itoa(c.FRPPort), c.TunnelID
