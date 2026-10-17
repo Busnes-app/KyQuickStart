@@ -11,7 +11,8 @@ handover of administrator and everyday logins.
 ## Targets
 
 - Docker hosts over SSH (pinned host keys, SSH agent authentication).
-- Kubernetes clusters through an existing kubeconfig.
+- Kubernetes clusters through an existing kubeconfig. App volumes use the cluster's default
+  StorageClass, or the one a target names with `storage_class`.
 
 Nothing is installed on your workstation beyond the binary. Secrets are generated on the
 target and never written to local state, logs or command output.

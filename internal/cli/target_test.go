@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/kube"
 	"github.com/Busnes-app/kyquickstart/internal/managed"
 	"github.com/Busnes-app/kyquickstart/internal/remote"
@@ -101,7 +102,7 @@ func newFixture(t *testing.T, catalogDir string) *fixture {
 	t.Cleanup(func() { dialTarget = saved })
 	dialTarget = func(_ context.Context, t stack.Target, _ remote.SSHConfig, needsStorage bool) (driver, error) {
 		if t.Kubernetes() {
-			return kubeDriver{c: kube.New(f.cs), needsStorage: needsStorage}, nil
+			return kubeDriver{c: kube.New(f.cs), needsStorage: needsStorage, storageClass: t.StorageClass}, nil
 		}
 		return sshDriver{t: t, c: f.h}, nil
 	}
@@ -195,5 +196,48 @@ func TestKubernetesMarkerRefusesNewerPlan(t *testing.T) {
 	}
 	if _, err := kube.Acquire(context.Background(), c, "after"); err != nil {
 		t.Fatalf("lease kept after refusal: %v", err)
+	}
+}
+
+func TestKubernetesStorageClassReachesDriver(t *testing.T) {
+	f := newFixture(t, "../catalog/testdata/apps")
+	kc := filepath.Join(t.TempDir(), "kubeconfig")
+	os.WriteFile(kc, nil, 0o600)
+	f.plan(t, "  - name: k1\n    kubeconfig: "+kc+"\n    storage_class: local-path\napps:\n  - name: hello\n    target: k1\n")
+	f.cs.Discovery().(*fakediscovery.FakeDiscovery).FakedServerVersion = &version.Info{Major: "1", Minor: "37"}
+	f.cs.PrependReactor("create", "selfsubjectaccessreviews", func(a ktesting.Action) (bool, runtime.Object, error) {
+		r := a.(ktesting.CreateAction).GetObject().(*authorizationv1.SelfSubjectAccessReview)
+		r.Status.Allowed = true
+		return true, r, nil
+	})
+	// No default class: only the named one.
+	f.cs.StorageV1().StorageClasses().Create(context.Background(), &storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: "local-path"}}, metav1.CreateOptions{})
+	if err := f.run("preflight"); err != nil || !strings.Contains(f.out.String(), "StorageClass local-path") {
+		t.Fatalf("preflight: %v\n%s", err, f.out.String())
+	}
+	cat, err := catalog.Load(os.DirFS("../catalog/testdata/apps"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := func(class string) string {
+		return kubeDriver{c: kube.New(f.cs), storageClass: class}.steps("hello", cat["hello"], "rs", nil)[1].InputHash()
+	}
+	if hash("local-path") == hash("") {
+		t.Fatal("storage class does not reach the deploy step")
+	}
+}
+
+func TestDialTargetKeepsStorageClass(t *testing.T) {
+	kc := filepath.Join(t.TempDir(), "kubeconfig")
+	cfg := "apiVersion: v1\nkind: Config\nclusters:\n- name: c\n  cluster:\n    server: https://192.0.2.1:6443\ncontexts:\n- name: c\n  context:\n    cluster: c\n    user: u\nusers:\n- name: u\n  user:\n    token: t\ncurrent-context: c\n"
+	if err := os.WriteFile(kc, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d, err := dialTarget(context.Background(), stack.Target{Name: "k1", Kubeconfig: kc, StorageClass: "local-path"}, remote.SSHConfig{}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if k, ok := d.(kubeDriver); !ok || k.storageClass != "local-path" {
+		t.Fatalf("driver = %+v", d)
 	}
 }

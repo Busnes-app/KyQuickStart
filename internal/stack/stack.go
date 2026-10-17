@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"go.yaml.in/yaml/v3"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 const DefaultRoot = "/opt/kyquickstart"
@@ -57,6 +58,8 @@ type Target struct {
 	Root       string `yaml:"root"`
 	Kubeconfig string `yaml:"kubeconfig"` // set only for a Kubernetes target; a path, never contents
 	Context    string `yaml:"context"`    // empty uses the kubeconfig's current context
+	// StorageClass names the class for the target's claims; empty needs a cluster default.
+	StorageClass string `yaml:"storage_class,omitempty"`
 }
 
 // Kubernetes reports whether the target is a cluster reached through a kubeconfig.
@@ -147,12 +150,14 @@ func (s *Stack) validate() error {
 				return fmt.Errorf("target %q: kubeconfig path contains a control character", t.Name)
 			case t.Context != "" && !contextRE.MatchString(t.Context):
 				return fmt.Errorf("target %q: context %q must match %s", t.Name, t.Context, contextRE)
+			case t.StorageClass != "" && len(validation.IsDNS1123Subdomain(t.StorageClass)) > 0:
+				return fmt.Errorf("target %q: storage_class %q must be a DNS-1123 subdomain name", t.Name, t.StorageClass)
 			}
 			seen[t.Name] = true
 			continue
 		}
-		if t.Context != "" {
-			return fmt.Errorf("target %q: context needs kubeconfig", t.Name)
+		if t.Context != "" || t.StorageClass != "" {
+			return fmt.Errorf("target %q: context and storage_class need kubeconfig", t.Name)
 		}
 		switch {
 		case !ValidName(t.Name):

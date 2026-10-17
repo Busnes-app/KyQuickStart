@@ -322,7 +322,7 @@ var dialTarget = func(ctx context.Context, t stack.Target, c remote.SSHConfig, n
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", t.Name, err)
 		}
-		return kubeDriver{c: c, needsStorage: needsStorage}, nil
+		return kubeDriver{c: c, needsStorage: needsStorage, storageClass: t.StorageClass}, nil
 	}
 	c.Name, c.Host, c.Port, c.User = t.Name, t.Host, t.Port, t.User
 	sc, err := remote.Dial(ctx, c)
