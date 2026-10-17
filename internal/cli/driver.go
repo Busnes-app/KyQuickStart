@@ -123,12 +123,13 @@ type kubeDriver struct {
 	c            *kube.Client
 	needsStorage bool
 	storageClass string
-	edge         string // the edge app on this cluster, admitted to the other apps' ports
+	edge         string         // the edge app on this cluster, admitted to the other apps' ports
+	nodePorts    map[int]string // NodePort -> the app here publishing it
 }
 
 func (d kubeDriver) preflight(ctx context.Context) []finding {
 	var out []finding
-	for _, f := range kube.Preflight(ctx, d.c, d.needsStorage, d.storageClass) {
+	for _, f := range kube.Preflight(ctx, d.c, d.needsStorage, d.storageClass, d.nodePorts) {
 		out = append(out, finding(f))
 	}
 	return out

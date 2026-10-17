@@ -136,7 +136,9 @@ the plan is saved only after every step passed.
 `stack.yaml` carries a `revision`, raised on every plan write. Every locked run records it
 on each target (`<root>/.plan`, or annotations on the `kyquickstart` namespace). A target
 recording a newer revision is refused (`plan_stale`): another workstation or the suite
-runner changed it, so copy its plan back with `kyquickstart pull-plan` first. Deployments record their catalog version (`kyquickstart/version`);
+runner changed it, so copy its plan back with `kyquickstart pull-plan` first. Markers also
+record the plan's `installation_id`; a target another plan manages is refused
+(`owned_by_other_plan`) until `kyquickstart apply --take-over-target T` claims it for this plan. Deployments record their catalog version (`kyquickstart/version`);
 Docker installs from earlier builds are recreated once by their next `apply` to record it.
 
 ## Hand-off to KyYard

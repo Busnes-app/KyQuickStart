@@ -254,15 +254,15 @@ func TestHandoffOwnershipAndRevoke(t *testing.T) {
 			t.Fatal(err, f.out.String())
 		}
 	}
-	if f.stack(t).Revision != 3 || f.marker(t) != `{"revision":3,"owner":"runner","runner_id":"`+runnerID+`"}` {
+	if f.stack(t).Revision != 3 || f.marker(t) != `{"revision":3,"owner":"runner","runner_id":"`+runnerID+`","installation_id":"`+f.stack(t).InstallationID+`"}` {
 		t.Fatalf("revision %d, marker %s", f.stack(t).Revision, f.marker(t))
 	}
 	keys, _ := os.ReadFile(filepath.Join(home, ".ssh", "authorized_keys"))
 	if string(keys) != "restrict "+r.key+" kyquickstart-runner "+runnerID+"\n" {
 		t.Errorf("authorized_keys = %q", keys)
 	}
-	if st, err := stack.Parse([]byte(r.imported["stack.yaml"])); err != nil || st.Revision != 3 {
-		t.Errorf("imported plan: %v", err)
+	if st, err := stack.Parse([]byte(r.imported["stack.yaml"])); err != nil || st.Revision != 3 || st.InstallationID != f.stack(t).InstallationID {
+		t.Errorf("imported plan (it carries the installation_id): %v", err)
 	}
 	if r.imported["known_hosts"] == "" || r.imported["results/web.deploy.json"] == "" {
 		t.Errorf("imported %v", r.imported)
@@ -317,7 +317,7 @@ func TestHandoffOwnershipAndRevoke(t *testing.T) {
 	if err := f.run("handoff", "--revoke"); err != nil {
 		t.Fatal(err, f.out.String())
 	}
-	if f.marker(t) != `{"revision":6,"owner":"cli","runner_id":""}` {
+	if f.marker(t) != `{"revision":6,"owner":"cli","runner_id":"","installation_id":"`+f.stack(t).InstallationID+`"}` {
 		t.Errorf("marker after revoke = %s", f.marker(t))
 	}
 	if keys, _ := os.ReadFile(filepath.Join(home, ".ssh", "authorized_keys")); len(keys) != 0 {
@@ -341,11 +341,15 @@ func TestRunnerActsOnlyOnItsOwnTargets(t *testing.T) {
 	if err := f.run("install", "db", "--target", "nas"); code(err) != suite.OwnedByRunner {
 		t.Fatalf("another runner's target: %v", err)
 	}
+	os.WriteFile(filepath.Join(f.h.root, ".plan"), []byte(`{"revision":0,"owner":"runner","runner_id":"`+runnerID+`","installation_id":"`+otherPlan+`"}`), 0o600)
+	if err := f.run("install", "db", "--target", "nas"); code(err) != suite.OwnedByOtherPlan {
+		t.Fatalf("another plan's target: %v", err)
+	}
 	os.WriteFile(filepath.Join(f.h.root, ".plan"), []byte(`{"revision":0,"owner":"runner","runner_id":"`+runnerID+`"}`), 0o600)
 	if err := f.run("install", "db", "--target", "nas"); err != nil {
 		t.Fatal(err)
 	}
-	if f.marker(t) != `{"revision":1,"owner":"runner","runner_id":"`+runnerID+`"}` {
+	if f.marker(t) != `{"revision":1,"owner":"runner","runner_id":"`+runnerID+`","installation_id":"`+f.stack(t).InstallationID+`"}` {
 		t.Errorf("marker = %s", f.marker(t))
 	}
 	if _, err := Status(context.Background(), f.state, f.o); err != nil {

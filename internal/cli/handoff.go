@@ -207,10 +207,11 @@ func (s *session) handoff(ctx context.Context, r handoffRecord, revoke bool) err
 		}
 		owner.Owner = "runner"
 	}
-	_, data, err := changePlan(s.state, s.revision, func(*stack.Stack) {})
+	next, data, err := changePlan(s.state, s.revision, func(*stack.Stack) {})
 	if err != nil {
 		return err
 	}
+	s.installation = next.InstallationID
 	var summary []string
 	return s.operate(ctx, "", func(ctx context.Context) ([]engine.Step, error) {
 		kubeconfigs := map[string][]byte{}
