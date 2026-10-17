@@ -7,11 +7,13 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 	"strings"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
@@ -109,7 +111,7 @@ func TestDeployKeepsExistingClaim(t *testing.T) {
 	if err := a.ensureNamespace(ctx); err != nil {
 		t.Fatal(err)
 	}
-	claim := render("hello", a.Catalog, "rs-0", "").Claims[0]
+	claim := renderHello(a.Catalog, "rs-0", "").Claims[0]
 	claim.Spec.VolumeName = "bound-pv"
 	cs.CoreV1().PersistentVolumeClaims("kyq-hello").Create(ctx, claim, metav1.CreateOptions{})
 	if err := deployOf(a).Apply(ctx); err != nil {
@@ -190,7 +192,7 @@ func TestDeployRefusesClaimStorageClassChange(t *testing.T) {
 			if err := a.ensureNamespace(ctx); err != nil {
 				t.Fatal(err)
 			}
-			claim := render("hello", a.Catalog, "rs-0", "").Claims[0]
+			claim := renderHello(a.Catalog, "rs-0", "").Claims[0]
 			claim.Spec.StorageClassName = have
 			cs.CoreV1().PersistentVolumeClaims("kyq-hello").Create(ctx, claim, metav1.CreateOptions{})
 			a.StorageClass = "local-path"
@@ -218,5 +220,38 @@ func TestDeployAcceptsClaimWithNamedClass(t *testing.T) {
 	}
 	if err := deployOf(a).Apply(ctx); err != nil {
 		t.Fatalf("rerun with the same class: %v", err)
+	}
+}
+
+// A hand edit that publishes the admin port is drift: apply puts it back to ClusterIP.
+func TestDeployRepairsAdminExposure(t *testing.T) {
+	ctx := context.Background()
+	a := App{Name: "npm", Client: New(fake.NewClientset()), Catalog: npmApp(t), ReleaseSet: "rs-1"}
+	d := deployOf(a)
+	if err := d.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if done, err := d.Inspect(ctx); err != nil || !done {
+		t.Fatalf("Inspect after apply = %v %v", done, err)
+	}
+	svcs := a.Client.cs.CoreV1().Services("kyq-npm")
+	svc, _ := svcs.Get(ctx, appName, metav1.GetOptions{})
+	svc.Spec.Type, svc.Spec.Ports[0].NodePort = corev1.ServiceTypeNodePort, 30081
+	svcs.Update(ctx, svc, metav1.UpdateOptions{})
+	if done, _ := d.Inspect(ctx); done {
+		t.Fatal("published admin port counted as deployed")
+	}
+	if err := d.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	svc, _ = svcs.Get(ctx, appName, metav1.GetOptions{})
+	if svc.Spec.Type != "" || svc.Spec.Ports[0].NodePort != 0 {
+		t.Fatalf("admin service not repaired: %+v", svc.Spec)
+	}
+	if err := RemoveSteps(a)[0].Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if list, _ := svcs.List(ctx, metav1.ListOptions{}); len(list.Items) != 0 {
+		t.Fatalf("uninstall left %d services", len(list.Items))
 	}
 }

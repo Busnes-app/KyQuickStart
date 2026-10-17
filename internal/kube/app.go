@@ -17,6 +17,8 @@ type App struct {
 	Redact     *engine.Redactor
 	// StorageClass is the target's storage_class; empty leaves claims to the cluster default.
 	StorageClass string
+	// Edge names the edge app on this cluster, whose pods may reach this app's ports; empty for none.
+	Edge string
 }
 
 func hashOf(parts ...string) string {
@@ -30,6 +32,6 @@ func hashOf(parts ...string) string {
 
 // Steps returns the app's install steps: secrets, deploy, health.
 func Steps(a App) []engine.Step {
-	hash := render(a.Name, a.Catalog, a.ReleaseSet, a.StorageClass).hash()
+	hash := render(a).hash()
 	return []engine.Step{secretsStep{a}, deployStep{a: a, hash: hash}, healthStep{a: a, hash: hash}}
 }
