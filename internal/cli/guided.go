@@ -543,7 +543,11 @@ func showPlan(out io.Writer, st *stack.Stack, cat catalog.Catalog) {
 		fmt.Fprintf(out, "Existing %s on %s: %s — integration pending, no adoption or changes\n", e.Product, e.Target, e.URL)
 	}
 	for _, i := range st.Integrations {
-		fmt.Fprintf(out, "Selected setup %s on %s: container %s, protected bundle %s (run integrate-stack explicitly)\n", i.Product, i.Target, i.Container, i.Bundle)
+		if i.Installed(st) {
+			fmt.Fprintf(out, "Selected setup %s on %s: protected bundle %s (apply runs it after health)\n", i.Product, i.Target, i.Bundle)
+		} else {
+			fmt.Fprintf(out, "Selected setup %s on %s: container %s, protected bundle %s (run integrate-stack explicitly)\n", i.Product, i.Target, i.Container, i.Bundle)
+		}
 		if i.Identity != nil {
 			fmt.Fprintln(out, "    Prepare KyIdentity metadata and generate private owner/everyday/client credentials on target; resume preserves retained files.")
 		}
