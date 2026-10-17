@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 // Edge references infrastructure and target-held credentials, never credential values.
@@ -73,9 +75,23 @@ func (s *Stack) validateEdges() error {
 		if e.Provider != "cloudflare" && e.Provider != "frp" {
 			return fmt.Errorf("edge %s: provider must be cloudflare or frp", e.Target)
 		}
-		u, err := url.Parse(e.NPMURL)
-		if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" || u.Opaque != "" {
-			return fmt.Errorf("edge %s: npm_url must be an HTTPS origin with no credentials, path or query", e.Target)
+		target, _ := s.Target(e.Target)
+		// adminHost and adminPort name the NPM API, which no route may forward to.
+		var adminHost, adminPort string
+		if ns, svc, port, ok := KubeService(e.NPMURL); ok {
+			if !target.Kubernetes() {
+				return fmt.Errorf("edge %s: a kube:// npm_url needs a Kubernetes target", e.Target)
+			}
+			adminHost, adminPort = svc+"."+ns, strconv.Itoa(port)
+		} else {
+			u, err := url.Parse(e.NPMURL)
+			if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" || u.Opaque != "" {
+				return fmt.Errorf("edge %s: npm_url must be an HTTPS origin with no credentials, path or query, or kube://<namespace>/<service>:<port>", e.Target)
+			}
+			adminHost, adminPort = strings.ToLower(u.Hostname()), u.Port()
+			if adminPort == "" {
+				adminPort = "443"
+			}
 		}
 		if apis[e.NPMURL] {
 			return fmt.Errorf("edge %s: npm_url is already owned by another target", e.Target)
@@ -96,7 +112,6 @@ func (s *Stack) validateEdges() error {
 			return fmt.Errorf("edge %s: proxy_port is only for frp", e.Target)
 		}
 		if c := e.Connector; c != nil {
-			target, _ := s.Target(e.Target)
 			if target.Kubernetes() {
 				return fmt.Errorf("edge %s: connector deployment currently requires a Docker target; Kubernetes source-address isolation is not implemented", e.Target)
 			}
@@ -134,11 +149,8 @@ func (s *Stack) validateEdges() error {
 			if r.ForwardPort < 1 || r.ForwardPort > 65535 || r.ForwardPort == 81 {
 				return fmt.Errorf("edge %s: forward_port must be 1-65535 and cannot be NPM admin port 81", e.Target)
 			}
-			adminPort := u.Port()
-			if adminPort == "" {
-				adminPort = "443"
-			}
-			if strings.EqualFold(r.ForwardHost, u.Hostname()) && strconv.Itoa(r.ForwardPort) == adminPort {
+			host := strings.ToLower(r.ForwardHost)
+			if (host == adminHost || strings.HasPrefix(host, adminHost+".svc")) && strconv.Itoa(r.ForwardPort) == adminPort {
 				return fmt.Errorf("edge %s: a route cannot forward to its NPM administration endpoint", e.Target)
 			}
 			if r.ForwardScheme == "" {
@@ -162,4 +174,18 @@ func (s *Stack) validateEdges() error {
 	return nil
 }
 
-var tunnelRE = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+var (
+	tunnelRE = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	kubeRE   = regexp.MustCompile(`^kube://([^/]+)/([^:]+):([1-9][0-9]{0,4})$`)
+)
+
+// KubeService parses npm_url kube://<namespace>/<service>:<port>: an NPM Service reached
+// through a port-forward the Kubernetes driver opens.
+func KubeService(s string) (namespace, service string, port int, ok bool) {
+	m := kubeRE.FindStringSubmatch(s)
+	if m == nil || len(validation.IsDNS1123Label(m[1])) > 0 || len(validation.IsDNS1035Label(m[2])) > 0 {
+		return "", "", 0, false
+	}
+	port, _ = strconv.Atoi(m[3])
+	return m[1], m[2], port, port <= 65535
+}

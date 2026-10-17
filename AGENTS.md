@@ -309,6 +309,11 @@ handover of admin and everyday logins.
   group retirement. Qualify actual KyIdentity group event delivery before deployment.
 - Reverse proxy is Nginx Proxy Manager. On an existing NPM, touch only installer-created hosts,
   through its API, never its database. NPM admin is LAN-only; its credentials go in the handover.
+  A host is this installation's only with `stack.yaml`'s `installation_id` in its marks; hosts
+  with the older target-only marks change only under `apply --adopt-edge-hosts`, once. On
+  Kubernetes the catalog's `npm` app keeps its admin API on a ClusterIP Service reached through
+  the driver's port-forward (`kube://`); bootstrap replaces NPM's first or default administrator
+  with a cluster-generated one (`docs/edge.md`).
 - One edge (NPM, and a tunnel or frp client) per target and one owner per hostname. The installer
   sets each product's trusted-proxy value to exactly where its edge connects from (pinned /32 on
   Docker, NAT-free LAN /32 across hosts, pod network plus an edge-only NetworkPolicy in the
@@ -351,7 +356,10 @@ handover of admin and everyday logins.
   it. Unit tests run commands for real through `remote.Local` and under sh, bash and fish.
 - Host keys are pinned in `<state>/known_hosts`; a changed key is never accepted, by flag or prompt.
 - On a cluster each app lives in namespace `kyq-<app>` (Pod Security `restricted`, default-deny
-  ingress) and the run lock is Lease `kyquickstart/kyquickstart-lock`. The installer never adopts
+  ingress) and the run lock is Lease `kyquickstart/kyquickstart-lock`. A manifest's
+  `pod_security: baseline` is the only exception (today only NPM, whose root init it needs;
+  `docs/edge.md` records its measured capabilities). Only edge components publish NodePorts,
+  never NPM's port 81; with an edge on the cluster, apps admit ingress from its pods alone. The installer never adopts
   a namespace or object without the managed label. A kubeconfig is referenced by path and may not
   live inside the state directory, symlinks resolved. One target per cluster; `apply` repairs
   drift in an app namespace's labels and its default-deny policy. A target's optional
@@ -386,7 +394,9 @@ calls and kind nodes must carry their own explicit bounds.
   every answer with KyYard's client types (`internal/runner/kyyard_test.go`).
 - `make e2e`: needs Docker; runs `apply` against an sshd container on the local Docker socket and
   against a kind cluster (`go run sigs.k8s.io/kind@v0.33.0`), including drift and stale-lock cases.
-  Also runs disposable NPM, frpc/frps and cloudflared container tests in `internal/edge`.
+  Also runs disposable NPM, frpc/frps and cloudflared container tests in `internal/edge`, and
+  `TestKubernetesNPMEdge`: catalog NPM on kind with claims, bootstrap, policy probes, a routed
+  request through the NodePort, a skipped rerun and token refresh.
   Set `KYQ_TEST_IDENTITY_BINARY` to a local static KyIdentity build to additionally test real
   container-local identity setup over SSH and kind, including target-held preparation,
   inspection/resume and changed-intent refusal; SSH additionally refuses lost credentials.

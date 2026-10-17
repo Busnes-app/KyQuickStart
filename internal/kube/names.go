@@ -14,11 +14,13 @@ import (
 
 const (
 	appName        = "app"
+	publicName     = "app-public" // an edge's NodePort Service
 	secretName     = "kyq-secrets"
 	policyName     = "default-deny-ingress"
 	hashAnnotation = "kyquickstart/input-hash"
 	podSecurity    = "pod-security.kubernetes.io/enforce"
 	nameLabel      = "app.kubernetes.io/name"
+	nsNameLabel    = "kubernetes.io/metadata.name" // set by the API server; cannot be forged
 )
 
 func namespaceOf(app string) string { return "kyq-" + app }

@@ -5,6 +5,7 @@ Reconcile owned NPM routes, deploy Docker edge connectors, and verify product pr
 ## Ownership
 
 - NPM API client, host ownership and reconciliation: `npm.go`.
+- NPM's own administrator (setup-mode creation, login, verification, rotation) for bootstrap: `admin.go`.
 - Target-held connector credentials, pinned images and configuration: `connector.go`.
 - Public HTTPS forwarded-header proof: `verify.go`.
 - Operator configuration and supported scope: `../../docs/edge.md`.
@@ -14,8 +15,10 @@ Reconcile owned NPM routes, deploy Docker edge connectors, and verify product pr
 ## Local Contracts
 
 - Read credentials from targets into memory; keep credential values out of hashes, state and errors.
-- NPM management uses verified private HTTPS with pinned address resolution and no redirects.
-- Reconcile only hosts carrying the expected installer marker and ownership metadata.
+- NPM management uses verified private HTTPS with pinned address resolution and no redirects, or
+  for `kube://` plain HTTP inside the Kubernetes driver's port-forward, never a local listener.
+- Reconcile only hosts carrying the expected installer marker and ownership metadata, including
+  the installation ID. Legacy target-only marks are claimed and rewritten only with `Adopt`.
   Disable hosts before changing their configuration and enable only after persistence verification.
 - Apply disables, never deletes, this target's owned hosts whose hostname left `routes`; verification
   fails while one is enabled. Deletion is the operator's choice.

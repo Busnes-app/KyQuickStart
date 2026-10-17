@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/Busnes-app/kyquickstart/internal/stack"
 )
+
+const testID = "9f1c2b6e-3d4a-4f5b-8c7d-0e1f2a3b4c5d"
 
 func testEdge() stack.Edge {
 	return stack.Edge{Target: "nas", Provider: "frp", NPMURL: "https://npm.test", ConnectorCIDR: "172.30.0.3/32", ProxyPort: 8443,
@@ -81,7 +84,7 @@ func TestReconcileResumeDriftAndForeignOwnership(t *testing.T) {
 		fmt.Fprint(w, `{}`)
 	}))
 	defer srv.Close()
-	n, err := NewNPM(srv.URL, "secret-token")
+	n, err := NewNPM(srv.URL, "secret-token", testID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +141,7 @@ func TestRemovedRouteIsDisabledOnlyWhenOwned(t *testing.T) {
 	owned := func(id int, name, target string) host {
 		r := e.Routes[0]
 		r.Hostname = name
-		c := config(stack.Edge{Target: target, Provider: e.Provider, ConnectorCIDR: e.ConnectorCIDR, ProxyPort: e.ProxyPort}, r)
+		c := (&NPM{installation: testID}).config(stack.Edge{Target: target, Provider: e.Provider, ConnectorCIDR: e.ConnectorCIDR, ProxyPort: e.ProxyPort}, r)
 		c.Enabled = true
 		return host{ID: id, hostConfig: c}
 	}
@@ -171,7 +174,7 @@ func TestRemovedRouteIsDisabledOnlyWhenOwned(t *testing.T) {
 		fmt.Fprint(w, `true`)
 	}))
 	defer srv.Close()
-	n, err := NewNPM(srv.URL, "secret-token")
+	n, err := NewNPM(srv.URL, "secret-token", testID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +217,7 @@ func TestRedirectNeverReceivesCredential(t *testing.T) {
 		http.Redirect(w, r, other.URL, http.StatusTemporaryRedirect)
 	}))
 	defer srv.Close()
-	n, err := NewNPM(srv.URL, "secret-token")
+	n, err := NewNPM(srv.URL, "secret-token", testID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +231,8 @@ func TestRedirectNeverReceivesCredential(t *testing.T) {
 
 func TestHeadersAndDedicatedListener(t *testing.T) {
 	e := testEdge()
-	c := config(e, e.Routes[0])
+	n := &NPM{installation: testID}
+	c := n.config(e, e.Routes[0])
 	for _, want := range []string{"listen 8443 ssl proxy_protocol;", "real_ip_header proxy_protocol;", "set_real_ip_from 172.30.0.3/32;", "location / {", `proxy_set_header Forwarded "";`, "proxy_set_header X-Forwarded-For $remote_addr;", "proxy_set_header X-Forwarded-Proto $scheme;"} {
 		if !strings.Contains(c.Advanced, want) {
 			t.Errorf("missing %s", want)
@@ -238,8 +242,56 @@ func TestHeadersAndDedicatedListener(t *testing.T) {
 		t.Fatal("untrusted forwarding header appended")
 	}
 	e.Provider, e.ProxyPort = "cloudflare", 0
-	cf := config(e, e.Routes[0]).Advanced
+	cf := n.config(e, e.Routes[0]).Advanced
 	if strings.Contains(cf, "proxy_protocol") || !strings.Contains(cf, "real_ip_header CF-Connecting-IP;") {
 		t.Fatal("wrong Cloudflare listener/trust")
+	}
+}
+
+// A kube:// NPM is reached only through the supplied tunnel, as plain HTTP inside it.
+func TestKubeTunnel(t *testing.T) {
+	var hostHeader string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hostHeader = r.Host
+		if r.Header.Get("Authorization") != "Bearer secret-token" {
+			t.Error("missing bearer")
+		}
+		fmt.Fprint(w, `[]`)
+	}))
+	defer srv.Close()
+	dials := 0
+	tunnel := func(ctx context.Context, network, address string) (net.Conn, error) {
+		dials++
+		if address != "app.kyq-npm:81" {
+			t.Errorf("tunnel asked for %s", address)
+		}
+		return (&net.Dialer{}).DialContext(ctx, "tcp", srv.Listener.Addr().String())
+	}
+	origin := "kube://kyq-npm/app:81"
+	if _, err := NewNPM(origin, "secret-token", testID, nil); err == nil {
+		t.Fatal("kube:// without a tunnel accepted")
+	}
+	if _, err := NewNPM("https://npm.test", "secret-token", testID, tunnel); err == nil {
+		t.Fatal("https:// with a tunnel accepted")
+	}
+	if _, err := NewNPM(origin, "secret-token", "", tunnel); err == nil {
+		t.Fatal("no installation id accepted")
+	}
+	n, err := NewNPM(origin, "secret-token", testID, tunnel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer n.Close()
+	var hosts []host
+	if err := n.request(context.Background(), http.MethodGet, hostPath, nil, &hosts); err != nil {
+		t.Fatal(err)
+	}
+	if dials != 1 || hostHeader != "app.kyq-npm:81" {
+		t.Fatalf("dials=%d host=%q", dials, hostHeader)
+	}
+	// https:// keeps the private-address rule.
+	public, _ := NewNPM("https://192.0.2.1", "secret-token", testID, nil)
+	if err := public.request(context.Background(), http.MethodGet, hostPath, nil, &hosts); err == nil {
+		t.Fatal("public NPM address dialled")
 	}
 }

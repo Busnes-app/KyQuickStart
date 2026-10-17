@@ -4,7 +4,8 @@ One command-line installer that stands up the Ky suite and selected third-party 
 your own servers: choices, prerequisite checks, installation, preconfiguration and a printed
 handover of administrator and everyday logins.
 
-**Status:** pre-release. The production catalog is empty; only a disposable demo app installs.
+**Status:** pre-release. The production catalog holds one app, Nginx Proxy Manager as the edge
+on a Kubernetes target ([docs/edge.md](docs/edge.md)); otherwise only a disposable demo app installs.
 `integrate-product` connects already-running Ky products to KyIdentity. See
 [the deployment plan](docs/superpowers/plans/2026-10-10-deployment-plan.md) for what remains.
 
