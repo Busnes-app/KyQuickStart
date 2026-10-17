@@ -447,6 +447,10 @@ changed intent fails with the product's refusal. `integrate-stack` skips install
   separate from the owner's: setup never adopts an account it did not create.
 - A setup's intent is immutable: adding a client later is refused by the product, so list the
   clients the plan needs before the first `apply`.
+- Not yet: `kyq-bootstrap` stays an active administrator after setup. KyIdentity 0.4.2
+  can only disable an account through its admin API, which needs a session and a step-up
+  factor KyQuickStart does not hold; retiring it waits on a product command. Until then,
+  disable it in the admin UI after the owner's first sign-in.
 - Not yet: `TRUSTED_PROXY_CIDRS` is unset, so KyIdentity sees the edge pod as every client;
   Docker placement (no Compose file); SCIM `active:false` proof (gate G2); backups (the
   `data` volume is declared, nothing schedules it).
