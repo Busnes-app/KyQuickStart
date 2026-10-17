@@ -6,6 +6,10 @@ Plain terminal planning and command orchestration for the operator-run installer
 
 - Guided questions, resume answers, plan review and publishing: `guided.go`.
 - CLI dispatch, target connections and locked deployment: `cli.go` and `driver.go`.
+- `suite.go` owns `install`, `uninstall`, `unmanage`, `upgrade` and `status`, the upgrade gate
+  and plan publication. The exported `Install`, `Uninstall`, `Unmanage`, `Upgrade` and `Status`
+  take a context, state directory and `Options` (with `Progress`) so the suite runner calls
+  them without flag parsing; they return `internal/suite` errors and status.
 - Explicit existing KyIdentity container setup and capability checks: `identity.go`, documented in `../../docs/guided-setup.md`.
 - `preparation.go` owns shared bounded native preparation receipts/readback and typed Identity
   staging; product-specific metadata and credentials remain native product responsibilities.

@@ -267,3 +267,28 @@ func TestBoundedFailureIsValidUTF8(t *testing.T) {
 		t.Errorf("diagnostics are %d bytes", len(d))
 	}
 }
+
+type notedStep struct{ fakeStep }
+
+func (notedStep) Note() string { return "acknowledged" }
+
+func TestProgressAndNotes(t *testing.T) {
+	e, _, _ := newEngine(t)
+	var events []string
+	e.Progress = func(ev Event) { events = append(events, ev.ID+" "+ev.Status+" "+ev.Diagnostics) }
+	ok := &notedStep{fakeStep{id: "a.gate", hash: "h"}}
+	bad := &fakeStep{id: "a.two", hash: "h", apply: func() error { return errors.New("boom") }}
+	if err := e.Run(context.Background(), []Step{ok, bad}); err == nil {
+		t.Fatal("want failure")
+	}
+	if r := readResult(t, e, "a.gate"); r.Status != "ok" || r.Diagnostics != "acknowledged" {
+		t.Errorf("noted result = %+v", r)
+	}
+	want := []string{"a.gate running ", "a.gate ok acknowledged", "a.two running ", "a.two failed apply: boom"}
+	if fmt.Sprint(events) != fmt.Sprint(want) {
+		t.Errorf("events = %q", events)
+	}
+	if r, ok := Read(e.Dir, "a.two"); !ok || r.Status != "failed" {
+		t.Errorf("Read = %+v %v", r, ok)
+	}
+}

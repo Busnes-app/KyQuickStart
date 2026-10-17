@@ -9,7 +9,6 @@ import (
 	"path"
 	"regexp"
 	"strings"
-	"time"
 	"unicode"
 
 	"github.com/Busnes-app/kyquickstart/internal/remote"
@@ -239,15 +238,11 @@ func integrateProductResult(ctx context.Context, args []string, o Options, fixed
 		return err
 	}
 	if !*check {
-		release, err := s.drivers[t.Name].acquire(ctx, "kyquickstart product setup")
+		done, err := s.lock(ctx, "kyquickstart product setup", []stack.Target{t})
 		if err != nil {
 			return err
 		}
-		defer func() {
-			unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-			defer cancel()
-			retErr = errors.Join(retErr, release(unlockCtx))
-		}()
+		defer func() { retErr = errors.Join(retErr, finish(ctx, done)) }()
 	}
 	if preparation != nil {
 		if credentialSource.Product != "" {

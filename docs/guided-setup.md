@@ -101,6 +101,42 @@ fingerprint with `--trust-host-key` on first connection. Use a separate state di
 for demo and production installations. Plans containing multiple routes for one app can
 be run but must currently be edited directly rather than through the wizard.
 
+## Managing apps
+
+After the first `apply`, these commands change one app at a time. Each takes `--state` and
+`--trust-host-key`, holds the target lock and is safe to rerun after it was interrupted:
+the plan is saved only after every step passed.
+
+```sh
+./kyquickstart install hello --target nas --state ./morning-test
+./kyquickstart upgrade --state ./morning-test        # every installed app
+./kyquickstart status --json --state ./morning-test
+./kyquickstart unmanage hello --state ./morning-test
+./kyquickstart uninstall hello --state ./morning-test
+```
+
+- `install` adds the app and any missing dependencies to the plan on that target.
+- `uninstall` refuses while another installed app depends on it. It disables the app's NPM
+  routes, removes its containers (`docker compose down`, never `-v`) or its Deployment and
+  Service, and keeps the app directory, data volumes, claims and secrets on the target.
+- `unmanage` removes `ky.managed-by` and `ky.release-set` and records the hand-over in
+  `<state>/handover.md`. Docker cannot relabel a container, so existing containers are
+  recreated once; on Kubernetes the pod-template change replaces the pods once. The installer
+  then refuses to install over the app.
+- `upgrade`, and `apply`/`install` over a kept deployment, compare the deployed version
+  with the catalog: older than `min_from`, skipping a `no_skip` version, a downgrade or an
+  unknown version is refused (`upgrade_refused`); a version that migrates data is refused
+  until verified pre-upgrade backups exist (`backup_required`); any other upgrade needs
+  `--acknowledge-no-backup` (`ack_required`), recorded in `results/<app>.upgrade.json`.
+  Apps upgrade one at a time in dependency order and stop at the first failure.
+
+`stack.yaml` carries a `revision`, raised on every plan write. Every locked run records it
+on each target (`<root>/.plan`, or annotations on the `kyquickstart` namespace). A target
+recording a newer revision is refused (`plan_stale`): another workstation or the suite
+runner changed it, so copy its plan back with `kyquickstart pull-plan` (arriving with the
+suite runner) first. Deployments record their catalog version (`kyquickstart/version`);
+Docker installs from earlier builds are recreated once by their next `apply` to record it.
+
 ## Existing installations
 
 The `existing` section records where each Ky product lives. It is separate from `apps`,

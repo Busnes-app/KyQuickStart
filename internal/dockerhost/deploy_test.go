@@ -37,12 +37,12 @@ func TestOverrideLabelsEveryService(t *testing.T) {
 	var o struct {
 		Services map[string]struct{ Labels map[string]string }
 	}
-	if err := yaml.Unmarshal(override([]string{"web", "db"}, "rs-1"), &o); err != nil {
+	if err := yaml.Unmarshal(override([]string{"web", "db"}, labels("rs-1", "1.2.3")), &o); err != nil {
 		t.Fatal(err)
 	}
 	for _, svc := range []string{"web", "db"} {
 		l := o.Services[svc].Labels
-		if l[managed.Label] != managed.Value || l[managed.ReleaseSetLabel] != "rs-1" {
+		if l[managed.Label] != managed.Value || l[managed.ReleaseSetLabel] != "rs-1" || l[managed.VersionLabel] != "1.2.3" {
 			t.Errorf("%s labels = %v", svc, l)
 		}
 	}

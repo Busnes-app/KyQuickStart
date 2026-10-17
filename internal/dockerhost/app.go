@@ -37,7 +37,7 @@ func hashOf(parts ...string) string {
 
 // Steps returns the app's install steps: secrets, deploy, health.
 func Steps(a App) []engine.Step {
-	ov := override(a.Catalog.Services, a.ReleaseSet)
+	ov := override(a.Catalog.Services, labels(a.ReleaseSet, a.Catalog.Version))
 	hash := hashOf(string(a.Catalog.Compose), string(ov))
 	return []engine.Step{secretsStep{a}, deployStep{a: a, override: ov, hash: hash}, healthStep{a: a, hash: hash}}
 }
