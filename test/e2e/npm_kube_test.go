@@ -51,7 +51,7 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	}
 	cs := kubernetes.NewForConfigOrDie(cfg)
 	catalogDir := filepath.Join(work, "catalog")
-	for _, src := range []string{"../../internal/catalog/testdata/apps/hello", "../../internal/catalog/apps/npm"} {
+	for _, src := range []string{"../../internal/catalog/testdata/apps/hello", "../../internal/catalog/apps/npm", "../../internal/catalog/apps/kyidentity"} {
 		if err := os.CopyFS(filepath.Join(catalogDir, filepath.Base(src)), os.DirFS(src)); err != nil {
 			t.Fatal(err)
 		}
@@ -153,6 +153,9 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	st.Edges = []stack.Edge{{Target: "k8s", Provider: "cloudflare", NPMURL: "kube://kyq-npm/app:81", ConnectorCIDR: ip(client) + "/32", Routes: []stack.Route{{
 		App: "hello", Hostname: "hello.example.test", ForwardHost: "app.kyq-hello.svc.cluster.local", ForwardPort: 8080, CertificateID: certID,
 	}}}}
+	// The catalog KyIdentity takes its issuer from its route, so it joins with the edge.
+	loadCatalogIdentity(t, name, cs)
+	addCatalogIdentity(st, certID)
 	b, _ := yaml.Marshal(st)
 	os.WriteFile(plan, b, 0o600)
 	out = apply("route")
@@ -173,6 +176,9 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	if code := docker(t, "exec", node, "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-m", "10", "http://"+nodeIP+":30080/"); code != "200" {
 		t.Fatalf("NodePort 30080 answered %s", code)
 	}
+	checkCatalogIdentity(t, ctx, cs, kc, out, func(host, path string) string {
+		return docker(t, "exec", client, "curl", "-sk", "-m", "10", "--resolve", host+":30443:"+nodeIP, "-H", "CF-Connecting-IP: 203.0.113.7", "https://"+host+":30443"+path)
+	})
 
 	// Rerun: nothing changes.
 	out = apply("rerun")
@@ -198,6 +204,24 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	}
 	if status(apply("after refresh"), "npm.bootstrap") != "skipped" {
 		t.Fatal("bootstrap not idempotent after refresh")
+	}
+
+	// Changed setup intent: the product refuses it at kyidentity.setup. Restored, the
+	// read-only check passes again, so the refusal changed nothing.
+	saved, _ := os.ReadFile(plan)
+	changed, _ := stack.Load(plan)
+	changed.Integrations[0].Identity.Clients[0].Name = "Changed intent"
+	b, _ = yaml.Marshal(changed)
+	os.WriteFile(plan, b, 0o600)
+	var refused bytes.Buffer
+	err = cli.Run(ctx, []string{"apply", "--state", state}, cli.Options{Catalog: os.DirFS(catalogDir), ReleaseSet: "e2e", Out: &refused})
+	if err == nil || status(refused.String(), "kyidentity.setup") != "failed" {
+		t.Fatalf("changed KyIdentity intent: %v\n%s", err, refused.String())
+	}
+	outputs = append(outputs, refused.String())
+	os.WriteFile(plan, saved, 0o600)
+	if out := apply("intent restored"); status(out, "kyidentity.setup") != "ok" || status(out, "kyidentity.deploy") != "skipped" {
+		t.Fatal("restored KyIdentity intent did not check clean")
 	}
 
 	// No credential reached apply output or workstation state.

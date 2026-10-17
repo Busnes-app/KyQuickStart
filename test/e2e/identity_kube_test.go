@@ -4,12 +4,15 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/kube"
 	"github.com/Busnes-app/kyquickstart/internal/managed"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
@@ -98,4 +101,100 @@ func testIdentityKubernetesPreparation(t *testing.T, ctx context.Context, cs kub
 	n := identityFixturePreparation()
 	st := &stack.Stack{Version: 1, Targets: []stack.Target{{Name: "k8s", Kubeconfig: kubeconfig}}, Existing: []stack.Existing{{Product: "kyidentity", Target: "k8s", URL: "https://identity.example.test"}}, Integrations: []stack.Integration{{Product: "kyidentity", Target: "k8s", Namespace: namespace, Pod: "identity", Container: "identity", Bundle: "/data/installer/" + n.SetupID + "/setup.json", Identity: n}}}
 	runPreparedIdentityStack(t, ctx, st, nil)
+}
+
+// catalogIdentityHost is where TestKubernetesNPMEdge routes the catalog KyIdentity.
+const catalogIdentityHost = "identity.example.test"
+
+// loadCatalogIdentity pulls the catalog's attested KyIdentity image and loads it into kind.
+// A failing test logs the app's pods and events before the cluster goes.
+func loadCatalogIdentity(t *testing.T, cluster string, cs kubernetes.Interface) {
+	t.Helper()
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		ctx := context.Background()
+		pods, _ := cs.CoreV1().Pods("kyq-kyidentity").List(ctx, metav1.ListOptions{})
+		for _, p := range pods.Items {
+			t.Logf("pod %s: phase %s, init %+v, containers %+v", p.Name, p.Status.Phase, p.Status.InitContainerStatuses, p.Status.ContainerStatuses)
+			for _, c := range []string{"private-volumes", "app"} {
+				logs, _ := cs.CoreV1().Pods("kyq-kyidentity").GetLogs(p.Name, &corev1.PodLogOptions{Container: c}).DoRaw(ctx)
+				t.Logf("%s/%s logs:\n%s", p.Name, c, logs)
+			}
+		}
+		events, _ := cs.CoreV1().Events("kyq-kyidentity").List(ctx, metav1.ListOptions{})
+		for _, e := range events.Items {
+			t.Logf("event %s %s: %s", e.InvolvedObject.Name, e.Reason, e.Message)
+		}
+	})
+	cat, err := catalog.Load(catalog.Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := cat["kyidentity"].Images["kyidentity"]
+	docker(t, "pull", "-q", ref)
+	// kind load of a digest reference leaves a broken image record; load the tag. The pod
+	// still names the digest, which containerd checks.
+	tag, _, _ := strings.Cut(ref, "@")
+	docker(t, "tag", ref, tag)
+	kind(t, "load", "docker-image", tag, "--name", cluster)
+}
+
+// addCatalogIdentity installs the catalog KyIdentity behind the edge and selects its setup.
+func addCatalogIdentity(st *stack.Stack, certID int) {
+	n := identityFixturePreparation()
+	st.Apps = append(st.Apps, stack.App{Name: "kyidentity", Target: "k8s"})
+	st.Edges[0].Routes = append(st.Edges[0].Routes, stack.Route{App: "kyidentity", Hostname: catalogIdentityHost,
+		ForwardHost: "app.kyq-kyidentity.svc.cluster.local", ForwardPort: 5867, CertificateID: certID})
+	st.Integrations = append(st.Integrations, stack.Integration{Product: "kyidentity", Target: "k8s",
+		Bundle: "/data/installer/" + n.SetupID + "/setup.json", Identity: n})
+}
+
+// checkCatalogIdentity proves the deployed catalog KyIdentity: restricted pod as uid 100 on
+// a private data directory, setup applied, its first-start administrator's password file
+// private, and discovery through the edge naming the route's issuer.
+func checkCatalogIdentity(t *testing.T, ctx context.Context, cs kubernetes.Interface, kubeconfig, out string, get func(host, path string) string) {
+	t.Helper()
+	for _, id := range []string{"kyidentity.deploy", "kyidentity.health", "kyidentity.setup"} {
+		if status(out, id) != "ok" {
+			t.Fatalf("%s = %q", id, status(out, id))
+		}
+	}
+	ns, err := cs.CoreV1().Namespaces().Get(ctx, "kyq-kyidentity", metav1.GetOptions{})
+	if err != nil || ns.Labels["pod-security.kubernetes.io/enforce"] != "restricted" {
+		t.Fatalf("namespace = %v, %v", ns.Labels, err)
+	}
+	c, err := kube.Connect(kubeconfig, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	namespace, pod, container, err := c.AppPod(ctx, "kyidentity")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := cs.CoreV1().Pods(namespace).Get(ctx, pod, metav1.GetOptions{})
+	if err != nil || *p.Spec.Containers[0].SecurityContext.RunAsUser != 100 || p.Spec.InitContainers[0].Name != "private-volumes" {
+		t.Fatalf("pod spec: %v", err)
+	}
+	stat, err := c.Exec(ctx, namespace, pod, container, []string{"stat", "-c", "%n %a %u", "/data", "/data/first-run-password.txt", "/data/installer"})
+	if err != nil || strings.TrimSpace(string(stat)) != "/data 700 100\n/data/first-run-password.txt 600 100\n/data/installer 700 100" {
+		t.Fatalf("data directory:\n%s %v", stat, err)
+	}
+	if user, err := c.Exec(ctx, namespace, pod, container, []string{"head", "-n1", "/data/first-run-password.txt"}); err != nil || strings.TrimSpace(string(user)) != "User: kyq-bootstrap" {
+		t.Fatalf("bootstrap administrator = %q %v", user, err)
+	}
+	events, _ := cs.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{FieldSelector: "involvedObject.name=" + pod})
+	for _, e := range events.Items {
+		if e.Reason == "Pulling" || e.Reason == "Pulled" {
+			t.Logf("image: %s", e.Message)
+		}
+	}
+	var discovery struct {
+		Issuer string `json:"issuer"`
+	}
+	body := get(catalogIdentityHost, "/.well-known/openid-configuration")
+	if json.Unmarshal([]byte(body), &discovery) != nil || discovery.Issuer != "https://"+catalogIdentityHost {
+		t.Fatalf("discovery through the edge:\n%s", body)
+	}
 }
