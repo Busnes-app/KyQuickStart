@@ -336,8 +336,11 @@ handover of admin and everyday logins.
   command. Installer-managed workloads carry `ky.managed-by=kyquickstart`; only the shared upgrade
   module changes them, from the CLI or KyYard, under a target-side lock.
 - `stack.yaml`'s `revision` rises on every plan write. Every locked run writes a plan marker on
-  each target it locked (`<root>/.plan`; annotations on the `kyquickstart` namespace) and
-  refuses a target whose marker is newer (`plan_stale`); it keeps the marker's owner. Plans are
+  each target it locked (`<root>/.plan`; annotations on the `kyquickstart` namespace) with the
+  plan's `installation_id`. It refuses a marker naming another installation
+  (`owned_by_other_plan`; `apply --take-over-target T` claims T unless the runner owns it), then
+  one of its own installation that is newer (`plan_stale`); it keeps the marker's owner. A
+  marker without an id, from an older build, is claimed by the first plan that locks it. Plans are
   published only after every step passed, so each command reruns after interruption.
 - Only `handoff` changes a marker's owner. Under `owner: runner` the CLI refuses `plan`,
   `install`, `uninstall` and `unmanage` (`owned_by_runner`); the runner acts only on targets

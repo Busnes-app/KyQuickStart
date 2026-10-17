@@ -146,12 +146,13 @@ func TestApplyWritesMarkerAndRefusesNewerPlan(t *testing.T) {
 	if err := f.run("apply"); err != nil {
 		t.Fatal(err, f.out.String())
 	}
+	// The plan had no installation_id: apply published one, at revision 3.
 	b, _ := os.ReadFile(filepath.Join(f.h.root, ".plan"))
-	if string(b) != `{"revision":2,"owner":"cli","runner_id":""}` {
+	if string(b) != `{"revision":3,"owner":"cli","runner_id":"","installation_id":"`+f.stack(t).InstallationID+`"}` {
 		t.Fatalf("marker = %s", b)
 	}
 
-	os.WriteFile(filepath.Join(f.h.root, ".plan"), []byte(`{"revision":3,"owner":"runner","runner_id":"ab-12"}`), 0o600)
+	os.WriteFile(filepath.Join(f.h.root, ".plan"), []byte(`{"revision":4,"owner":"runner","runner_id":"ab-12"}`), 0o600)
 	f.h.docker = nil
 	err := f.run("apply")
 	if code(err) != suite.PlanStale || !strings.Contains(err.Error(), "pull-plan") {
@@ -165,7 +166,7 @@ func TestApplyWritesMarkerAndRefusesNewerPlan(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(f.h.root, ".lock")); !os.IsNotExist(err) {
 		t.Error("lock kept after refusal")
 	}
-	if b, _ := os.ReadFile(filepath.Join(f.h.root, ".plan")); !strings.Contains(string(b), `"revision":3`) {
+	if b, _ := os.ReadFile(filepath.Join(f.h.root, ".plan")); !strings.Contains(string(b), `"revision":4`) {
 		t.Errorf("refusal rewrote the marker: %s", b)
 	}
 }
@@ -239,5 +240,101 @@ func TestDialTargetKeepsStorageClass(t *testing.T) {
 	}
 	if k, ok := d.(kubeDriver); !ok || k.storageClass != "local-path" {
 		t.Fatalf("driver = %+v", d)
+	}
+}
+
+const (
+	thisPlan  = "271333e2-c221-4601-b249-563b3d828530"
+	otherPlan = "2c676879-9c71-4913-b8a7-995521d9ed20"
+)
+
+// Revisions compare only within one installation; a marker without an id predates them.
+func TestGuardInstallation(t *testing.T) {
+	cli := &session{revision: 5, installation: thisPlan}
+	runner := &session{revision: 5, installation: thisPlan, o: Options{RunnerID: runnerID}}
+	for _, c := range []struct {
+		s    *session
+		m    stack.Marker
+		want suite.Code
+	}{
+		{cli, stack.Marker{Revision: 4, Owner: "cli", InstallationID: thisPlan}, ""},
+		{cli, stack.Marker{Revision: 6, Owner: "cli", InstallationID: thisPlan}, suite.PlanStale},
+		{cli, stack.Marker{Revision: 1, Owner: "cli", InstallationID: otherPlan}, suite.OwnedByOtherPlan},
+		{cli, stack.Marker{Revision: 9, Owner: "cli", InstallationID: otherPlan}, suite.OwnedByOtherPlan},
+		{cli, stack.Marker{Revision: 4, Owner: "cli"}, ""},
+		{cli, stack.Marker{Revision: 6, Owner: "cli"}, suite.PlanStale},
+		{runner, stack.Marker{Revision: 4, Owner: "runner", RunnerID: runnerID, InstallationID: thisPlan}, ""},
+		{runner, stack.Marker{Revision: 4, Owner: "runner", RunnerID: runnerID, InstallationID: otherPlan}, suite.OwnedByOtherPlan},
+		{runner, stack.Marker{Revision: 4, Owner: "runner", RunnerID: runnerID}, ""},
+	} {
+		err := c.s.guard("nas", c.m)
+		if code(err) != c.want {
+			t.Errorf("%+v (runner %q): %v, want %q", c.m, c.s.o.RunnerID, err, c.want)
+		}
+		if c.want == suite.OwnedByOtherPlan && !strings.Contains(err.Error(), "installation "+otherPlan+"); run apply --take-over-target nas") {
+			t.Errorf("message: %v", err)
+		}
+	}
+}
+
+func TestApplyClaimsAndTakesOverTargets(t *testing.T) {
+	f := newFixture(t, "../catalog/testdata/apps")
+	f.plan(t, "revision: 2\ninstallation_id: "+thisPlan+"\napps:\n  - name: hello\n    target: nas\n")
+	marker := filepath.Join(f.h.root, ".plan")
+	ours := `{"revision":2,"owner":"cli","runner_id":"","installation_id":"` + thisPlan + `"}`
+
+	// A marker from an older build is claimed.
+	os.WriteFile(marker, []byte(`{"revision":1,"owner":"cli","runner_id":""}`), 0o600)
+	if err := f.run("apply"); err != nil || f.marker(t) != ours {
+		t.Fatalf("legacy marker: %v, marker %s", err, f.marker(t))
+	}
+
+	// Another plan's target is refused before anything changes, whatever its revision.
+	foreign := `{"revision":9,"owner":"cli","runner_id":"","installation_id":"` + otherPlan + `"}`
+	os.WriteFile(marker, []byte(foreign), 0o600)
+	f.h.docker = nil
+	if err := f.run("apply"); code(err) != suite.OwnedByOtherPlan || f.ran(" up ") || f.marker(t) != foreign {
+		t.Fatalf("other plan: %v, marker %s", err, f.marker(t))
+	}
+	if err := f.run("apply", "--take-over-target", "nas"); err != nil {
+		t.Fatal(err, f.out.String())
+	}
+	if f.marker(t) != ours || !strings.Contains(f.out.String(), "warning: taking nas over from installation "+otherPlan) {
+		t.Fatalf("take-over: marker %s, out %s", f.marker(t), f.out.String())
+	}
+
+	// The runner's target must be revoked by its own plan first.
+	runners := `{"revision":1,"owner":"runner","runner_id":"` + runnerID + `","installation_id":"` + otherPlan + `"}`
+	os.WriteFile(marker, []byte(runners), 0o600)
+	if err := f.run("apply", "--take-over-target", "nas"); code(err) != suite.OwnedByRunner || !strings.Contains(err.Error(), "--revoke") || f.marker(t) != runners {
+		t.Fatalf("runner-owned take-over: %v, marker %s", err, f.marker(t))
+	}
+
+	if err := f.run("apply", "--take-over-target", "nope"); code(err) != suite.UnknownTarget {
+		t.Errorf("unknown target: %v", err)
+	}
+	if err := f.run("preflight", "--take-over-target", "nas"); err == nil || !strings.Contains(err.Error(), "only for apply") {
+		t.Errorf("preflight: %v", err)
+	}
+}
+
+// A failed apply's new id is not published, so it must not reach the marker either: the
+// rerun generates another and would otherwise be refused as another plan.
+func TestFailedApplyKeepsTheIDOffMarkers(t *testing.T) {
+	f := newFixture(t, "../catalog/testdata/apps")
+	f.plan(t, "apps:\n  - name: hello\n    target: nas\n")
+	f.h.fail = " up -d"
+	if err := f.run("apply"); err == nil {
+		t.Fatal("apply passed")
+	}
+	if m := f.marker(t); m == "" || strings.Contains(m, "installation_id") || f.stack(t).InstallationID != "" {
+		t.Fatalf("unpublished id leaked: marker %s", f.marker(t))
+	}
+	f.h.fail = ""
+	if err := f.run("apply"); err != nil {
+		t.Fatal(err, f.out.String())
+	}
+	if id := f.stack(t).InstallationID; id == "" || !strings.Contains(f.marker(t), id) {
+		t.Fatalf("rerun: plan id %q, marker %s", id, f.marker(t))
 	}
 }

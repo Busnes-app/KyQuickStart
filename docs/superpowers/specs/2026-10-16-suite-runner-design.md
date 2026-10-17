@@ -21,12 +21,19 @@ CLI does (SSH, kubeconfig) with credentials only it holds.
 `stack.yaml` gains `revision` (integer, +1 on every write). Every mutating command writes a
 marker on each target it touched, under the target lock:
 
-- Docker: `<root>/.plan`, JSON `{"revision":N,"owner":"cli"|"runner","runner_id":"<uuid>"}`.
+- Docker: `<root>/.plan`, JSON `{"revision":N,"owner":"cli"|"runner","runner_id":"<uuid>","installation_id":"<uuid>"}`.
 - Kubernetes: annotations `kyquickstart/plan-revision`, `kyquickstart/plan-owner`,
-  `kyquickstart/runner-id` on the lock namespace.
+  `kyquickstart/runner-id`, `kyquickstart/installation-id` on the lock namespace.
 
-A mutating command refuses (`plan_stale`) when a target's marker revision is greater than its own
-plan's. After hand-off the owner is `runner`, and under each target's lock:
+`installation_id` is the plan's (`stack.yaml`); `apply` and every plan change give a plan without
+one its id, and markers record it once that plan is published. A marker naming another
+installation is refused (`owned_by_other_plan`) before any revision check; `apply
+--take-over-target T` claims T for this plan (refused while T's owner is `runner`). A marker
+without one, from an older build, is claimed by the first plan that locks it.
+
+Between markers and plans of one installation, a mutating command refuses (`plan_stale`) when a
+target's marker revision is greater than its own plan's. After hand-off the owner is `runner`,
+and under each target's lock:
 
 - The runner acts only on targets whose marker says `owner: runner` with its own `runner_id`;
   otherwise it refuses (`owned_by_cli`, or `owned_by_runner` for another runner's ID).
@@ -246,7 +253,8 @@ timeout). `GET /v1/status` reads every target and answers within 8 seconds.
 (message names holder and age), `upgrade_refused` (`min_from`, `no_skip`), `backup_required`,
 `ack_required`, `step_failed`, `owned_by_runner` (the CLI may not change a runner-owned plan;
 the runner refuses another runner's target), `owned_by_cli` (the runner refuses a target not
-handed to it, or has no plan yet), `not_found` (no such operation or route), `internal` (any
+handed to it, or has no plan yet), `owned_by_other_plan` (the target's marker names another
+installation), `not_found` (no such operation or route), `internal` (any
 failure without a code above, such as an unreachable target).
 
 Error bodies: `{"error": {"code": "…", "message": "…"}}`, message at most 512 bytes, redacted
@@ -257,7 +265,7 @@ operation's `error`. A code's HTTP status, when the runner answers with it direc
 |---|---|
 | 400 | `invalid_request` (413 when the body exceeds 64 KiB; 405 for a wrong method) |
 | 404 | `not_found` only: KyYard reads any 404 as an operation the runner does not know |
-| 409 | `id_conflict`, `busy`, `plan_stale`, `target_locked`, `owned_by_runner`, `owned_by_cli` |
+| 409 | `id_conflict`, `busy`, `plan_stale`, `target_locked`, `owned_by_runner`, `owned_by_cli`, `owned_by_other_plan` |
 | 422 | `unknown_app`, `unknown_target`, `already_installed`, `not_installed`, `dependency`, `upgrade_refused`, `backup_required`, `ack_required` |
 | 500 | `step_failed`, `internal` |
 

@@ -172,8 +172,8 @@ carry `ky.managed-by=kyquickstart`; the installer will not adopt foreign objects
 
 ## Host ownership
 
-`stack.yaml` holds an `installation_id`, a random UUID written once by `plan` or, for a plan with
-edges that lacks one, by the first `apply` (a plan change: it bumps `revision`, is saved only
+`stack.yaml` holds an `installation_id`, a random UUID written once by `plan` or, for a plan
+that lacks one, by the first `apply` or plan change (a plan change: it bumps `revision`, is saved only
 after every step passed, and is refused on a runner-owned target). A host is this
 installation's only if its `meta` holds `ky.managed-by`, `ky.target` and `ky.installation` and
 its advanced configuration starts with `# kyquickstart:<installation_id>:<target>:`. Two
