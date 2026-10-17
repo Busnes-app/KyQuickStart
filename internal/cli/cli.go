@@ -180,7 +180,8 @@ type session struct {
 	owner        *stack.Marker // set by a published handoff: the owner markers now record
 	integrations []stack.Integration
 	allTargets   []stack.Target
-	revision     int // of the loaded plan; markers on targets record it
+	revision     int    // of the loaded plan; markers on targets record it
+	installation string // stack.yaml's installation_id; marks this installation's NPM hosts
 	trust        trustFlag
 	ack          bool // acknowledge upgrading without a pre-upgrade backup
 	redact       *engine.Redactor
@@ -256,7 +257,7 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 	if redact == nil {
 		redact = &engine.Redactor{}
 	}
-	s := &session{revision: st.Revision, trust: trust, redact: redact, allTargets: st.Targets, integrations: st.Integrations, o: o, state: state, demo: st.Demo, cat: cat, placed: map[string]stack.Target{}, drivers: map[string]driver{}, edges: st.Edges, npms: map[string]*edge.NPM{}}
+	s := &session{revision: st.Revision, installation: st.InstallationID, trust: trust, redact: redact, allTargets: st.Targets, integrations: st.Integrations, o: o, state: state, demo: st.Demo, cat: cat, placed: map[string]stack.Target{}, drivers: map[string]driver{}, edges: st.Edges, npms: map[string]*edge.NPM{}}
 	var names []string
 	used := map[string]bool{}
 	for _, a := range st.Apps {
@@ -305,7 +306,7 @@ func (s *session) connect(ctx context.Context, trust trustFlag) error {
 		if err != nil {
 			return fmt.Errorf("edge %s: %w", e.Target, err)
 		}
-		n, err := edge.NewNPM(e.NPMURL, strings.TrimSpace(string(token)))
+		n, err := edge.NewNPM(e.NPMURL, strings.TrimSpace(string(token)), s.installation, nil)
 		if err != nil {
 			return fmt.Errorf("edge %s: %w", e.Target, err)
 		}
