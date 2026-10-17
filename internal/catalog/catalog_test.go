@@ -186,3 +186,22 @@ func TestThirdPartyNeedsCompose(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestUpgradeAllows(t *testing.T) {
+	u := Upgrade{MinFrom: "2.0.0", NoSkip: []string{"2.2.0"}}
+	for installed, want := range map[string]string{
+		"2.2.0":  "",
+		"2.2.5":  "",
+		"2.4.0":  "",
+		"2.1.9":  "would skip 2.2.0",
+		"1.9.0":  "min_from 2.0.0",
+		"2.5.0":  "downgrades",
+		"2.0":    "not MAJOR.MINOR.PATCH",
+		"2.10.0": "downgrades",
+	} {
+		err := u.Allows(installed, "2.4.0")
+		if want == "" && err != nil || want != "" && (err == nil || !strings.Contains(err.Error(), want)) {
+			t.Errorf("%s: err = %v, want %q", installed, err, want)
+		}
+	}
+}
