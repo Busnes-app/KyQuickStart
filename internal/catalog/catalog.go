@@ -31,6 +31,8 @@ type Manifest struct {
 	Backup      *Backup           `yaml:"backup"`
 	Upgrade     Upgrade           `yaml:"upgrade"`
 	Kubernetes  *Kubernetes       `yaml:"kubernetes"`
+	// PodSecurity is the app namespace's enforced level: restricted (the default) or baseline.
+	PodSecurity string `yaml:"pod_security"`
 }
 
 // OIDC is the app's client in KyIdentity. Paths are relative to the app's public origin.
@@ -70,9 +72,16 @@ type Kubernetes struct {
 	Env           map[string]string `yaml:"env"` // never secrets: those are files in /run/secrets
 	Ports         []int             `yaml:"ports"`
 	ReadinessPath string            `yaml:"readiness_path"`
-	RunAs         int64             `yaml:"run_as"` // uid and gid; never 0
+	RunAs         int64             `yaml:"run_as"` // uid and gid; 0 only under baseline
 	Resources     Resources         `yaml:"resources"`
 	Volumes       []Volume          `yaml:"volumes"`
+	// Baseline only: capabilities added back after dropping ALL, and a writable root filesystem.
+	Capabilities []string `yaml:"capabilities"`
+	WritableRoot bool     `yaml:"writable_root"`
+	// LowPorts lets the pod's non-root processes bind ports below 1024 (a safe sysctl).
+	LowPorts bool `yaml:"low_ports"`
+	// NodePorts publishes container ports on every node, with their default NodePort; edge only.
+	NodePorts map[int]int `yaml:"node_ports"`
 }
 
 // Resources are both the requests and the limits.
@@ -112,6 +121,12 @@ var (
 	versionRE = regexp.MustCompile(`^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$`)
 )
 
+// AdminPort is NPM's admin API port. It is never published outside the cluster.
+const AdminPort = 81
+
+// baselineCaps are the capabilities Pod Security baseline lets a container add.
+var baselineCaps = []string{"AUDIT_WRITE", "CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "MKNOD", "NET_BIND_SERVICE", "SETFCAP", "SETGID", "SETPCAP", "SETUID", "SYS_CHROOT"}
+
 // Load reads every directory of fsys as one app.
 func Load(fsys fs.FS) (Catalog, error) {
 	entries, err := fs.ReadDir(fsys, ".")
@@ -142,6 +157,9 @@ func loadApp(fsys fs.FS, dir string) (App, error) {
 	var m Manifest
 	if err := dec.Decode(&m); err != nil {
 		return App{}, fmt.Errorf("manifest.yaml: %w", err)
+	}
+	if m.PodSecurity == "" {
+		m.PodSecurity = "restricted"
 	}
 	if err := m.validate(dir); err != nil {
 		return App{}, fmt.Errorf("manifest.yaml: %w", err)
@@ -232,18 +250,21 @@ func (m Manifest) validate(dir string) error {
 			return fmt.Errorf("oidc.%w", err)
 		}
 	}
+	if m.PodSecurity != "restricted" && m.PodSecurity != "baseline" {
+		return fmt.Errorf("pod_security %q must be restricted or baseline", m.PodSecurity)
+	}
 	if m.Kubernetes != nil {
 		if m.Category == "third-party" {
 			return fmt.Errorf("kubernetes: third-party apps run on Docker hosts only")
 		}
-		if err := m.Kubernetes.validate(m.Images); err != nil {
+		if err := m.Kubernetes.validate(m.Images, m.PodSecurity == "baseline", m.Category == "edge"); err != nil {
 			return fmt.Errorf("kubernetes.%w", err)
 		}
 	}
 	return nil
 }
 
-func (k Kubernetes) validate(images map[string]string) error {
+func (k Kubernetes) validate(images map[string]string, baseline, edge bool) error {
 	if _, ok := images[k.Image]; !ok {
 		return fmt.Errorf("image %q is not a key of images", k.Image)
 	}
@@ -262,8 +283,28 @@ func (k Kubernetes) validate(images map[string]string) error {
 			return fmt.Errorf("env: name %q must match %s", key, envRE)
 		}
 	}
-	if k.RunAs < 1 || k.RunAs > 2147483647 {
-		return fmt.Errorf("run_as %d must be a non-root uid", k.RunAs)
+	switch {
+	case k.RunAs < 0 || k.RunAs > 2147483647 || k.RunAs == 0 && !baseline:
+		return fmt.Errorf("run_as %d must be a non-root uid (root needs pod_security baseline)", k.RunAs)
+	case (len(k.Capabilities) > 0 || k.WritableRoot) && !baseline:
+		return fmt.Errorf("capabilities and writable_root need pod_security baseline")
+	case len(k.NodePorts) > 0 && !edge:
+		return fmt.Errorf("node_ports: only edge components publish ports; apps are reached through the edge")
+	}
+	if err := check(k.Capabilities, func(c string) bool { return slices.Contains(baselineCaps, c) }); err != nil {
+		return fmt.Errorf("capabilities: %w must be unique and one of %v", err, baselineCaps)
+	}
+	used := map[int]bool{}
+	for p, n := range k.NodePorts {
+		switch {
+		case p == AdminPort:
+			return fmt.Errorf("node_ports: %d is NPM's admin API port, which never leaves the cluster", p)
+		case !seen[p]:
+			return fmt.Errorf("node_ports: %d is not one of ports", p)
+		case !stack.ValidNodePort(n) || used[n]:
+			return fmt.Errorf("node_ports: %d must be unique and 30000-32767", n)
+		}
+		used[n] = true
 	}
 	if !cpuRE.MatchString(k.Resources.CPU) {
 		return fmt.Errorf("resources.cpu %q must look like 100m or 2", k.Resources.CPU)
