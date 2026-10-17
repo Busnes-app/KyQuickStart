@@ -117,6 +117,9 @@ func TestGuidedExplicitIntegrationResumeAndDecline(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(st.Integrations, after.Integrations) {
 		t.Fatal("resume lost selected setup", err)
 	}
+	if st.InstallationID == "" || after.InstallationID != st.InstallationID {
+		t.Fatalf("installation id %q not written once (now %q)", st.InstallationID, after.InstallationID)
+	}
 	// Declining integration removes intent without deleting an existing installation.
 	out.Reset()
 	o.In = strings.NewReader(strings.Repeat("\n", 13) + "no\nyes\nfinish\n")
