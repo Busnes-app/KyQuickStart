@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"io"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/dockerhost"
@@ -34,6 +35,7 @@ type driver interface {
 	edgeToken(context.Context) ([]byte, error)
 	checkConnector(context.Context, stack.Edge) error
 	connectorSteps(context.Context, stack.Edge, string, *engine.Redactor) ([]engine.Step, error)
+	execRunner(ctx context.Context, r handoffRecord, serve string, stdin io.Reader) ([]byte, error)
 	close() error
 }
 
@@ -86,6 +88,18 @@ func (d sshDriver) unmanageSteps(name string, app catalog.App) []engine.Step {
 }
 
 func (d sshDriver) close() error { return d.c.Close() }
+
+// execRunner runs kyquickstart serve-* in the runner container with docker exec.
+func (d sshDriver) execRunner(ctx context.Context, r handoffRecord, serve string, stdin io.Reader) ([]byte, error) {
+	var in []byte
+	if stdin != nil {
+		var err error
+		if in, err = io.ReadAll(stdin); err != nil {
+			return nil, err
+		}
+	}
+	return d.c.Run(ctx, "docker exec -i "+remote.Quote(r.Container)+" kyquickstart "+remote.Quote(serve)+" --state "+runnerState, in)
+}
 
 func (d sshDriver) edgeToken(ctx context.Context) ([]byte, error) {
 	return remote.ReadSecret(ctx, d.c, d.t.Root+"/edge/secrets/npm_token")
@@ -140,6 +154,11 @@ func (d kubeDriver) unmanageSteps(name string, app catalog.App) []engine.Step {
 }
 
 func (d kubeDriver) close() error { return nil }
+
+// execRunner runs kyquickstart serve-* in the runner pod over pods/exec.
+func (d kubeDriver) execRunner(ctx context.Context, r handoffRecord, serve string, stdin io.Reader) ([]byte, error) {
+	return d.c.ExecRunner(ctx, r.Namespace, r.Selector, []string{"kyquickstart", serve, "--state", podRunnerState, "--pod-volumes"}, stdin)
+}
 
 func (d kubeDriver) edgeToken(ctx context.Context) ([]byte, error) { return d.c.EdgeToken(ctx) }
 
