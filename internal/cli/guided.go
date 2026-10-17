@@ -533,6 +533,11 @@ func showPlan(out io.Writer, st *stack.Stack, cat catalog.Catalog) {
 		if target, _ := st.Target(a.Target); target.Kubernetes() && len(cat[a.Name].Secrets) > 0 {
 			fmt.Fprintf(out, "  Required temporary credential generator: %s (cluster-local; removed after generation)\n", kube.CredentialGeneratorImage)
 		}
+		if target, _ := st.Target(a.Target); target.Kubernetes() {
+			if k := cat[a.Name].Kubernetes; k != nil && k.RunAs != 0 && len(k.Volumes) > 0 {
+				fmt.Fprintf(out, "  Required volume init: %s (creates each claim's private directory)\n", kube.CredentialGeneratorImage)
+			}
+		}
 	}
 	for _, e := range st.Existing {
 		fmt.Fprintf(out, "Existing %s on %s: %s — integration pending, no adoption or changes\n", e.Product, e.Target, e.URL)
