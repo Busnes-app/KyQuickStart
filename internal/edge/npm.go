@@ -51,19 +51,52 @@ type host struct {
 }
 
 type NPM struct {
-	base  string
-	token string
-	http  *http.Client
+	base         string
+	token        string
+	installation string
+	http         *http.Client
+	// Adopt claims this target's hosts marked by builds that predate installation IDs, and
+	// rewrites them to this installation's marks (apply --adopt-edge-hosts).
+	Adopt bool
 }
 
-// NewNPM uses verified HTTPS on LAN-only administration. Credentials stay in memory.
-func NewNPM(origin, token string) (*NPM, error) {
-	u, err := url.Parse(origin)
-	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
-		return nil, errors.New("NPM requires an HTTPS origin without credentials, path or query")
+// Dial opens one connection to NPM's API; for kube:// it is the Kubernetes driver's port-forward.
+type Dial = func(ctx context.Context, network, address string) (net.Conn, error)
+
+// NewNPM uses verified HTTPS on LAN-only administration, or for a kube:// origin plain HTTP
+// inside tunnel, a port-forward the API server's TLS carries. Credentials stay in memory.
+// installation is stack.yaml's installation_id, which marks the hosts this installation owns.
+func NewNPM(origin, token, installation string, tunnel Dial) (*NPM, error) {
+	if installation == "" {
+		return nil, errors.New("NPM host ownership needs stack.yaml's installation_id; run kyquickstart apply")
 	}
 	if token == "" || len(token) > 16384 || strings.ContainsAny(token, "\r\n\x00") {
 		return nil, errors.New("NPM token is empty or invalid")
+	}
+	base, transport, err := npmTransport(origin, tunnel)
+	if err != nil {
+		return nil, err
+	}
+	return &NPM{base: base, token: token, installation: installation, http: npmClient(transport)}, nil
+}
+
+func npmClient(t *http.Transport) *http.Client {
+	return &http.Client{Transport: t, Timeout: 30 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+}
+
+// npmTransport returns the base URL and transport for origin.
+func npmTransport(origin string, tunnel Dial) (string, *http.Transport, error) {
+	if ns, svc, port, ok := stack.KubeService(origin); ok {
+		if tunnel == nil {
+			return "", nil, errors.New("a kube:// NPM is reached only through the Kubernetes driver's port-forward")
+		}
+		// No environment proxy, and every connection goes through the tunnel.
+		return fmt.Sprintf("http://%s.%s:%d", svc, ns, port), &http.Transport{DialContext: tunnel}, nil
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || tunnel != nil {
+		return "", nil, errors.New("NPM requires an HTTPS origin without credentials, path or query")
 	}
 	transport := &http.Transport{
 		// No environment proxy: administration and its bearer token stay on the LAN.
@@ -96,60 +129,111 @@ func NewNPM(origin, token string) (*NPM, error) {
 			return nil, last
 		},
 	}
-	return &NPM{base: origin, token: token, http: &http.Client{
-		Transport: transport, Timeout: 30 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}}, nil
+	return origin, transport, nil
 }
 
 func (n *NPM) Close() { n.http.CloseIdleConnections() }
 
 func (n *NPM) request(ctx context.Context, method, path string, body any, result any) error {
+	_, err := call(ctx, n.http, n.base, n.token, method, path, body, result)
+	return err
+}
+
+// call sends one API request; an empty token sends none. A non-2xx answer is an error carrying
+// its status, never its body.
+func call(ctx context.Context, client *http.Client, base, token, method, path string, body any, result any) (int, error) {
 	var data []byte
 	if body != nil {
 		var err error
 		data, err = json.Marshal(body)
 		if err != nil {
-			return err
+			return 0, err
 		}
 	}
-	req, err := http.NewRequestWithContext(ctx, method, n.base+path, bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, method, base+path, bytes.NewReader(data))
 	if err != nil {
-		return errors.New("NPM request construction failed")
+		return 0, errors.New("NPM request construction failed")
 	}
-	req.Header.Set("Authorization", "Bearer "+n.token)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	req.Header.Set("Content-Type", "application/json")
-	res, err := n.http.Do(req)
+	res, err := client.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return 0, ctx.Err()
 		}
-		return fmt.Errorf("NPM %s request failed: %w", method, engine.ErrTransient)
+		return 0, fmt.Errorf("NPM %s request failed: %w", method, engine.ErrTransient)
 	}
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		// Never echo an external API body; it may contain credentials or nginx config.
 		if res.StatusCode == 429 || res.StatusCode >= 500 {
-			return fmt.Errorf("NPM HTTP %d: %w", res.StatusCode, engine.ErrTransient)
+			return res.StatusCode, fmt.Errorf("NPM HTTP %d: %w", res.StatusCode, engine.ErrTransient)
 		}
-		return fmt.Errorf("NPM HTTP %d", res.StatusCode)
+		return res.StatusCode, fmt.Errorf("NPM HTTP %d", res.StatusCode)
 	}
 	if result == nil {
-		return nil
+		return res.StatusCode, nil
 	}
 	data, err = io.ReadAll(io.LimitReader(res.Body, (4<<20)+1))
 	if err != nil || len(data) > 4<<20 || json.Unmarshal(data, result) != nil {
-		return errors.New("NPM response is invalid or exceeds 4 MiB")
+		return res.StatusCode, errors.New("NPM response is invalid or exceeds 4 MiB")
 	}
-	return nil
+	return res.StatusCode, nil
 }
 
-func marker(e stack.Edge, r stack.Route) string {
-	return "# kyquickstart:" + e.Target + ":" + r.App + ":" + r.Hostname + "\n"
+// Ownership marks: an advanced_config first line and meta keys. Builds before installation IDs
+// wrote only the target; those hosts are legacy, claimed only with Adopt.
+func (n *NPM) prefix(e stack.Edge) string {
+	return "# kyquickstart:" + n.installation + ":" + e.Target + ":"
 }
 
-func config(e stack.Edge, r stack.Route) hostConfig {
-	advanced := marker(e, r) + "set_real_ip_from " + e.ConnectorCIDR + ";\nreal_ip_recursive off;\n"
+func legacyPrefix(e stack.Edge) string { return "# kyquickstart:" + e.Target + ":" }
+
+func (n *NPM) marker(e stack.Edge, r stack.Route) string {
+	return n.prefix(e) + r.App + ":" + r.Hostname + "\n"
+}
+
+type claim int
+
+const (
+	foreign claim = iota
+	legacy        // this target's marks from before installation IDs
+	ours
+)
+
+// claim reads h's ownership; rest narrows the marker to one route ("" for any of the target's).
+func (n *NPM) claim(h host, e stack.Edge, rest string) claim {
+	if h.Meta["ky.managed-by"] != "kyquickstart" || h.Meta["ky.target"] != e.Target {
+		return foreign
+	}
+	id, tagged := h.Meta["ky.installation"]
+	switch {
+	case id == n.installation && strings.HasPrefix(h.Advanced, n.prefix(e)+rest):
+		return ours
+	case !tagged && strings.HasPrefix(h.Advanced, legacyPrefix(e)+rest):
+		return legacy
+	}
+	return foreign
+}
+
+// owns reports whether this run may change h: ours, or legacy when adopting.
+func (n *NPM) owns(h host, e stack.Edge, rest string) bool {
+	c := n.claim(h, e, rest)
+	return c == ours || c == legacy && n.Adopt
+}
+
+// refuse explains why h cannot be changed, pointing a legacy host at --adopt-edge-hosts.
+func (n *NPM) refuse(h host, e stack.Edge, rest, why string) error {
+	if n.claim(h, e, rest) == legacy {
+		return errors.New(why + ": it carries this target's marks from a build without installation IDs; if this installation owns it, rerun apply with --adopt-edge-hosts")
+	}
+	return errors.New(why)
+}
+
+func (n *NPM) config(e stack.Edge, r stack.Route) hostConfig {
+	advanced := n.marker(e, r) + "set_real_ip_from " + e.ConnectorCIDR + ";\nreal_ip_recursive off;\n"
 	advanced += fmt.Sprintf("if ($realip_remote_addr != %s) { return 403; }\nif ($ssl_server_name != %s) { return 421; }\n", strings.TrimSuffix(e.ConnectorCIDR, "/32"), r.Hostname)
 	if e.Provider == "frp" {
 		advanced += fmt.Sprintf("listen %d ssl proxy_protocol;\nreal_ip_header proxy_protocol;\n", e.ProxyPort)
@@ -179,7 +263,7 @@ func config(e stack.Edge, r stack.Route) hostConfig {
 		Domains: []string{r.Hostname}, Scheme: r.ForwardScheme, Host: r.ForwardHost,
 		Port: r.ForwardPort, Certificate: r.CertificateID, SSLForced: true,
 		Websocket: true, HTTP2: true, Advanced: advanced, Locations: []any{},
-		Meta: map[string]any{"ky.managed-by": "kyquickstart", "ky.target": e.Target},
+		Meta: map[string]any{"ky.managed-by": "kyquickstart", "ky.target": e.Target, "ky.installation": n.installation},
 	}
 }
 
@@ -226,15 +310,16 @@ func (n *NPM) find(ctx context.Context, e stack.Edge, r stack.Route) (*host, err
 	listener := regexp.MustCompile(fmt.Sprintf(`\blisten\s+(?:[^\s;]+:)?%d(?:\s|;)`, e.ProxyPort))
 	for i := range hosts {
 		h := &hosts[i]
-		if e.Provider == "frp" && listener.MatchString(h.Advanced) && (h.Meta["ky.managed-by"] != "kyquickstart" || h.Meta["ky.target"] != e.Target) {
-			return nil, fmt.Errorf("frp listener port %d is already claimed by a foreign NPM host", e.ProxyPort)
+		if e.Provider == "frp" && listener.MatchString(h.Advanced) && !n.owns(*h, e, "") {
+			return nil, n.refuse(*h, e, "", fmt.Sprintf("frp listener port %d is already claimed by a foreign NPM host", e.ProxyPort))
 		}
 		for _, name := range h.Domains {
 			if !overlaps(name, r.Hostname) {
 				continue
 			}
-			if h.ID < 1 || len(h.Domains) != 1 || name != r.Hostname || h.Meta["ky.managed-by"] != "kyquickstart" || h.Meta["ky.target"] != e.Target || !strings.HasPrefix(h.Advanced, marker(e, r)) {
-				return nil, fmt.Errorf("hostname %s is claimed by an unmanaged or different edge host; refusing adoption", r.Hostname)
+			rest := r.App + ":" + r.Hostname + "\n"
+			if h.ID < 1 || len(h.Domains) != 1 || name != r.Hostname || !n.owns(*h, e, rest) {
+				return nil, n.refuse(*h, e, rest, fmt.Sprintf("hostname %s is claimed by an unmanaged or different edge host; refusing adoption", r.Hostname))
 			}
 			if found != nil {
 				return nil, fmt.Errorf("hostname %s has multiple NPM owners", r.Hostname)
@@ -270,20 +355,20 @@ func (s hostStep) InputHash() string {
 	b, _ := json.Marshal(struct {
 		API    string
 		Config hostConfig
-	}{s.n.base, config(s.e, s.r)})
+	}{s.n.base, s.n.config(s.e, s.r)})
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
 func (s hostStep) Inspect(ctx context.Context) (bool, error) {
 	h, err := s.n.find(ctx, s.e, s.r)
-	return h != nil && matches(h, config(s.e, s.r)) && h.Enabled && h.Meta["nginx_online"] == true, err
+	return h != nil && matches(h, s.n.config(s.e, s.r)) && h.Enabled && h.Meta["nginx_online"] == true, err
 }
 func (s hostStep) Apply(ctx context.Context) error {
 	h, err := s.n.find(ctx, s.e, s.r)
 	if err != nil {
 		return err
 	}
-	want := config(s.e, s.r) // disabled until its API representation is verified
+	want := s.n.config(s.e, s.r) // disabled until its API representation is verified
 	if h == nil {
 		if err = s.n.request(ctx, http.MethodPost, hostPath, want, &host{}); err != nil {
 			return err
@@ -335,7 +420,8 @@ func (s hostStep) Verify(ctx context.Context) error {
 }
 
 // removedStep disables this target's installer-owned hosts whose hostname left stack.yaml.
-// Disabling is reversible; deletion is left to the operator.
+// Disabling is reversible; deletion is left to the operator. When adopting, it also re-marks
+// this target's legacy hosts outside the routes, so no legacy mark outlives adoption.
 type removedStep struct {
 	n *NPM
 	e stack.Edge
@@ -343,7 +429,7 @@ type removedStep struct {
 
 func (s removedStep) ID() string { return s.e.Target + ".edge.removed" }
 func (s removedStep) InputHash() string {
-	names := []string{s.n.base}
+	names := []string{s.n.base, s.n.installation, fmt.Sprint(s.n.Adopt)}
 	for _, r := range s.e.Routes {
 		names = append(names, r.Hostname)
 	}
@@ -351,8 +437,9 @@ func (s removedStep) InputHash() string {
 	return hex.EncodeToString(sum[:])
 }
 
-// enabled lists active hosts carrying every ownership mark for this target but no configured route.
-func (s removedStep) enabled(ctx context.Context) ([]host, error) {
+// pending lists hosts outside the routes this run must change: enabled ones it owns, and when
+// adopting, legacy ones.
+func (s removedStep) pending(ctx context.Context) ([]host, error) {
 	var hosts []host
 	if err := s.n.request(ctx, http.MethodGet, hostPath, nil, &hosts); err != nil {
 		return nil, err
@@ -363,36 +450,50 @@ func (s removedStep) enabled(ctx context.Context) ([]host, error) {
 	}
 	var out []host
 	for _, h := range hosts {
-		owned := h.Meta["ky.managed-by"] == "kyquickstart" && h.Meta["ky.target"] == s.e.Target && strings.HasPrefix(h.Advanced, "# kyquickstart:"+s.e.Target+":")
-		if h.Enabled && owned && !(len(h.Domains) == 1 && routed[h.Domains[0]]) {
+		if len(h.Domains) == 1 && routed[h.Domains[0]] {
+			continue
+		}
+		if h.Enabled && s.n.owns(h, s.e, "") || s.n.Adopt && s.n.claim(h, s.e, "") == legacy {
 			out = append(out, h)
 		}
 	}
 	return out, nil
 }
 func (s removedStep) Inspect(ctx context.Context) (bool, error) {
-	hosts, err := s.enabled(ctx)
+	hosts, err := s.pending(ctx)
 	return len(hosts) == 0, err
 }
 func (s removedStep) Apply(ctx context.Context) error {
-	hosts, err := s.enabled(ctx)
+	hosts, err := s.pending(ctx)
 	if err != nil {
 		return err
 	}
 	for _, h := range hosts {
-		if err := s.n.request(ctx, http.MethodPost, fmt.Sprintf("%s/%d/disable", hostPath, h.ID), nil, nil); err != nil {
-			return err
+		if h.Enabled {
+			if err := s.n.request(ctx, http.MethodPost, fmt.Sprintf("%s/%d/disable", hostPath, h.ID), nil, nil); err != nil {
+				return err
+			}
+		}
+		if s.n.claim(h, s.e, "") == legacy {
+			// NPM merges a partial update; the host stays disabled.
+			remark := map[string]any{
+				"advanced_config": s.n.prefix(s.e) + strings.TrimPrefix(h.Advanced, legacyPrefix(s.e)),
+				"meta":            map[string]any{"ky.installation": s.n.installation},
+			}
+			if err := s.n.request(ctx, http.MethodPut, fmt.Sprintf("%s/%d", hostPath, h.ID), remark, nil); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 func (s removedStep) Verify(ctx context.Context) error {
-	hosts, err := s.enabled(ctx)
+	hosts, err := s.pending(ctx)
 	if err != nil {
 		return err
 	}
 	if len(hosts) > 0 {
-		return fmt.Errorf("installer-owned NPM host %q is enabled but absent from stack.yaml", strings.Join(hosts[0].Domains, ","))
+		return fmt.Errorf("installer-owned NPM host %q is enabled or still legacy-marked but absent from stack.yaml", strings.Join(hosts[0].Domains, ","))
 	}
 	return nil
 }
