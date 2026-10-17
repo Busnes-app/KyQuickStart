@@ -255,23 +255,36 @@ func (n *NPM) refuse(h host, e stack.Edge, rest, why string) error {
 
 // config is r's host; cert is its resolved certificate ID.
 func (n *NPM) config(e stack.Edge, r stack.Route, cert int) hostConfig {
-	advanced := n.marker(e, r) + "set_real_ip_from " + e.ConnectorCIDR + ";\nreal_ip_recursive off;\n"
-	advanced += fmt.Sprintf("if ($realip_remote_addr != %s) { return 403; }\nif ($ssl_server_name != %s) { return 421; }\n", strings.TrimSuffix(e.ConnectorCIDR, "/32"), r.Hostname)
-	if e.Provider == "frp" {
-		advanced += fmt.Sprintf("listen %d ssl proxy_protocol;\nreal_ip_header proxy_protocol;\n", e.ProxyPort)
+	sni := fmt.Sprintf("if ($ssl_server_name != %s) { return 421; }\n", r.Hostname)
+	advanced, port := n.marker(e, r), 443
+	if e.Provider == "lan" {
+		// NPM's http block trusts X-Real-IP from every private range. Trust only unix
+		// sockets, which NPM never listens on, so $remote_addr stays the TCP peer.
+		advanced += "set_real_ip_from unix:;\n" + sni
+		for _, c := range e.AllowCIDRs {
+			advanced += "allow " + c + ";\n"
+		}
+		advanced += "deny all;\n"
+		port = e.ClientPort
 	} else {
-		advanced += "real_ip_header CF-Connecting-IP;\n"
+		advanced += "set_real_ip_from " + e.ConnectorCIDR + ";\nreal_ip_recursive off;\n"
+		advanced += fmt.Sprintf("if ($realip_remote_addr != %s) { return 403; }\n", strings.TrimSuffix(e.ConnectorCIDR, "/32")) + sni
+		if e.Provider == "frp" {
+			advanced += fmt.Sprintf("listen %d ssl proxy_protocol;\nreal_ip_header proxy_protocol;\n", e.ProxyPort)
+		} else {
+			advanced += "real_ip_header CF-Connecting-IP;\n"
+		}
 	}
 	// A server-level proxy_set_header loses to NPM's default location. Own the whole
 	// location, which also suppresses NPM's default forwarding-header configuration.
-	advanced += `location / {
+	advanced += fmt.Sprintf(`location / {
   proxy_set_header Host $host;
   proxy_set_header X-Forwarded-Host $host;
   proxy_set_header X-Forwarded-For $remote_addr;
   proxy_set_header X-Real-IP $remote_addr;
   proxy_set_header X-Forwarded-Proto $scheme;
   proxy_set_header X-Forwarded-Scheme $scheme;
-  proxy_set_header X-Forwarded-Port 443;
+  proxy_set_header X-Forwarded-Port %d;
   proxy_set_header Forwarded "";
   proxy_set_header CF-Connecting-IP "";
   proxy_set_header True-Client-IP "";
@@ -280,7 +293,7 @@ func (n *NPM) config(e stack.Edge, r stack.Route, cert int) hostConfig {
   proxy_http_version 1.1;
   proxy_pass $forward_scheme://$server:$port$request_uri;
 }
-`
+`, port)
 	return hostConfig{
 		Domains: []string{r.Hostname}, Scheme: r.ForwardScheme, Host: r.ForwardHost,
 		Port: r.ForwardPort, Certificate: cert, SSLForced: true,
