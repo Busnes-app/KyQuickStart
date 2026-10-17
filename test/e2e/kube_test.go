@@ -71,6 +71,10 @@ func kindCluster(t *testing.T, work string) (string, string) {
 	return name, kc
 }
 
+// kubeInstallation is the installation_id of TestKubernetesApply's plan and of the runner
+// pod's, which manages the same cluster.
+const kubeInstallation = "8c1e2173-3701-458c-8d27-8899dba16323"
+
 func TestKubernetesApply(t *testing.T) {
 	ctx := context.Background()
 	work := t.TempDir()
@@ -85,7 +89,7 @@ func TestKubernetesApply(t *testing.T) {
 	cs := kubernetes.NewForConfigOrDie(cfg)
 
 	os.WriteFile(filepath.Join(state, "stack.yaml"), []byte(
-		"version: 1\ntargets:\n  - name: k8s\n    kubeconfig: "+kc+"\napps:\n  - name: hello\n    target: k8s\n"), 0o600)
+		"version: 1\ninstallation_id: "+kubeInstallation+"\ntargets:\n  - name: k8s\n    kubeconfig: "+kc+"\napps:\n  - name: hello\n    target: k8s\n"), 0o600)
 	apply := func() (string, error) {
 		var out bytes.Buffer
 		o := cli.Options{Catalog: os.DirFS("../../internal/catalog/testdata/apps"), ReleaseSet: "e2e", Out: &out}
