@@ -10,6 +10,11 @@ Plain terminal planning and command orchestration for the operator-run installer
   and plan publication. The exported `Install`, `Uninstall`, `Unmanage`, `Upgrade` and `Status`
   take a context, state directory and `Options` (with `Progress`) so the suite runner calls
   them without flag parsing; they return `internal/suite` errors and status.
+- `handoff.go` owns `handoff` (grant, `--revoke`) and `pull-plan`: it reaches the runner only
+  through `docker exec` of serve-* over the KyYard target's SSH, holds every target lock while
+  granting, and publishes the plan before markers change owner. `handoff.json` in the state
+  directory makes `plan` refuse while the runner owns the plan. `session.guard` is the
+  ownership rule for every locked command and CLI `status`.
 - Explicit existing KyIdentity container setup and capability checks: `identity.go`, documented in `../../docs/guided-setup.md`.
 - `preparation.go` owns shared bounded native preparation receipts/readback and typed Identity
   staging; product-specific metadata and credentials remain native product responsibilities.

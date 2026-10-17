@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/Busnes-app/ky-primitives/keyfile"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
@@ -24,21 +25,21 @@ type SSHConfig struct {
 	KnownHosts string                              // pinned host keys
 	Trust      string                              // "SHA256:..." accepted for an unknown host
 	Confirm    func(name, fingerprint string) bool // nil when not interactive
+	KeyFile    string                              // private key file; empty uses the SSH agent
 }
 
-// SSH runs commands on one target over one connection, authenticating with the SSH agent.
+// SSH runs commands on one target over one connection.
 type SSH struct {
 	client *ssh.Client
-	agent  net.Conn
+	agent  net.Conn // nil with a key file
 }
+
+// maxKeyFile bounds a private key file; an ed25519 OpenSSH key is about 400 bytes.
+const maxKeyFile = 16 << 10
 
 const dialTimeout = 15 * time.Second
 
 func Dial(ctx context.Context, c SSHConfig) (*SSH, error) {
-	sock := os.Getenv("SSH_AUTH_SOCK")
-	if sock == "" {
-		return nil, errors.New("SSH_AUTH_SOCK is not set: start an SSH agent and add your key")
-	}
 	var conn net.Conn
 	if confirm := c.Confirm; confirm != nil {
 		// The prompt waits outside the handshake deadline; sshd's LoginGraceTime still bounds it.
@@ -52,29 +53,60 @@ func Dial(ctx context.Context, c SSHConfig) (*SSH, error) {
 	if err != nil {
 		return nil, err
 	}
-	ac, err := (&net.Dialer{}).DialContext(ctx, "unix", sock)
+	auth, ac, err := authMethod(ctx, c.KeyFile)
 	if err != nil {
-		return nil, fmt.Errorf("ssh agent: %w", err)
+		return nil, err
+	}
+	closeAgent := func() {
+		if ac != nil {
+			ac.Close()
+		}
 	}
 	addr := net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
 	conn, err = (&net.Dialer{Timeout: dialTimeout}).DialContext(ctx, "tcp", addr)
 	if err != nil {
-		ac.Close()
+		closeAgent()
 		return nil, fmt.Errorf("%s: %w", c.Name, err)
 	}
 	conn.SetDeadline(time.Now().Add(dialTimeout))
 	sc, chans, reqs, err := ssh.NewClientConn(conn, addr, &ssh.ClientConfig{
 		User:            c.User,
-		Auth:            []ssh.AuthMethod{ssh.PublicKeysCallback(agent.NewClient(ac).Signers)},
+		Auth:            []ssh.AuthMethod{auth},
 		HostKeyCallback: hk,
 	})
 	if err != nil {
 		conn.Close()
-		ac.Close()
+		closeAgent()
 		return nil, fmt.Errorf("%s: ssh: %w", c.Name, err)
 	}
 	conn.SetDeadline(time.Time{})
 	return &SSH{client: ssh.NewClient(sc, chans, reqs), agent: ac}, nil
+}
+
+// authMethod signs with keyFile, a private file of this user, or else with the SSH agent,
+// whose connection it returns.
+func authMethod(ctx context.Context, keyFile string) (ssh.AuthMethod, net.Conn, error) {
+	if keyFile != "" {
+		b, err := keyfile.ReadPrivate(keyFile, maxKeyFile)
+		if err != nil {
+			return nil, nil, fmt.Errorf("ssh key %s: %w", keyFile, err)
+		}
+		signer, err := ssh.ParsePrivateKey(b)
+		clear(b)
+		if err != nil {
+			return nil, nil, fmt.Errorf("ssh key %s: %w", keyFile, err)
+		}
+		return ssh.PublicKeys(signer), nil, nil
+	}
+	sock := os.Getenv("SSH_AUTH_SOCK")
+	if sock == "" {
+		return nil, nil, errors.New("SSH_AUTH_SOCK is not set: start an SSH agent and add your key")
+	}
+	ac, err := (&net.Dialer{}).DialContext(ctx, "unix", sock)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ssh agent: %w", err)
+	}
+	return ssh.PublicKeysCallback(agent.NewClient(ac).Signers), ac, nil
 }
 
 func (s *SSH) Run(ctx context.Context, cmd string, stdin []byte) ([]byte, error) {
@@ -108,7 +140,11 @@ func wrap(cmd string) string {
 }
 
 func (s *SSH) Close() error {
-	return errors.Join(s.client.Close(), s.agent.Close())
+	err := s.client.Close()
+	if s.agent != nil {
+		err = errors.Join(err, s.agent.Close())
+	}
+	return err
 }
 
 // hostKeyCallback accepts a pinned key, pins an unknown key only when trusted by flag or

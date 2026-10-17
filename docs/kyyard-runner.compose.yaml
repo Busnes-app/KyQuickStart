@@ -1,0 +1,36 @@
+# The suite runner beside KyYard (docs/guided-setup.md, "Hand-off to KyYard"). Merge these
+# services into KyYard's docker-compose.yml; KyYard's own settings are not repeated here.
+#
+# The two share only the socket directory. Both run as uid 10001, and the socket's file
+# permission is the only access control. The runner has its own state volume, which holds
+# its SSH key and kubeconfigs, and publishes no ports.
+services:
+  kyquickstart-runner:
+    # Pin a digest after verifying its attestation:
+    #   gh attestation verify oci://ghcr.io/busnes-app/kyquickstart-runner:<version> --repo Busnes-app/KyQuickStart
+    image: ghcr.io/busnes-app/kyquickstart-runner:stable
+    # handoff and pull-plan reach it by this name (--runner-container).
+    container_name: kyquickstart-runner
+    restart: unless-stopped
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    # serve lets a running operation finish for up to 4 minutes after SIGTERM.
+    stop_grace_period: 5m
+    volumes:
+      - runner-state:/state
+      - runner-socket:/run/kyquickstart
+
+  kyyard:
+    # Created after the runner, so the new socket volume takes the runner image's private
+    # uid 10001 directory rather than a root-owned one.
+    depends_on: [kyquickstart-runner]
+    environment:
+      KY_SUITE_RUNNER_SOCKET: /run/kyquickstart/runner.sock
+    volumes:
+      - runner-socket:/run/kyquickstart
+
+volumes:
+  runner-state:
+  runner-socket:

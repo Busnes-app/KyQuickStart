@@ -29,9 +29,10 @@ import (
 // faked with one "whoami" container per Compose project.
 type dockerHost struct {
 	root   string
-	docker []string          // docker commands, in order
-	up     map[string]string // project -> compose.kyq.yaml when its container was created
-	fail   string            // docker commands containing this fail
+	docker []string                                       // docker commands, in order
+	up     map[string]string                              // project -> compose.kyq.yaml when its container was created
+	fail   string                                         // docker commands containing this fail
+	exec   func(cmd string, stdin []byte) ([]byte, error) // answers docker exec
 }
 
 var (
@@ -46,6 +47,9 @@ func (h *dockerHost) Run(ctx context.Context, cmd string, stdin []byte) ([]byte,
 	h.docker = append(h.docker, cmd)
 	if h.fail != "" && strings.Contains(cmd, h.fail) {
 		return nil, &remote.ExitError{Code: 1, Stderr: []byte("injected failure")}
+	}
+	if h.exec != nil && strings.HasPrefix(cmd, "docker exec ") {
+		return h.exec(cmd, stdin)
 	}
 	var project string
 	if m := projectRE.FindStringSubmatch(cmd); m != nil {
@@ -95,7 +99,7 @@ func newFixture(t *testing.T, catalogDir string) *fixture {
 	f.o = Options{Catalog: os.DirFS(catalogDir), ReleaseSet: "test", Out: &f.out}
 	saved := dialTarget
 	t.Cleanup(func() { dialTarget = saved })
-	dialTarget = func(_ context.Context, t stack.Target, _, _ string, _ func(string, string) bool, needsStorage bool) (driver, error) {
+	dialTarget = func(_ context.Context, t stack.Target, _ remote.SSHConfig, needsStorage bool) (driver, error) {
 		if t.Kubernetes() {
 			return kubeDriver{c: kube.New(f.cs), needsStorage: needsStorage}, nil
 		}

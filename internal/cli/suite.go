@@ -55,6 +55,25 @@ func Status(ctx context.Context, state string, o Options) (suite.Status, error) 
 	return status(ctx, state, nil, o)
 }
 
+// Catalog lists this release set's apps for the plan at state; it connects to nothing.
+func Catalog(state string, o Options) (suite.Catalog, error) {
+	s, err := load(state, nil, o)
+	if err != nil {
+		return suite.Catalog{}, err
+	}
+	out := suite.Catalog{ReleaseSet: o.ReleaseSet, Apps: []suite.CatalogApp{}}
+	for _, name := range slices.Sorted(maps.Keys(s.cat)) {
+		a := s.cat[name]
+		_, installed := s.placed[name]
+		out.Apps = append(out.Apps, suite.CatalogApp{
+			Name: name, Description: a.Description, Category: a.Category, Version: a.Version,
+			DependsOn: append([]string{}, a.DependsOn...), Installed: installed,
+			Upgrade: suite.Upgrade{MinFrom: a.Upgrade.MinFrom, NoSkip: append([]string{}, a.Upgrade.NoSkip...), MigratesData: a.Upgrade.MigratesData},
+		})
+	}
+	return out, nil
+}
+
 // suiteCommand parses an install, uninstall, unmanage, upgrade or status command line.
 func suiteCommand(ctx context.Context, cmd string, args []string, o Options) error {
 	fl := flag.NewFlagSet(cmd, flag.ContinueOnError)
@@ -174,7 +193,7 @@ func install(ctx context.Context, state string, r Request, trust trustFlag, o Op
 		return suite.Errorf(suite.InvalidRequest, "%w", err)
 	}
 	defer ns.close()
-	ns.revision, ns.ack, ns.edges = s.revision, r.AcknowledgeNoBackup, nil
+	ns.revision, ns.ack, ns.edges, ns.changesPlan = s.revision, r.AcknowledgeNoBackup, nil, true
 	ns.order = slices.DeleteFunc(ns.order, func(a string) bool { return !added[a] })
 	ns.targets = []stack.Target{ns.placed[name]}
 	if err := ns.connect(ctx, trust); err != nil {
@@ -265,7 +284,7 @@ func remove(ctx context.Context, state string, r Request, trust trustFlag, o Opt
 			edges = append(edges, e)
 		}
 	}
-	s.targets, s.edges = []stack.Target{t}, edges
+	s.targets, s.edges, s.changesPlan = []stack.Target{t}, edges, true
 	if err := s.connect(ctx, trust); err != nil {
 		return err
 	}
@@ -442,6 +461,12 @@ func status(ctx context.Context, state string, trust trustFlag, o Options) (suit
 		m, err := s.drivers[t.Name].marker(ctx)
 		if err != nil {
 			return suite.Status{}, fmt.Errorf("%s: %w", t.Name, err)
+		}
+		// The runner reports whatever it finds, including a plan it does not own.
+		if s.o.RunnerID == "" {
+			if err := s.guard(t.Name, m); err != nil {
+				return suite.Status{}, err
+			}
 		}
 		if m.Owner == "runner" {
 			st.Runner.PlanOwner, st.Runner.RunnerID = m.Owner, m.RunnerID
