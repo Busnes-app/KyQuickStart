@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -281,12 +283,65 @@ func nativeProductExec(target driver, i stack.Integration, adapter productAdapte
 	case sshDriver:
 		return dockerProductExec(d.c, i.Container, adapter.binary, adapter.runtimeUser), dockerProductInputExec(d.c, i.Container, adapter.binary, adapter.runtimeUser), nil
 	case kubeDriver:
-		return func(ctx context.Context, args []string) ([]byte, error) {
-				return d.c.Exec(ctx, i.Namespace, i.Pod, i.Container, append([]string{adapter.binary}, args...))
-			},
-			func(ctx context.Context, args []string, input []byte) ([]byte, error) {
-				return d.c.ExecInput(ctx, i.Namespace, i.Pod, i.Container, append([]string{adapter.binary}, args...), input)
-			}, nil
+		// An installed app's integration names no pod: each call finds the app's ready one.
+		where := func(ctx context.Context) (string, string, string, error) {
+			if i.Pod == "" {
+				return d.c.AppPod(ctx, i.Product)
+			}
+			return i.Namespace, i.Pod, i.Container, nil
+		}
+		input := func(ctx context.Context, args []string, input []byte) ([]byte, error) {
+			ns, pod, container, err := where(ctx)
+			if err != nil {
+				return nil, err
+			}
+			args = append([]string{adapter.binary}, args...)
+			if input == nil {
+				return d.c.Exec(ctx, ns, pod, container, args)
+			}
+			return d.c.ExecInput(ctx, ns, pod, container, args, input)
+		}
+		return func(ctx context.Context, args []string) ([]byte, error) { return input(ctx, args, nil) }, input, nil
 	}
 	return nil, nil, errors.New("selected product target is not connected")
+}
+
+// identitySetupStep is apply's staged apply-setup for a catalog KyIdentity, from the app's
+// saved integration: native preparation, then setup, each confirmed by its read-only check.
+type identitySetupStep struct {
+	i     stack.Integration
+	exec  identityExec
+	input func(context.Context, []string, []byte) ([]byte, error)
+}
+
+func (s identitySetupStep) ID() string { return s.i.Product + ".setup" }
+
+func (s identitySetupStep) InputHash() string {
+	b, err := json.Marshal(s.i)
+	if err != nil {
+		panic(err) // plain typed metadata always marshals
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+// Inspect is the read-only check; until it passes, Apply runs and reports the real refusal.
+func (s identitySetupStep) Inspect(ctx context.Context) (bool, error) {
+	return s.Verify(ctx) == nil, nil
+}
+
+func (s identitySetupStep) Apply(ctx context.Context) error {
+	if err := stageIdentity(ctx, s.exec, s.input, s.i.Identity, s.i.Bundle, false); err != nil {
+		return err
+	}
+	_, err := identitySetup(ctx, s.exec, s.i.Bundle, false)
+	return err
+}
+
+func (s identitySetupStep) Verify(ctx context.Context) error {
+	if err := stageIdentity(ctx, s.exec, s.input, s.i.Identity, s.i.Bundle, true); err != nil {
+		return err
+	}
+	_, err := identitySetup(ctx, s.exec, s.i.Bundle, true)
+	return err
 }

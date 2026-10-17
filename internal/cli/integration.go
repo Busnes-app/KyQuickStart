@@ -10,6 +10,7 @@ import (
 	"io"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -64,6 +65,11 @@ func integrateStack(ctx context.Context, args []string, o Options) error {
 	s.close()
 	if o.In != nil {
 		o.In = bufio.NewReader(o.In)
+	}
+	// apply configures installed apps; this command is for existing products.
+	ordered = slices.DeleteFunc(ordered, func(i stack.Integration) bool { return i.Installed(st) })
+	if len(ordered) == 0 {
+		return errors.New("every selected integration is an installed app's, which apply configures")
 	}
 	for _, i := range ordered {
 		if err := ctx.Err(); err != nil {
