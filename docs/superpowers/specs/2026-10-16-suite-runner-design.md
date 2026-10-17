@@ -49,10 +49,10 @@ plan's. After hand-off the owner is `runner`, and under each target's lock:
 | `unmanage <app>` | Removes `ky.managed-by`/`ky.release-set`, drops the app from the plan, records it in `handover.md` |
 | `upgrade [app…]` | Upgrade rules, then one app at a time in dependency order; stops at the first failure |
 | `status --json` | Per app: version, release set, target, last health, last step results |
-| `handoff --kyyard-target T [--runner-container NAME] [--revoke]` | Moves the plan into the runner on target T (below) |
-| `pull-plan --kyyard-target T [--runner-container NAME]` | Copies the runner's current plan back to the workstation |
-| `serve --state DIR --socket PATH` | Runner mode |
-| `serve-keygen`, `serve-import`, `serve-export` (`--state DIR`) | Run inside the runner container by `handoff` and `pull-plan` |
+| `handoff --kyyard-target T [--runner-container NAME \| --runner-pod NS/SELECTOR] [--revoke]` | Moves the plan into the runner on target T (below) |
+| `pull-plan [--kyyard-target T [--runner-container NAME \| --runner-pod NS/SELECTOR]]` | Copies the runner's current plan back to the workstation |
+| `serve --state DIR --socket PATH [--pod-volumes]` | Runner mode |
+| `serve-keygen`, `serve-import`, `serve-export` (`--state DIR [--pod-volumes]`) | Run inside the runner container by `handoff` and `pull-plan` |
 
 ### Upgrade gate
 
@@ -66,10 +66,22 @@ then:
 
 ### Hand-off
 
-Run once from the workstation; a rerun reconciles. Over the CLI's own SSH connection to Docker
-target T (KyYard's host), each runner step is `docker exec -i <runner> kyquickstart serve-…
---state /state` (`--runner-container`, default `kyquickstart-runner`). `handoff` connects to
-every target and holds every target's lock from step 2 on.
+Run once from the workstation; a rerun reconciles. T is KyYard's target, and each runner step
+runs a `serve-…` command in the runner through the CLI's own connection to T:
+
+- Docker target: over SSH, `docker exec -i <runner> kyquickstart serve-… --state /state`
+  (`--runner-container`, default `kyquickstart-runner`).
+- Kubernetes target: `pods/exec` without a TTY into container `runner` of the one Running pod
+  that `--runner-pod NAMESPACE/LABEL_SELECTOR` (default `kyq-runner/app=runner`) matches, running
+  `kyquickstart serve-… --state /state/runner --pod-volumes`; zero or several matching pods are
+  refused. stdin carries the import, stdout is bounded to 1 MiB and stderr goes into the error,
+  redacted. Before the first step `handoff` checks with SelfSubjectAccessReviews that the
+  workstation may list pods and create `pods/exec` in that namespace, and refuses otherwise.
+  The runner image is not checked by name: `serve-keygen`'s output must be a runner's key.
+
+Naming the other kind's flag (`--runner-pod` for a Docker target, `--runner-container` for a
+Kubernetes one, or both) is refused. `handoff` connects to every target and holds every
+target's lock from step 2 on.
 
 1. `serve-keygen` creates an ed25519 key in `/state/ssh/id_ed25519` (0600) once and prints only
    the public line, commented `kyquickstart-runner <runner_id>`. The runner's ID is chosen once,
@@ -86,7 +98,10 @@ every target and holds every target's lock from step 2 on.
    `kyquickstart-runner-token` annotated with the runner ID. A token issued to another runner
    ID is deleted and reissued. The runner gets a kubeconfig with that token, the cluster's CA
    inline, and the workstation's API server address; a workstation connection that skips
-   certificate verification is refused. No object without the managed label is adopted.
+   certificate verification is refused. For T itself (one target per cluster, so the runner
+   pod's own cluster) the address is `https://kubernetes.default.svc`, TLS server name
+   `kubernetes.default.svc`, CA from the token Secret. No object without the managed label is
+   adopted.
 4. `serve-import` reads a tar from stdin: `stack.yaml` at the next revision, `known_hosts`,
    `results/*.json` and `kubeconfigs/<target>.yaml`. Regular files only, those names only (no
    absolute, `..` or nested paths), at most 1 MiB for `stack.yaml` and `known_hosts`, 64 KiB per
@@ -95,8 +110,9 @@ every target and holds every target's lock from step 2 on.
    proxies or skipped verification. The import refuses a plan older than the runner's own
    (`pull-plan` first) and rewrites each Kubernetes target to the runner-local kubeconfig in
    the runner's copy only. It writes `stack.yaml` last.
-5. The workstation publishes the same revision, writes `handoff.json`, and every target's
-   marker records `owner: runner` and the runner ID.
+5. The workstation publishes the same revision, writes `handoff.json` (T and the container, or
+   the pod's namespace and selector), and every target's marker records `owner: runner` and the
+   runner ID.
 
 Until step 5 every marker still says `owner: cli`, so the runner refuses to act. A rerun after an
 interruption repeats steps 1-4 at a new revision.
@@ -105,6 +121,8 @@ interruption repeats steps 1-4 at a new revision.
 ServiceAccount, roles, bindings and token, publishes a new revision, writes `owner: cli` with an
 empty runner ID and removes `handoff.json`. Pull the plan first: a target holding a newer marker
 refuses. The runner keeps its copy, which can no longer reach the targets.
+
+Without `--kyyard-target`, `pull-plan` and `--revoke` use the runner recorded in `handoff.json`.
 
 `pull-plan` runs `serve-export` and replaces the local `stack.yaml` (the previous one becomes
 `stack.yaml.bak`) only when the runner's revision is at least the local one. Kubeconfig paths and
@@ -118,13 +136,23 @@ in (`stack.yaml`, `known_hosts`, `results/`, `handover.md`). `plan/` holds no se
 workstation; credentials live beside it. The runner's SSH accepts only host keys pinned in
 `plan/known_hosts`: no prompt and no trust flag.
 
+With `--pod-volumes` (Kubernetes) the state and socket directories are private subdirectories
+the runner creates and checks as above (`/state/runner`, `/run/kyquickstart/sock`), and only
+their parent, the kubelet's world-writable volume root, is exempt, and only as a mount point
+owned by root or the runner; its ancestors are checked as usual. Residual risk: another
+container mounting that volume could rename the subdirectory; in the runner pod only the
+runner mounts `/state`, and only KyYard (uid 10001, the runner's uid) shares the socket volume.
+
 ### Image
 
 `ghcr.io/busnes-app/kyquickstart-runner`: a static `CGO_ENABLED=0` build on distroless static,
 pinned by digest, uid 10001, entrypoint `kyquickstart serve --state /state --socket
 /run/kyquickstart/runner.sock`, no shell. `docs/kyyard-runner.compose.yaml` runs it beside KyYard:
 shared socket volume only, its own state volume, no ports, read-only root, all capabilities
-dropped, `no-new-privileges`. `release-image.yml` publishes a release's `:X.Y.Z`, checks that
+dropped, `no-new-privileges`. `docs/kyyard-runner.k8s.yaml` runs it as a pod in namespace
+`kyq-runner` (Pod Security `restricted`, no ServiceAccount token, an emptyDir for the socket, a
+claim for `/state`, and a NetworkPolicy allowing egress only to DNS, the API server and the
+Docker targets' SSH); KyYard joins that pod with its catalog entry. `release-image.yml` publishes a release's `:X.Y.Z`, checks that
 the image reports the tag's version, attests and verifies it, then moves `:stable`.
 
 ## Runner protocol v1

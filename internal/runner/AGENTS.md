@@ -38,8 +38,8 @@ v1 in `../../docs/superpowers/specs/2026-10-16-suite-runner-design.md`.
 
 - `make ci`: HTTP tests over a temporary socket (every endpoint, busy, id_conflict, repeats,
   limits, unknown fields, startup and shutdown), import hardening, keygen and `--pod-volumes`.
-- `make e2e`: builds the image, hands a plan to a runner container over the sshd fixture,
-  installs and uninstalls through the socket, pulls the plan back, checks the CLI refusal and
-  revokes.
+- `make e2e`: builds the image, hands a plan to a runner container over the sshd fixture and to
+  the documented runner pod in kind (a test-only curl container shares its socket), installs
+  and uninstalls through the socket, pulls the plan back, checks the CLI refusal and revokes.
 
 ## Child DOX Index
