@@ -52,7 +52,7 @@ type harness struct {
 func start(t *testing.T, plan string) *harness {
 	t.Helper()
 	state := filepath.Join(shortDir(t), "state")
-	s, err := newServer(state, cli.Options{Catalog: catalog.Embedded(), ReleaseSet: "0.5.0"}, io.Discard)
+	s, err := newServer(state, false, cli.Options{Catalog: catalog.Embedded(), ReleaseSet: "0.5.0"}, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func start(t *testing.T, plan string) *harness {
 func serveHarness(t *testing.T, s *server) *harness {
 	t.Helper()
 	socket := filepath.Join(shortDir(t), "run", "runner.sock")
-	l, err := listen(socket)
+	l, err := listen(socket, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,7 +344,7 @@ func TestHTTPStatusTable(t *testing.T) {
 
 func TestRunningOperationBecomesUnknownAtStartup(t *testing.T) {
 	state := filepath.Join(shortDir(t), "state")
-	s, err := newServer(state, cli.Options{Catalog: catalog.Embedded()}, io.Discard)
+	s, err := newServer(state, false, cli.Options{Catalog: catalog.Embedded()}, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +352,7 @@ func TestRunningOperationBecomesUnknownAtStartup(t *testing.T) {
 		&record{Operation: suite.Operation{ID: uuid.NewString(), Kind: "upgrade", Apps: []string{}, State: "succeeded", Steps: []suite.Step{}}}
 	s.write(running)
 	s.write(done)
-	s, err = newServer(state, cli.Options{Catalog: catalog.Embedded()}, io.Discard)
+	s, err = newServer(state, false, cli.Options{Catalog: catalog.Embedded()}, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -413,7 +413,7 @@ func TestShutdownWaitsThenRecordsUnknown(t *testing.T) {
 func TestSocket(t *testing.T) {
 	dir := filepath.Join(shortDir(t), "run")
 	socket := filepath.Join(dir, "runner.sock")
-	l, err := listen(socket)
+	l, err := listen(socket, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,29 +423,29 @@ func TestSocket(t *testing.T) {
 	if fi, _ := os.Stat(dir); fi.Mode().Perm() != 0o700 {
 		t.Errorf("directory mode %v", fi.Mode())
 	}
-	if _, err := listen(socket); err == nil || !strings.Contains(err.Error(), "another runner") {
+	if _, err := listen(socket, false); err == nil || !strings.Contains(err.Error(), "another runner") {
 		t.Fatalf("live socket: %v", err)
 	}
 	// A crashed runner leaves its socket file behind; the next one replaces it.
 	l.(*net.UnixListener).SetUnlinkOnClose(false)
 	l.Close()
-	l, err = listen(socket)
+	l, err = listen(socket, false)
 	if err != nil {
 		t.Fatalf("stale socket: %v", err)
 	}
 	l.Close()
 
 	os.WriteFile(socket, nil, 0o600)
-	if _, err := listen(socket); err == nil || !strings.Contains(err.Error(), "non-socket") {
+	if _, err := listen(socket, false); err == nil || !strings.Contains(err.Error(), "non-socket") {
 		t.Errorf("file at the socket path: %v", err)
 	}
 	os.Remove(socket)
 	os.Chmod(dir, 0o750)
-	if _, err := listen(socket); err == nil || !strings.Contains(err.Error(), "private") {
+	if _, err := listen(socket, false); err == nil || !strings.Contains(err.Error(), "private") {
 		t.Errorf("shared directory: %v", err)
 	}
 	for _, bad := range []string{"run/runner.sock", dir + "/../run/runner.sock", "/" + strings.Repeat("d", maxSocketPath)} {
-		if _, err := listen(bad); err == nil {
+		if _, err := listen(bad, false); err == nil {
 			t.Errorf("accepted %s", bad)
 		}
 	}

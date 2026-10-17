@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"syscall"
 
 	"github.com/Busnes-app/ky-primitives/keyfile"
 	"github.com/Busnes-app/kyquickstart/internal/dockerhost"
@@ -34,19 +35,13 @@ const (
 )
 
 // openState returns dir as an absolute path to a private directory of this user, creating it.
-func openState(dir string) (string, error) {
+func openState(dir string, podVolume bool) (string, error) {
 	dir, err := filepath.Abs(dir)
 	if err != nil {
 		return "", err
 	}
-	if err := keyfile.RequireTrustedAncestry(dir); err != nil {
-		return "", errors.New("state directory has an ancestor other users can modify")
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := privateDir("state", dir, podVolume); err != nil {
 		return "", err
-	}
-	if err := keyfile.RequirePrivateDirectory(dir); err != nil {
-		return "", errors.New("state directory must be private (0700) and owned by the runner's user")
 	}
 	for _, d := range []string{planDir, opsDir, kubeDir, filepath.Dir(keyFile)} {
 		if err := os.MkdirAll(filepath.Join(dir, d), 0o700); err != nil {
@@ -54,6 +49,55 @@ func openState(dir string) (string, error) {
 		}
 	}
 	return dir, nil
+}
+
+// privateDir creates dir 0700 and checks that it is this user's alone, under ancestors no
+// other user can modify. With podVolume, dir's parent is a pod volume's root, which the
+// kubelet creates world-writable: it must be a mount point owned by root or this user, and
+// the ancestry check starts above it.
+func privateDir(what, dir string, podVolume bool) error {
+	trusted := dir
+	if podVolume {
+		root := filepath.Dir(dir)
+		if err := volumeRoot(root); err != nil {
+			return fmt.Errorf("%s volume %s: %w", what, root, err)
+		}
+		trusted = filepath.Dir(root)
+	}
+	if err := keyfile.RequireTrustedAncestry(trusted); err != nil {
+		return fmt.Errorf("%s directory has an ancestor other users can modify", what)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("cannot create the private %s directory", what)
+	}
+	if err := keyfile.RequirePrivateDirectory(dir); err != nil {
+		return fmt.Errorf("%s directory must be private (0700) and owned by the runner's user", what)
+	}
+	return nil
+}
+
+// volumeRoot refuses root unless it is a directory owned by root or this user and a mount
+// point: its device differs from its parent's. Tests replace it.
+var volumeRoot = func(root string) error {
+	fi, err := os.Lstat(root)
+	if err != nil {
+		return err
+	}
+	parent, err := os.Stat(filepath.Dir(root))
+	if err != nil {
+		return err
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	pst, pok := parent.Sys().(*syscall.Stat_t)
+	switch {
+	case !fi.IsDir() || !ok || !pok:
+		return errors.New("not a directory")
+	case st.Dev == pst.Dev:
+		return errors.New("not a mount point")
+	case st.Uid != 0 && st.Uid != uint32(os.Geteuid()):
+		return errors.New("owned by another user")
+	}
+	return nil
 }
 
 // writeNew publishes data at file unless it exists: a rerun after a crash keeps the first.

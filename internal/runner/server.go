@@ -23,7 +23,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/Busnes-app/ky-primitives/keyfile"
 	"github.com/Busnes-app/kyquickstart/internal/cli"
 	"github.com/Busnes-app/kyquickstart/internal/engine"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
@@ -74,8 +73,8 @@ func operate(ctx context.Context, kind, plan string, r cli.Request, o cli.Option
 	return cli.Upgrade(ctx, plan, r, o)
 }
 
-func newServer(state string, o cli.Options, stderr io.Writer) (*server, error) {
-	state, err := openState(state)
+func newServer(state string, podVolume bool, o cli.Options, stderr io.Writer) (*server, error) {
+	state, err := openState(state, podVolume)
 	if err != nil {
 		return nil, err
 	}
@@ -138,22 +137,15 @@ func (s *server) write(rec *record) error {
 
 // listen creates the socket as ky-primitives applysetup.StartLocal does: a canonical path in
 // a private directory of this user, under ancestors no other user can modify.
-func listen(socket string) (net.Listener, error) {
+func listen(socket string, podVolume bool) (net.Listener, error) {
 	if !filepath.IsAbs(socket) || socket != filepath.Clean(socket) {
 		return nil, errors.New("socket path must be absolute and canonical")
 	}
 	if len(socket) > maxSocketPath {
 		return nil, fmt.Errorf("socket path exceeds the %d-byte Unix limit", maxSocketPath)
 	}
-	dir := filepath.Dir(socket)
-	if err := keyfile.RequireTrustedAncestry(dir); err != nil {
-		return nil, errors.New("socket directory has an ancestor other users can modify")
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, errors.New("cannot create the private socket directory")
-	}
-	if err := keyfile.RequirePrivateDirectory(dir); err != nil {
-		return nil, errors.New("socket directory must be private (0700) and owned by the runner's user")
+	if err := privateDir("socket", filepath.Dir(socket), podVolume); err != nil {
+		return nil, err
 	}
 	if info, err := os.Lstat(socket); err == nil {
 		if info.Mode()&os.ModeSocket == 0 {
