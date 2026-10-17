@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/google/uuid"
 	"go.yaml.in/yaml/v3"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
@@ -27,6 +28,8 @@ type Stack struct {
 	Edges        []Edge        `yaml:"edges,omitempty"`
 	Existing     []Existing    `yaml:"existing,omitempty"`
 	Integrations []Integration `yaml:"integrations,omitempty"`
+	// InstallationID (UUID v4) marks this installation's NPM hosts; written once, by plan or apply.
+	InstallationID string `yaml:"installation_id,omitempty"`
 }
 
 // Integration explicitly selects product-owned setup, independently of references.
@@ -68,6 +71,8 @@ func (t Target) Kubernetes() bool { return t.Kubeconfig != "" }
 type App struct {
 	Name   string `yaml:"name"`
 	Target string `yaml:"target"`
+	// NodePorts overrides an edge's published NodePorts: container port -> node port.
+	NodePorts map[int]int `yaml:"node_ports,omitempty"`
 }
 
 var (
@@ -81,6 +86,17 @@ var (
 // ValidName reports whether s is a usable target or app name. App names become step IDs,
 // file names and Compose project names.
 func ValidName(s string) bool { return nameRE.MatchString(s) }
+
+// ValidNodePort is in the API server's default NodePort range.
+func ValidNodePort(n int) bool { return n >= 30000 && n <= 32767 }
+
+// NewInstallationID returns a random UUID v4.
+func NewInstallationID() string { return uuid.NewString() }
+
+func validInstallationID(s string) bool {
+	u, err := uuid.Parse(s)
+	return err == nil && u.String() == s && u.Version() == 4 && u.Variant() == uuid.RFC4122
+}
 
 func Load(path string) (*Stack, error) {
 	b, err := os.ReadFile(path)
@@ -133,6 +149,9 @@ func (s *Stack) validate() error {
 	if s.Revision < 0 {
 		return errors.New("revision must not be negative")
 	}
+	if s.InstallationID != "" && !validInstallationID(s.InstallationID) {
+		return errors.New("installation_id must be a lowercase UUID v4")
+	}
 	if len(s.Targets) == 0 {
 		return errors.New("no targets")
 	}
@@ -175,7 +194,7 @@ func (s *Stack) validate() error {
 		}
 		seen[t.Name] = true
 	}
-	apps := map[string]bool{}
+	apps, nodePorts := map[string]bool{}, map[int]bool{}
 	for _, a := range s.Apps {
 		switch {
 		case !ValidName(a.Name):
@@ -186,6 +205,12 @@ func (s *Stack) validate() error {
 			return fmt.Errorf("app %q: unknown target %q", a.Name, a.Target)
 		}
 		apps[a.Name] = true
+		for _, n := range a.NodePorts {
+			if !ValidNodePort(n) || nodePorts[n] {
+				return fmt.Errorf("app %q: node_ports %d must be unique and 30000-32767", a.Name, n)
+			}
+			nodePorts[n] = true
+		}
 	}
 	references := map[string]bool{}
 	for _, e := range s.Existing {

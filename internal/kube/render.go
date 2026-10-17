@@ -9,6 +9,7 @@ import (
 	"slices"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
+	"github.com/Busnes-app/kyquickstart/internal/managed"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -21,9 +22,22 @@ import (
 // objects is everything the deploy step writes for one app, in one namespace.
 type objects struct {
 	Deployment *appsv1.Deployment
-	Service    *corev1.Service // nil when the app listens on no port
+	Service    *corev1.Service // ClusterIP; nil when every port is published or there is none
 	Claims     []*corev1.PersistentVolumeClaim
 	Policy     *networkingv1.NetworkPolicy
+	// Public is the NodePort Service for an edge's node_ports. omitempty keeps other apps' hashes.
+	Public *corev1.Service `json:",omitempty"`
+}
+
+// services are the app's Services that exist, ClusterIP first.
+func (o objects) services() []*corev1.Service {
+	var out []*corev1.Service
+	for _, s := range []*corev1.Service{o.Service, o.Public} {
+		if s != nil {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func (o objects) hash() string {
@@ -36,16 +50,21 @@ func (o objects) hash() string {
 }
 
 // render builds the app's objects. Catalog validation guarantees every quantity parses.
-// An empty storageClass leaves claims to the cluster default and out of the hash.
-func render(app string, c catalog.App, releaseSet, storageClass string) objects {
-	k := c.Kubernetes
+// An empty storage class leaves claims to the cluster default and out of the hash.
+func render(a App) objects {
+	app, c, k := a.Name, a.Catalog, a.Catalog.Kubernetes
 	ns := namespaceOf(app)
 	meta := func(name string) metav1.ObjectMeta {
-		return metav1.ObjectMeta{Name: name, Namespace: ns, Labels: workloadLabels(releaseSet)}
+		return metav1.ObjectMeta{Name: name, Namespace: ns, Labels: workloadLabels(a.ReleaseSet)}
 	}
 	res := corev1.ResourceList{
 		corev1.ResourceCPU:    resource.MustParse(k.Resources.CPU),
 		corev1.ResourceMemory: resource.MustParse(k.Resources.Memory),
+	}
+	root := k.RunAs == 0 // only under baseline
+	caps := &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}
+	for _, name := range k.Capabilities {
+		caps.Add = append(caps.Add, corev1.Capability(name))
 	}
 	container := corev1.Container{
 		Name:      appName,
@@ -54,11 +73,11 @@ func render(app string, c catalog.App, releaseSet, storageClass string) objects 
 		Resources: corev1.ResourceRequirements{Requests: res, Limits: res},
 		SecurityContext: &corev1.SecurityContext{
 			AllowPrivilegeEscalation: ptr.To(false),
-			ReadOnlyRootFilesystem:   ptr.To(true),
-			RunAsNonRoot:             ptr.To(true),
+			ReadOnlyRootFilesystem:   ptr.To(!k.WritableRoot),
+			RunAsNonRoot:             ptr.To(!root),
 			RunAsUser:                ptr.To(k.RunAs),
 			RunAsGroup:               ptr.To(k.RunAs),
-			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+			Capabilities:             caps,
 			SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 		},
 		VolumeMounts: []corev1.VolumeMount{{Name: "tmp", MountPath: "/tmp"}},
@@ -73,14 +92,10 @@ func render(app string, c catalog.App, releaseSet, storageClass string) objects 
 		}})
 		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: "secrets", MountPath: "/run/secrets", ReadOnly: true})
 	}
-	o := objects{Policy: &networkingv1.NetworkPolicy{
-		ObjectMeta: meta(policyName),
-		// No ingress rules: nothing reaches the app until the edge is admitted (Phase 4).
-		Spec: networkingv1.NetworkPolicySpec{PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress}},
-	}}
+	o := objects{Policy: &networkingv1.NetworkPolicy{ObjectMeta: meta(policyName), Spec: policy(a)}}
 	var class *string // nil is omitted from the JSON the hash covers
-	if storageClass != "" {
-		class = &storageClass
+	if a.StorageClass != "" {
+		class = &a.StorageClass
 	}
 	for _, v := range k.Volumes {
 		claim := "vol-" + v.Name
@@ -102,9 +117,24 @@ func render(app string, c catalog.App, releaseSet, storageClass string) objects 
 		for _, p := range k.Ports {
 			port := int32(p)
 			container.Ports = append(container.Ports, corev1.ContainerPort{ContainerPort: port})
-			svc.Spec.Ports = append(svc.Spec.Ports, corev1.ServicePort{Name: fmt.Sprintf("p%d", p), Port: port, TargetPort: intstr.FromInt32(port)})
+			sp := corev1.ServicePort{Name: fmt.Sprintf("p%d", p), Port: port, TargetPort: intstr.FromInt32(port)}
+			if node, ok := k.NodePorts[p]; ok {
+				if o.Public == nil {
+					// Local keeps the client's address, which the edge's connector_cidr check relies on.
+					o.Public = &corev1.Service{ObjectMeta: meta(publicName), Spec: corev1.ServiceSpec{
+						Type: corev1.ServiceTypeNodePort, Selector: selector(app),
+						ExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
+					}}
+				}
+				sp.NodePort = int32(node)
+				o.Public.Spec.Ports = append(o.Public.Spec.Ports, sp)
+				continue
+			}
+			svc.Spec.Ports = append(svc.Spec.Ports, sp)
 		}
-		o.Service = svc
+		if len(svc.Spec.Ports) > 0 {
+			o.Service = svc
+		}
 		if k.ReadinessPath != "" {
 			container.ReadinessProbe = &corev1.Probe{
 				ProbeHandler:  corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: k.ReadinessPath, Port: intstr.FromInt32(int32(k.Ports[0]))}},
@@ -120,20 +150,70 @@ func render(app string, c catalog.App, releaseSet, storageClass string) objects 
 			// Recreate: a ReadWriteOnce claim cannot attach to two pods at once.
 			Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: podLabels(app, releaseSet)},
+				ObjectMeta: metav1.ObjectMeta{Labels: podLabels(app, a.ReleaseSet)},
 				Spec: corev1.PodSpec{
 					AutomountServiceAccountToken: ptr.To(false),
 					EnableServiceLinks:           ptr.To(false),
-					SecurityContext: &corev1.PodSecurityContext{
-						RunAsNonRoot:   ptr.To(true),
-						FSGroup:        ptr.To(k.RunAs),
-						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
-					},
-					Containers: []corev1.Container{container},
-					Volumes:    volumes,
+					SecurityContext:              podSecurityContext(k),
+					Containers:                   []corev1.Container{container},
+					Volumes:                      volumes,
 				},
 			},
 		},
 	}
 	return o
+}
+
+func podSecurityContext(k *catalog.Kubernetes) *corev1.PodSecurityContext {
+	sc := &corev1.PodSecurityContext{
+		RunAsNonRoot:   ptr.To(true),
+		FSGroup:        ptr.To(k.RunAs),
+		SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+	}
+	if k.RunAs == 0 {
+		sc.RunAsNonRoot, sc.FSGroup = nil, nil // a root init sets its own ownership
+	}
+	if k.LowPorts {
+		sc.Sysctls = []corev1.Sysctl{{Name: "net.ipv4.ip_unprivileged_port_start", Value: "0"}}
+	}
+	return sc
+}
+
+// policy denies all ingress except, for an edge, to its published ports and, for an app on a
+// cluster with an edge, from the edge's pods. An edge's egress is limited to DNS, HTTP(S)
+// anywhere (ACME and upstreams) and pods in installer-managed namespaces, whose own policies
+// decide what it reaches there.
+func policy(a App) networkingv1.NetworkPolicySpec {
+	k := a.Catalog.Kubernetes
+	spec := networkingv1.NetworkPolicySpec{PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress}}
+	tcp := func(ports ...int) []networkingv1.NetworkPolicyPort {
+		var out []networkingv1.NetworkPolicyPort
+		for _, p := range ports {
+			out = append(out, networkingv1.NetworkPolicyPort{Protocol: ptr.To(corev1.ProtocolTCP), Port: ptr.To(intstr.FromInt(p))})
+		}
+		return out
+	}
+	if a.Catalog.Category == "edge" {
+		if len(k.NodePorts) > 0 {
+			spec.Ingress = []networkingv1.NetworkPolicyIngressRule{{Ports: tcp(slices.Sorted(maps.Keys(k.NodePorts))...)}}
+		}
+		dns := append(tcp(53), networkingv1.NetworkPolicyPort{Protocol: ptr.To(corev1.ProtocolUDP), Port: ptr.To(intstr.FromInt(53))})
+		spec.PolicyTypes = append(spec.PolicyTypes, networkingv1.PolicyTypeEgress)
+		spec.Egress = []networkingv1.NetworkPolicyEgressRule{
+			{Ports: dns, To: []networkingv1.NetworkPolicyPeer{{
+				NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{nsNameLabel: "kube-system"}},
+				PodSelector:       &metav1.LabelSelector{MatchLabels: map[string]string{"k8s-app": "kube-dns"}},
+			}}},
+			{Ports: tcp(80, 443)},
+			{To: []networkingv1.NetworkPolicyPeer{{NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{managed.Label: managed.Value}}}}},
+		}
+		return spec
+	}
+	if a.Edge != "" && len(k.Ports) > 0 {
+		spec.Ingress = []networkingv1.NetworkPolicyIngressRule{{Ports: tcp(k.Ports...), From: []networkingv1.NetworkPolicyPeer{{
+			NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{nsNameLabel: namespaceOf(a.Edge)}},
+			PodSelector:       &metav1.LabelSelector{MatchLabels: selector(a.Edge)},
+		}}}}
+	}
+	return spec
 }

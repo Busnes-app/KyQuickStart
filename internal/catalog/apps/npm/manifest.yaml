@@ -1,0 +1,39 @@
+name: npm
+description: Nginx Proxy Manager, the reverse proxy at the edge; its admin API never leaves the cluster
+category: edge
+version: 2.16.0
+# The one exception to restricted: NPM's s6 init must start as root (see docs/edge.md).
+pod_security: baseline
+images:
+  npm: jc21/nginx-proxy-manager:2.16.0@sha256:4393e642e233e5efd5adeb7f10918d4aaea71c9ed875b94190273fc8e87f9594
+secrets: [admin_password]
+health:
+  timeout_seconds: 300
+backup:
+  volumes: [data, letsencrypt]
+kubernetes:
+  image: npm
+  env:
+    # nginx and the API run as this user; only the init and its supervisors stay root.
+    PUID: "1000"
+    PGID: "1000"
+    DISABLE_IPV6: "true"
+  ports: [81, 80, 443]
+  readiness_path: /api/
+  run_as: 0
+  # Measured in kind: the init chowns, writes files it chowned, and drops to PUID;
+  # KILL lets its supervisors stop those processes cleanly.
+  capabilities: [CHOWN, DAC_OVERRIDE, SETGID, SETUID, KILL]
+  writable_root: true
+  low_ports: true
+  node_ports: {80: 30080, 443: 30443}
+  resources:
+    cpu: 500m
+    memory: 512Mi
+  volumes:
+    - name: data
+      mount: /data
+      size: 1Gi
+    - name: letsencrypt
+      mount: /etc/letsencrypt
+      size: 256Mi

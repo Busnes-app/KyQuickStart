@@ -27,7 +27,7 @@ func (c *Client) Deployed(ctx context.Context, app string) (managed.Deployed, er
 	return managed.Deployed{Found: true, Managed: owned(ns), ReleaseSet: l[managed.ReleaseSetLabel], Version: l[managed.VersionLabel]}, nil
 }
 
-// RemoveSteps deletes the app's Deployment and Service. The namespace, its claims, Secret
+// RemoveSteps deletes the app's Deployment and Services. The namespace, its claims, Secret
 // and default-deny policy stay, so a later install finds the data.
 func RemoveSteps(a App) []engine.Step { return []engine.Step{removeStep{a}} }
 
@@ -36,25 +36,34 @@ type removeStep struct{ a App }
 func (s removeStep) ID() string        { return s.a.Name + ".uninstall" }
 func (s removeStep) InputHash() string { return hashOf("uninstall") }
 
-// objects returns the app's Deployment and Service, nil where absent.
-func (s removeStep) objects(ctx context.Context) (*appsv1.Deployment, *corev1.Service, error) {
+// objects returns the app's Deployment (nil where absent) and its present Services.
+func (s removeStep) objects(ctx context.Context) (*appsv1.Deployment, []*corev1.Service, error) {
 	ns := namespaceOf(s.a.Name)
 	dep, _, err := getOwned(ctx, s.a.Client.cs.AppsV1().Deployments(ns), "deployment", appName)
 	if err != nil {
 		return nil, nil, err
 	}
-	svc, _, err := getOwned(ctx, s.a.Client.cs.CoreV1().Services(ns), "service", appName)
-	return dep, svc, err
+	var svcs []*corev1.Service
+	for _, name := range []string{appName, publicName} {
+		svc, found, err := getOwned(ctx, s.a.Client.cs.CoreV1().Services(ns), "service", name)
+		if err != nil {
+			return nil, nil, err
+		}
+		if found {
+			svcs = append(svcs, svc)
+		}
+	}
+	return dep, svcs, nil
 }
 
 func (s removeStep) Inspect(ctx context.Context) (bool, error) {
-	dep, svc, err := s.objects(ctx)
-	return dep == nil && svc == nil, err
+	dep, svcs, err := s.objects(ctx)
+	return dep == nil && len(svcs) == 0, err
 }
 
 // Apply deletes by UID, so an object replaced in between is left alone.
 func (s removeStep) Apply(ctx context.Context) error {
-	dep, svc, err := s.objects(ctx)
+	dep, svcs, err := s.objects(ctx)
 	if err != nil {
 		return err
 	}
@@ -68,9 +77,9 @@ func (s removeStep) Apply(ctx context.Context) error {
 			return fmt.Errorf("delete deployment: %w", err)
 		}
 	}
-	if svc != nil {
-		if err := s.a.Client.cs.CoreV1().Services(ns).Delete(ctx, appName, byUID(svc)); err != nil && !apierrors.IsNotFound(err) {
-			return fmt.Errorf("delete service: %w", err)
+	for _, svc := range svcs {
+		if err := s.a.Client.cs.CoreV1().Services(ns).Delete(ctx, svc.Name, byUID(svc)); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("delete service %s: %w", svc.Name, err)
 		}
 	}
 	return nil
@@ -132,7 +141,7 @@ func meta[T metav1.Object](o T) []map[string]string { return []map[string]string
 func (s unmanageStep) sweep(ctx context.Context, fix bool) (string, error) {
 	ns := namespaceOf(s.a.Name)
 	cs := s.a.Client.cs
-	o := render(s.a.Name, s.a.Catalog, s.a.ReleaseSet, s.a.StorageClass)
+	o := render(s.a)
 	type check struct {
 		what string
 		run  func() (bool, error)
@@ -144,6 +153,7 @@ func (s unmanageStep) sweep(ctx context.Context, fix bool) (string, error) {
 			}, fix)
 		}},
 		{"service", func() (bool, error) { return relabel(ctx, cs.CoreV1().Services(ns), appName, unlabel, meta, fix) }},
+		{"public service", func() (bool, error) { return relabel(ctx, cs.CoreV1().Services(ns), publicName, unlabel, meta, fix) }},
 		{"network policy", func() (bool, error) {
 			return relabel(ctx, cs.NetworkingV1().NetworkPolicies(ns), policyName, unlabel, meta, fix)
 		}},

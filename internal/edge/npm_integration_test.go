@@ -179,7 +179,7 @@ func TestNPMContainer(t *testing.T) {
 	}
 	shim := httptest.NewTLSServer(httputil.NewSingleHostReverseProxy(upstream))
 	defer shim.Close()
-	n, err := NewNPM(shim.URL, token)
+	n, err := NewNPM(shim.URL, token, testID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
