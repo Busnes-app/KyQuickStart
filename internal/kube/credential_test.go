@@ -69,3 +69,31 @@ func TestEdgeSecretNeedsTheManagedLabel(t *testing.T) {
 		}
 	}
 }
+
+func TestLANDNSLedgerKeepsOtherKeysAndNeedsOwnedSecret(t *testing.T) {
+	ctx := context.Background()
+	owned := map[string]string{managed.Label: managed.Value}
+	cs := fake.NewClientset(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "kyq-credentials", Namespace: "kyq-edge", Labels: owned}, Data: map[string][]byte{"npm_token": []byte("npm-value")}})
+	c := New(cs)
+	if b, err := c.LANDNSLedger(ctx); err != nil || len(b) != 0 {
+		t.Fatalf("empty ledger: %q %v", b, err)
+	}
+	if err := c.SetLANDNSLedger(ctx, []byte(`[{"id":1}]`)); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := cs.CoreV1().Secrets("kyq-edge").Get(ctx, "kyq-credentials", metav1.GetOptions{})
+	if string(s.Data["npm_token"]) != "npm-value" || string(s.Data["kydns_records"]) != `[{"id":1}]` {
+		t.Fatalf("secret data %v", s.Data)
+	}
+	if b, _ := c.LANDNSLedger(ctx); string(b) != `[{"id":1}]` {
+		t.Fatalf("ledger %q", b)
+	}
+
+	foreign := New(fake.NewClientset(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "kyq-credentials", Namespace: "kyq-edge"}}))
+	if err := foreign.SetLANDNSLedger(ctx, []byte(`[]`)); err == nil {
+		t.Fatal("wrote an unlabelled Secret")
+	}
+	if err := New(fake.NewClientset()).SetLANDNSLedger(ctx, []byte(`[]`)); err == nil {
+		t.Fatal("created the Secret")
+	}
+}

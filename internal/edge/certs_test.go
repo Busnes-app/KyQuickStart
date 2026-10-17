@@ -19,14 +19,23 @@ import (
 
 const cfToken = "cf_TOKEN_0123456789abcdefghij"
 
-type fakeSecrets map[string]string
+type fakeSecrets struct {
+	values map[string]string
+	ledger []byte
+	saves  int
+}
 
-func (f fakeSecrets) EdgeSecret(_ context.Context, name, key string) ([]byte, error) {
-	v, ok := f[name+"/"+key]
+func (f *fakeSecrets) EdgeSecret(_ context.Context, name, key string) ([]byte, error) {
+	v, ok := f.values[name+"/"+key]
 	if !ok {
 		return nil, fmt.Errorf("secret kyq-edge/%s is absent", name)
 	}
 	return []byte(v), nil
+}
+func (f *fakeSecrets) LANDNSLedger(context.Context) ([]byte, error) { return f.ledger, nil }
+func (f *fakeSecrets) SetLANDNSLedger(_ context.Context, b []byte) error {
+	f.ledger, f.saves = b, f.saves+1
+	return nil
 }
 
 // fakeCertNPM serves NPM 2.16's users and certificates API. Every request is logged.
@@ -96,7 +105,7 @@ func (f *fakeCertNPM) serve(t *testing.T) *NPM {
 		t.Fatal(err)
 	}
 	n.http.Transport.(*http.Transport).TLSClientConfig = srv.Client().Transport.(*http.Transport).TLSClientConfig
-	n.Secrets = fakeSecrets{"cloudflare-dns/api_token": cfToken + "\n"}
+	n.Secrets = &fakeSecrets{values: map[string]string{"cloudflare-dns/api_token": cfToken + "\n"}}
 	t.Cleanup(n.Close)
 	return n
 }
@@ -279,7 +288,7 @@ func TestCertificateCredentialNeverInErrors(t *testing.T) {
 	for _, bad := range []string{cfToken + "\ndns_cloudflare_email = x@example.com", "short", cfToken + " x"} {
 		f := &fakeCertNPM{perms: map[int]map[string]string{}}
 		n := f.serve(t)
-		n.Secrets = fakeSecrets{"cloudflare-dns/api_token": bad}
+		n.Secrets = &fakeSecrets{values: map[string]string{"cloudflare-dns/api_token": bad}}
 		err := certStep{n: n, e: e, c: c}.Apply(ctx)
 		if err == nil || strings.Contains(err.Error(), cfToken) || strings.Contains(err.Error(), "short") {
 			t.Fatalf("%q: %v", bad, err)

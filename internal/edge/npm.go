@@ -56,6 +56,7 @@ type NPM struct {
 	token        string
 	installation string
 	http         *http.Client
+	lan          *http.Client // other LAN administration APIs: KyDNS
 	// Adopt claims this target's hosts marked by builds that predate installation IDs, and
 	// rewrites them to this installation's marks (apply --adopt-edge-hosts).
 	Adopt bool
@@ -65,9 +66,12 @@ type NPM struct {
 	Redact *engine.Redactor
 }
 
-// Secrets reads target-held edge credentials by reference. Values stay in memory.
+// Secrets reads target-held edge credentials by reference, and keeps the LAN DNS ledger
+// (records carry no owner in KyDNS). Values stay in memory.
 type Secrets interface {
 	EdgeSecret(ctx context.Context, name, key string) ([]byte, error)
+	LANDNSLedger(ctx context.Context) ([]byte, error) // empty when none yet
+	SetLANDNSLedger(ctx context.Context, ledger []byte) error
 }
 
 // Dial opens one connection to NPM's API; for kube:// it is the Kubernetes driver's port-forward.
@@ -87,7 +91,7 @@ func NewNPM(origin, token, installation string, tunnel Dial) (*NPM, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &NPM{base: base, token: token, installation: installation, http: npmClient(transport), Redact: &engine.Redactor{}}, nil
+	return &NPM{base: base, token: token, installation: installation, http: npmClient(transport), lan: npmClient(lanTransport()), Redact: &engine.Redactor{}}, nil
 }
 
 func npmClient(t *http.Transport) *http.Client {
@@ -108,7 +112,12 @@ func npmTransport(origin string, tunnel Dial) (string, *http.Transport, error) {
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || tunnel != nil {
 		return "", nil, errors.New("NPM requires an HTTPS origin without credentials, path or query")
 	}
-	transport := &http.Transport{
+	return origin, lanTransport(), nil
+}
+
+// lanTransport verifies TLS and dials only private or loopback addresses, with no proxy.
+func lanTransport() *http.Transport {
+	return &http.Transport{
 		// No environment proxy: administration and its bearer token stay on the LAN.
 		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 			host, port, err := net.SplitHostPort(address)
@@ -122,7 +131,7 @@ func npmTransport(origin string, tunnel Dial) (string, *http.Transport, error) {
 			for _, ip := range ips {
 				ip = ip.Unmap()
 				if !ip.IsPrivate() && !ip.IsLoopback() {
-					return nil, errors.New("NPM administration must resolve only to private or loopback addresses")
+					return nil, errors.New("LAN administration must resolve only to private or loopback addresses")
 				}
 			}
 			var last error
@@ -134,15 +143,17 @@ func npmTransport(origin string, tunnel Dial) (string, *http.Transport, error) {
 				last = err
 			}
 			if last == nil {
-				last = errors.New("NPM hostname has no addresses")
+				last = errors.New("hostname has no addresses")
 			}
 			return nil, last
 		},
 	}
-	return origin, transport, nil
 }
 
-func (n *NPM) Close() { n.http.CloseIdleConnections() }
+func (n *NPM) Close() {
+	n.http.CloseIdleConnections()
+	n.lan.CloseIdleConnections()
+}
 
 func (n *NPM) request(ctx context.Context, method, path string, body any, result any) error {
 	_, err := call(ctx, n.http, n.base, n.token, method, path, body, result)
@@ -533,6 +544,9 @@ func (n *NPM) Steps(e stack.Edge) []engine.Step {
 	for _, r := range e.Routes {
 		out = append(out, hostStep{n: n, e: e, r: r})
 	}
+	if e.LANDNS != nil {
+		out = append(out, dnsStep{n: n, e: e})
+	}
 	return out
 }
 
@@ -564,6 +578,16 @@ func (n *NPM) Preflight(ctx context.Context, e stack.Edge) error {
 		expires, err := expiry(cert.Expires)
 		if !slices.ContainsFunc(cert.Domains, func(d string) bool { return stack.Covers(d, r.Hostname) }) || err != nil || !expires.After(time.Now()) {
 			return fmt.Errorf("certificate %d must be unexpired and cover %s", r.CertificateID, r.Hostname)
+		}
+	}
+	if e.LANDNS != nil {
+		s := dnsStep{n: n, e: e}
+		k, err := s.client(ctx)
+		if err != nil {
+			return err
+		}
+		if _, err := s.plan(ctx, k); err != nil {
+			return err
 		}
 	}
 	return nil
