@@ -109,7 +109,7 @@ func TestDeployKeepsExistingClaim(t *testing.T) {
 	if err := a.ensureNamespace(ctx); err != nil {
 		t.Fatal(err)
 	}
-	claim := render("hello", a.Catalog, "rs-0").Claims[0]
+	claim := render("hello", a.Catalog, "rs-0", "").Claims[0]
 	claim.Spec.VolumeName = "bound-pv"
 	cs.CoreV1().PersistentVolumeClaims("kyq-hello").Create(ctx, claim, metav1.CreateOptions{})
 	if err := deployOf(a).Apply(ctx); err != nil {
@@ -179,5 +179,44 @@ func TestDeployRepairsPolicy(t *testing.T) {
 	p, _ = pols.Get(ctx, policyName, metav1.GetOptions{})
 	if len(p.Spec.Ingress) != 0 {
 		t.Fatalf("ingress = %+v", p.Spec.Ingress)
+	}
+}
+
+func TestDeployRefusesClaimStorageClassChange(t *testing.T) {
+	ctx := context.Background()
+	for name, have := range map[string]*string{"other class": ptr.To("standard"), "no class": nil} {
+		t.Run(name, func(t *testing.T) {
+			a, cs := testApp(t, "token")
+			if err := a.ensureNamespace(ctx); err != nil {
+				t.Fatal(err)
+			}
+			claim := render("hello", a.Catalog, "rs-0", "").Claims[0]
+			claim.Spec.StorageClassName = have
+			cs.CoreV1().PersistentVolumeClaims("kyq-hello").Create(ctx, claim, metav1.CreateOptions{})
+			a.StorageClass = "local-path"
+			err := deployOf(a).Apply(ctx)
+			if err == nil || !strings.Contains(err.Error(), `names "local-path"`) || !strings.Contains(err.Error(), "cannot change") {
+				t.Fatalf("err = %v", err)
+			}
+			if _, err := cs.AppsV1().Deployments("kyq-hello").Get(ctx, appName, metav1.GetOptions{}); err == nil {
+				t.Fatal("deployment written despite the refused claim")
+			}
+		})
+	}
+}
+
+func TestDeployAcceptsClaimWithNamedClass(t *testing.T) {
+	ctx := context.Background()
+	a, cs := testApp(t, "token")
+	a.StorageClass = "local-path"
+	if err := deployOf(a).Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := cs.CoreV1().PersistentVolumeClaims("kyq-hello").Get(ctx, "vol-data", metav1.GetOptions{})
+	if got.Spec.StorageClassName == nil || *got.Spec.StorageClassName != "local-path" {
+		t.Fatalf("claim class = %v", got.Spec.StorageClassName)
+	}
+	if err := deployOf(a).Apply(ctx); err != nil {
+		t.Fatalf("rerun with the same class: %v", err)
 	}
 }

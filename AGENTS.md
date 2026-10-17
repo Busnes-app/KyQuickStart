@@ -354,7 +354,9 @@ handover of admin and everyday logins.
   ingress) and the run lock is Lease `kyquickstart/kyquickstart-lock`. The installer never adopts
   a namespace or object without the managed label. A kubeconfig is referenced by path and may not
   live inside the state directory, symlinks resolved. One target per cluster; `apply` repairs
-  drift in an app namespace's labels and its default-deny policy.
+  drift in an app namespace's labels and its default-deny policy. A target's optional
+  `storage_class` sets every claim's class and must exist at preflight; without it claims need a
+  default class. A claim's class never changes: `apply` refuses an existing claim of another class.
 
 ## Work Guidance
 

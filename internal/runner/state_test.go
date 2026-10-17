@@ -39,7 +39,7 @@ func tarOf(t *testing.T, entries ...entry) []byte {
 	return b.Bytes()
 }
 
-const kubePlan = "version: 1\nrevision: 4\ntargets:\n  - name: nas\n    host: 192.0.2.1\n    user: kyq\n  - name: k1\n    kubeconfig: /home/op/.kube/config\n    context: admin@k1\napps: []\n"
+const kubePlan = "version: 1\nrevision: 4\ntargets:\n  - name: nas\n    host: 192.0.2.1\n    user: kyq\n  - name: k1\n    kubeconfig: /home/op/.kube/config\n    context: admin@k1\n    storage_class: local-path\napps: []\n"
 
 const tokenKubeconfig = `apiVersion: v1
 kind: Config
@@ -80,7 +80,7 @@ func TestImportRewritesKubeconfigsIntoTheRunner(t *testing.T) {
 		t.Fatal(err)
 	}
 	k1, _ := st.Target("k1")
-	if st.Revision != 4 || k1.Kubeconfig != filepath.Join(state, kubeDir, "k1.yaml") || k1.Context != "" {
+	if st.Revision != 4 || k1.Kubeconfig != filepath.Join(state, kubeDir, "k1.yaml") || k1.Context != "" || k1.StorageClass != "local-path" {
 		t.Errorf("imported plan = %+v", st)
 	}
 	for _, f := range []string{filepath.Join(planDir, "known_hosts"), filepath.Join(planDir, "results", "hello.deploy.json"), filepath.Join(kubeDir, "k1.yaml"), filepath.Join(planDir, "stack.yaml")} {

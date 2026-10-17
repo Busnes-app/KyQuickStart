@@ -36,7 +36,8 @@ func (o objects) hash() string {
 }
 
 // render builds the app's objects. Catalog validation guarantees every quantity parses.
-func render(app string, c catalog.App, releaseSet string) objects {
+// An empty storageClass leaves claims to the cluster default and out of the hash.
+func render(app string, c catalog.App, releaseSet, storageClass string) objects {
 	k := c.Kubernetes
 	ns := namespaceOf(app)
 	meta := func(name string) metav1.ObjectMeta {
@@ -77,13 +78,18 @@ func render(app string, c catalog.App, releaseSet string) objects {
 		// No ingress rules: nothing reaches the app until the edge is admitted (Phase 4).
 		Spec: networkingv1.NetworkPolicySpec{PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress}},
 	}}
+	var class *string // nil is omitted from the JSON the hash covers
+	if storageClass != "" {
+		class = &storageClass
+	}
 	for _, v := range k.Volumes {
 		claim := "vol-" + v.Name
 		o.Claims = append(o.Claims, &corev1.PersistentVolumeClaim{
 			ObjectMeta: meta(claim),
 			Spec: corev1.PersistentVolumeClaimSpec{
-				AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
-				Resources:   corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse(v.Size)}},
+				AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+				Resources:        corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse(v.Size)}},
+				StorageClassName: class,
 			},
 		})
 		volumes = append(volumes, corev1.Volume{Name: claim, VolumeSource: corev1.VolumeSource{

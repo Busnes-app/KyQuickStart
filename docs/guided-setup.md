@@ -32,6 +32,9 @@ The wizard asks for:
 The first computer-name question accepts DNS names such as `K80.urlxl.us`, including
 uppercase letters. It derives a safe installation label (`k80-urlxl-us`); Docker's SSH
 address defaults to the name you entered. Kubernetes still connects through its kubeconfig.
+A Kubernetes target may name a StorageClass for app volumes (`storage_class`); blank needs a
+default class. Preflight checks the named class exists. A volume's class cannot change later:
+apply refuses an existing volume of another class.
 
 For the simplest first test: use one Docker test host, choose `install` for `hello`,
 choose `none` for its public connection, and choose `finish`. You can record existing
