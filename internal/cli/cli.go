@@ -356,7 +356,7 @@ func (s *session) connect(ctx context.Context, trust trustFlag) error {
 			return err
 		}
 		if k, ok := d.(kubeDriver); ok {
-			k.edge = s.edgeApp(t.Name)
+			k.edge, k.nodePorts = s.edgeApp(t.Name), s.nodePorts(t.Name)
 			d = k
 		}
 		s.drivers[t.Name] = d
@@ -403,6 +403,19 @@ func (s *session) edgeApp(target string) string {
 		}
 	}
 	return ""
+}
+
+// nodePorts maps each NodePort an app on target publishes, node_ports applied, to the app.
+func (s *session) nodePorts(target string) map[int]string {
+	out := map[int]string{}
+	for name, t := range s.placed {
+		if k := s.cat[name].Kubernetes; t.Name == target && k != nil {
+			for _, node := range k.NodePorts {
+				out[node] = name
+			}
+		}
+	}
+	return out
 }
 
 func (s *session) needsStorage(target string) bool {
