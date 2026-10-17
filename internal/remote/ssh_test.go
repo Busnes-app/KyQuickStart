@@ -1,8 +1,11 @@
 package remote
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/pem"
+	"errors"
 	"net"
 	"os"
 	"os/exec"
@@ -126,5 +129,80 @@ func TestWrapSurvivesLoginShells(t *testing.T) {
 		if string(out) != want {
 			t.Errorf("%s: got %q, want %q", shell, out, want)
 		}
+	}
+}
+
+// serveSSH accepts one client key on a loopback port and answers every exec with "ran".
+func serveSSH(t *testing.T, client ssh.PublicKey) (port int, hostFP string) {
+	t.Helper()
+	_, hostPriv, _ := ed25519.GenerateKey(rand.Reader)
+	host, _ := ssh.NewSignerFromKey(hostPriv)
+	cfg := &ssh.ServerConfig{PublicKeyCallback: func(_ ssh.ConnMetadata, k ssh.PublicKey) (*ssh.Permissions, error) {
+		if string(k.Marshal()) != string(client.Marshal()) {
+			return nil, errors.New("unknown key")
+		}
+		return nil, nil
+	}}
+	cfg.AddHostKey(host)
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				_, chans, reqs, err := ssh.NewServerConn(c, cfg)
+				if err != nil {
+					return
+				}
+				go ssh.DiscardRequests(reqs)
+				for nc := range chans {
+					ch, in, _ := nc.Accept()
+					go func() {
+						for r := range in {
+							r.Reply(r.Type == "exec", nil)
+							if r.Type == "exec" {
+								ch.Write([]byte("ran"))
+								ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Code uint32 }{0}))
+								ch.Close()
+							}
+						}
+					}()
+				}
+			}()
+		}
+	}()
+	return l.Addr().(*net.TCPAddr).Port, ssh.FingerprintSHA256(host.PublicKey())
+}
+
+func TestDialWithKeyFile(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "")
+	_, priv, _ := ed25519.GenerateKey(rand.Reader)
+	signer, _ := ssh.NewSignerFromKey(priv)
+	block, _ := ssh.MarshalPrivateKey(priv, "")
+	dir := t.TempDir()
+	key := filepath.Join(dir, "id_ed25519")
+	os.WriteFile(key, pem.EncodeToMemory(block), 0o600)
+	port, fp := serveSSH(t, signer.PublicKey())
+	c := SSHConfig{Name: "nas", Host: "127.0.0.1", Port: port, User: "kyq", KnownHosts: filepath.Join(dir, "known_hosts"), Trust: fp, KeyFile: key}
+
+	s, err := Dial(context.Background(), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := s.Run(context.Background(), "true", nil)
+	s.Close()
+	if err != nil || string(out) != "ran" {
+		t.Fatalf("run: %q %v", out, err)
+	}
+	// A key file others can read is refused before connecting.
+	os.Chmod(key, 0o644)
+	if _, err := Dial(context.Background(), c); err == nil || !strings.Contains(err.Error(), "ssh key") {
+		t.Fatalf("readable key: %v", err)
 	}
 }
