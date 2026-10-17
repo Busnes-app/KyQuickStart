@@ -30,8 +30,12 @@ func hashOf(parts ...string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// Steps returns the app's install steps: secrets, deploy, health.
+// Steps returns the app's install steps: secrets, deploy, health, and for NPM its bootstrap.
 func Steps(a App) []engine.Step {
 	hash := render(a).hash()
-	return []engine.Step{secretsStep{a}, deployStep{a: a, hash: hash}, healthStep{a: a, hash: hash}}
+	steps := []engine.Step{secretsStep{a}, deployStep{a: a, hash: hash}, healthStep{a: a, hash: hash}}
+	if a.Name == "npm" && a.Catalog.Category == "edge" {
+		steps = append(steps, npmBootstrapStep{a})
+	}
+	return steps
 }

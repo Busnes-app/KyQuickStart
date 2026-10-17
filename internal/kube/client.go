@@ -4,6 +4,7 @@ package kube
 import (
 	"context"
 	"fmt"
+	"net"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
@@ -17,6 +18,7 @@ type Client struct {
 	config      *rest.Config
 	execCommand func(context.Context, string, string, string, []string) ([]byte, error)
 	execStream  func(context.Context, string, string, string, []string, remotecommand.StreamOptions) error
+	portForward func(ctx context.Context, namespace, pod string, port int) (net.Conn, error) // tests
 }
 
 // New wraps a clientset; tests pass a fake one.

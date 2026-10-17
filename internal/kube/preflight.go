@@ -29,8 +29,9 @@ var required = func() []authorizationv1.ResourceAttributes {
 	}
 	// patch is unmanage's; delete of deployments and services is uninstall's.
 	add("", "namespaces", "", "get", "create", "update", "patch")
-	add("", "pods", "", "get", "create", "delete")
+	add("", "pods", "", "get", "list", "create", "delete")
 	add("", "pods/exec", "", "create")
+	add("", "pods/portforward", "", "create") // the in-cluster NPM's admin API
 	add("", "secrets", "", "get", "create", "update", "patch")
 	add("", "services", "", "get", "create", "update", "patch", "delete")
 	add("", "persistentvolumeclaims", "", "get", "create", "patch")
