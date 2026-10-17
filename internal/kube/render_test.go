@@ -1,7 +1,9 @@
 package kube
 
 import (
+	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
@@ -19,7 +21,7 @@ func fixture(t *testing.T) catalog.App {
 }
 
 func TestRenderIsRestricted(t *testing.T) {
-	o := render("hello", fixture(t), "rs-1")
+	o := render("hello", fixture(t), "rs-1", "")
 	d := o.Deployment
 	if d.Namespace != "kyq-hello" || d.Name != appName || *d.Spec.Replicas != 1 {
 		t.Fatalf("deployment meta = %s/%s replicas %d", d.Namespace, d.Name, *d.Spec.Replicas)
@@ -62,11 +64,11 @@ func TestRenderIsRestricted(t *testing.T) {
 }
 
 func TestRenderHashFollowsInputs(t *testing.T) {
-	a, b := render("hello", fixture(t), "rs-1"), render("hello", fixture(t), "rs-1")
+	a, b := render("hello", fixture(t), "rs-1", ""), render("hello", fixture(t), "rs-1", "")
 	if a.hash() != b.hash() {
 		t.Fatal("hash not deterministic")
 	}
-	if a.hash() == render("hello", fixture(t), "rs-2").hash() {
+	if a.hash() == render("hello", fixture(t), "rs-2", "").hash() {
 		t.Fatal("release set change did not change the hash")
 	}
 }
@@ -76,7 +78,7 @@ func TestRenderEnvIsSorted(t *testing.T) {
 	k := *app.Kubernetes
 	k.Env = map[string]string{"B": "2", "A": "1", "C": "3"}
 	app.Kubernetes = &k
-	env := render("hello", app, "rs-1").Deployment.Spec.Template.Spec.Containers[0].Env
+	env := render("hello", app, "rs-1", "").Deployment.Spec.Template.Spec.Containers[0].Env
 	if len(env) != 3 || env[0].Name != "A" || env[1].Value != "2" || env[2].Name != "C" {
 		t.Fatalf("env = %+v", env)
 	}
@@ -87,7 +89,7 @@ func TestRenderWithoutPortsOrSecrets(t *testing.T) {
 	k := *app.Kubernetes
 	k.Ports, k.ReadinessPath, k.Volumes = nil, "", nil
 	app.Kubernetes, app.Secrets = &k, nil
-	o := render("hello", app, "rs-1")
+	o := render("hello", app, "rs-1", "")
 	if o.Service != nil || len(o.Claims) != 0 || o.Deployment.Spec.Template.Spec.Containers[0].ReadinessProbe != nil {
 		t.Fatalf("objects = %+v", o)
 	}
@@ -95,5 +97,28 @@ func TestRenderWithoutPortsOrSecrets(t *testing.T) {
 		if v.Secret != nil {
 			t.Fatal("secret volume without secrets")
 		}
+	}
+}
+
+func TestRenderStorageClass(t *testing.T) {
+	unset := render("hello", fixture(t), "rs-1", "")
+	set := render("hello", fixture(t), "rs-1", "local-path")
+	if len(set.Claims) == 0 {
+		t.Fatal("fixture has no volumes")
+	}
+	for i, c := range set.Claims {
+		if c.Spec.StorageClassName == nil || *c.Spec.StorageClassName != "local-path" {
+			t.Errorf("claim %s class = %v", c.Name, c.Spec.StorageClassName)
+		}
+		if unset.Claims[i].Spec.StorageClassName != nil {
+			t.Errorf("unset claim %s has a class", c.Name)
+		}
+	}
+	// Unset must hash exactly as before the field existed, so existing installs do not redeploy.
+	if b, _ := json.Marshal(unset); strings.Contains(string(b), "storageClassName") {
+		t.Error("unset class reaches the hashed JSON")
+	}
+	if set.hash() == unset.hash() {
+		t.Error("storage class does not change the hash")
 	}
 }

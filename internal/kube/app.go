@@ -15,6 +15,8 @@ type App struct {
 	Catalog    catalog.App
 	ReleaseSet string
 	Redact     *engine.Redactor
+	// StorageClass is the target's storage_class; empty leaves claims to the cluster default.
+	StorageClass string
 }
 
 func hashOf(parts ...string) string {
@@ -28,6 +30,6 @@ func hashOf(parts ...string) string {
 
 // Steps returns the app's install steps: secrets, deploy, health.
 func Steps(a App) []engine.Step {
-	hash := render(a.Name, a.Catalog, a.ReleaseSet).hash()
+	hash := render(a.Name, a.Catalog, a.ReleaseSet, a.StorageClass).hash()
 	return []engine.Step{secretsStep{a}, deployStep{a: a, hash: hash}, healthStep{a: a, hash: hash}}
 }

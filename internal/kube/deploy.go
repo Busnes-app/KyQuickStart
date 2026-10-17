@@ -9,6 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 )
 
 type deployStep struct {
@@ -23,7 +24,7 @@ func (d deployStep) InputHash() string { return d.hash }
 func (d deployStep) check(ctx context.Context) (string, error) {
 	ns := namespaceOf(d.a.Name)
 	cs := d.a.Client.cs
-	want := render(d.a.Name, d.a.Catalog, d.a.ReleaseSet)
+	want := render(d.a.Name, d.a.Catalog, d.a.ReleaseSet, d.a.StorageClass)
 	// Pod security and the policy are security controls: drift in either is repaired.
 	n, err := cs.CoreV1().Namespaces().Get(ctx, ns, metav1.GetOptions{})
 	switch {
@@ -83,20 +84,23 @@ func (d deployStep) Apply(ctx context.Context) error {
 	}
 	ns := namespaceOf(d.a.Name)
 	cs := d.a.Client.cs
-	o := render(d.a.Name, d.a.Catalog, d.a.ReleaseSet)
+	o := render(d.a.Name, d.a.Catalog, d.a.ReleaseSet, d.a.StorageClass)
 	if err := upsert(ctx, cs.NetworkingV1().NetworkPolicies(ns), "network policy", o.Policy, nil); err != nil {
 		return err
 	}
 	for _, c := range o.Claims {
 		// A claim's spec is immutable once bound: create it if missing, never rewrite it.
-		_, found, err := getOwned(ctx, cs.CoreV1().PersistentVolumeClaims(ns), "claim", c.Name)
-		if err != nil {
+		have, found, err := getOwned(ctx, cs.CoreV1().PersistentVolumeClaims(ns), "claim", c.Name)
+		switch {
+		case err != nil:
 			return err
-		}
-		if !found {
+		case !found:
 			if _, err := cs.CoreV1().PersistentVolumeClaims(ns).Create(ctx, c, metav1.CreateOptions{}); err != nil {
 				return fmt.Errorf("claim %s: %w", c.Name, err)
 			}
+		case c.Spec.StorageClassName != nil && ptr.Deref(have.Spec.StorageClassName, "") != *c.Spec.StorageClassName:
+			return fmt.Errorf("claim %s has StorageClass %q but storage_class names %q; a claim's class cannot change",
+				c.Name, ptr.Deref(have.Spec.StorageClassName, ""), *c.Spec.StorageClassName)
 		}
 	}
 	if o.Service != nil {
