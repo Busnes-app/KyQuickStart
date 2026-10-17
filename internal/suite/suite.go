@@ -26,6 +26,10 @@ const (
 	BackupRequired   Code = "backup_required"
 	AckRequired      Code = "ack_required"
 	StepFailed       Code = "step_failed"
+	OwnedByRunner    Code = "owned_by_runner" // the CLI may not change a plan the runner owns
+	OwnedByCLI       Code = "owned_by_cli"    // the runner acts only on a plan handed to it
+	NotFound         Code = "not_found"       // runner protocol: no such operation or route
+	Internal         Code = "internal"        // runner protocol: any failure without a code above
 )
 
 type Error struct {
@@ -82,4 +86,62 @@ type Result struct {
 	Step   string    `json:"step"`
 	Status string    `json:"status"` // ok or failed
 	Time   time.Time `json:"time"`
+}
+
+// Catalog is the body of GET /v1/catalog.
+type Catalog struct {
+	ReleaseSet string       `json:"release_set"`
+	Apps       []CatalogApp `json:"apps"`
+}
+
+type CatalogApp struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Category    string   `json:"category"`
+	Version     string   `json:"version"`
+	DependsOn   []string `json:"depends_on"`
+	Installed   bool     `json:"installed"`
+	Upgrade     Upgrade  `json:"upgrade"`
+}
+
+type Upgrade struct {
+	MinFrom      string   `json:"min_from"`
+	NoSkip       []string `json:"no_skip"`
+	MigratesData bool     `json:"migrates_data"`
+}
+
+// Request is the body of POST /v1/operations.
+type Request struct {
+	ID                  string   `json:"id"`
+	Kind                string   `json:"kind"`
+	Apps                []string `json:"apps"`
+	Target              string   `json:"target,omitempty"`
+	AcknowledgeNoBackup bool     `json:"acknowledge_no_backup"`
+	Actor               string   `json:"actor"`
+}
+
+// Operation is the body of GET /v1/operations/{id}.
+type Operation struct {
+	ID       string     `json:"id"`
+	Kind     string     `json:"kind"`
+	Apps     []string   `json:"apps"`
+	Actor    string     `json:"actor"`
+	State    string     `json:"state"` // running, succeeded, failed or unknown
+	Started  time.Time  `json:"started"`
+	Finished *time.Time `json:"finished"`
+	Steps    []Step     `json:"steps"`
+	Error    *Refusal   `json:"error"`
+}
+
+type Step struct {
+	ID          string    `json:"id"`
+	Status      string    `json:"status"` // running, ok, failed or skipped
+	Time        time.Time `json:"time"`
+	Diagnostics string    `json:"diagnostics"`
+}
+
+// Refusal is an error on the wire: a refused request's body is {"error": Refusal}.
+type Refusal struct {
+	Code    Code   `json:"code"`
+	Message string `json:"message"`
 }
