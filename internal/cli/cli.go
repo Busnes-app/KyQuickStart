@@ -345,6 +345,25 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 		app.Kubernetes = &k
 		cat[a.Name] = app
 	}
+	for name, t := range s.placed {
+		app := cat[name]
+		if !t.Kubernetes() || !app.Kubernetes.UsesHostname() {
+			continue
+		}
+		var hosts []string
+		for _, e := range st.Edges {
+			for _, r := range e.Routes {
+				if r.App == name {
+					hosts = append(hosts, r.Hostname)
+				}
+			}
+		}
+		if len(hosts) != 1 {
+			return nil, fmt.Errorf("app %q takes its URL from its route hostname; give it exactly one edge route", name)
+		}
+		app.Kubernetes = app.Kubernetes.WithHostname(hosts[0])
+		cat[name] = app
+	}
 	return s, nil
 }
 

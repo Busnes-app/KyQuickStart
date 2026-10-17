@@ -69,7 +69,7 @@ type Health struct {
 type Kubernetes struct {
 	Image         string            `yaml:"image"` // a key of Images
 	Args          []string          `yaml:"args"`
-	Env           map[string]string `yaml:"env"` // never secrets: those are files in /run/secrets
+	Env           map[string]string `yaml:"env"` // never secrets: those are files in /run/secrets; may hold HostnameRef
 	Ports         []int             `yaml:"ports"`
 	ReadinessPath string            `yaml:"readiness_path"`
 	RunAs         int64             `yaml:"run_as"` // uid and gid; 0 only under baseline
@@ -120,6 +120,9 @@ var (
 	skipRE    = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)+$`)
 	versionRE = regexp.MustCompile(`^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$`)
 )
+
+// HostnameRef in a kubernetes.env value stands for the app's route hostname in the plan.
+const HostnameRef = "{{hostname}}"
 
 // AdminPort is NPM's admin API port. It is never published outside the cluster.
 const AdminPort = 81
@@ -278,9 +281,12 @@ func (k Kubernetes) validate(images map[string]string, baseline, edge bool) erro
 	if k.ReadinessPath != "" && (len(k.Ports) == 0 || !strings.HasPrefix(k.ReadinessPath, "/")) {
 		return fmt.Errorf("readiness_path %q needs a port and must start with /", k.ReadinessPath)
 	}
-	for key := range k.Env {
+	for key, v := range k.Env {
 		if !envRE.MatchString(key) {
 			return fmt.Errorf("env: name %q must match %s", key, envRE)
+		}
+		if rest := strings.ReplaceAll(v, HostnameRef, ""); strings.Contains(rest, "{{") || strings.Contains(rest, "}}") {
+			return fmt.Errorf("env: %s: the only reference is %s", key, HostnameRef)
 		}
 	}
 	switch {
@@ -325,6 +331,26 @@ func (k Kubernetes) validate(images map[string]string, baseline, edge bool) erro
 		mounts[v.Mount] = true
 	}
 	return nil
+}
+
+// UsesHostname reports whether an env value references the route hostname.
+func (k Kubernetes) UsesHostname() bool {
+	for _, v := range k.Env {
+		if strings.Contains(v, HostnameRef) {
+			return true
+		}
+	}
+	return false
+}
+
+// WithHostname returns a copy whose env has every HostnameRef replaced by host.
+func (k Kubernetes) WithHostname(host string) *Kubernetes {
+	env := make(map[string]string, len(k.Env))
+	for key, v := range k.Env {
+		env[key] = strings.ReplaceAll(v, HostnameRef, host)
+	}
+	k.Env = env
+	return &k
 }
 
 func (o OIDC) validate() error {
