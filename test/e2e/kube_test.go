@@ -175,4 +175,8 @@ func TestKubernetesApply(t *testing.T) {
 	if _, err := cs.CoordinationV1().Leases("kyquickstart").Get(ctx, "kyquickstart-lock", metav1.GetOptions{}); err != nil {
 		t.Fatalf("stale lease removed: %v", err)
 	}
+	if err := cs.CoordinationV1().Leases("kyquickstart").Delete(ctx, "kyquickstart-lock", metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	testRunnerPod(t, ctx, cs, name, kc)
 }
