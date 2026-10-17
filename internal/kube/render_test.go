@@ -80,6 +80,29 @@ func TestRenderIsRestricted(t *testing.T) {
 	}
 }
 
+// A non-root app's claim is mounted through a 0700 subdirectory its own uid creates, so a
+// group- or world-writable claim root never becomes the app's data directory.
+func TestRenderPrivateVolumes(t *testing.T) {
+	pod := renderHello(fixture(t), "rs-1", "").Deployment.Spec.Template.Spec
+	if len(pod.InitContainers) != 1 {
+		t.Fatalf("init containers = %+v", pod.InitContainers)
+	}
+	init := pod.InitContainers[0]
+	if init.Image != CredentialGeneratorImage || !slices.Equal(init.Command, []string{"mkdir", "-p", "-m", "700", "/volumes/data/private"}) ||
+		init.SecurityContext != pod.Containers[0].SecurityContext || init.Resources.Limits.Memory().String() != "16Mi" ||
+		len(init.VolumeMounts) != 1 || init.VolumeMounts[0].Name != "vol-data" || init.VolumeMounts[0].MountPath != "/volumes/data" {
+		t.Fatalf("init = %+v", init)
+	}
+	for _, m := range pod.Containers[0].VolumeMounts {
+		if m.Name == "vol-data" && (m.MountPath != "/data" || m.SubPath != privateDir) {
+			t.Fatalf("data mount = %+v", m)
+		}
+	}
+	if npm := render(App{Name: "npm", Catalog: npmApp(t)}).Deployment.Spec.Template.Spec; len(npm.InitContainers) != 0 || npm.Containers[0].VolumeMounts[2].SubPath != "" {
+		t.Fatal("a root app's claims changed")
+	}
+}
+
 // The edge's admin API port never leaves ClusterIP; only node_ports reach the NodePort Service.
 func TestRenderNPMKeepsAdminInCluster(t *testing.T) {
 	o := render(App{Name: "npm", Catalog: npmApp(t), ReleaseSet: "rs-1", StorageClass: "local-path"})
