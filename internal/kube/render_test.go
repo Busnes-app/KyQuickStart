@@ -3,6 +3,7 @@ package kube
 import (
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -20,8 +21,21 @@ func fixture(t *testing.T) catalog.App {
 	return cat["hello"]
 }
 
+func renderHello(c catalog.App, releaseSet, storageClass string) objects {
+	return render(App{Name: "hello", Catalog: c, ReleaseSet: releaseSet, StorageClass: storageClass})
+}
+
+func npmApp(t *testing.T) catalog.App {
+	t.Helper()
+	cat, err := catalog.Load(catalog.Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cat["npm"]
+}
+
 func TestRenderIsRestricted(t *testing.T) {
-	o := render("hello", fixture(t), "rs-1", "")
+	o := renderHello(fixture(t), "rs-1", "")
 	d := o.Deployment
 	if d.Namespace != "kyq-hello" || d.Name != appName || *d.Spec.Replicas != 1 {
 		t.Fatalf("deployment meta = %s/%s replicas %d", d.Namespace, d.Name, *d.Spec.Replicas)
@@ -61,14 +75,88 @@ func TestRenderIsRestricted(t *testing.T) {
 	if len(o.Policy.Spec.PolicyTypes) != 1 || len(o.Policy.Spec.Ingress) != 0 {
 		t.Errorf("policy = %+v", o.Policy.Spec)
 	}
+	if o.Public != nil || pod.SecurityContext.Sysctls != nil || len(sc.Capabilities.Add) != 0 {
+		t.Errorf("restricted app published ports, set sysctls or added capabilities")
+	}
+}
+
+// The edge's admin API port never leaves ClusterIP; only node_ports reach the NodePort Service.
+func TestRenderNPMKeepsAdminInCluster(t *testing.T) {
+	o := render(App{Name: "npm", Catalog: npmApp(t), ReleaseSet: "rs-1", StorageClass: "local-path"})
+	if o.Service == nil || o.Service.Spec.Type != "" || len(o.Service.Spec.Ports) != 1 || o.Service.Spec.Ports[0].Port != catalog.AdminPort {
+		t.Fatalf("cluster service = %+v", o.Service)
+	}
+	pub := o.Public
+	if pub == nil || pub.Name != publicName || pub.Spec.Type != corev1.ServiceTypeNodePort || pub.Spec.ExternalTrafficPolicy != corev1.ServiceExternalTrafficPolicyLocal {
+		t.Fatalf("public service = %+v", pub)
+	}
+	got := map[int32]int32{}
+	for _, p := range pub.Spec.Ports {
+		got[p.Port] = p.NodePort
+	}
+	if len(got) != 2 || got[80] != 30080 || got[443] != 30443 {
+		t.Fatalf("published = %v", got)
+	}
+	for _, rule := range o.Policy.Spec.Ingress {
+		for _, p := range rule.Ports {
+			if p.Port.IntValue() == catalog.AdminPort {
+				t.Fatal("policy admits the admin port")
+			}
+		}
+	}
+	if len(o.Policy.Spec.Ingress) != 1 || len(o.Policy.Spec.Ingress[0].From) != 0 || len(o.Policy.Spec.Ingress[0].Ports) != 2 {
+		t.Fatalf("ingress = %+v", o.Policy.Spec.Ingress)
+	}
+	if len(o.Policy.Spec.PolicyTypes) != 2 || len(o.Policy.Spec.Egress) != 3 || o.Policy.Spec.Egress[0].To[0].NamespaceSelector.MatchLabels[nsNameLabel] != "kube-system" {
+		t.Fatalf("egress = %+v", o.Policy.Spec)
+	}
+	pod := o.Deployment.Spec.Template.Spec
+	sc := pod.Containers[0].SecurityContext
+	want := []corev1.Capability{"CHOWN", "DAC_OVERRIDE", "SETGID", "SETUID", "KILL"}
+	if *sc.AllowPrivilegeEscalation || *sc.RunAsNonRoot || *sc.RunAsUser != 0 || *sc.ReadOnlyRootFilesystem ||
+		sc.Capabilities.Drop[0] != "ALL" || !slices.Equal(sc.Capabilities.Add, want) || sc.Privileged != nil || pod.HostNetwork {
+		t.Fatalf("security context = %+v", sc)
+	}
+	if pod.SecurityContext.RunAsNonRoot != nil || pod.SecurityContext.FSGroup != nil || pod.SecurityContext.Sysctls[0].Value != "0" {
+		t.Fatalf("pod security context = %+v", pod.SecurityContext)
+	}
+	if c := pod.Containers[0]; c.ReadinessProbe.HTTPGet.Port.IntValue() != catalog.AdminPort || len(o.Claims) != 2 {
+		t.Fatalf("probe or claims = %+v %d", c.ReadinessProbe, len(o.Claims))
+	}
+	if (App{Catalog: npmApp(t)}).namespaceLabels()[podSecurity] != "baseline" {
+		t.Fatal("npm namespace is not baseline")
+	}
+}
+
+func TestRenderAdmitsEdgeOnly(t *testing.T) {
+	o := render(App{Name: "hello", Catalog: fixture(t), ReleaseSet: "rs-1", Edge: "npm"})
+	in := o.Policy.Spec.Ingress
+	if len(in) != 1 || len(in[0].From) != 1 || in[0].From[0].NamespaceSelector.MatchLabels[nsNameLabel] != "kyq-npm" ||
+		in[0].From[0].PodSelector.MatchLabels[nameLabel] != "npm" || in[0].Ports[0].Port.IntValue() != 8080 {
+		t.Fatalf("ingress = %+v", in)
+	}
+	if len(o.Policy.Spec.PolicyTypes) != 1 {
+		t.Fatal("app egress restricted")
+	}
+	if o.hash() == renderHello(fixture(t), "rs-1", "").hash() {
+		t.Fatal("edge admission does not change the hash")
+	}
+}
+
+func TestNamespaceLevelFailsClosed(t *testing.T) {
+	for level, want := range map[string]string{"baseline": "baseline", "restricted": "restricted", "": "restricted", "privileged": "restricted"} {
+		if got := (App{Catalog: catalog.App{Manifest: catalog.Manifest{PodSecurity: level}}}).namespaceLabels()[podSecurity]; got != want {
+			t.Errorf("%q -> %q", level, got)
+		}
+	}
 }
 
 func TestRenderHashFollowsInputs(t *testing.T) {
-	a, b := render("hello", fixture(t), "rs-1", ""), render("hello", fixture(t), "rs-1", "")
+	a, b := renderHello(fixture(t), "rs-1", ""), renderHello(fixture(t), "rs-1", "")
 	if a.hash() != b.hash() {
 		t.Fatal("hash not deterministic")
 	}
-	if a.hash() == render("hello", fixture(t), "rs-2", "").hash() {
+	if a.hash() == renderHello(fixture(t), "rs-2", "").hash() {
 		t.Fatal("release set change did not change the hash")
 	}
 }
@@ -78,7 +166,7 @@ func TestRenderEnvIsSorted(t *testing.T) {
 	k := *app.Kubernetes
 	k.Env = map[string]string{"B": "2", "A": "1", "C": "3"}
 	app.Kubernetes = &k
-	env := render("hello", app, "rs-1", "").Deployment.Spec.Template.Spec.Containers[0].Env
+	env := renderHello(app, "rs-1", "").Deployment.Spec.Template.Spec.Containers[0].Env
 	if len(env) != 3 || env[0].Name != "A" || env[1].Value != "2" || env[2].Name != "C" {
 		t.Fatalf("env = %+v", env)
 	}
@@ -89,7 +177,7 @@ func TestRenderWithoutPortsOrSecrets(t *testing.T) {
 	k := *app.Kubernetes
 	k.Ports, k.ReadinessPath, k.Volumes = nil, "", nil
 	app.Kubernetes, app.Secrets = &k, nil
-	o := render("hello", app, "rs-1", "")
+	o := renderHello(app, "rs-1", "")
 	if o.Service != nil || len(o.Claims) != 0 || o.Deployment.Spec.Template.Spec.Containers[0].ReadinessProbe != nil {
 		t.Fatalf("objects = %+v", o)
 	}
@@ -101,8 +189,8 @@ func TestRenderWithoutPortsOrSecrets(t *testing.T) {
 }
 
 func TestRenderStorageClass(t *testing.T) {
-	unset := render("hello", fixture(t), "rs-1", "")
-	set := render("hello", fixture(t), "rs-1", "local-path")
+	unset := renderHello(fixture(t), "rs-1", "")
+	set := renderHello(fixture(t), "rs-1", "local-path")
 	if len(set.Claims) == 0 {
 		t.Fatal("fixture has no volumes")
 	}

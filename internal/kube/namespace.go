@@ -15,6 +15,9 @@ import (
 func (a App) namespaceLabels() map[string]string {
 	l := workloadLabels(a.ReleaseSet)
 	l[podSecurity] = "restricted"
+	if a.Catalog.PodSecurity == "baseline" { // anything else fails closed
+		l[podSecurity] = "baseline"
+	}
 	l[managed.VersionLabel] = a.Catalog.Version
 	return l
 }

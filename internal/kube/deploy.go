@@ -24,7 +24,7 @@ func (d deployStep) InputHash() string { return d.hash }
 func (d deployStep) check(ctx context.Context) (string, error) {
 	ns := namespaceOf(d.a.Name)
 	cs := d.a.Client.cs
-	want := render(d.a.Name, d.a.Catalog, d.a.ReleaseSet, d.a.StorageClass)
+	want := render(d.a)
 	// Pod security and the policy are security controls: drift in either is repaired.
 	n, err := cs.CoreV1().Namespaces().Get(ctx, ns, metav1.GetOptions{})
 	switch {
@@ -49,9 +49,13 @@ func (d deployStep) check(ctx context.Context) (string, error) {
 	case dep.Spec.Replicas == nil || *dep.Spec.Replicas != 1:
 		return "deployment is not at one replica", nil
 	}
-	if want.Service != nil {
-		if _, found, err := getOwned(ctx, cs.CoreV1().Services(ns), "service", appName); err != nil || !found {
-			return "service missing", err
+	for _, svc := range want.services() {
+		have, found, err := getOwned(ctx, cs.CoreV1().Services(ns), "service", svc.Name)
+		switch {
+		case err != nil || !found:
+			return "service " + svc.Name + " missing", err
+		case exposure(have) != exposure(svc):
+			return "service " + svc.Name + " exposes other ports", nil
 		}
 	}
 	for _, c := range want.Claims {
@@ -71,6 +75,19 @@ func (d deployStep) check(ctx context.Context) (string, error) {
 	return "", nil
 }
 
+// exposure is what a Service publishes, in a form the API server's defaults do not change.
+func exposure(s *corev1.Service) string {
+	t := s.Spec.Type
+	if t == "" {
+		t = corev1.ServiceTypeClusterIP
+	}
+	out := fmt.Sprint(t, s.Spec.ExternalTrafficPolicy, s.Spec.ExternalIPs)
+	for _, p := range s.Spec.Ports {
+		out += fmt.Sprintf(" %d:%d->%s", p.Port, p.NodePort, p.TargetPort.String())
+	}
+	return out
+}
+
 func (d deployStep) Inspect(ctx context.Context) (bool, error) {
 	why, err := d.check(ctx)
 	return why == "", err
@@ -84,7 +101,7 @@ func (d deployStep) Apply(ctx context.Context) error {
 	}
 	ns := namespaceOf(d.a.Name)
 	cs := d.a.Client.cs
-	o := render(d.a.Name, d.a.Catalog, d.a.ReleaseSet, d.a.StorageClass)
+	o := render(d.a)
 	if err := upsert(ctx, cs.NetworkingV1().NetworkPolicies(ns), "network policy", o.Policy, nil); err != nil {
 		return err
 	}
@@ -103,8 +120,7 @@ func (d deployStep) Apply(ctx context.Context) error {
 				c.Name, ptr.Deref(have.Spec.StorageClassName, ""), *c.Spec.StorageClassName)
 		}
 	}
-	if o.Service != nil {
-		svc := o.Service
+	for _, svc := range o.services() {
 		err := upsert(ctx, cs.CoreV1().Services(ns), "service", svc, func(have *corev1.Service) {
 			svc.Spec.ClusterIP, svc.Spec.ClusterIPs = have.Spec.ClusterIP, have.Spec.ClusterIPs
 			svc.Spec.IPFamilies, svc.Spec.IPFamilyPolicy = have.Spec.IPFamilies, have.Spec.IPFamilyPolicy
