@@ -279,7 +279,9 @@ handover of admin and everyday logins.
   credential receipts refuse changes/loss; no credential enters local state. Destination
   SCIM tokens remain existing protected target references. `integrate-stack` runs
   these selections explicitly; `apply` retains deployment scope and does not configure
-  recorded existing products.
+  recorded existing products. An entry for an installed catalog app names no workload:
+  `apply` runs it after the app's health step against the app's one ready pod, and
+  `integrate-stack` skips it. Today only KyIdentity on Kubernetes, from its `identity` settings.
 - Command-line only: no GUI, web UI or full-screen terminal UI. `plan` asks its questions as
   plain terminal prompts, and every command also runs unattended from `stack.yaml`.
 - A Notes integration's explicit `identity_client` selects one declared prepared KyIdentity
@@ -369,6 +371,9 @@ handover of admin and everyday logins.
   drift in an app namespace's labels and its default-deny policy. A target's optional
   `storage_class` sets every claim's class and must exist at preflight; without it claims need a
   default class. A claim's class never changes: `apply` refuses an existing claim of another class.
+  A non-root app mounts each claim through a 0700 `private` subdirectory that an init container
+  (the pinned BusyBox helper, the app's uid) creates. A `kubernetes.env` value may contain
+  `{{hostname}}`, replaced by the app's one edge route hostname; no other template syntax.
 
 ## Work Guidance
 
@@ -400,7 +405,9 @@ calls and kind nodes must carry their own explicit bounds.
   against a kind cluster (`go run sigs.k8s.io/kind@v0.33.0`), including drift and stale-lock cases.
   Also runs disposable NPM, frpc/frps and cloudflared container tests in `internal/edge`, and
   `TestKubernetesNPMEdge`: catalog NPM on kind with claims, bootstrap, policy probes, a routed
-  request through the NodePort, a skipped rerun and token refresh.
+  request through the NodePort, a skipped rerun and token refresh. It also installs the catalog
+  KyIdentity from its attested image behind that edge: restricted uid-100 pod on a private
+  data directory, staged `apply-setup`, OIDC discovery through the edge, changed-intent refusal.
   Set `KYQ_TEST_IDENTITY_BINARY` to a local static KyIdentity build to additionally test real
   container-local identity setup over SSH and kind, including target-held preparation,
   inspection/resume and changed-intent refusal; SSH additionally refuses lost credentials.
