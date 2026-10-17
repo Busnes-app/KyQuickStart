@@ -3,10 +3,14 @@ package edge
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strings"
 	"testing"
+
+	"github.com/Busnes-app/kyquickstart/internal/stack"
 )
 
 func TestProductVerificationRejectsMissingAndSpoofedReports(t *testing.T) {
@@ -33,5 +37,33 @@ func TestProductVerificationRejectsMissingAndSpoofedReports(t *testing.T) {
 				t.Fatalf("verification: %v", err)
 			}
 		})
+	}
+}
+
+// A lan edge is verified from an allowed client, on the port clients use.
+func TestLANVerificationNeedsAnAllowedClient(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	e := stack.Edge{Provider: "lan", AllowCIDRs: []string{"127.0.0.0/8"}, ClientPort: l.Addr().(*net.TCPAddr).Port,
+		Routes: []stack.Route{{Hostname: "127.0.0.1", StatusPath: "/api/status"}}}
+	err = VerifyRoutes(context.Background(), e, netip.MustParseAddr("192.168.1.50"))
+	if err == nil || !strings.Contains(err.Error(), "outside allow_cidrs") {
+		t.Fatalf("outside client: %v", err)
+	}
+	dialled := make(chan bool, 1)
+	go func() {
+		c, err := l.Accept()
+		if err == nil {
+			c.Close()
+		}
+		dialled <- err == nil
+	}()
+	err = VerifyRoutes(context.Background(), e, netip.MustParseAddr("127.0.0.1"))
+	l.Close() // ends an Accept that never came
+	if err == nil || !<-dialled {
+		t.Fatalf("allowed client did not probe client_port: %v", err)
 	}
 }

@@ -17,12 +17,15 @@ import (
 // Edge references infrastructure and target-held credentials, never credential values.
 type Edge struct {
 	Target        string     `yaml:"target"`
-	Provider      string     `yaml:"provider"` // cloudflare or frp
+	Provider      string     `yaml:"provider"` // cloudflare, frp or lan
 	NPMURL        string     `yaml:"npm_url"`
-	ConnectorCIDR string     `yaml:"connector_cidr"`
+	ConnectorCIDR string     `yaml:"connector_cidr,omitempty"`
 	ProxyPort     int        `yaml:"proxy_port,omitempty"` // separate PROXY-protocol TLS listener for frp
 	Routes        []Route    `yaml:"routes"`
 	Connector     *Connector `yaml:"connector,omitempty"`
+	// lan: clients reach NPM directly; only these prefixes are served.
+	AllowCIDRs []string `yaml:"allow_cidrs,omitempty"`
+	ClientPort int      `yaml:"client_port,omitempty"` // lan: the port clients reach NPM's 443 on
 	// Certificates are requested by NPM from Let's Encrypt through a DNS-01 challenge.
 	Certificates []Certificate `yaml:"certificates,omitempty"`
 	LANDNS       *LANDNS       `yaml:"lan_dns,omitempty"`
@@ -107,8 +110,8 @@ func (s *Stack) validateEdges() error {
 			return fmt.Errorf("edge target %q must exist and have only one edge", e.Target)
 		}
 		targets[e.Target] = true
-		if e.Provider != "cloudflare" && e.Provider != "frp" {
-			return fmt.Errorf("edge %s: provider must be cloudflare or frp", e.Target)
+		if e.Provider != "cloudflare" && e.Provider != "frp" && e.Provider != "lan" {
+			return fmt.Errorf("edge %s: provider must be cloudflare, frp or lan", e.Target)
 		}
 		target, _ := s.Target(e.Target)
 		// adminHost and adminPort name the NPM API, which no route may forward to.
@@ -132,39 +135,14 @@ func (s *Stack) validateEdges() error {
 			return fmt.Errorf("edge %s: npm_url is already owned by another target", e.Target)
 		}
 		apis[e.NPMURL] = true
-		p, err := netip.ParsePrefix(e.ConnectorCIDR)
-		if err != nil || !p.Addr().Is4() || p.Bits() != 32 || p.Addr().IsUnspecified() || p.Addr().IsMulticast() {
-			return fmt.Errorf("edge %s: connector_cidr must pin one IPv4 address (/32)", e.Target)
+		var err error
+		if e.Provider == "lan" {
+			err = validateLAN(e)
+		} else {
+			err = validateConnector(e, target)
 		}
-		if e.Provider == "frp" {
-			if e.ProxyPort == 0 {
-				e.ProxyPort = 8443
-			}
-			if e.ProxyPort < 1024 || e.ProxyPort > 65535 {
-				return fmt.Errorf("edge %s: proxy_port must be a dedicated unprivileged port (1024-65535)", e.Target)
-			}
-		} else if e.ProxyPort != 0 {
-			return fmt.Errorf("edge %s: proxy_port is only for frp", e.Target)
-		}
-		if c := e.Connector; c != nil {
-			if target.Kubernetes() {
-				return fmt.Errorf("edge %s: connector deployment currently requires a Docker target; Kubernetes source-address isolation is not implemented", e.Target)
-			}
-			if !contextRE.MatchString(c.Network) || strings.ContainsAny(c.Network, "@:/") || !hostRE.MatchString(c.NPMHost) {
-				return fmt.Errorf("edge %s: connector needs a valid Docker network and NPM hostname", e.Target)
-			}
-			if e.Provider == "frp" {
-				if c.FRPPort == 0 {
-					c.FRPPort = 7000
-				}
-				if !hostRE.MatchString(c.FRPServer) || c.FRPPort < 1 || c.FRPPort > 65535 || c.TunnelID != "" {
-					return fmt.Errorf("edge %s: frp connector needs frp_server and frp_port, with no tunnel_id", e.Target)
-				}
-			} else {
-				if !tunnelRE.MatchString(c.TunnelID) || c.FRPServer != "" || c.FRPPort != 0 {
-					return fmt.Errorf("edge %s: cloudflare connector needs a tunnel_id UUID, with no frp fields", e.Target)
-				}
-			}
+		if err != nil {
+			return err
 		}
 		if len(e.Routes) == 0 {
 			return fmt.Errorf("edge %s: no routes", e.Target)
@@ -217,6 +195,82 @@ func (s *Stack) validateEdges() error {
 		}
 	}
 	return nil
+}
+
+// validateConnector checks a tunnel edge: one trusted connector address.
+func validateConnector(e *Edge, target Target) error {
+	if len(e.AllowCIDRs) > 0 || e.ClientPort != 0 {
+		return fmt.Errorf("edge %s: allow_cidrs and client_port are only for lan", e.Target)
+	}
+	p, err := netip.ParsePrefix(e.ConnectorCIDR)
+	if err != nil || !p.Addr().Is4() || p.Bits() != 32 || p.Addr().IsUnspecified() || p.Addr().IsMulticast() {
+		return fmt.Errorf("edge %s: connector_cidr must pin one IPv4 address (/32)", e.Target)
+	}
+	if e.Provider == "frp" {
+		if e.ProxyPort == 0 {
+			e.ProxyPort = 8443
+		}
+		if e.ProxyPort < 1024 || e.ProxyPort > 65535 {
+			return fmt.Errorf("edge %s: proxy_port must be a dedicated unprivileged port (1024-65535)", e.Target)
+		}
+	} else if e.ProxyPort != 0 {
+		return fmt.Errorf("edge %s: proxy_port is only for frp", e.Target)
+	}
+	if c := e.Connector; c != nil {
+		if target.Kubernetes() {
+			return fmt.Errorf("edge %s: connector deployment currently requires a Docker target; Kubernetes source-address isolation is not implemented", e.Target)
+		}
+		if !contextRE.MatchString(c.Network) || strings.ContainsAny(c.Network, "@:/") || !hostRE.MatchString(c.NPMHost) {
+			return fmt.Errorf("edge %s: connector needs a valid Docker network and NPM hostname", e.Target)
+		}
+		if e.Provider == "frp" {
+			if c.FRPPort == 0 {
+				c.FRPPort = 7000
+			}
+			if !hostRE.MatchString(c.FRPServer) || c.FRPPort < 1 || c.FRPPort > 65535 || c.TunnelID != "" {
+				return fmt.Errorf("edge %s: frp connector needs frp_server and frp_port, with no tunnel_id", e.Target)
+			}
+		} else {
+			if !tunnelRE.MatchString(c.TunnelID) || c.FRPServer != "" || c.FRPPort != 0 {
+				return fmt.Errorf("edge %s: cloudflare connector needs a tunnel_id UUID, with no frp fields", e.Target)
+			}
+		}
+	}
+	return nil
+}
+
+// validateLAN checks an edge LAN clients reach directly: NPM trusts no forwarding header.
+func validateLAN(e *Edge) error {
+	if e.ConnectorCIDR != "" || e.Connector != nil || e.ProxyPort != 0 {
+		return fmt.Errorf("edge %s: lan takes no connector_cidr, connector or proxy_port; clients reach NPM directly", e.Target)
+	}
+	if len(e.AllowCIDRs) == 0 || len(e.AllowCIDRs) > 32 {
+		return fmt.Errorf("edge %s: lan needs allow_cidrs, 1-32 client prefixes", e.Target)
+	}
+	seen := map[string]bool{}
+	for _, c := range e.AllowCIDRs {
+		if !AllowCIDR(c) || seen[c] {
+			return fmt.Errorf("edge %s: allow_cidrs entry %q must be a unique canonical prefix, at least /8 for IPv4 or /32 for IPv6", e.Target, c)
+		}
+		seen[c] = true
+	}
+	if e.ClientPort == 0 {
+		e.ClientPort = 443
+	}
+	if e.ClientPort < 1 || e.ClientPort > 65535 {
+		return fmt.Errorf("edge %s: client_port must be 1-65535", e.Target)
+	}
+	return nil
+}
+
+// AllowCIDR accepts a canonical network prefix no wider than /8 (IPv4) or /32 (IPv6).
+func AllowCIDR(s string) bool {
+	p, err := netip.ParsePrefix(s)
+	min := 8
+	if p.Addr().Is6() {
+		min = 32
+	}
+	return err == nil && p.String() == s && p == p.Masked() && !p.Addr().Is4In6() && p.Bits() >= min
 }
 
 // validateCertificates returns e's certificates by name.

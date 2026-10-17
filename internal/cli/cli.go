@@ -59,7 +59,7 @@ commands:
 flags for preflight, apply, verify-edge and the app commands:
   --state DIR                          state directory holding stack.yaml (default .)
   --trust-host-key NAME=SHA256:<fp>    accept this unknown host key for target NAME
-  --expected-client-ip ADDR           required for verify-edge: expected public client address
+  --expected-client-ip ADDR           required for verify-edge: this workstation's address as the edge sees it
   --acknowledge-no-backup             apply, install, upgrade: upgrade without a pre-upgrade backup`
 
 type Options struct {
@@ -108,7 +108,7 @@ func Run(ctx context.Context, args []string, o Options) error {
 	fl := flag.NewFlagSet(cmd, flag.ContinueOnError)
 	fl.SetOutput(o.Out)
 	state := fl.String("state", ".", "state directory holding stack.yaml")
-	clientIP := fl.String("expected-client-ip", "", "verify-edge: this workstation's expected public client address")
+	clientIP := fl.String("expected-client-ip", "", "verify-edge: this workstation's address as the edge sees it")
 	ack := fl.Bool("acknowledge-no-backup", false, "apply: upgrade data without a pre-upgrade backup")
 	adopt := fl.Bool("adopt-edge-hosts", false, "apply: claim and re-mark this target's NPM hosts from builds without installation_id")
 	takeOver := fl.String("take-over-target", "", "apply: claim this target from the plan that last changed it")
