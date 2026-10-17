@@ -248,6 +248,38 @@ func TestHeadersAndDedicatedListener(t *testing.T) {
 	}
 }
 
+// A lan host trusts no forwarding header, serves only allow_cidrs and overwrites XFF.
+func TestLANHostConfig(t *testing.T) {
+	e := testEdge()
+	e.Provider, e.ConnectorCIDR, e.ProxyPort = "lan", "", 0
+	e.AllowCIDRs, e.ClientPort = []string{"192.168.1.0/24", "fd00:1::/48"}, 30543
+	want := "# kyquickstart:" + testID + ":nas:hello:hello.example.com\n" + `set_real_ip_from unix:;
+if ($ssl_server_name != hello.example.com) { return 421; }
+allow 192.168.1.0/24;
+allow fd00:1::/48;
+deny all;
+location / {
+  proxy_set_header Host $host;
+  proxy_set_header X-Forwarded-Host $host;
+  proxy_set_header X-Forwarded-For $remote_addr;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-Proto $scheme;
+  proxy_set_header X-Forwarded-Scheme $scheme;
+  proxy_set_header X-Forwarded-Port 30543;
+  proxy_set_header Forwarded "";
+  proxy_set_header CF-Connecting-IP "";
+  proxy_set_header True-Client-IP "";
+  proxy_set_header Upgrade $http_upgrade;
+  proxy_set_header Connection $http_connection;
+  proxy_http_version 1.1;
+  proxy_pass $forward_scheme://$server:$port$request_uri;
+}
+`
+	if got := (&NPM{installation: testID}).config(e, e.Routes[0], 1).Advanced; got != want {
+		t.Fatalf("lan advanced_config:\n%s", got)
+	}
+}
+
 // A kube:// NPM is reached only through the supplied tunnel, as plain HTTP inside it.
 func TestKubeTunnel(t *testing.T) {
 	var hostHeader string

@@ -25,7 +25,8 @@ The wizard asks for:
 3. Existing Ky products: product name, target and HTTPS origin.
    Outside demo mode, supported products also offer a separate setup choice (default no),
    container name and protected container-local bundle path; Kubernetes needs namespace/pod.
-4. Optional existing NPM and Cloudflare/frp connection settings.
+4. Optional existing NPM and Cloudflare/frp connection settings, or `lan` for clients that
+   reach NPM directly (its allowed client prefixes and client port).
 5. Review and confirmation of the plan.
 6. `finish`, `check` or `deploy`. `finish` is always the default and changes no servers.
 

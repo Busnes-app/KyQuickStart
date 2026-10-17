@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"net/netip"
+	"slices"
+	"strconv"
 	"time"
 
 	"github.com/Busnes-app/kyquickstart/internal/stack"
@@ -15,12 +17,20 @@ import (
 
 // VerifyRoutes probes public HTTPS while injecting forged forwarding headers. A product
 // must report its resolved client address, trusted-proxy decision, and resolved scheme.
+// On a lan edge, expected is this workstation's LAN address, which must be allowed.
 func VerifyRoutes(ctx context.Context, e stack.Edge, expected netip.Addr) error {
+	port := ""
+	if e.Provider == "lan" {
+		if !slices.ContainsFunc(e.AllowCIDRs, func(c string) bool { return netip.MustParsePrefix(c).Contains(expected.Unmap()) }) {
+			return fmt.Errorf("this workstation's address %s is outside allow_cidrs; verify-edge must run from a client the lan edge serves", expected)
+		}
+		port = ":" + strconv.Itoa(e.ClientPort)
+	}
 	client := &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	defer client.CloseIdleConnections()
 	for _, r := range e.Routes {
-		if err := verifyRoute(ctx, client, "https://"+r.Hostname+r.StatusPath, expected); err != nil {
+		if err := verifyRoute(ctx, client, "https://"+r.Hostname+port+r.StatusPath, expected); err != nil {
 			return fmt.Errorf("route %s: %w", r.Hostname, err)
 		}
 	}

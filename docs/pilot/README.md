@@ -26,10 +26,17 @@ The earlier demo plan's `hello` was uninstalled first (its namespace and retaine
 
 ## Edge values (not yet applied)
 
-Certificates and LAN DNS for K80, per `docs/edge.md`. Both Secrets are created on the cluster
-by the operator with the commands there; nothing below is a credential.
+A `lan` edge (see `docs/edge.md`): LAN clients reach NPM on k81's NodePort directly, no tunnel.
+The certificate and KyDNS Secrets are created on the cluster by the operator with the commands
+there; nothing below is a credential.
 
 ```yaml
+edges:
+  - target: k80
+    provider: lan
+    npm_url: kube://kyq-npm/app:81
+    allow_cidrs: [192.168.1.0/24]
+    client_port: 30543
     certificates:
       - name: k80
         domains: ['*.k80.urlxl.us']
@@ -41,11 +48,18 @@ by the operator with the commands there; nothing below is a credential.
       url: https://kydns.urlxl.us/
       credentials: {secret: kydns-api, key: token}
       address: 192.168.1.81
+    routes:
+      - app: <app>
+        hostname: <app>.k80.urlxl.us
+        forward_host: app.kyq-<app>.svc.cluster.local
+        forward_port: <its port>
+        certificate: k80
 ```
 
-Routes use `certificate: k80` and hostnames `<app>.k80.urlxl.us`. Open before relying on them:
+Clients open `https://<app>.k80.urlxl.us:30543/`. Run `verify-edge` from a workstation on
+`192.168.1.0/24` with `--expected-client-ip` set to its LAN address. Open before relying on it:
 
-- `192.168.1.81` is k81, the node running NPM; it answers only on the NodePorts 30180/30543,
-  so a LAN client resolving `<app>.k80.urlxl.us` reaches HTTPS on 443 only if k81 forwards 443
-  to 30543. Nothing in KyQuickStart sets that up.
+- `192.168.1.81` is k81, the node running NPM; it answers only on the NodePorts 30180/30543.
+  A product that builds absolute URLs without the forwarded port sends clients to 443, which
+  answers only if k81 forwards 443 to 30543. Nothing in KyQuickStart sets that up.
 - KyDNS must hold `k80.urlxl.us` names inside its private zone; preflight reports the zone if not.

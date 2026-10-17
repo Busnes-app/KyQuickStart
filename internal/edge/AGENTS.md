@@ -33,6 +33,10 @@ Reconcile owned NPM routes, deploy Docker edge connectors, and verify product pr
   fails while one is enabled. Deletion is the operator's choice.
 - Each route trusts exactly its connector IPv4 /32. frp uses a separate TLS listener accepting
   PROXY v2; Cloudflare uses its connecting-IP header. Sanitize forwarding headers before the product.
+- A `lan` edge has no connector and trusts no forwarding header: `set_real_ip_from unix:;`
+  overrides NPM's `nginx.conf` trust of `X-Real-IP` from every private range, then each
+  `allow_cidrs` prefix is allowed, everyone else denied, and the SNI check kept. Its
+  verification runs from an allowed client, on `client_port`.
 - Optional connector deployment uses an existing Docker network and existing tunnel/server credentials.
   Containers run with a fixed address, read-only files, no published ports and no capabilities.
 - Kubernetes connector deployment remains unavailable until source-address isolation is implemented.
@@ -47,7 +51,7 @@ Use disposable fixtures for infrastructure tests. Preserve existing operator res
 
 - `make ci` covers unit tests, race checks and vet with the e2e tag.
 - `make e2e` runs actual pinned NPM API/configuration, frps/frpc routing with client-IP
-  preservation and cloudflared ingress parsing.
+  preservation and cloudflared ingress parsing. The kind NPM test also covers a `lan` route.
   The Cloudflare fixture does not prove a live account connection.
 
 ## Child DOX Index
