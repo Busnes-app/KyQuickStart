@@ -41,11 +41,12 @@ var required = func() []authorizationv1.ResourceAttributes {
 	return out
 }()
 
-// Preflight checks a cluster and changes nothing.
-func Preflight(ctx context.Context, c *Client, needsStorage bool) []Finding {
+// Preflight checks a cluster and changes nothing. A named storageClass must exist; with none,
+// claims need a default class.
+func Preflight(ctx context.Context, c *Client, needsStorage bool, storageClass string) []Finding {
 	out := []Finding{c.versionCheck(), c.accessCheck(ctx)}
 	if needsStorage {
-		out = append(out, c.storageCheck(ctx))
+		out = append(out, c.storageCheck(ctx, storageClass))
 	}
 	return out
 }
@@ -84,10 +85,18 @@ func (c *Client) accessCheck(ctx context.Context) Finding {
 	return Finding{"permissions", true, fmt.Sprintf("%d checks allowed", len(required))}
 }
 
-func (c *Client) storageCheck(ctx context.Context) Finding {
+func (c *Client) storageCheck(ctx context.Context, named string) Finding {
 	list, err := c.cs.StorageV1().StorageClasses().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return Finding{"storage", false, err.Error()}
+	}
+	if named != "" {
+		for _, sc := range list.Items {
+			if sc.Name == named {
+				return Finding{"storage", true, "StorageClass " + named}
+			}
+		}
+		return Finding{"storage", false, "StorageClass " + named + " named by storage_class does not exist"}
 	}
 	for _, sc := range list.Items {
 		if sc.Annotations["storageclass.kubernetes.io/is-default-class"] == "true" {

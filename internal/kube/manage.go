@@ -132,7 +132,7 @@ func meta[T metav1.Object](o T) []map[string]string { return []map[string]string
 func (s unmanageStep) sweep(ctx context.Context, fix bool) (string, error) {
 	ns := namespaceOf(s.a.Name)
 	cs := s.a.Client.cs
-	o := render(s.a.Name, s.a.Catalog, s.a.ReleaseSet)
+	o := render(s.a.Name, s.a.Catalog, s.a.ReleaseSet, s.a.StorageClass)
 	type check struct {
 		what string
 		run  func() (bool, error)

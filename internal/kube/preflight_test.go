@@ -42,32 +42,49 @@ func TestPreflight(t *testing.T) {
 	ok.StorageV1().StorageClasses().Create(ctx, &storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{
 		Name: "standard", Annotations: map[string]string{"storageclass.kubernetes.io/is-default-class": "true"},
 	}}, metav1.CreateOptions{})
-	for _, f := range Preflight(ctx, New(ok), true) {
+	for _, f := range Preflight(ctx, New(ok), true, "") {
 		if !f.OK {
 			t.Errorf("healthy cluster failed %+v", f)
 		}
 	}
-	if f := find(Preflight(ctx, New(cluster("29", "")), false), "kubernetes"); f.OK {
+	if f := find(Preflight(ctx, New(cluster("29", "")), false, ""), "kubernetes"); f.OK {
 		t.Errorf("1.29 accepted: %+v", f)
 	}
-	if f := find(Preflight(ctx, New(cluster("37", "create deployments")), false), "permissions"); f.OK || !strings.Contains(f.Detail, "create deployments") {
+	if f := find(Preflight(ctx, New(cluster("37", "create deployments")), false, ""), "permissions"); f.OK || !strings.Contains(f.Detail, "create deployments") {
 		t.Errorf("denied permission not reported: %+v", f)
 	}
-	if f := find(Preflight(ctx, New(cluster("37", "list storageclasses")), false), "permissions"); f.OK {
+	if f := find(Preflight(ctx, New(cluster("37", "list storageclasses")), false, ""), "permissions"); f.OK {
 		t.Errorf("denied storage class listing not reported: %+v", f)
 	}
-	if f := find(Preflight(ctx, New(cluster("37", "")), true), "storage"); f.OK {
+	if f := find(Preflight(ctx, New(cluster("37", "")), true, ""), "storage"); f.OK {
 		t.Errorf("missing default StorageClass accepted: %+v", f)
 	}
-	if f := find(Preflight(ctx, New(cluster("37", "")), false), "storage"); f.Check != "absent" {
+	if f := find(Preflight(ctx, New(cluster("37", "")), false, ""), "storage"); f.Check != "absent" {
 		t.Errorf("storage checked when no app needs it: %+v", f)
 	}
 }
 
 func TestPreflightRequiresCredentialPodAndExecPermissions(t *testing.T) {
 	for _, permission := range []string{"create pods", "get pods", "delete pods", "create pods/exec"} {
-		if f := find(Preflight(context.Background(), New(cluster("37", permission)), false), "permissions"); f.OK || !strings.Contains(f.Detail, permission) {
+		if f := find(Preflight(context.Background(), New(cluster("37", permission)), false, ""), "permissions"); f.OK || !strings.Contains(f.Detail, permission) {
 			t.Fatal("missing credential generation permission not reported", permission, f)
 		}
+	}
+}
+
+func TestPreflightNamedStorageClass(t *testing.T) {
+	ctx := context.Background()
+	cs := cluster("37", "")
+	cs.StorageV1().StorageClasses().Create(ctx, &storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: "local-path"}}, metav1.CreateOptions{})
+	// No default class exists: a named class that exists is enough.
+	if f := find(Preflight(ctx, New(cs), true, "local-path"), "storage"); !f.OK || !strings.Contains(f.Detail, "local-path") {
+		t.Errorf("named present class refused: %+v", f)
+	}
+	cs.StorageV1().StorageClasses().Create(ctx, &storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{
+		Name: "standard", Annotations: map[string]string{"storageclass.kubernetes.io/is-default-class": "true"},
+	}}, metav1.CreateOptions{})
+	// A default does not stand in for a missing named class.
+	if f := find(Preflight(ctx, New(cs), true, "fast"), "storage"); f.OK || !strings.Contains(f.Detail, "fast") {
+		t.Errorf("named missing class accepted: %+v", f)
 	}
 }

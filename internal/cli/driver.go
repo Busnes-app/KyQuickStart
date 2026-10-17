@@ -102,11 +102,12 @@ func (d sshDriver) connectorSteps(ctx context.Context, e stack.Edge, release str
 type kubeDriver struct {
 	c            *kube.Client
 	needsStorage bool
+	storageClass string
 }
 
 func (d kubeDriver) preflight(ctx context.Context) []finding {
 	var out []finding
-	for _, f := range kube.Preflight(ctx, d.c, d.needsStorage) {
+	for _, f := range kube.Preflight(ctx, d.c, d.needsStorage, d.storageClass) {
 		out = append(out, finding(f))
 	}
 	return out
@@ -123,7 +124,7 @@ func (d kubeDriver) writeMarker(ctx context.Context, m stack.Marker) error {
 }
 
 func (d kubeDriver) steps(name string, app catalog.App, releaseSet string, redact *engine.Redactor) []engine.Step {
-	return kube.Steps(kube.App{Name: name, Client: d.c, Catalog: app, ReleaseSet: releaseSet, Redact: redact})
+	return kube.Steps(kube.App{Name: name, Client: d.c, Catalog: app, ReleaseSet: releaseSet, Redact: redact, StorageClass: d.storageClass})
 }
 
 func (d kubeDriver) deployed(ctx context.Context, name string) (managed.Deployed, error) {

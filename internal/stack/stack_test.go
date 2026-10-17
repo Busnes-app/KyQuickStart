@@ -109,11 +109,26 @@ func TestKubernetesTarget(t *testing.T) {
 	}
 }
 
+func TestStorageClass(t *testing.T) {
+	s, err := Parse([]byte(strings.Replace(kubeStack, "context: admin@k1", "context: admin@k1\n    storage_class: local-path.v1", 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if k, _ := s.Target("k1"); k.StorageClass != "local-path.v1" {
+		t.Fatalf("k1 = %+v", k)
+	}
+	docker := "version: 1\ntargets:\n  - name: d1\n    host: d1.lan\n    user: kyq\n    storage_class: fast\napps: []\n"
+	if _, err := Parse([]byte(docker)); err == nil || !strings.Contains(err.Error(), "storage_class need") {
+		t.Fatalf("docker target with storage_class: err = %v", err)
+	}
+}
+
 func TestKubernetesTargetRejects(t *testing.T) {
 	cases := map[string]struct{ old, new, want string }{
 		"ssh field":    {"context: admin@k1", "context: admin@k1\n    host: k1.lan", "ssh fields"},
 		"bad context":  {"context: admin@k1", "context: \"a b\"", "context"},
 		"newline path": {"kubeconfig: /home/op/.kube/k1.yaml", "kubeconfig: \"/a\\nb\"", "kubeconfig"},
+		"bad class":    {"context: admin@k1", "context: admin@k1\n    storage_class: Fast_SSD", "storage_class"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

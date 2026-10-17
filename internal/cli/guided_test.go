@@ -217,3 +217,38 @@ func TestPlanDeclaresClusterCredentialGenerator(t *testing.T) {
 		t.Fatal("required helper image missing from installation plan")
 	}
 }
+
+func TestGuidedKubernetesStorageClassResumes(t *testing.T) {
+	dir := t.TempDir()
+	kc := filepath.Join(t.TempDir(), "kubeconfig")
+	if err := os.WriteFile(kc, []byte("not: a kubeconfig\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	o := Options{Catalog: catalog.Embedded(), In: strings.NewReader("yes\n1\nk1\nkubernetes\n" + kc + "\n\nlocal-path\ninstall\nk1\n0\nnone\nyes\nfinish\n"), Out: &out}
+	if err := Run(context.Background(), []string{"plan", "--demo", "--state", dir}, o); err != nil {
+		t.Fatal(err, out.String())
+	}
+	st, err := stack.Load(filepath.Join(dir, "stack.yaml"))
+	if err != nil || st.Targets[0].StorageClass != "local-path" {
+		t.Fatalf("storage class not saved: %v %+v", err, st)
+	}
+	if !strings.Contains(out.String(), "Volumes use StorageClass local-path") {
+		t.Fatal("review hides the storage class")
+	}
+	// Resume from stack.yaml alone, as on another workstation.
+	if err := os.Remove(filepath.Join(dir, "plan-answers.json")); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	o.In = strings.NewReader(strings.Repeat("\n", 20))
+	if err := Run(context.Background(), []string{"plan", "--state", dir}, o); err != nil {
+		t.Fatal(err, out.String())
+	}
+	if st, err := stack.Load(filepath.Join(dir, "stack.yaml")); err != nil || st.Targets[0].StorageClass != "local-path" || st.Revision != 2 {
+		t.Fatalf("resume lost storage class: %v %+v", err, st)
+	}
+	if !strings.Contains(out.String(), "StorageClass for app volumes (blank uses the cluster default) [local-path]") {
+		t.Fatal("resume did not seed the storage class")
+	}
+}

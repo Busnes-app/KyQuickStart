@@ -318,6 +318,10 @@ func guided(ctx context.Context, args []string, o Options) error {
 			if err != nil {
 				return err
 			}
+			t.StorageClass, err = p.ask(key+"storage_class", "StorageClass for app volumes (blank uses the cluster default)", "", nil)
+			if err != nil {
+				return err
+			}
 		}
 		st.Targets = append(st.Targets, t)
 	}
@@ -514,6 +518,9 @@ func showPlan(out io.Writer, st *stack.Stack, cat catalog.Catalog) {
 	for _, t := range st.Targets {
 		if t.Kubernetes() {
 			fmt.Fprintf(out, "Target %s: Kubernetes (%s)\n", t.Name, t.Context)
+			if t.StorageClass != "" {
+				fmt.Fprintf(out, "  Volumes use StorageClass %s\n", t.StorageClass)
+			}
 		} else {
 			fmt.Fprintf(out, "Target %s: Docker over SSH %s@%s:%d, files %s\n", t.Name, t.User, t.Host, t.Port, t.Root)
 		}
@@ -601,6 +608,7 @@ func seedAnswers(a map[string]string, st *stack.Stack) {
 	for i, t := range st.Targets {
 		k := fmt.Sprintf("target.%d.", i)
 		a[k+"name"], a[k+"host"], a[k+"user"], a[k+"port"], a[k+"root"], a[k+"kubeconfig"], a[k+"context"] = t.Name, t.Host, t.User, strconv.Itoa(t.Port), t.Root, t.Kubeconfig, t.Context
+		a[k+"storage_class"] = t.StorageClass
 		a[k+"kind"] = "docker"
 		if t.Kubernetes() {
 			a[k+"kind"] = "kubernetes"
