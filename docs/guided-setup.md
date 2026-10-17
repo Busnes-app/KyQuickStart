@@ -400,6 +400,56 @@ server. Connector credentials stay in protected target files, never in the wizar
 [edge setup](edge.md) for those requirements. Fresh NPM, DNS/certificate issuance, new
 tunnels/VPS provisioning and Kubernetes connector deployment remain unavailable.
 
+## Catalog KyIdentity on Kubernetes
+
+The catalog's `kyidentity` app installs KyIdentity 0.4.2 on a Kubernetes target from its
+attested release image (`internal/catalog/apps/kyidentity/manifest.yaml` records the digest).
+It needs an edge route: its issuer is `https://<route hostname>`, and a plan without exactly
+one route for it is refused. Select its setup with an `integrations` entry that names no
+container, namespace or pod; `apply` finds the app's own pod.
+
+```yaml
+apps:
+  - name: kyidentity
+    target: k80
+edges:
+  - target: k80
+    routes:
+      - app: kyidentity
+        hostname: identity.k80.example.com
+        forward_host: app.kyq-kyidentity.svc.cluster.local
+        forward_port: 5867
+        certificate: k80
+integrations:
+  - product: kyidentity
+    target: k80
+    bundle: /data/installer/<setup UUID>/setup.json
+    identity:
+      schema: kyidentity.setup/1
+      setup_id: <setup UUID>
+      admin: {username: owner-admin, email: owner-admin@example.com}
+      everyday: {username: owner, email: owner@example.com}
+      clients: []
+```
+
+`apply` then runs `kyidentity.secrets`, `.deploy`, `.health` and `.setup`. The setup step is
+the typed preparation above (`apply-setup --stage`, credentials generated in the pod's data
+directory) followed by `apply-setup`, each read back with `--check`; a rerun skips it, and
+changed intent fails with the product's refusal. `integrate-stack` skips installed apps.
+
+- The pod runs as uid 100 under Pod Security `restricted`. Its claim is mounted through a
+  0700 `private` subdirectory that an init container creates, because KyIdentity refuses a
+  data directory other users can write and claim roots often allow that.
+- KyIdentity generates its signing, session and encryption keys in `/data` on first start. With
+  no administrator yet it also creates `kyq-bootstrap` and writes its password to
+  `/data/first-run-password.txt` (0600), deleted after the first sign-in. That account is
+  separate from the owner's: setup never adopts an account it did not create.
+- A setup's intent is immutable: adding a client later is refused by the product, so list the
+  clients the plan needs before the first `apply`.
+- Not yet: `TRUSTED_PROXY_CIDRS` is unset, so KyIdentity sees the edge pod as every client;
+  Docker placement (no Compose file); SCIM `active:false` proof (gate G2); backups (the
+  `data` volume is declared, nothing schedules it).
+
 ## Existing KyIdentity setup
 
 The first real product adapter is `integrate-identity`. It runs the selected

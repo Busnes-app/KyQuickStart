@@ -46,6 +46,11 @@ Ordering from the installer spec: edge → KyIdentity → KyRecovery → kyPulse
    ownership ID, disable removed routes); G11 forwarded-header self-check per product.
 2. **KyIdentity (G1, G2):** catalog entry; `bootstrap-admin` + staged `apply-setup`; prove G2
    SCIM `active:false` on disable/end date/lost assignment. Fix owner lookup by verified ID.
+   **Catalog entry and setup done 2026-10-17** (Kubernetes): 0.4.2 from its attested image;
+   `apply` runs staged `apply-setup` after health. No `bootstrap-admin` call: the server's own
+   first start creates `kyq-bootstrap`. Open: G2 proof; owner lookup by verified ID is
+   KyIdentity-server's (`setup_export.go`, export reads the owner by username after the ID
+   check); trusted-proxy CIDR; Docker placement.
 3. **KyRecovery (G3, G10):** catalog entry; human custodian ceremony as a parked gate;
    unattended `pair generate --service`; backup status/restore-start UI.
 4. **kyPulse (G4):** catalog entry; preparation that preserves and validates the `monitoring`
