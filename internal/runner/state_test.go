@@ -57,7 +57,7 @@ current-context: runner
 
 func newState(t *testing.T) string {
 	t.Helper()
-	s, err := openState(filepath.Join(t.TempDir(), "state"))
+	s, err := openState(filepath.Join(shortDir(t), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestKeygenOnce(t *testing.T) {
 }
 
 func TestStateMustBePrivate(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "state")
+	dir := filepath.Join(shortDir(t), "state")
 	os.Mkdir(dir, 0o755)
 	if _, err := openState(dir); err == nil {
 		t.Fatal("accepted a state directory others can read")
