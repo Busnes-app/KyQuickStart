@@ -166,7 +166,7 @@ func (s recoverySetupStep) run(ctx context.Context, check bool) error {
 	}
 	dir := path.Dir(s.i.Bundle)
 	bundle, err := json.Marshal(map[string]any{
-		"schema": "ky.product-setup/1", "service": "kyrecovery", "setupId": s.i.RecoverySetupID(),
+		"schema": "ky.product-setup/1", "service": "kyrecovery", "setupId": s.i.SetupID(),
 		"sso": map[string]string{
 			"issuerUrl": frame.IssuerURL, "clientId": frame.ClientID, "redirectUri": frame.RedirectURIs[0],
 			"clientSecretFile": path.Join(dir, "client.secret"), "directorySecretFile": path.Join(dir, "directory.secret"),
