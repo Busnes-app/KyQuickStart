@@ -49,7 +49,7 @@ func (h *dockerHost) Run(ctx context.Context, cmd string, stdin []byte) ([]byte,
 	if h.fail != "" && strings.Contains(cmd, h.fail) {
 		return nil, &remote.ExitError{Code: 1, Stderr: []byte("injected failure")}
 	}
-	if h.exec != nil && strings.HasPrefix(cmd, "docker exec ") {
+	if h.exec != nil && strings.Contains(cmd, "docker exec ") {
 		return h.exec(cmd, stdin)
 	}
 	var project string
