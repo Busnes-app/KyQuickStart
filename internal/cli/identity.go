@@ -310,14 +310,18 @@ func nativeProductExec(target driver, i stack.Integration, adapter productAdapte
 
 // identitySetupStep is apply's staged apply-setup for a catalog KyIdentity, from the app's
 // saved integration: native preparation, then setup, each confirmed by its read-only check.
+// The same step stages and applies a setup amendment (kyidentity.amend.<app>).
 type identitySetupStep struct {
-	i     stack.Integration
-	exec  identityExec
-	input func(context.Context, []string, []byte) ([]byte, error)
-	late  []string // clients other installed apps added to the intent
+	id     string
+	i      stack.Integration // Bundle is the setup's own
+	intent any               // staged on stdin: i.Identity, or an amendment bundle
+	caps   []string          // capabilities beyond preparation's
+	exec   identityExec
+	input  func(context.Context, []string, []byte) ([]byte, error)
+	late   []string // clients other installed apps added to the intent
 }
 
-func (s identitySetupStep) ID() string { return s.i.Product + ".setup" }
+func (s identitySetupStep) ID() string { return s.id }
 
 func (s identitySetupStep) InputHash() string {
 	b, err := json.Marshal(s.i)
@@ -334,7 +338,7 @@ func (s identitySetupStep) Inspect(ctx context.Context) (bool, error) {
 }
 
 func (s identitySetupStep) Apply(ctx context.Context) error {
-	if err := stageIdentity(ctx, s.exec, s.input, s.i.Identity, s.i.Bundle, false); err != nil {
+	if err := stageIdentity(ctx, s.exec, s.input, s.intent, s.i.Bundle, false, s.caps...); err != nil {
 		return s.lateClients(ctx, err)
 	}
 	_, err := identitySetup(ctx, s.exec, s.i.Bundle, false)
@@ -342,7 +346,7 @@ func (s identitySetupStep) Apply(ctx context.Context) error {
 }
 
 func (s identitySetupStep) Verify(ctx context.Context) error {
-	if err := stageIdentity(ctx, s.exec, s.input, s.i.Identity, s.i.Bundle, true); err != nil {
+	if err := stageIdentity(ctx, s.exec, s.input, s.intent, s.i.Bundle, true, s.caps...); err != nil {
 		return err
 	}
 	_, err := identitySetup(ctx, s.exec, s.i.Bundle, true)
@@ -350,22 +354,35 @@ func (s identitySetupStep) Verify(ctx context.Context) error {
 }
 
 // lateClients names the real cause when the retained setup matches the intent without the
-// clients other apps added, all of them or one: KyIdentity takes clients only in its first setup.
+// clients other apps added: apply adds them with a setup amendment when KyIdentity can.
 func (s identitySetupStep) lateClients(ctx context.Context, err error) error {
-	missing := [][]string{s.late}
-	if len(s.late) > 1 {
-		for _, id := range s.late {
+	late := staleClients(ctx, s.exec, s.input, s.i, s.late)
+	switch {
+	case late == nil:
+		return err
+	case identityCapabilities(ctx, s.exec, true, "setup-amendments") == nil:
+		return fmt.Errorf("KyIdentity setup %s was prepared without client %s; rerun kyquickstart apply, which adds it with a setup amendment", s.i.Identity.SetupID, strings.Join(late, ", "))
+	}
+	return fmt.Errorf("KyIdentity setup %s was prepared without client %s, and this KyIdentity cannot add a client to an existing setup (Busnes-app/KyIdentity-server#110); upgrade it to 0.4.3 or later, whose setup amendments add it, or install KyIdentity afresh with it", s.i.Identity.SetupID, strings.Join(late, ", "))
+}
+
+// staleClients returns the clients of late that i's retained setup intent was prepared
+// without, all of them or one, or nil.
+func staleClients(ctx context.Context, exec identityExec, input func(context.Context, []string, []byte) ([]byte, error), i stack.Integration, late []string) []string {
+	missing := [][]string{late}
+	if len(late) > 1 {
+		for _, id := range late {
 			missing = append(missing, []string{id})
 		}
 	}
 	for _, late := range missing {
-		n := *s.i.Identity
+		n := *i.Identity
 		n.Clients = slices.DeleteFunc(slices.Clone(n.Clients), func(c stack.IdentityClient) bool { return slices.Contains(late, c.ID) })
-		if len(late) > 0 && stageIdentity(ctx, s.exec, s.input, &n, s.i.Bundle, true) == nil {
-			return fmt.Errorf("KyIdentity setup %s was prepared without client %s, and KyIdentity cannot add a client to an existing setup (Busnes-app/KyIdentity-server#110); install KyIdentity afresh with it, or wait for setup amendments", n.SetupID, strings.Join(late, ", "))
+		if len(late) > 0 && stageIdentity(ctx, exec, input, &n, i.Bundle, true) == nil {
+			return late
 		}
 	}
-	return err
+	return nil
 }
 
 // issuerEnv carries the catalog KyIdentity's issuer, taken from its route.
@@ -408,11 +425,16 @@ func (s *session) refuseMovedSetup(ctx context.Context) error {
 			return err
 		}
 	}
+	for _, a := range s.amendments {
+		if err := movedClient(ctx, exec, a.source, a.source.Identity.Clients[0].ID); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 // movedClient refuses a plan that moves the URLs of client id, which composeClients took
-// from the catalog, once KyIdentity's setup has registered it.
+// from the catalog, once i's setup (KyIdentity's first, or an amendment) has registered it.
 func movedClient(ctx context.Context, exec identityExec, i stack.Integration, id string) error {
 	want := i.Identity.Clients[slices.IndexFunc(i.Identity.Clients, func(c stack.IdentityClient) bool { return c.ID == id })]
 	raw, err := exec(ctx, []string{"apply-setup", "--file", i.Bundle, "--export-client", want.ID})
@@ -432,7 +454,7 @@ func movedClient(ctx context.Context, exec identityExec, i stack.Integration, id
 		wantDirectory = want.SuiteWebhook.URL
 	}
 	if !slices.Equal(frame.RedirectURIs, want.RedirectURIs) || frame.DirectoryURL != wantDirectory {
-		return suite.Errorf(suite.IssuerChanged, "this plan moves %s's KyIdentity client from %s to %s (its route hostname or its edge's client_port changed), but KyIdentity cannot change a client after its first setup (Busnes-app/KyIdentity-server#110). Restore the route and client_port; nothing was changed", want.Name, strings.Join(frame.RedirectURIs, " "), strings.Join(want.RedirectURIs, " "))
+		return suite.Errorf(suite.IssuerChanged, "this plan moves %s's KyIdentity client from %s to %s (its route hostname or its edge's client_port changed), but KyIdentity's setup cannot change a registered client: that needs KyIdentity's own administration (Busnes-app/KyIdentity-server#110). Restore the route and client_port; nothing was changed", want.Name, strings.Join(frame.RedirectURIs, " "), strings.Join(want.RedirectURIs, " "))
 	}
 	return nil
 }

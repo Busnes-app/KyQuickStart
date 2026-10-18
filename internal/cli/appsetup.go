@@ -16,6 +16,7 @@ import (
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/engine"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
+	"github.com/google/uuid"
 )
 
 // catalogClient is the KyIdentity client an app's oidc block describes at its route host.
@@ -54,9 +55,10 @@ func routeHost(st *stack.Stack, app string) (string, error) {
 }
 
 // composeClients adds each installed app's catalog client to the installed KyIdentity's
-// setup intent, or checks a hand-written one against it. KyIdentity takes clients only in its
-// first setup, so every one must be in the plan from the start.
+// setup intent, or checks a hand-written one against it. An app whose integration records an
+// identity_amendment brings its client in that setup amendment instead.
 func (s *session) composeClients(st *stack.Stack) error {
+	s.integrations, s.derived, s.amendments, s.handover = st.Integrations, nil, nil, ""
 	k := slices.IndexFunc(s.integrations, func(i stack.Integration) bool {
 		return i.Product == "kyidentity" && i.Identity != nil && i.Installed(st)
 	})
@@ -84,16 +86,23 @@ func (s *session) composeClients(st *stack.Stack) error {
 		found := false
 		for _, c := range n.Clients {
 			if strings.EqualFold(c.ID, want.ID) {
+				if i.IdentityAmendment != "" {
+					return fmt.Errorf("KyIdentity client %s comes in setup amendment %s; remove it from identity.clients", c.ID, i.IdentityAmendment)
+				}
 				if !reflect.DeepEqual(c, want) {
 					return fmt.Errorf("KyIdentity client %s differs from the catalog's %s client; remove it from identity.clients and apply derives it", c.ID, want.Name)
 				}
 				found = true
 			}
 		}
-		if !found {
-			n.Clients = append(n.Clients, want)
+		if i.IdentityAmendment != "" {
+			s.amendments = append(s.amendments, newAmendment(i, s.integrations[k], want))
+		} else {
+			if !found {
+				n.Clients = append(n.Clients, want)
+			}
+			s.derived = append(s.derived, want.ID)
 		}
-		s.derived = append(s.derived, want.ID)
 		switch i.Product {
 		case "kyrecovery":
 			s.handover += fmt.Sprintf(recoveryCeremony, host, n.Admin.Username)
@@ -111,6 +120,96 @@ func (s *session) composeClients(st *stack.Stack) error {
 		s.integrations[k].Identity = &n
 	}
 	return nil
+}
+
+// identityAmendment is the KyIdentity setup amendment that adds app's client after
+// KyIdentity's first setup. source is KyIdentity's integration as that client's setup and
+// export see it: the amendment's bundle path, setup ID and client, the parent's accounts.
+type identityAmendment struct {
+	app    string
+	bundle json.RawMessage // staged on stdin
+	source stack.Integration
+}
+
+func newAmendment(app, parent stack.Integration, c stack.IdentityClient) identityAmendment {
+	p := parent.Identity
+	source := parent
+	source.Bundle = path.Join(path.Dir(path.Dir(parent.Bundle)), app.IdentityAmendment, "setup.json")
+	source.Identity = &stack.IdentityPreparation{Schema: p.Schema, SetupID: app.IdentityAmendment, Admin: p.Admin, Everyday: p.Everyday, Clients: []stack.IdentityClient{c}}
+	bundle, err := json.Marshal(struct {
+		Schema  string                 `json:"schema"`
+		SetupID string                 `json:"setupId"`
+		Extends string                 `json:"extends"`
+		Clients []stack.IdentityClient `json:"clients"`
+	}{p.Schema, app.IdentityAmendment, p.SetupID, source.Identity.Clients})
+	if err != nil {
+		panic(err) // plain typed metadata always marshals
+	}
+	return identityAmendment{app: app.Product, bundle: bundle, source: source}
+}
+
+// amendmentID derives an amendment's setup UUID from its parent's and its client's, so a run
+// that stops before publishing the plan stages the same amendment again.
+func amendmentID(parent, client string) string {
+	return uuid.NewSHA1(uuid.MustParse(parent), []byte(client)).String()
+}
+
+// amendLate records a setup amendment for each installed app whose catalog client the
+// running KyIdentity's retained setup was prepared without, when that KyIdentity takes
+// amendments, and returns apply's publish with them in the plan. It only reads the target.
+func (s *session) amendLate(ctx context.Context, state string, prior func() error) (func() error, error) {
+	t := s.placed["kyidentity"]
+	k := slices.IndexFunc(s.integrations, func(i stack.Integration) bool {
+		return i.Product == "kyidentity" && i.Identity != nil && i.Target == t.Name
+	})
+	d, ok := s.drivers[t.Name].(kubeDriver)
+	if k < 0 || !ok || len(s.derived) == 0 {
+		return prior, nil
+	}
+	if _, found, err := d.c.AppEnv(ctx, "kyidentity", issuerEnv); err != nil || !found {
+		return prior, err // not deployed: the first setup takes every client
+	}
+	i := s.integrations[k]
+	exec, input, err := nativeProductExec(d, i, productAdapters["kyidentity"])
+	if err != nil {
+		return nil, err
+	}
+	// Only clients apply derived; a hand-written one belongs to the operator's intent.
+	saved := s.plan.Integrations[k].Identity.Clients
+	added := slices.DeleteFunc(slices.Clone(s.derived), func(id string) bool {
+		return slices.ContainsFunc(saved, func(c stack.IdentityClient) bool { return strings.EqualFold(c.ID, id) })
+	})
+	if len(added) == 0 || identityCapabilities(ctx, exec, true, "setup-amendments") != nil || stageIdentity(ctx, exec, input, i.Identity, i.Bundle, true) == nil {
+		return prior, nil // nothing late, or kyidentity.setup gives the refusal
+	}
+	late := staleClients(ctx, exec, input, i, added)
+	if late == nil {
+		return prior, nil
+	}
+	next := *s.plan
+	next.Integrations = slices.Clone(next.Integrations)
+	for j, a := range next.Integrations {
+		if a.Product != "kyidentity" && a.Installed(&next) && slices.Contains(late, a.IdentityClient) {
+			next.Integrations[j].IdentityAmendment = amendmentID(i.Identity.SetupID, a.IdentityClient)
+			fmt.Fprintf(s.o.Out, "KyIdentity setup %s ran without %s's client: adding it with setup amendment %s, recorded in stack.yaml when apply passes\n", i.Identity.SetupID, a.Product, next.Integrations[j].IdentityAmendment)
+		}
+	}
+	if err := s.composeClients(&next); err != nil {
+		return nil, err
+	}
+	installation := s.installation
+	_, data, err := changePlan(state, s.revision, func(p *stack.Stack) {
+		p.InstallationID = installation
+		for j := range p.Integrations {
+			p.Integrations[j].IdentityAmendment = next.Integrations[j].IdentityAmendment
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.plan, s.changesPlan = &next, true
+	revision := s.revision
+	return func() error { return publish(state, revision, data) }, nil
 }
 
 // recoveryCeremony is printed after every apply that installs KyRecovery: apply cannot see
@@ -171,7 +270,7 @@ func pulseHandover(host, admin string, targets []pulseTarget, unwatched []string
 type clientSetupStep struct {
 	i       stack.Integration
 	name    string            // the app's name in KyIdentity, for messages
-	source  stack.Integration // KyIdentity's, with the client composeClients added
+	source  stack.Integration // KyIdentity's with the client composeClients added, or its amendment's
 	issuer  string
 	targets []pulseTarget // kyPulse's monitoring extension; nil for any other app
 	export  identityExec  // KyIdentity's apply-setup
@@ -279,18 +378,25 @@ func (s clientSetupStep) run(ctx context.Context, check bool) error {
 	return nil
 }
 
-// setupStep is apply's setup for an installed app's integration: KyIdentity, or an app that
-// signs in through it, on Kubernetes (newSession refuses anything else).
-func (s *session) setupStep(d driver, i stack.Integration) (engine.Step, error) {
+// setupSteps are apply's setup for an installed app's integration: KyIdentity's (its setup
+// and the setup amendments), or an app's that signs in through it, on Kubernetes (newSession refuses anything else).
+func (s *session) setupSteps(d driver, i stack.Integration) ([]engine.Step, error) {
 	adapter := productAdapters[i.Product]
 	exec, input, err := nativeProductExec(d, i, adapter)
 	if err != nil {
 		return nil, err
 	}
 	if i.Product == "kyidentity" {
-		return identitySetupStep{i: i, exec: exec, input: input, late: s.derived}, nil
+		steps := []engine.Step{identitySetupStep{id: "kyidentity.setup", i: i, intent: i.Identity, exec: exec, input: input, late: s.derived}}
+		for _, a := range s.amendments {
+			steps = append(steps, identitySetupStep{id: "kyidentity.amend." + a.app, i: a.source, intent: a.bundle, caps: []string{"setup-amendments"}, exec: exec, input: input})
+		}
+		return steps, nil
 	}
 	source := s.integrations[slices.IndexFunc(s.integrations, func(x stack.Integration) bool { return x.Product == "kyidentity" && x.Identity != nil })]
+	if a := slices.IndexFunc(s.amendments, func(a identityAmendment) bool { return a.app == i.Product }); a >= 0 {
+		source = s.amendments[a].source
+	}
 	export, _, err := nativeProductExec(s.drivers[s.placed["kyidentity"].Name], source, productAdapters["kyidentity"])
 	if err != nil {
 		return nil, err
@@ -309,5 +415,5 @@ func (s *session) setupStep(d driver, i stack.Integration) (engine.Step, error) 
 	if i.Product == "kypulse" {
 		step.targets = s.pulseTargets
 	}
-	return step, nil
+	return []engine.Step{step}, nil
 }
