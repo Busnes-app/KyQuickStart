@@ -227,11 +227,10 @@ Outstanding human step, unless already done: the KyRecovery custodian ceremony.
 
 // driveHandover is printed after every apply that installs KyDrive.
 const driveHandover = `
-KyDrive at https://%[1]s/: sign in through KyIdentity as %[2]s, its only account so far.
-  Not yet: KyIdentity's SCIM connector to KyDrive, without which KyDrive refuses %[5]s and
-  every other account. Its endpoint is https://%[1]s/scim/v2 and its bearer token is
-  %[3]s/secrets/scim_token on %[4]s. Its local "admin" break-glass password is in
-  %[3]s/data/initial-admin-password on %[4]s: sign in once, change it and delete the file.
+KyDrive at https://%[1]s/: sign in through KyIdentity as %[2]s (its administrator) or %[5]s.
+  KyIdentity's SCIM connector provisions both, and everyone later assigned to KyDrive, at
+  https://%[1]s/scim/v2; allow it a minute after apply. Its local "admin" break-glass password
+  is in %[3]s/data/initial-admin-password on %[4]s: sign in once, change it and delete the file.
 `
 
 // pulseTarget is a kyPulse monitoring target: an app's readiness path through its route.
@@ -405,14 +404,94 @@ func (s clientSetupStep) run(ctx context.Context, check bool) error {
 	return nil
 }
 
+// scimStep (kyidentity.scim.<app>) adds KyIdentity's SCIM connector to the client of an app
+// that declares oidc.scim_token_file. KyIdentity takes a connector on a later pass of the
+// setup that registered the client, from a bundle outside its preparation directories, once
+// the receiver is ready: the app's setup has created its administrator, whom KyIdentity would
+// otherwise push first and the app's setup then refuse to adopt. The app's target generated
+// the token; a copy goes to a private file in KyIdentity's pod, never replacing one.
+type scimStep struct {
+	app       string
+	token     func(context.Context) ([]byte, error) // read on the app's target
+	tokenFile string                                // the copy in KyIdentity's pod
+	file      string                                // the pass's bundle there
+	bundle    []byte
+	place     func(ctx context.Context, args []string, input []byte) error // KyIdentity's shell
+	exec      identityExec                                                 // KyIdentity's apply-setup
+}
+
+func (s scimStep) ID() string { return "kyidentity.scim." + s.app }
+
+func (s scimStep) InputHash() string {
+	sum := sha256.Sum256(append([]byte(s.tokenFile+"\x00"+s.file+"\x00"), s.bundle...))
+	return hex.EncodeToString(sum[:])
+}
+
+func (s scimStep) Inspect(ctx context.Context) (bool, error) { return s.Verify(ctx) == nil, nil }
+func (s scimStep) Apply(ctx context.Context) error           { return s.run(ctx, false) }
+func (s scimStep) Verify(ctx context.Context) error          { return s.run(ctx, true) }
+
+func (s scimStep) run(ctx context.Context, check bool) error {
+	if err := identityCapabilities(ctx, s.exec, false); err != nil {
+		return err
+	}
+	token, err := s.token(ctx)
+	defer clear(token)
+	if err != nil {
+		return fmt.Errorf("%s's SCIM token on its target: %w", s.app, err)
+	}
+	mode := "write"
+	if check {
+		mode = "check"
+	}
+	if s.place(ctx, []string{mode, s.tokenFile}, token) != nil {
+		return fmt.Errorf("KyIdentity's copy of %s's SCIM token, %s, is missing, unsafe or differs from %s's; it is never replaced", s.app, s.tokenFile, s.app)
+	}
+	if s.place(ctx, []string{mode, s.file}, s.bundle) != nil {
+		return fmt.Errorf("KyIdentity's SCIM setup pass %s is missing, unsafe or differs from this plan's", s.file)
+	}
+	_, err = identitySetup(ctx, s.exec, s.file, check)
+	return err
+}
+
+// scimPass is the bundle of the pass that adds scim to client id of src's setup (KyIdentity's
+// first, or an amendment of parent): that setup's ID, its intent for the client and, as its
+// preparation generated them, the paths of the client secret and the accounts' passwords.
+func scimPass(src stack.Integration, parent, id string, scim stack.IdentitySCIM) []byte {
+	n, scope := src.Identity, path.Dir(src.Bundle)
+	type account struct {
+		stack.IdentityAccount
+		PasswordFile string `json:"passwordFile"`
+	}
+	type client struct {
+		stack.IdentityClient
+		SecretFile string `json:"secretFile"`
+	}
+	c := client{n.Clients[slices.IndexFunc(n.Clients, func(c stack.IdentityClient) bool { return c.ID == id })], path.Join(scope, "client-"+id+".secret")}
+	c.SCIM = &scim
+	b := map[string]any{"schema": n.Schema, "setupId": n.SetupID, "clients": []client{c}}
+	if parent != "" {
+		b["extends"] = parent
+	} else {
+		b["admin"] = account{n.Admin, path.Join(scope, "admin.password")}
+		b["everyday"] = account{n.Everyday, path.Join(scope, "everyday.password")}
+	}
+	raw, err := json.Marshal(b)
+	if err != nil {
+		panic(err) // plain typed metadata always marshals
+	}
+	return raw
+}
+
 // setupSteps are apply's setup for an installed app's integration: KyIdentity's (its setup,
 // the setup amendments and the bootstrap administrator's retirement), or an app's that signs
-// in through it, on Kubernetes or a Docker host (newSession refuses anything else).
-func (s *session) setupSteps(d driver, i stack.Integration) ([]engine.Step, error) {
+// in through it, on Kubernetes or a Docker host (newSession refuses anything else). connector
+// is the app's kyidentity.scim step, which apply runs after the edges route to the app.
+func (s *session) setupSteps(d driver, i stack.Integration) (steps []engine.Step, connector engine.Step, err error) {
 	adapter := productAdapters[i.Product]
 	exec, input, err := nativeProductExec(d, i, adapter)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if i.Product == "kyidentity" {
 		steps := []engine.Step{identitySetupStep{id: "kyidentity.setup", i: i, intent: i.Identity, exec: exec, input: input, late: s.derived}}
@@ -422,30 +501,53 @@ func (s *session) setupSteps(d driver, i stack.Integration) ([]engine.Step, erro
 		if bootstrap := s.cat["kyidentity"].Kubernetes.Env["BOOTSTRAP_ADMIN_USER"]; bootstrap != "" {
 			steps = append(steps, retireBootstrapStep{exec: exec, bootstrap: bootstrap, admin: i.Identity.Admin.Username, note: &s.bootstrapNote})
 		}
-		return steps, nil
+		return steps, nil, nil
 	}
-	source := s.integrations[slices.IndexFunc(s.integrations, func(x stack.Integration) bool { return x.Product == "kyidentity" && x.Identity != nil })]
+	first := s.integrations[slices.IndexFunc(s.integrations, func(x stack.Integration) bool { return x.Product == "kyidentity" && x.Identity != nil })]
+	source, parent := first, ""
 	if a := slices.IndexFunc(s.amendments, func(a identityAmendment) bool { return a.app == i.Product }); a >= 0 {
-		source = s.amendments[a].source
+		source, parent = s.amendments[a].source, first.Identity.SetupID
 	}
-	export, _, err := nativeProductExec(s.drivers[s.placed["kyidentity"].Name], source, productAdapters["kyidentity"])
+	identity := s.drivers[s.placed["kyidentity"].Name]
+	export, _, err := nativeProductExec(identity, source, productAdapters["kyidentity"])
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	// The app's shell, as its runtime user, places the files: sh -c placeScript sh <mode> <path>.
-	_, shell, err := nativeProductExec(d, i, productAdapter{binary: "sh", runtimeUser: adapter.runtimeUser})
+	place := func(d driver, i stack.Integration, user string) (func(context.Context, []string, []byte) error, error) {
+		// The pod's or container's shell, as its runtime user: sh -c placeScript sh <mode> <path>.
+		_, shell, err := nativeProductExec(d, i, productAdapter{binary: "sh", runtimeUser: user})
+		return func(ctx context.Context, args []string, input []byte) error {
+			_, err := shell(ctx, append([]string{"-c", placeScript, "sh"}, args...), input)
+			return err
+		}, err
+	}
+	appPlace, err := place(d, i, adapter.runtimeUser)
 	if err != nil {
-		return nil, err
-	}
-	place := func(ctx context.Context, args []string, input []byte) error {
-		_, err := shell(ctx, append([]string{"-c", placeScript, "sh"}, args...), input)
-		return err
+		return nil, nil, err
 	}
 	o := s.cat[i.Product].OIDC
 	step := clientSetupStep{i: i, name: o.Name, source: source, issuer: s.cat["kyidentity"].Kubernetes.Env[issuerEnv], scimToken: o.SCIMTokenFile,
-		export: export, exec: exec, setup: adapter.setup, place: place}
+		export: export, exec: exec, setup: adapter.setup, place: appPlace}
 	if i.Product == "kypulse" {
 		step.targets = s.pulseTargets
 	}
-	return []engine.Step{step}, nil
+	if o.SCIMTokenFile == "" {
+		return []engine.Step{step}, nil, nil
+	}
+	host, err := routeHost(s.plan, i.Product)
+	if err != nil {
+		return nil, nil, err
+	}
+	identityPlace, err := place(identity, source, "")
+	if err != nil {
+		return nil, nil, err
+	}
+	installer := path.Dir(path.Dir(source.Bundle))
+	scim := stack.IdentitySCIM{URL: "https://" + host + "/scim/v2", TokenFile: path.Join(installer, "scim-"+i.IdentityClient+".token")}
+	connector = scimStep{app: i.Product, tokenFile: scim.TokenFile, file: path.Join(installer, "scim-"+i.IdentityClient+".json"),
+		bundle: scimPass(source, parent, i.IdentityClient, scim), place: identityPlace, exec: export,
+		token: func(ctx context.Context) ([]byte, error) {
+			return d.appSecret(ctx, i.Product, path.Base(o.SCIMTokenFile))
+		}}
+	return []engine.Step{step}, connector, nil
 }
