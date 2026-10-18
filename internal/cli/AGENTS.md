@@ -23,6 +23,8 @@ Plain terminal planning and command orchestration for the operator-run installer
 - Explicit existing KyIdentity container setup and capability checks: `identity.go`, documented in `../../docs/guided-setup.md`.
   It also owns `identitySetupStep`, apply's staged setup for a catalog KyIdentity, reusing the same
   staging and setup functions; `nativeProductExec` finds an installed app's pod per call.
+  `refuseMovedSetup`, first in `deploySteps`, refuses a moved issuer or KyRecovery client of a
+  completed setup with `issuer_changed`.
 - `preparation.go` owns shared bounded native preparation receipts/readback and typed Identity
   staging; product-specific metadata and credentials remain native product responsibilities.
 - `credential_transfer.go` owns explicit Notes `identity_client` transfer: require both native

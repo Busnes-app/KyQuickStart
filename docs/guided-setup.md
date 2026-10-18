@@ -405,8 +405,8 @@ tunnels/VPS provisioning and Kubernetes connector deployment remain unavailable.
 
 The catalog's `kyidentity` app installs KyIdentity 0.4.2 on a Kubernetes target from its
 attested release image (`internal/catalog/apps/kyidentity/manifest.yaml` records the digest).
-It needs an edge route: its issuer is `https://<route hostname>`, and a plan without exactly
-one route for it is refused. Select its setup with an `integrations` entry that names no
+It needs an edge route: its issuer is `https://<route hostname>`, plus `:<client_port>` behind a
+`lan` edge whose `client_port` is not 443, and a plan without exactly one route for it is refused. Select its setup with an `integrations` entry that names no
 container, namespace or pod; `apply` finds the app's own pod.
 
 ```yaml
@@ -449,6 +449,12 @@ changed intent fails with the product's refusal. `integrate-stack` skips install
   (Busnes-app/KyIdentity-server#110, setup amendments), so every app that signs in must be in
   the plan before the first `apply`. Catalog KyRecovery's client is added automatically (next
   section); if the setup already ran without it, `kyidentity.setup` fails and names #110.
+- The issuer cannot change once setup has run: every client and token names it. Before any
+  step, `apply` compares the issuer KyIdentity's Deployment runs with to the plan's; when they
+  differ and the pod's read-only `apply-setup --check` passes (or the pod cannot be asked), it
+  refuses with `issuer_changed` and changes nothing. KyRecovery's registered client URLs are
+  compared the same way (#110). Changing the route hostname or `client_port` therefore needs a
+  fresh KyIdentity.
 - Not yet: `kyq-bootstrap` stays an active administrator after setup. KyIdentity 0.4.2
   can only disable an account through its admin API, which needs a session and a step-up
   factor KyQuickStart does not hold; retiring it waits on a product command. Until then,

@@ -37,13 +37,13 @@ func catalogClient(id, host string, o *catalog.OIDC) (stack.IdentityClient, erro
 	return c, nil
 }
 
-// routeHost is the one edge route hostname of app.
+// routeHost is the URL host of app's one edge route.
 func routeHost(st *stack.Stack, app string) (string, error) {
 	var hosts []string
 	for _, e := range st.Edges {
 		for _, r := range e.Routes {
 			if r.App == app {
-				hosts = append(hosts, r.Hostname)
+				hosts = append(hosts, e.URLHost(r))
 			}
 		}
 	}

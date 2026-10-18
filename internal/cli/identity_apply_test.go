@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,6 +14,8 @@ import (
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/kube"
 	"github.com/Busnes-app/kyquickstart/internal/managed"
+	"github.com/Busnes-app/kyquickstart/internal/suite"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/remotecommand"
@@ -43,7 +46,7 @@ func TestCatalogKyIdentityTakesItsRouteAndIntegration(t *testing.T) {
 	if got := s.cat["kyidentity"].Kubernetes.Env["KYIDENTITY_ISSUER_URL"]; got != "https://identity.example.com" {
 		t.Fatalf("issuer = %q", got)
 	}
-	if fresh, _ := catalog.Load(catalog.Embedded()); !fresh["kyidentity"].Kubernetes.UsesHostname() {
+	if fresh, _ := catalog.Load(catalog.Embedded()); !fresh["kyidentity"].Kubernetes.UsesHost() {
 		t.Fatal("hostname leaked into the catalog")
 	}
 
@@ -115,10 +118,12 @@ type fakeIdentity struct {
 	pod, stdin      string
 	intent          string // retained at the first staging; a different one is refused
 	export          string // --export-client's frame
+	calls           []string
 }
 
 func (n *fakeIdentity) stream(_ context.Context, namespace, pod, container string, args []string, o remotecommand.StreamOptions) error {
 	n.pod = namespace + "/" + pod + "/" + container
+	n.calls = append(n.calls, strings.Join(args, " "))
 	check := args[len(args)-1] == "--check"
 	var out string
 	switch {
@@ -153,4 +158,112 @@ func (n *fakeIdentity) stream(_ context.Context, namespace, pod, container strin
 	}
 	_, err := io.WriteString(o.Stdout, out)
 	return err
+}
+
+func TestCatalogKyIdentityIssuerCarriesTheClientPort(t *testing.T) {
+	f := newFixture(t, "../catalog/testdata/apps")
+	f.o.Catalog = catalog.Embedded()
+	kc := filepath.Join(t.TempDir(), "kubeconfig")
+	os.WriteFile(kc, nil, 0o600)
+	f.plan(t, "  - name: k1\n    kubeconfig: "+kc+"\napps:\n  - name: npm\n    target: k1\n  - name: kyidentity\n    target: k1\n"+
+		"edges:\n  - target: k1\n    provider: lan\n    npm_url: kube://kyq-npm/app:81\n    allow_cidrs: [192.168.1.0/24]\n    client_port: 30543\n    routes:\n"+
+		"      - app: kyidentity\n        hostname: identity.example.com\n        forward_host: app.kyq-kyidentity.svc.cluster.local\n        forward_port: 5867\n        certificate_id: 1\n")
+	s, err := load(f.state, nil, f.o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.cat["kyidentity"].Kubernetes.Env["KYIDENTITY_ISSUER_URL"]; got != "https://identity.example.com:30543" {
+		t.Fatalf("issuer = %q, want the lan edge's client port in it", got)
+	}
+}
+
+// movedSetupSteps runs deploySteps over a KyIdentity Deployment that runs with issuer and its
+// ready pod answered by native, as an apply after an earlier one would see them.
+func movedSetupSteps(t *testing.T, f *fixture, issuer string, native *fakeIdentity, ready bool) ([]string, error) {
+	t.Helper()
+	ctx := context.Background()
+	s, err := load(f.state, nil, f.o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owned := map[string]string{"app.kubernetes.io/name": "kyidentity", managed.Label: managed.Value}
+	f.cs.AppsV1().Deployments("kyq-kyidentity").Create(ctx, &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "app", Labels: owned},
+		Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{
+			Name: "app", Env: []corev1.EnvVar{{Name: "KYIDENTITY_DATA_DIR", Value: "/data"}, {Name: "KYIDENTITY_ISSUER_URL", Value: issuer}},
+		}}}}},
+	}, metav1.CreateOptions{})
+	if ready {
+		f.cs.CoreV1().Pods("kyq-kyidentity").Create(ctx, &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "app-1", Labels: owned},
+			Status:     corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
+		}, metav1.CreateOptions{})
+	}
+	s.drivers["k1"] = kubeDriver{c: kube.Fake(f.cs, "https://k1.test", native.stream)}
+	s.edges = nil
+	steps, err := s.deploySteps(ctx)
+	var ids []string
+	for _, st := range steps {
+		ids = append(ids, st.ID())
+	}
+	// Whatever deploySteps decided, it only read.
+	for _, c := range native.calls {
+		if !strings.Contains(c, "--capabilities") && !strings.HasSuffix(c, "--check") && !strings.Contains(c, "--export-client") {
+			t.Errorf("deploySteps ran %q", c)
+		}
+	}
+	return ids, err
+}
+
+func TestIssuerChangeAfterSetupRefused(t *testing.T) {
+	for _, c := range []struct {
+		name           string
+		running        string // the Deployment's issuer
+		applied, ready bool
+		refused        string
+	}{
+		{"changed after setup", "https://identity.example.com:30443", true, true, "from https://identity.example.com:30443 to https://identity.example.com (its route hostname or its edge's client_port changed), but an issuer cannot change after setup"},
+		{"changed with setup unreadable", "https://identity.example.com:30443", true, false, "whether its setup has run cannot be read"},
+		{"changed before setup", "https://identity.example.com:30443", false, true, ""},
+		{"unchanged after setup", "https://identity.example.com", true, true, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t, "../catalog/testdata/apps")
+			f.o.Catalog = catalog.Embedded()
+			catalogIdentityPlan(t, f, "kyidentity", "")
+			native := &fakeIdentity{staged: c.applied, applied: c.applied}
+			ids, err := movedSetupSteps(t, f, c.running, native, c.ready)
+			if c.refused == "" {
+				if err != nil || !slices.Contains(ids, "kyidentity.deploy") {
+					t.Fatalf("steps %v, err %v", ids, err)
+				}
+				return
+			}
+			if code(err) != suite.IssuerChanged || !strings.Contains(err.Error(), c.refused) || ids != nil {
+				t.Fatalf("steps %v, err %v", ids, err)
+			}
+		})
+	}
+}
+
+func TestRecoveryClientMoveAfterSetupRefused(t *testing.T) {
+	for _, c := range []struct {
+		name, registered string // the redirect host KyIdentity's setup holds
+		refused          bool
+	}{{"moved", "recovery.example.com:30443", true}, {"unchanged", "recovery.example.com", false}} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t, "../catalog/testdata/apps")
+			f.o.Catalog = catalog.Embedded()
+			recoveryPlan(t, f, "      clients: []\n")
+			native := &fakeIdentity{staged: true, applied: true, export: strings.ReplaceAll(recoveryExport("https://identity.example.com"), "recovery.example.com", c.registered)}
+			_, err := movedSetupSteps(t, f, "https://identity.example.com", native, true)
+			want := fmt.Sprintf("from https://%s/api/auth/callback to https://recovery.example.com/api/auth/callback", c.registered)
+			if c.refused != (code(err) == suite.IssuerChanged && strings.Contains(err.Error(), want) && strings.Contains(err.Error(), "KyIdentity-server#110")) || !c.refused && err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if err != nil && strings.Contains(err.Error(), clientSecret) {
+				t.Fatal("secret in the refusal")
+			}
+		})
+	}
 }
