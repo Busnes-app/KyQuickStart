@@ -19,6 +19,7 @@ import (
 	"github.com/Busnes-app/kyquickstart/internal/remote"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/remotecommand"
 )
 
 const (
@@ -77,6 +78,22 @@ func words(t *testing.T, cmd string) []string {
 	return strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00")
 }
 
+// fakePlace has placeScript's semantics, which TestPlaceScript proves under a real sh.
+func fakePlace(files map[string]string, mode, path string, stdin []byte) error {
+	old, ok := files[path]
+	switch {
+	case mode == "replace":
+	case ok && old != string(stdin):
+		return errors.New("differs")
+	case ok:
+		return nil
+	case mode != "write":
+		return errors.New("missing")
+	}
+	files[path] = string(stdin)
+	return nil
+}
+
 func (d *fakeDrive) exec(t *testing.T) func(string, []byte) ([]byte, error) {
 	return func(cmd string, stdin []byte) ([]byte, error) {
 		args := words(t, cmd)
@@ -85,20 +102,7 @@ func (d *fakeDrive) exec(t *testing.T) func(string, []byte) ([]byte, error) {
 			if args[1] != "-c" || args[2] != placeScript {
 				return nil, errors.New("unexpected script")
 			}
-			// placeScript's semantics, which TestPlaceScript proves under a real sh.
-			mode, path := args[4], args[5]
-			old, ok := d.files[path]
-			switch {
-			case mode == "replace":
-			case ok && old != string(stdin):
-				return nil, errors.New("differs")
-			case ok:
-				return nil, nil
-			case mode != "write":
-				return nil, errors.New("missing")
-			}
-			d.files[path] = string(stdin)
-			return nil, nil
+			return nil, fakePlace(d.files, args[4], args[5], stdin)
 		case args[0] != "/app/kydrive-server":
 			return nil, errors.New("unexpected binary")
 		case slices.Contains(args, "--capabilities"):
@@ -117,7 +121,7 @@ func (d *fakeDrive) exec(t *testing.T) func(string, []byte) ([]byte, error) {
 	}
 }
 
-func driveSteps(t *testing.T, f *fixture, identity *fakeIdentity, drive *fakeDrive) (*session, map[string]engine.Step) {
+func driveSteps(t *testing.T, f *fixture, identity func(context.Context, string, string, string, []string, remotecommand.StreamOptions) error, drive *fakeDrive) (*session, map[string]engine.Step) {
 	t.Helper()
 	ctx := context.Background()
 	s, err := load(f.state, nil, f.o)
@@ -128,7 +132,7 @@ func driveSteps(t *testing.T, f *fixture, identity *fakeIdentity, drive *fakeDri
 		ObjectMeta: metav1.ObjectMeta{Name: "app-1", Labels: map[string]string{"app.kubernetes.io/name": "kyidentity", managed.Label: managed.Value}},
 		Status:     corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
 	}, metav1.CreateOptions{})
-	s.drivers["k1"] = kubeDriver{c: kube.Fake(f.cs, "https://k1.test", identity.stream)}
+	s.drivers["k1"] = kubeDriver{c: kube.Fake(f.cs, "https://k1.test", identity)}
 	s.drivers["nas"] = sshDriver{t: s.placed["kydrive"], c: f.h}
 	f.h.exec = drive.exec(t)
 	s.edges = nil
@@ -157,7 +161,7 @@ func TestKyDriveOnDockerSetup(t *testing.T) {
 	drivePlan(t, f, "192.0.2.1")
 	identity := &fakeIdentity{export: driveExport(driveSecret)}
 	drive := &fakeDrive{files: map[string]string{}}
-	s, steps := driveSteps(t, f, identity, drive)
+	s, steps := driveSteps(t, f, identity.stream, drive)
 
 	// The compose file publishes on the forward address and names the route's URL.
 	c := string(s.cat["kydrive"].Compose)
@@ -284,6 +288,18 @@ func TestKyDriveOnDockerAddedByAmendment(t *testing.T) {
 	}
 	if !slices.Contains(amendment.calls, "/usr/local/bin/kyidentity apply-setup --file "+bundle+" --export-client kydrive") || !drive.applied || drive.files[filepath.Dir(driveBundle)+"/client.secret"] != driveSecret {
 		t.Fatalf("export calls %q, KyDrive applied %v", amendment.calls, drive.applied)
+	}
+	// Its SCIM connector comes in a pass of that amendment: no accounts, its parent named.
+	all, err := s.deploySteps(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector, ok := all[len(all)-1].(scimStep)
+	want := `{"clients":[{"id":"kydrive","name":"KyDrive","redirectUris":["https://drive.example.com/api/sso/kysignon/callback"],"postLogoutUris":null,` +
+		`"administratorRole":"kydrive.admin","everydayRole":"kydrive.user","scim":{"url":"https://drive.example.com/scim/v2","tokenFile":"/data/installer/scim-kydrive.token"},` +
+		`"secretFile":"/data/installer/` + id + `/client-kydrive.secret"}],"extends":"` + parentSetup + `","schema":"kyidentity.setup/1","setupId":"` + id + `"}`
+	if !ok || connector.ID() != "kyidentity.scim.kydrive" || string(connector.bundle) != want || connector.file != "/data/installer/scim-kydrive.json" {
+		t.Fatalf("connector = %+v\n%s\nwant\n%s", all[len(all)-1], connector.bundle, want)
 	}
 }
 

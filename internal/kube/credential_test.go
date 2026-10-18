@@ -97,3 +97,25 @@ func TestLANDNSLedgerKeepsOtherKeysAndNeedsOwnedSecret(t *testing.T) {
 		t.Fatal("created the Secret")
 	}
 }
+
+func TestAppSecretReadsOnlyTheAppsOwnedSecret(t *testing.T) {
+	owned := map[string]string{managed.Label: managed.Value}
+	cs := fake.NewClientset(
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "kyq-secrets", Namespace: "kyq-a", Labels: owned}, Data: map[string][]byte{"scim_token": []byte("token-a")}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "kyq-secrets", Namespace: "kyq-b"}, Data: map[string][]byte{"scim_token": []byte("token-b")}},
+	)
+	c := New(cs)
+	if b, err := c.AppSecret(context.Background(), "a", "scim_token"); err != nil || string(b) != "token-a" {
+		t.Fatalf("read %q %v", b, err)
+	}
+	for _, read := range [][2]string{{"a", "other"}, {"b", "scim_token"}, {"c", "scim_token"}} {
+		if b, err := c.AppSecret(context.Background(), read[0], read[1]); err == nil || strings.Contains(err.Error(), "token-") {
+			t.Errorf("%v: %q %v", read, b, err)
+		}
+	}
+	for _, action := range cs.Actions() {
+		if action.GetVerb() != "get" {
+			t.Fatalf("secret read mutated the cluster: %s", action.GetVerb())
+		}
+	}
+}
