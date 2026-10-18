@@ -53,6 +53,14 @@ Ordering from the installer spec: edge → KyIdentity → KyRecovery → kyPulse
    check); trusted-proxy CIDR; Docker placement.
 3. **KyRecovery (G3, G10):** catalog entry; human custodian ceremony as a parked gate;
    unattended `pair generate --service`; backup status/restore-start UI.
+   **Catalog entry and setup done 2026-10-17** (Kubernetes, fresh installs): 0.4.2 from its
+   attested image; its client joins KyIdentity's first setup (adding one later waits on
+   KyIdentity-server#110); `kyrecovery.setup` after health; apply prints the ceremony as an
+   outstanding human step. 0.4.2's `pair generate --service` takes only flags (not yet run
+   by the installer): a code is useless before the ceremony (claims get 409) and nothing pairs
+   yet, so apply mints none. The
+   status/restore UI ships in the product; restic status waits on the rest-server (M1.5).
+   Open: trusted-proxy CIDR, local `admin` password only in the first pod log, Docker placement.
 4. **kyPulse (G4):** catalog entry; preparation that preserves and validates the `monitoring`
    extension; target/log-source registration.
 5. **rest-server** on the KyRecovery host (append-only, private repos, TLS, separate prune
