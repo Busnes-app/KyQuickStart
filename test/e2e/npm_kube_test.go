@@ -51,7 +51,7 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	}
 	cs := kubernetes.NewForConfigOrDie(cfg)
 	catalogDir := filepath.Join(work, "catalog")
-	for _, src := range []string{"../../internal/catalog/testdata/apps/hello", "../../internal/catalog/apps/npm", "../../internal/catalog/apps/kyidentity"} {
+	for _, src := range []string{"../../internal/catalog/testdata/apps/hello", "../../internal/catalog/apps/npm", "../../internal/catalog/apps/kyidentity", "../../internal/catalog/apps/kyrecovery"} {
 		if err := os.CopyFS(filepath.Join(catalogDir, filepath.Base(src)), os.DirFS(src)); err != nil {
 			t.Fatal(err)
 		}
@@ -136,7 +136,7 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	}
 
 	// A throwaway certificate, uploaded through the tunnel.
-	certID := uploadCertificate(t, ctx, tunnel, token)
+	certID, certPEM := uploadCertificate(t, ctx, tunnel, token)
 	ip := func(container string) string {
 		return docker(t, "inspect", container, "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}")
 	}
@@ -153,9 +153,12 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	st.Edges = []stack.Edge{{Target: "k8s", Provider: "cloudflare", NPMURL: "kube://kyq-npm/app:81", ConnectorCIDR: ip(client) + "/32", Routes: []stack.Route{{
 		App: "hello", Hostname: "hello.example.test", ForwardHost: "app.kyq-hello.svc.cluster.local", ForwardPort: 8080, CertificateID: certID,
 	}}}}
-	// The catalog KyIdentity takes its issuer from its route, so it joins with the edge.
-	loadCatalogIdentity(t, name, cs)
+	// The catalog KyIdentity takes its issuer from its route, so it joins with the edge;
+	// KyRecovery's client joins KyIdentity's first setup.
+	loadCatalogApp(t, name, cs, "kyidentity")
+	loadCatalogApp(t, name, cs, "kyrecovery")
 	addCatalogIdentity(st, certID)
+	addCatalogRecovery(st, certID)
 	b, _ := yaml.Marshal(st)
 	os.WriteFile(plan, b, 0o600)
 	out = apply("route")
@@ -176,9 +179,11 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	if code := docker(t, "exec", node, "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-m", "10", "http://"+nodeIP+":30080/"); code != "200" {
 		t.Fatalf("NodePort 30080 answered %s", code)
 	}
-	checkCatalogIdentity(t, ctx, cs, kc, out, func(host, path string) string {
+	viaEdge := func(host, path string) string {
 		return docker(t, "exec", client, "curl", "-sk", "-m", "10", "--resolve", host+":30443:"+nodeIP, "-H", "CF-Connecting-IP: 203.0.113.7", "https://"+host+":30443"+path)
-	})
+	}
+	checkCatalogIdentity(t, ctx, cs, kc, out, viaEdge)
+	recoverySecrets := checkCatalogRecovery(t, ctx, cs, kc, out, viaEdge)
 
 	// Rerun: nothing changes.
 	out = apply("rerun")
@@ -258,8 +263,25 @@ func TestKubernetesNPMEdge(t *testing.T) {
 		t.Fatal("restored KyIdentity intent did not check clean")
 	}
 
+	// Sign-on: the lan edge also admits this host (the network's gateway) and the cluster's
+	// pods, whose requests to KyIdentity go through it like a browser's.
+	st, _ = stack.Load(plan)
+	podCIDR := mustNode(t, ctx, cs, node).Spec.PodCIDR
+	for _, gw := range strings.Fields(docker(t, "network", "inspect", "kind", "--format", "{{range .IPAM.Config}}{{.Gateway}} {{end}}")) {
+		if strings.Contains(gw, ".") {
+			st.Edges[0].AllowCIDRs = append(st.Edges[0].AllowCIDRs, gw+"/32")
+		}
+	}
+	st.Edges[0].AllowCIDRs = append(st.Edges[0].AllowCIDRs, podCIDR)
+	b, _ = yaml.Marshal(st)
+	os.WriteFile(plan, b, 0o600)
+	if out := apply("sign-on edge"); status(out, "kyrecovery.setup") != "skipped" {
+		t.Fatal("edge change re-ran KyRecovery's setup")
+	}
+	recoverySignOn(t, ctx, cs, kc, certPEM, nodeIP)
+
 	// No credential reached apply output or workstation state.
-	secretsSeen := []string{password, token, stored()}
+	secretsSeen := append([]string{password, token, stored()}, recoverySecrets...)
 	for _, o := range outputs {
 		for _, s := range secretsSeen {
 			if strings.Contains(o, s) {
@@ -322,8 +344,9 @@ func probe(t *testing.T, ctx context.Context, cs kubernetes.Interface, url strin
 	return strings.TrimSpace(string(logs))
 }
 
-// uploadCertificate adds a self-signed *.example.test certificate through NPM's API.
-func uploadCertificate(t *testing.T, ctx context.Context, tunnel edge.Dial, token string) int {
+// uploadCertificate adds a self-signed *.example.test certificate through NPM's API and
+// returns its ID and PEM.
+func uploadCertificate(t *testing.T, ctx context.Context, tunnel edge.Dial, token string) (int, []byte) {
 	t.Helper()
 	client := &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{DialContext: tunnel}}
 	defer client.CloseIdleConnections()
@@ -367,5 +390,14 @@ func uploadCertificate(t *testing.T, ctx context.Context, tunnel edge.Dial, toke
 	}
 	form.Close()
 	request("POST", fmt.Sprintf("/api/nginx/certificates/%d/upload", created.ID), form.FormDataContentType(), &upload, nil)
-	return created.ID
+	return created.ID, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+}
+
+func mustNode(t *testing.T, ctx context.Context, cs kubernetes.Interface, name string) *corev1.Node {
+	t.Helper()
+	n, err := cs.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
+	if err != nil || n.Spec.PodCIDR == "" {
+		t.Fatalf("node %s: %v", name, err)
+	}
+	return n
 }

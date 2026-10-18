@@ -106,24 +106,25 @@ func testIdentityKubernetesPreparation(t *testing.T, ctx context.Context, cs kub
 // catalogIdentityHost is where TestKubernetesNPMEdge routes the catalog KyIdentity.
 const catalogIdentityHost = "identity.example.test"
 
-// loadCatalogIdentity pulls the catalog's attested KyIdentity image and loads it into kind.
+// loadCatalogApp pulls a catalog app's attested image and loads it into kind.
 // A failing test logs the app's pods and events before the cluster goes.
-func loadCatalogIdentity(t *testing.T, cluster string, cs kubernetes.Interface) {
+func loadCatalogApp(t *testing.T, cluster string, cs kubernetes.Interface, app string) {
 	t.Helper()
 	t.Cleanup(func() {
 		if !t.Failed() {
 			return
 		}
 		ctx := context.Background()
-		pods, _ := cs.CoreV1().Pods("kyq-kyidentity").List(ctx, metav1.ListOptions{})
+		ns := "kyq-" + app
+		pods, _ := cs.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
 		for _, p := range pods.Items {
 			t.Logf("pod %s: phase %s, init %+v, containers %+v", p.Name, p.Status.Phase, p.Status.InitContainerStatuses, p.Status.ContainerStatuses)
 			for _, c := range []string{"private-volumes", "app"} {
-				logs, _ := cs.CoreV1().Pods("kyq-kyidentity").GetLogs(p.Name, &corev1.PodLogOptions{Container: c}).DoRaw(ctx)
+				logs, _ := cs.CoreV1().Pods(ns).GetLogs(p.Name, &corev1.PodLogOptions{Container: c}).DoRaw(ctx)
 				t.Logf("%s/%s logs:\n%s", p.Name, c, logs)
 			}
 		}
-		events, _ := cs.CoreV1().Events("kyq-kyidentity").List(ctx, metav1.ListOptions{})
+		events, _ := cs.CoreV1().Events(ns).List(ctx, metav1.ListOptions{})
 		for _, e := range events.Items {
 			t.Logf("event %s %s: %s", e.InvolvedObject.Name, e.Reason, e.Message)
 		}
@@ -132,7 +133,7 @@ func loadCatalogIdentity(t *testing.T, cluster string, cs kubernetes.Interface) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	ref := cat["kyidentity"].Images["kyidentity"]
+	ref := cat[app].Images[cat[app].Kubernetes.Image]
 	docker(t, "pull", "-q", ref)
 	// kind load of a digest reference leaves a broken image record; load the tag. The pod
 	// still names the digest, which containerd checks.
