@@ -72,7 +72,7 @@ Plain terminal planning and command orchestration for the operator-run installer
   separate from Matrix chat/call access, whose assignment composition remains a gate.
 - KyRecovery setup runs explicitly as `kyrecovery`, activates live, commits exact administrator grants with its keyed SQL audit, and never performs the custodian ceremony.
   `appsetup.go` owns apply's catalog apps that sign in through KyIdentity (KyRecovery,
-  kyPulse on Kubernetes, KyDrive on Docker): `composeClients` adds each one's catalog-derived client to the installed
+  kyPulse and KyNotes on Kubernetes, KyDrive on Docker): `composeClients` adds each one's catalog-derived client to the installed
   KyIdentity's intent in the session only (the saved plan is unchanged; a hand-written client
   must match), `clientSetupStep` (`<app>.setup`) exports that client, places bundle and secrets
   with `placeScript` (secrets no-clobber, kyPulse's bundle replaced, compare-only on check)
@@ -84,6 +84,11 @@ Plain terminal planning and command orchestration for the operator-run installer
   places it in KyIdentity's pod with `placeScript` (never replaced) and applies `scimPass`, the
   registering setup's pass with `scim` added. `recoveryCeremony`, `pulseHandover` and
   `driveHandover` are what apply prints.
+  KyNotes' distroless image has no shell: `notesSetupStep` (`kynotes.setup`) reuses
+  `transferNotesCredentials` and `notesSetup` with the preparation `notesPreparation` derives
+  (catalog client, KyIdentity's issuer, secrets beside the fixed bundle, backup from its env);
+  `deploySteps` holds it and KyNotes' route (`routedFirst`, `edge.RouteApp`) until after the other
+  edge steps, setup first. `notesHandover` names the KyRecovery pairing as a human step.
   `amendLate` (apply only, read-only, before preflight) records an `identity_amendment` for each
   app whose client the running KyIdentity's retained setup lacks, all or one, when it advertises
   `setup-amendments`; composeClients then puts that client in an `identityAmendment`, whose

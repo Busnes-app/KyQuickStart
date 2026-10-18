@@ -645,9 +645,9 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 				}
 				if slices.Contains(routedFirst, name) {
 					held = append(held, setup...)
-					continue
+				} else {
+					steps = append(steps, setup...)
 				}
-				steps = append(steps, setup...)
 				if connector != nil {
 					connectors = append(connectors, connector)
 				}

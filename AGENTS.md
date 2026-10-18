@@ -282,9 +282,11 @@ handover of admin and everyday logins.
   recorded existing products. An entry for an installed catalog app names no workload:
   `apply` runs it after the app's health step against the app's one ready pod, and
   `integrate-stack` skips it. Today only KyIdentity (from its `identity` settings) and the
-  installed Ky apps with a catalog `oidc` block and a product adapter: KyRecovery and kyPulse on
-  Kubernetes, KyDrive on Docker (its one running managed container, through `docker exec` over
-  SSH). Apply adds each such app's client, derived from its `oidc` block and route, to
+  installed Ky apps with a catalog `oidc` block and a product adapter: KyRecovery, kyPulse and
+  KyNotes on Kubernetes, KyDrive on Docker (its one running managed container, through `docker
+  exec` over SSH). An installed KyNotes' entry is exactly `bundle: /data/installer/setup.json`
+  and its `identity_client` (no `notes` block): apply derives its native preparation, and its
+  setup runs after the edge routes KyIdentity and before KyNotes' own route. Apply adds each such app's client, derived from its `oidc` block and route, to
   KyIdentity's first setup intent. When the running KyIdentity's setup ran without it and the
   KyIdentity advertises `setup-amendments` (0.4.3+, KyIdentity-server#110), apply records the
   app's `identity_amendment` (UUID derived from parent setup and client) in the plan and
@@ -396,7 +398,8 @@ handover of admin and everyday logins.
   `storage_class` sets every claim's class and must exist at preflight; without it claims need a
   default class. A claim's class never changes: `apply` refuses an existing claim of another class.
   A non-root app mounts each claim through a 0700 `private` subdirectory that an init container
-  (the pinned BusyBox helper, the app's uid) creates. A `kubernetes.env` value may contain
+  (the pinned BusyBox helper, the app's uid) creates. `kubernetes.termination_grace_seconds`
+  (0-3600, 0 keeps the default) sets the pod's termination grace. A `kubernetes.env` value may contain
   `{{host}}`, replaced by the URL host of the app's one edge route (hostname, plus `:client_port` when it is not 443); no other template syntax.
 - A Compose template may write `{{host}}` and `{{forward}}` (the route's
   `forward_host:forward_port`, an IP of the Docker target, where the app publishes its port).
@@ -453,7 +456,11 @@ calls and kind nodes must carry their own explicit bounds.
   every other routed app in its live `--check`, and health through the edge. Then, with
   test-only cluster DNS and CA trust, the owner's admin signs in to KyRecovery and kyPulse
   through KyIdentity, the everyday account is refused by both, and kyPulse reports every
-  target ok.
+  target ok. Last, the catalog KyNotes joins after KyIdentity's first setup through a setup
+  amendment: restricted uid-65532 pod, staged/imported private setup files (checked from an
+  ephemeral BusyBox container, the image has no shell), live present-only `--check`, no route
+  until its setup passed, health through the edge, admin and everyday sign-in with KyNotes' admin
+  separation (backup status 200/403, notes 403 `admin_account` for the admin), and a skipped rerun.
   Set `KYQ_TEST_IDENTITY_BINARY` to a local static KyIdentity build to additionally test real
   container-local identity setup over SSH and kind, including target-held preparation,
   inspection/resume and changed-intent refusal; SSH additionally refuses lost credentials.

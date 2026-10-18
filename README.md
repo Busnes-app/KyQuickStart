@@ -6,9 +6,9 @@ handover of administrator and everyday logins.
 
 **Status:** pre-release. The production catalog holds Nginx Proxy Manager as the edge on a
 Kubernetes target ([docs/edge.md](docs/edge.md)), KyIdentity behind it
-([docs/guided-setup.md](docs/guided-setup.md#catalog-kyidentity-on-kubernetes)), and KyRecovery
-and kyPulse signing in through it ([docs/guided-setup.md](docs/guided-setup.md#catalog-kyrecovery-on-kubernetes),
-[kyPulse](docs/guided-setup.md#catalog-kypulse-on-kubernetes)), with KyDrive on a Docker host
+([docs/guided-setup.md](docs/guided-setup.md#catalog-kyidentity-on-kubernetes)), and KyRecovery,
+kyPulse and KyNotes signing in through it ([docs/guided-setup.md](docs/guided-setup.md#catalog-kyrecovery-on-kubernetes),
+[kyPulse](docs/guided-setup.md#catalog-kypulse-on-kubernetes), [KyNotes](docs/guided-setup.md#catalog-kynotes-on-kubernetes)), with KyDrive on a Docker host
 routed through that edge ([KyDrive](docs/guided-setup.md#catalog-kydrive-on-docker));
 otherwise only a disposable demo app installs.
 `integrate-product` connects already-running Ky products to KyIdentity. See

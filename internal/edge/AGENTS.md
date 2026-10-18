@@ -4,7 +4,8 @@ Reconcile owned NPM routes, deploy Docker edge connectors, and verify product pr
 
 ## Ownership
 
-- NPM API client, host ownership and reconciliation: `npm.go`.
+- NPM API client, host ownership and reconciliation: `npm.go`. `RouteApp` names a route step's
+  app, so apply can run an app's setup before its route.
 - NPM's own administrator (setup-mode creation, login, verification, rotation) for bootstrap: `admin.go`.
 - Let's Encrypt DNS-01 certificates, their per-email NPM user and route name resolution: `certs.go`.
 - KyDNS LAN A records and their ownership ledger: `kydns.go`.
