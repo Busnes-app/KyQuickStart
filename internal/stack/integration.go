@@ -6,6 +6,8 @@ import (
 	"path"
 	"regexp"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 var containerRE = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,252}$`)
@@ -59,6 +61,11 @@ func (s *Stack) validateIntegrations() error {
 				return err
 			}
 		}
+		if i.Product == "kyrecovery" && (installed || i.IdentityClient != "") {
+			if !installed || i.Notes != nil || i.Identity != nil || !identitySetupName.MatchString(i.IdentityClient) || i.RecoverySetupID() == "" {
+				return errors.New("KyRecovery setup needs an installed app, its identity_client and a bundle at <data>/installer/<setup UUID>/setup.json")
+			}
+		}
 		workload := [4]string{i.Target, i.Namespace, i.Pod, i.Container}
 		if !installed && workloads[workload] {
 			return errors.New("a container can have only one product integration")
@@ -66,7 +73,8 @@ func (s *Stack) validateIntegrations() error {
 		products[i.Product], workloads[workload] = true, !installed
 	}
 	for _, i := range s.Integrations {
-		if i.IdentityClient != "" {
+		// apply checks an installed KyRecovery's client against the catalog.
+		if i.IdentityClient != "" && i.Product != "kyrecovery" {
 			if _, _, err := s.IdentitySource(i); err != nil {
 				return err
 			}
@@ -83,6 +91,17 @@ func (i Integration) Installed(s *Stack) bool {
 		}
 	}
 	return false
+}
+
+// RecoverySetupID is the setup UUID naming a KyRecovery bundle's directory,
+// <data>/installer/<UUID>/setup.json, or "" for any other path.
+func (i Integration) RecoverySetupID() string {
+	dir := path.Dir(i.Bundle)
+	id, err := uuid.Parse(path.Base(dir))
+	if !preparationPath(i.Bundle) || path.Base(i.Bundle) != "setup.json" || path.Base(path.Dir(dir)) != "installer" || err != nil || id.String() != path.Base(dir) {
+		return ""
+	}
+	return id.String()
 }
 
 // IdentitySource validates the selected source/destination graph before any connection.
