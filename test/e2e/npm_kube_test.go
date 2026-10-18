@@ -41,7 +41,8 @@ import (
 // TestKubernetesNPMEdge deploys NPM from the catalog into kind, bootstraps it, routes the
 // demo app through it as a cloudflare and then a lan edge, and reruns apply until nothing
 // changes. KyIdentity, KyRecovery and kyPulse join behind the lan edge, so their URLs carry
-// its client_port, which may not change once KyIdentity's setup ran.
+// its client_port, which may not change once KyIdentity's setup ran. KyDrive joins from a
+// Docker target, routed through the same edge, with its client in the same first setup.
 func TestKubernetesNPMEdge(t *testing.T) {
 	ctx := context.Background()
 	work := t.TempDir()
@@ -62,11 +63,11 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	}
 	plan := filepath.Join(state, "stack.yaml")
 	os.WriteFile(plan, []byte("version: 1\ntargets:\n  - name: k8s\n    kubeconfig: "+kc+"\n    storage_class: standard\napps:\n  - name: npm\n    target: k8s\n  - name: hello\n    target: k8s\n"), 0o600)
-	var outputs []string
+	var outputs, trust []string
 	apply := func(want string) string {
 		t.Helper()
 		var out bytes.Buffer
-		err := cli.Run(ctx, []string{"apply", "--state", state}, cli.Options{Catalog: os.DirFS(catalogDir), ReleaseSet: "e2e", Out: &out})
+		err := cli.Run(ctx, append([]string{"apply", "--state", state}, trust...), cli.Options{Catalog: os.DirFS(catalogDir), ReleaseSet: "e2e", Out: &out})
 		t.Logf("apply:\n%s", out.String())
 		if err != nil {
 			t.Fatalf("apply (%s): %v", want, err)
@@ -248,9 +249,12 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	loadCatalogApp(t, name, cs, "kyidentity")
 	loadCatalogApp(t, name, cs, "kyrecovery")
 	loadCatalogApp(t, name, cs, "kypulse")
+	drive := startDriveTarget(t, work, catalogDir, nodeIP, certPEM)
 	addCatalogIdentity(st, certID)
 	addCatalogRecovery(st, certID)
 	addCatalogPulse(st, certID)
+	addCatalogDrive(st, certID, drive)
+	trust = []string{"--trust-host-key", "nas=" + drive.fp}
 	b, _ = yaml.Marshal(st)
 	os.WriteFile(plan, b, 0o600)
 	out = apply("identity")
@@ -260,6 +264,7 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	checkCatalogIdentity(t, ctx, cs, kc, out, viaEdge)
 	recoverySecrets := checkCatalogRecovery(t, ctx, cs, kc, out, viaEdge)
 	pulseSecrets := checkCatalogPulse(t, ctx, cs, kc, out, viaEdge)
+	driveSecrets := checkCatalogDrive(t, out, drive, viaEdge)
 	rerun("identity rerun")
 
 	// Changed setup intent: the product refuses it at kyidentity.setup. Restored, the
@@ -324,16 +329,18 @@ func TestKubernetesNPMEdge(t *testing.T) {
 			st.Edges[0].AllowCIDRs = append(st.Edges[0].AllowCIDRs, gw+"/32")
 		}
 	}
-	st.Edges[0].AllowCIDRs = append(st.Edges[0].AllowCIDRs, podCIDR)
+	// KyDrive, on the Docker target, reaches KyIdentity through the edge from its relay.
+	st.Edges[0].AllowCIDRs = append(st.Edges[0].AllowCIDRs, podCIDR, drive.relayIP(t)+"/32")
 	b, _ = yaml.Marshal(st)
 	os.WriteFile(plan, b, 0o600)
-	if out := apply("sign-on edge"); status(out, "kyrecovery.setup") != "skipped" || status(out, "kypulse.setup") != "skipped" {
+	if out := apply("sign-on edge"); status(out, "kyrecovery.setup") != "skipped" || status(out, "kypulse.setup") != "skipped" || status(out, "kydrive.setup") != "skipped" {
 		t.Fatal("edge change re-ran an app's setup")
 	}
 	catalogSignOn(t, ctx, cs, kc, certPEM, nodeIP)
+	driveSignOn(t, ctx, kc, certPEM, nodeIP)
 
 	// No credential reached apply output or workstation state.
-	secretsSeen := append(append([]string{password, token, stored()}, recoverySecrets...), pulseSecrets...)
+	secretsSeen := append(append(append([]string{password, token, stored()}, recoverySecrets...), pulseSecrets...), driveSecrets...)
 	for _, o := range outputs {
 		for _, s := range secretsSeen {
 			if strings.Contains(o, s) {

@@ -13,6 +13,9 @@ import (
 	"github.com/Busnes-app/kyquickstart/internal/remote"
 )
 
+// ComposeEnv precedes every docker compose command.
+const ComposeEnv = "KYQ_UID=$(id -u) KYQ_GID=$(id -g)"
+
 // App is one catalog app placed on one Docker host.
 type App struct {
 	Name          string
@@ -25,6 +28,15 @@ type App struct {
 }
 
 func (a App) dir() string { return path.Join(a.Root, a.Name) }
+
+// binds are the paths of the app's bind directories.
+func (a App) binds() []string {
+	var out []string
+	for _, b := range a.Catalog.Binds {
+		out = append(out, path.Join(a.dir(), b))
+	}
+	return out
+}
 
 func hashOf(parts ...string) string {
 	h := sha256.New()
@@ -42,9 +54,11 @@ func Steps(a App) []engine.Step {
 	return []engine.Step{secretsStep{a}, deployStep{a: a, override: ov, hash: hash}, healthStep{a: a, hash: hash}}
 }
 
-// compose runs docker compose for this app's project from its directory.
+// compose runs docker compose for this app's project from its directory. A Compose file
+// may run a service as the target user, ${KYQ_UID}:${KYQ_GID}, who owns its secrets and
+// bind directories.
 func (a App) compose(args string) string {
-	return "cd " + remote.Quote(a.dir()) + " && docker compose -p " + remote.Quote("kyq-"+a.Name) +
+	return "cd " + remote.Quote(a.dir()) + " && " + ComposeEnv + " docker compose -p " + remote.Quote("kyq-"+a.Name) +
 		" -f compose.yaml -f compose.kyq.yaml " + args
 }
 

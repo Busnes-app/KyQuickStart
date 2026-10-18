@@ -282,8 +282,9 @@ handover of admin and everyday logins.
   recorded existing products. An entry for an installed catalog app names no workload:
   `apply` runs it after the app's health step against the app's one ready pod, and
   `integrate-stack` skips it. Today only KyIdentity (from its `identity` settings) and the
-  installed Ky apps with a catalog `oidc` block and a product adapter (KyRecovery, kyPulse), on
-  Kubernetes. Apply adds each such app's client, derived from its `oidc` block and route, to
+  installed Ky apps with a catalog `oidc` block and a product adapter: KyRecovery and kyPulse on
+  Kubernetes, KyDrive on Docker (its one running managed container, through `docker exec` over
+  SSH). Apply adds each such app's client, derived from its `oidc` block and route, to
   KyIdentity's first setup intent. When the running KyIdentity's setup ran without it and the
   KyIdentity advertises `setup-amendments` (0.4.3+, KyIdentity-server#110), apply records the
   app's `identity_amendment` (UUID derived from parent setup and client) in the plan and
@@ -293,7 +294,8 @@ handover of admin and everyday logins.
   (`issuer_changed`) a plan that moves the issuer KyIdentity's Deployment runs with, or the URLs
   of an added client its setup exported, once that setup has run (read-only
   `--check`/`--export-client` on the running pod; unreadable refuses). Each app's setup
-  transfers its client's secrets in memory into private pod files, never replacing one.
+  transfers its client's secrets in memory, across targets too, into private files in the app's
+  pod or container, never replacing one.
   KyRecovery's custodian ceremony stays human and apply prints it as outstanding. kyPulse's
   bundle registers every other routed app's readiness path as a monitoring target; that bundle
   is replaced as targets change, since kyPulse keeps omitted targets and refuses edited ones.
@@ -332,7 +334,9 @@ handover of admin and everyday logins.
   Kubernetes the catalog's `npm` app keeps its admin API on a ClusterIP Service reached through
   the driver's port-forward (`kube://`); bootstrap replaces NPM's first or default administrator
   with a cluster-generated one (`docs/edge.md`).
-- One edge (NPM, and a tunnel or frp client) per target and one owner per hostname. The installer
+- One edge (NPM, and a tunnel or frp client) per target and one owner per hostname. A route's
+  app is on the edge's target or on a Docker target, never in another cluster; a cluster edge's
+  egress admits such an upstream's `forward_host` (an IP) and port alone. The installer
   sets each product's trusted-proxy value to exactly where its edge connects from (pinned /32 on
   Docker, NAT-free LAN /32 across hosts, pod network plus an edge-only NetworkPolicy in the
   cluster), never `0.0.0.0/0`, and `verify` checks the client address the product reports.
@@ -389,6 +393,11 @@ handover of admin and everyday logins.
   A non-root app mounts each claim through a 0700 `private` subdirectory that an init container
   (the pinned BusyBox helper, the app's uid) creates. A `kubernetes.env` value may contain
   `{{host}}`, replaced by the URL host of the app's one edge route (hostname, plus `:client_port` when it is not 443); no other template syntax.
+- A Compose template may write `{{host}}` and `{{forward}}` (the route's
+  `forward_host:forward_port`, an IP of the Docker target, where the app publishes its port).
+  Compose runs with `KYQ_UID`/`KYQ_GID` set to the target user's; `./<name>` bind directories
+  are created private by the driver before Compose, and no other relative bind source is
+  accepted.
 
 ## Work Guidance
 
@@ -426,6 +435,11 @@ calls and kind nodes must carry their own explicit bounds.
   `apply-setup`, OIDC discovery through the edge naming the `:30443` issuer, changed-intent
   refusal, and a later `client_port` change refused (`issuer_changed`) before
   `kyidentity.deploy`, Deployment and pod unchanged.
+  The catalog KyDrive joins it from an sshd Docker target, routed through the same lan edge to
+  the kind gateway: hardened container as the target user, published on that address only, its
+  client in the same first setup, secrets crossed to its container over SSH, live `--check`,
+  health through the edge and, later, the owner's admin signed in through KyIdentity (the
+  everyday account refused until SCIM provisions it).
   The catalog KyRecovery joins it: restricted uid-10001 pod, its client in KyIdentity's first
   setup, transferred private setup files, live `--check`, health through the edge, the
   ceremony handover and a skipped rerun. The catalog kyPulse joins too: restricted uid-10001 pod

@@ -8,7 +8,8 @@ handover of administrator and everyday logins.
 Kubernetes target ([docs/edge.md](docs/edge.md)), KyIdentity behind it
 ([docs/guided-setup.md](docs/guided-setup.md#catalog-kyidentity-on-kubernetes)), and KyRecovery
 and kyPulse signing in through it ([docs/guided-setup.md](docs/guided-setup.md#catalog-kyrecovery-on-kubernetes),
-[kyPulse](docs/guided-setup.md#catalog-kypulse-on-kubernetes));
+[kyPulse](docs/guided-setup.md#catalog-kypulse-on-kubernetes)), with KyDrive on a Docker host
+routed through that edge ([KyDrive](docs/guided-setup.md#catalog-kydrive-on-docker));
 otherwise only a disposable demo app installs.
 `integrate-product` connects already-running Ky products to KyIdentity. See
 [the deployment plan](docs/superpowers/plans/2026-10-10-deployment-plan.md) for what remains.

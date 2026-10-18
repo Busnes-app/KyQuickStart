@@ -48,7 +48,7 @@ func checkCatalogPulse(t *testing.T, ctx context.Context, cs kubernetes.Interfac
 			t.Fatalf("%s = %q", id, status(out, id))
 		}
 	}
-	if !strings.Contains(out, "kyPulse at https://"+catalogPulseURLHost+"/ (sign in through KyIdentity as prepared-admin) watches: "+strings.Join(pulseWatched, ", ")+".") || !strings.Contains(out, "Not watched (no readiness path or single edge route): npm.") {
+	if !strings.Contains(out, "kyPulse at https://"+catalogPulseURLHost+"/ (sign in through KyIdentity as prepared-admin) watches: "+strings.Join(pulseWatched, ", ")+".") || !strings.Contains(out, "Not watched (no readiness path or single edge route): npm, kydrive.") {
 		t.Fatal("kyPulse handover missing")
 	}
 	c, err := kube.Connect(kubeconfig, "")

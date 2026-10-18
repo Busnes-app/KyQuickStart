@@ -14,6 +14,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/Busnes-app/kyquickstart/internal/managed"
 	"github.com/Busnes-app/kyquickstart/internal/remote"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
 	"github.com/Busnes-app/kyquickstart/internal/suite"
@@ -40,6 +41,19 @@ func dockerProductExec(r remote.Runner, container, binary string, runtimeUser ..
 }
 
 func dockerProductInputExec(r remote.Runner, container, binary string, runtimeUser ...string) func(context.Context, []string, []byte) ([]byte, error) {
+	return dockerExec(r, "", remote.Quote(container), binary, runtimeUser...)
+}
+
+// dockerAppContainer is a shell prefix that sets $c to the ID of installed app's one running
+// installer-managed container, or fails.
+func dockerAppContainer(app string) string {
+	return "c=$(docker ps -q --filter " + remote.Quote("label=com.docker.compose.project=kyq-"+app) +
+		" --filter " + remote.Quote("label="+managed.Label+"="+managed.Value) + " --filter status=running) && " +
+		"case $c in ''|*[!0-9a-f]*) echo " + remote.Quote("want one running "+app+" container") + " >&2; exit 1;; esac && "
+}
+
+// dockerExec runs binary in container, a shell word that prefix may set.
+func dockerExec(r remote.Runner, prefix, container, binary string, runtimeUser ...string) func(context.Context, []string, []byte) ([]byte, error) {
 	return func(ctx context.Context, args []string, input []byte) ([]byte, error) {
 		if len(input) > 128<<10 {
 			return nil, errors.New("product command input exceeds limit")
@@ -51,11 +65,11 @@ func dockerProductInputExec(r remote.Runner, container, binary string, runtimeUs
 		if len(runtimeUser) > 0 && runtimeUser[0] != "" {
 			words = append(words, "--user", remote.Quote(runtimeUser[0]))
 		}
-		words = append(words, remote.Quote(container), remote.Quote(binary))
+		words = append(words, container, remote.Quote(binary))
 		for _, arg := range args {
 			words = append(words, remote.Quote(arg))
 		}
-		b, err := r.Run(ctx, strings.Join(words, " "), input)
+		b, err := r.Run(ctx, prefix+strings.Join(words, " "), input)
 		if err != nil {
 			return nil, errors.New("product setup command failed; inspect product logs locally")
 		}
@@ -292,7 +306,11 @@ func integrateProductResult(ctx context.Context, args []string, o Options, fixed
 func nativeProductExec(target driver, i stack.Integration, adapter productAdapter) (identityExec, func(context.Context, []string, []byte) ([]byte, error), error) {
 	switch d := target.(type) {
 	case sshDriver:
-		return dockerProductExec(d.c, i.Container, adapter.binary, adapter.runtimeUser), dockerProductInputExec(d.c, i.Container, adapter.binary, adapter.runtimeUser), nil
+		input := dockerProductInputExec(d.c, i.Container, adapter.binary, adapter.runtimeUser)
+		if i.Container == "" { // an installed app: its one running container, found per call
+			input = dockerExec(d.c, dockerAppContainer(i.Product), `"$c"`, adapter.binary, adapter.runtimeUser)
+		}
+		return func(ctx context.Context, args []string) ([]byte, error) { return input(ctx, args, nil) }, input, nil
 	case kubeDriver:
 		// An installed app's integration names no pod: each call finds the app's ready one.
 		where := func(ctx context.Context) (string, string, string, error) {

@@ -184,3 +184,43 @@ func TestFailedComposeWriteLeavesDeployRetryable(t *testing.T) {
 		t.Fatalf("Inspect = %v, %v; want false, nil", done, err)
 	}
 }
+
+// Bind directories are created private, as the target user, before Compose runs; compose
+// runs with that user's uid and gid. A symlinked bind directory is refused.
+func TestDeployCreatesBindDirectories(t *testing.T) {
+	root := realTemp(t)
+	var compose []string
+	r := runFunc(func(ctx context.Context, cmd string, stdin []byte) ([]byte, error) {
+		if strings.Contains(cmd, "docker compose") {
+			compose = append(compose, cmd)
+			return nil, nil
+		}
+		return remote.Local{}.Run(ctx, cmd, stdin)
+	})
+	a := fakeApp(r)
+	a.Root, a.Catalog.Binds = root, []string{"backups", "data"}
+	if err := deployOf(a).Apply(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range a.Catalog.Binds {
+		fi, err := os.Stat(filepath.Join(root, "hello", b))
+		if err != nil || !fi.IsDir() || fi.Mode().Perm() != 0o700 {
+			t.Fatalf("%s: %v %v", b, fi, err)
+		}
+	}
+	if len(compose) != 2 || !strings.Contains(compose[1], "&& KYQ_UID=$(id -u) KYQ_GID=$(id -g) docker compose -p 'kyq-hello' ") {
+		t.Fatalf("compose = %q", compose)
+	}
+	os.Remove(filepath.Join(root, "hello", "data"))
+	os.Symlink(t.TempDir(), filepath.Join(root, "hello", "data"))
+	compose = nil
+	if err := deployOf(a).Apply(context.Background()); err == nil || len(compose) != 0 {
+		t.Fatalf("symlinked bind directory: %v, compose %q", err, compose)
+	}
+}
+
+type runFunc func(context.Context, string, []byte) ([]byte, error)
+
+func (f runFunc) Run(ctx context.Context, cmd string, stdin []byte) ([]byte, error) {
+	return f(ctx, cmd, stdin)
+}

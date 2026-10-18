@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
+	"github.com/Busnes-app/kyquickstart/internal/dockerhost"
 	"github.com/Busnes-app/kyquickstart/internal/engine"
 	"github.com/Busnes-app/kyquickstart/internal/managed"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
@@ -270,11 +271,16 @@ func remove(ctx context.Context, state string, r Request, trust trustFlag, o Opt
 	if err != nil {
 		return err
 	}
-	// The app's edge without its routes: its removed-route step disables them in NPM.
+	// The app's edges without its routes: their removed-route steps disable them in NPM. An
+	// edge may be on another target, which is then locked too.
 	var edges []stack.Edge
 	var hostnames []string
+	targets := []stack.Target{t}
 	for _, e := range s.edges {
-		if e.Target == t.Name && slices.ContainsFunc(e.Routes, routed) {
+		if slices.ContainsFunc(e.Routes, routed) {
+			if e.Target != t.Name {
+				targets = append(targets, s.allTargets[slices.IndexFunc(s.allTargets, func(x stack.Target) bool { return x.Name == e.Target })])
+			}
 			for _, r := range e.Routes {
 				if routed(r) {
 					hostnames = append(hostnames, r.Hostname)
@@ -284,7 +290,7 @@ func remove(ctx context.Context, state string, r Request, trust trustFlag, o Opt
 			edges = append(edges, e)
 		}
 	}
-	s.targets, s.edges, s.changesPlan, s.installation = []stack.Target{t}, edges, true, next.InstallationID
+	s.targets, s.edges, s.changesPlan, s.installation = targets, edges, true, next.InstallationID
 	if err := s.connect(ctx, trust); err != nil {
 		return err
 	}
@@ -324,7 +330,7 @@ func handoverSection(name string, t stack.Target, version string, hostnames []st
 	if t.Kubernetes() {
 		fmt.Fprintf(b, "It runs in namespace %s; its objects no longer carry %s.\n", "kyq-"+name, managed.Label)
 	} else {
-		fmt.Fprintf(b, "Its Compose project kyq-%s is in %s; run it with `docker compose -p kyq-%s -f compose.yaml -f compose.kyq.yaml up -d` there.\n", name, path.Join(t.Root, name), name)
+		fmt.Fprintf(b, "Its Compose project kyq-%s is in %s; run it with `%s docker compose -p kyq-%s -f compose.yaml -f compose.kyq.yaml up -d` there.\n", name, path.Join(t.Root, name), dockerhost.ComposeEnv, name)
 	}
 	if len(hostnames) > 0 {
 		fmt.Fprintf(b, "Its public hostnames (%s) were disabled in Nginx Proxy Manager. They still carry the installer's ownership marks, so a later apply keeps them disabled; serve the app through a proxy host you create yourself.\n", strings.Join(hostnames, ", "))

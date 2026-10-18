@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"net/netip"
 	"slices"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
@@ -212,8 +213,8 @@ func podSecurityContext(k *catalog.Kubernetes) *corev1.PodSecurityContext {
 
 // policy denies all ingress except, for an edge, to its published ports and, for an app on a
 // cluster with an edge, from the edge's pods. An edge's egress is limited to DNS, HTTP(S)
-// anywhere (ACME and upstreams) and pods in installer-managed namespaces, whose own policies
-// decide what it reaches there.
+// anywhere (ACME and upstreams), its upstreams off the cluster and pods in installer-managed
+// namespaces, whose own policies decide what it reaches there.
 func policy(a App) networkingv1.NetworkPolicySpec {
 	k := a.Catalog.Kubernetes
 	spec := networkingv1.NetworkPolicySpec{PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress}}
@@ -237,6 +238,10 @@ func policy(a App) networkingv1.NetworkPolicySpec {
 			}}},
 			{Ports: tcp(80, 443)},
 			{To: []networkingv1.NetworkPolicyPeer{{NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{managed.Label: managed.Value}}}}},
+		}
+		for _, u := range a.Upstreams {
+			spec.Egress = append(spec.Egress, networkingv1.NetworkPolicyEgressRule{Ports: tcp(int(u.Port())),
+				To: []networkingv1.NetworkPolicyPeer{{IPBlock: &networkingv1.IPBlock{CIDR: netip.PrefixFrom(u.Addr(), u.Addr().BitLen()).String()}}}})
 		}
 		return spec
 	}

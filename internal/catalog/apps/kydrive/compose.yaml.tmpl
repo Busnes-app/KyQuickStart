@@ -1,0 +1,52 @@
+# From KyDrive v0.4.2's docker-compose.yml. It runs as the target user, who owns its secrets
+# and bind directories, with data under /data rather than /app/data: KyDrive's setup socket
+# refuses a parent directory (/app) owned by another user.
+services:
+  app:
+    image: {{ .Images.kydrive }}
+    platform: linux/amd64
+    user: "${KYQ_UID:?}:${KYQ_GID:?}"
+    restart: unless-stopped
+    # Lets uploads, backups and restic finish on shutdown.
+    stop_grace_period: 20m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    # /tmp holds restic packs and SQLite temp files. The image's unused VOLUME paths are
+    # tmpfs, so Docker leaves no anonymous volumes behind.
+    tmpfs: [/tmp, "/app/data:size=1m", "/app/backups:size=1m"]
+    mem_limit: 1g
+    memswap_limit: 1g
+    cpus: 2
+    pids_limit: 256
+    # Only on the address the edge forwards to; see docs/guided-setup.md for its firewall.
+    ports: ["{{forward}}:8080"]
+    secrets: [session_secret, scim_token]
+    # KY_SESSION_SECRET has no file form: read it from the secret, never from Compose.
+    entrypoint: ["/bin/sh", "-c", "s=$$(cat /run/secrets/session_secret) || exit 1; KY_SESSION_SECRET=$$s; export KY_SESSION_SECRET; unset s; exec /app/kydrive-server"]
+    environment:
+      KY_ENV: production
+      KY_HOST: 0.0.0.0
+      KY_PORT: "8080"
+      KY_APP_NAME: KyDrive
+      KY_APP_URL: "https://{{host}}"
+      KY_DB_DRIVER: sqlite
+      KY_DATA_DIR: /data
+      KY_BACKUP_DIR: /backups
+      # apply-setup writes the KyIdentity issuer, client and secret; only setup's accounts sign in.
+      KY_SSO_ENABLED: "true"
+      KY_SSO_AUTO_PROVISION: "false"
+      KY_SCIM_ENABLED: "true"
+      KY_SCIM_TOKEN_FILE: /run/secrets/scim_token
+      GOMEMLIMIT: 768MiB
+    volumes: ["./data:/data", "./backups:/backups"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+secrets:
+  session_secret:
+    file: ./secrets/session_secret
+  scim_token:
+    file: ./secrets/scim_token

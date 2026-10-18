@@ -48,9 +48,14 @@ edges:
         status_path: /api/status
 ```
 
-There is one edge per target and one owner per hostname. The connector address must be a
-free fixed IPv4 address on the existing Docker network. NPM and the connector must be able
-to reach each other there; the NPM hostname must resolve inside the container and its
+There is one edge per target and one owner per hostname. A route's app runs on the edge's
+target or on a Docker target, which NPM reaches over the LAN at `forward_host`; a Docker edge
+never routes into a cluster. An app whose Compose file publishes on `{{forward}}` (catalog
+KyDrive) binds exactly `forward_host:forward_port`, so `forward_host` must be an IP of its
+Docker target; firewall it to the edge's source (`guided-setup.md`, "Catalog KyDrive on Docker").
+
+The connector address must be a free fixed IPv4 address on the existing Docker network. NPM
+and the connector must be able to reach each other there; the NPM hostname must resolve inside the container and its
 certificate must cover each routed hostname. The management URL must resolve to private or
 loopback addresses and present a certificate trusted by the workstation. There is no TLS bypass.
 NPM administration stays on the LAN. Routes cannot forward to port 81 or their management URL.
@@ -155,7 +160,8 @@ apps:
   80/443 anywhere (ACME and HTTPS upstreams), and any port on pods in installer-managed
   namespaces. That last rule is the simplest correct one for upstreams: each app's own policy
   decides what NPM reaches, and on a cluster with NPM every other app's policy admits only NPM's
-  pods (by namespace name, which the API server sets) to its ports.
+  pods (by namespace name, which the API server sets) to its ports. A route to an app on another
+  target adds its `forward_host`/32 and `forward_port` alone, so that `forward_host` must be an IP.
 
 ### The baseline exception
 

@@ -106,6 +106,9 @@ func (s *session) composeClients(st *stack.Stack) error {
 		switch i.Product {
 		case "kyrecovery":
 			s.handover += fmt.Sprintf(recoveryCeremony, host, n.Admin.Username)
+		case "kydrive":
+			t := s.placed["kydrive"]
+			s.handover += fmt.Sprintf(driveHandover, host, n.Admin.Username, path.Join(t.Root, "kydrive"), t.Name, n.Everyday.Username)
 		case "kypulse":
 			var unwatched []string
 			s.pulseTargets, unwatched = pulseTargets(st, s.cat)
@@ -222,6 +225,15 @@ Outstanding human step, unless already done: the KyRecovery custodian ceremony.
   pod's log (kubectl -n kyq-kyrecovery logs deployment/app), and lost when that pod is replaced.
 `
 
+// driveHandover is printed after every apply that installs KyDrive.
+const driveHandover = `
+KyDrive at https://%[1]s/: sign in through KyIdentity as %[2]s, its only account so far.
+  Not yet: KyIdentity's SCIM connector to KyDrive, without which KyDrive refuses %[5]s and
+  every other account. Its endpoint is https://%[1]s/scim/v2 and its bearer token is
+  %[3]s/secrets/scim_token on %[4]s. Its local "admin" break-glass password is in
+  %[3]s/data/initial-admin-password on %[4]s: sign in once, change it and delete the file.
+`
+
 // pulseTarget is a kyPulse monitoring target: an app's readiness path through its route.
 type pulseTarget struct {
 	Key  string `json:"key"`
@@ -264,19 +276,21 @@ func pulseHandover(host, admin string, targets []pulseTarget, unwatched []string
 }
 
 // clientSetupStep is apply's apply-setup for an installed Ky app that signs in through
-// KyIdentity: KyRecovery or kyPulse. Neither 0.4.2 has native preparation or credential import,
-// so the step places its bundle and KyIdentity's client and directory secrets as private files
-// through its pod's shell, never replacing a secret.
+// KyIdentity: KyRecovery, kyPulse or KyDrive. None of their 0.4.2 releases imports
+// credentials, so the step places its bundle and KyIdentity's client and directory secrets as
+// private files through its container's shell, never replacing a secret. KyIdentity may run on
+// another target: the export crosses to the app's only in memory.
 type clientSetupStep struct {
-	i       stack.Integration
-	name    string            // the app's name in KyIdentity, for messages
-	source  stack.Integration // KyIdentity's with the client composeClients added, or its amendment's
-	issuer  string
-	targets []pulseTarget // kyPulse's monitoring extension; nil for any other app
-	export  identityExec  // KyIdentity's apply-setup
-	exec    identityExec  // the app's apply-setup
-	setup   func(context.Context, identityExec, string, bool) ([]byte, error)
-	place   func(ctx context.Context, args []string, input []byte) error
+	i         stack.Integration
+	name      string            // the app's name in KyIdentity, for messages
+	source    stack.Integration // KyIdentity's with the client composeClients added, or its amendment's
+	issuer    string
+	scimToken string        // the app's own SCIM token file, which its bundle names; "" for none
+	targets   []pulseTarget // kyPulse's monitoring extension; nil for any other app
+	export    identityExec  // KyIdentity's apply-setup
+	exec      identityExec  // the app's apply-setup
+	setup     func(context.Context, identityExec, string, bool) ([]byte, error)
+	place     func(ctx context.Context, args []string, input []byte) error
 }
 
 func (s clientSetupStep) ID() string { return s.i.Product + ".setup" }
@@ -285,6 +299,9 @@ func (s clientSetupStep) InputHash() string {
 	in := []any{s.i, s.source, s.issuer}
 	if s.targets != nil {
 		in = append(in, s.targets)
+	}
+	if s.scimToken != "" {
+		in = append(in, s.scimToken)
 	}
 	b, err := json.Marshal(in)
 	if err != nil {
@@ -331,22 +348,6 @@ func (s clientSetupStep) run(ctx context.Context, check bool) error {
 	if err != nil {
 		return err
 	}
-	dir := path.Dir(s.i.Bundle)
-	b := map[string]any{
-		"schema": "ky.product-setup/1", "service": s.i.Product, "setupId": s.i.SetupID(),
-		"sso": map[string]string{
-			"issuerUrl": frame.IssuerURL, "clientId": frame.ClientID, "redirectUri": frame.RedirectURIs[0],
-			"clientSecretFile": path.Join(dir, "client.secret"), "directorySecretFile": path.Join(dir, "directory.secret"),
-		},
-		"admins": []map[string]string{{"issuer": frame.IssuerURL, "subject": frame.Administrator.Subject, "username": frame.Administrator.Username}},
-	}
-	if len(s.targets) > 0 {
-		b["monitoring"] = map[string]any{"targets": s.targets}
-	}
-	bundle, err := json.Marshal(b)
-	if err != nil {
-		return err
-	}
 	mode, bundleMode := "write", "write"
 	if s.targets != nil {
 		// kyPulse's targets follow the plan: it keeps a target the bundle omits and refuses an
@@ -356,11 +357,37 @@ func (s clientSetupStep) run(ctx context.Context, check bool) error {
 	if check {
 		mode, bundleMode = "check", "check"
 	}
-	// The bundle goes last: it names files that must already be in place.
-	for _, f := range []struct {
+	dir := path.Dir(s.i.Bundle)
+	type file struct {
 		name, mode string
 		data       []byte
-	}{{"client.secret", mode, []byte(frame.ClientSecret)}, {"directory.secret", mode, []byte(frame.DirectorySecret)}, {"setup.json", bundleMode, bundle}} {
+	}
+	files := []file{{"client.secret", mode, []byte(frame.ClientSecret)}}
+	sso := map[string]string{
+		"issuerUrl": frame.IssuerURL, "clientId": frame.ClientID, "redirectUri": frame.RedirectURIs[0],
+		"clientSecretFile": path.Join(dir, "client.secret"),
+	}
+	// readClientCredentials holds a directory secret exactly when the client has a directory.
+	if frame.DirectorySecret != "" {
+		sso["directorySecretFile"] = path.Join(dir, "directory.secret")
+		files = append(files, file{"directory.secret", mode, []byte(frame.DirectorySecret)})
+	}
+	if s.scimToken != "" {
+		sso["scimTokenFile"] = s.scimToken
+	}
+	b := map[string]any{
+		"schema": "ky.product-setup/1", "service": s.i.Product, "setupId": s.i.SetupID(), "sso": sso,
+		"admins": []map[string]string{{"issuer": frame.IssuerURL, "subject": frame.Administrator.Subject, "username": frame.Administrator.Username}},
+	}
+	if len(s.targets) > 0 {
+		b["monitoring"] = map[string]any{"targets": s.targets}
+	}
+	bundle, err := json.Marshal(b)
+	if err != nil {
+		return err
+	}
+	// The bundle goes last: it names files that must already be in place.
+	for _, f := range append(files, file{"setup.json", bundleMode, bundle}) {
 		if err := s.place(ctx, []string{f.mode, path.Join(dir, f.name)}, f.data); err != nil {
 			return fmt.Errorf("%s's %s is missing, unsafe or differs from KyIdentity's current client; retained secrets are never replaced", s.name, f.name)
 		}
@@ -380,7 +407,7 @@ func (s clientSetupStep) run(ctx context.Context, check bool) error {
 
 // setupSteps are apply's setup for an installed app's integration: KyIdentity's (its setup,
 // the setup amendments and the bootstrap administrator's retirement), or an app's that signs
-// in through it, on Kubernetes (newSession refuses anything else).
+// in through it, on Kubernetes or a Docker host (newSession refuses anything else).
 func (s *session) setupSteps(d driver, i stack.Integration) ([]engine.Step, error) {
 	adapter := productAdapters[i.Product]
 	exec, input, err := nativeProductExec(d, i, adapter)
@@ -405,16 +432,17 @@ func (s *session) setupSteps(d driver, i stack.Integration) ([]engine.Step, erro
 	if err != nil {
 		return nil, err
 	}
-	k := d.(kubeDriver)
+	// The app's shell, as its runtime user, places the files: sh -c placeScript sh <mode> <path>.
+	_, shell, err := nativeProductExec(d, i, productAdapter{binary: "sh", runtimeUser: adapter.runtimeUser})
+	if err != nil {
+		return nil, err
+	}
 	place := func(ctx context.Context, args []string, input []byte) error {
-		ns, pod, container, err := k.c.AppPod(ctx, i.Product)
-		if err != nil {
-			return err
-		}
-		_, err = k.c.ExecInput(ctx, ns, pod, container, append([]string{"sh", "-c", placeScript, "sh"}, args...), input)
+		_, err := shell(ctx, append([]string{"-c", placeScript, "sh"}, args...), input)
 		return err
 	}
-	step := clientSetupStep{i: i, name: s.cat[i.Product].OIDC.Name, source: source, issuer: s.cat["kyidentity"].Kubernetes.Env[issuerEnv],
+	o := s.cat[i.Product].OIDC
+	step := clientSetupStep{i: i, name: o.Name, source: source, issuer: s.cat["kyidentity"].Kubernetes.Env[issuerEnv], scimToken: o.SCIMTokenFile,
 		export: export, exec: exec, setup: adapter.setup, place: place}
 	if i.Product == "kypulse" {
 		step.targets = s.pulseTargets
