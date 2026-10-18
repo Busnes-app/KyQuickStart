@@ -156,11 +156,11 @@ func addCatalogIdentity(st *stack.Stack, certID int) {
 }
 
 // checkCatalogIdentity proves the deployed catalog KyIdentity: restricted pod as uid 100 on
-// a private data directory, setup applied, its first-start administrator's password file
-// private, and discovery through the edge naming the route's issuer.
+// a private data directory, setup applied, its first-start administrator retired (disabled,
+// password file gone), and discovery through the edge naming the route's issuer.
 func checkCatalogIdentity(t *testing.T, ctx context.Context, cs kubernetes.Interface, kubeconfig, out string, get func(host, path string) string) {
 	t.Helper()
-	for _, id := range []string{"kyidentity.deploy", "kyidentity.health", "kyidentity.setup"} {
+	for _, id := range []string{"kyidentity.deploy", "kyidentity.health", "kyidentity.setup", "kyidentity.retire-bootstrap"} {
 		if status(out, id) != "ok" {
 			t.Fatalf("%s = %q", id, status(out, id))
 		}
@@ -181,12 +181,17 @@ func checkCatalogIdentity(t *testing.T, ctx context.Context, cs kubernetes.Inter
 	if err != nil || *p.Spec.Containers[0].SecurityContext.RunAsUser != 100 || p.Spec.InitContainers[0].Name != "private-volumes" {
 		t.Fatalf("pod spec: %v", err)
 	}
-	stat, err := c.Exec(ctx, namespace, pod, container, []string{"stat", "-c", "%n %a %u", "/data", "/data/first-run-password.txt", "/data/installer"})
-	if err != nil || strings.TrimSpace(string(stat)) != "/data 700 100\n/data/first-run-password.txt 600 100\n/data/installer 700 100" {
+	stat, err := c.Exec(ctx, namespace, pod, container, []string{"stat", "-c", "%n %a %u", "/data", "/data/installer"})
+	if err != nil || strings.TrimSpace(string(stat)) != "/data 700 100\n/data/installer 700 100" {
 		t.Fatalf("data directory:\n%s %v", stat, err)
 	}
-	if user, err := c.Exec(ctx, namespace, pod, container, []string{"head", "-n1", "/data/first-run-password.txt"}); err != nil || strings.TrimSpace(string(user)) != "User: kyq-bootstrap" {
-		t.Fatalf("bootstrap administrator = %q %v", user, err)
+	// disable-user removes the password file naming the account it retires.
+	if _, err := c.Exec(ctx, namespace, pod, container, []string{"test", "!", "-e", "/data/first-run-password.txt"}); err != nil {
+		t.Fatal("kyq-bootstrap's first-run password file survived its retirement")
+	}
+	// A rerun answers unchanged: the account is already disabled.
+	if b, err := c.Exec(ctx, namespace, pod, container, []string{"/usr/local/bin/kyidentity", "disable-user", "--username", "kyq-bootstrap", "--require-active-admin", identityFixturePreparation().Admin.Username}); err != nil || !strings.Contains(string(b), `"status":"unchanged"`) {
+		t.Fatalf("kyq-bootstrap is not disabled: %s %v", b, err)
 	}
 	events, _ := cs.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{FieldSelector: "involvedObject.name=" + pod})
 	for _, e := range events.Items {
