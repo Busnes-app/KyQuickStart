@@ -71,7 +71,7 @@ func TestIntegrationBoundary(t *testing.T) {
 // An installed app's integration names no workload: apply finds the app's own pod.
 func TestInstalledIntegrationNamesNoWorkload(t *testing.T) {
 	plan := "version: 1\ntargets:\n- name: k8s\n  kubeconfig: /tmp/fixture-kubeconfig\napps:\n- name: kyidentity\n  target: k8s\n- name: kypulse\n  target: k8s\n" +
-		"integrations:\n- product: kyidentity\n  target: k8s\n  bundle: /data/a.json\n- product: kypulse\n  target: k8s\n  bundle: /data/b.json\n"
+		"integrations:\n- product: kyidentity\n  target: k8s\n  bundle: /data/a.json\n- product: kypulse\n  target: k8s\n  bundle: /data/installer/0f9a3c1e-5b7d-4e2a-9c8b-1d2e3f4a5b6c/setup.json\n  identity_client: kypulse\n"
 	s, err := Parse([]byte(plan))
 	if err != nil {
 		t.Fatal("installed integrations rejected", err)
@@ -87,7 +87,7 @@ func TestInstalledIntegrationNamesNoWorkload(t *testing.T) {
 	}
 }
 
-// An installed KyRecovery's setup names its KyIdentity client and a UUID-scoped bundle.
+// An installed app's setup names its KyIdentity client and a UUID-scoped bundle.
 func TestRecoveryIntegration(t *testing.T) {
 	const bundle = "/app/data/installer/0f9a3c1e-5b7d-4e2a-9c8b-1d2e3f4a5b6c/setup.json"
 	plan := "version: 1\ntargets:\n- name: k8s\n  kubeconfig: /tmp/fixture-kubeconfig\napps:\n- name: kyidentity\n  target: k8s\n- name: kyrecovery\n  target: k8s\n" +
@@ -96,7 +96,7 @@ func TestRecoveryIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal("KyRecovery integration rejected", err)
 	}
-	if s.Integrations[0].RecoverySetupID() != "0f9a3c1e-5b7d-4e2a-9c8b-1d2e3f4a5b6c" {
+	if s.Integrations[0].SetupID() != "0f9a3c1e-5b7d-4e2a-9c8b-1d2e3f4a5b6c" {
 		t.Fatal("setup id not read from the bundle path")
 	}
 	for name, bad := range map[string]string{
@@ -107,9 +107,15 @@ func TestRecoveryIntegration(t *testing.T) {
 		"not installer":  strings.Replace(plan, "/installer/", "/other/", 1),
 		"other filename": strings.Replace(plan, "/setup.json", "/bundle.json", 1),
 		"not installed":  strings.Replace(plan, "- name: kyrecovery\n  target: k8s\n", "", 1) + "existing:\n- product: kyrecovery\n  target: k8s\n  url: https://recovery.example.test\n",
+		"kyidentity":     strings.ReplaceAll(plan, "product: kyrecovery", "product: kyidentity"),
 	} {
 		if _, err := Parse([]byte(bad)); err == nil {
 			t.Errorf("%s accepted", name)
 		}
+	}
+	// Any other installed app takes the same shape.
+	pulse := strings.ReplaceAll(plan, "kyrecovery", "kypulse")
+	if _, err := Parse([]byte(pulse)); err != nil {
+		t.Fatal("kyPulse integration rejected", err)
 	}
 }
