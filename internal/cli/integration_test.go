@@ -91,7 +91,7 @@ func TestGuidedResumePreservesPreparationAndDisclosesItsScope(t *testing.T) {
 
 func TestGuidedExplicitIntegrationResumeAndDecline(t *testing.T) {
 	dir := t.TempDir()
-	answers := "no\n1\nnas\ndocker\n192.0.2.1\nkyq\n22\n/opt/test\nskip\nskip\nskip\n1\nkypulse\nnas\nhttps://pulse.example.test\nyes\npulse\n/data/installer/setup.json\nyes\nfinish\n"
+	answers := "no\n1\nnas\ndocker\n192.0.2.1\nkyq\n22\n/opt/test\nskip\nskip\nskip\nskip\n1\nkypulse\nnas\nhttps://pulse.example.test\nyes\npulse\n/data/installer/setup.json\nyes\nfinish\n"
 	var out bytes.Buffer
 	o := Options{Catalog: catalog.Embedded(), In: strings.NewReader(answers), Out: &out}
 	if err := Run(context.Background(), []string{"plan", "--state", dir}, o); err != nil {
@@ -109,7 +109,7 @@ func TestGuidedExplicitIntegrationResumeAndDecline(t *testing.T) {
 		t.Fatal(err)
 	}
 	out.Reset()
-	o.In = strings.NewReader(strings.Repeat("\n", 20))
+	o.In = strings.NewReader(strings.Repeat("\n", 21))
 	if err := Run(context.Background(), []string{"plan", "--state", dir}, o); err != nil {
 		t.Fatal(err, out.String())
 	}
@@ -122,7 +122,7 @@ func TestGuidedExplicitIntegrationResumeAndDecline(t *testing.T) {
 	}
 	// Declining integration removes intent without deleting an existing installation.
 	out.Reset()
-	o.In = strings.NewReader(strings.Repeat("\n", 15) + "no\nyes\nfinish\n")
+	o.In = strings.NewReader(strings.Repeat("\n", 16) + "no\nyes\nfinish\n")
 	if err := Run(context.Background(), []string{"plan", "--state", dir}, o); err != nil {
 		t.Fatal(err, out.String())
 	}
@@ -138,7 +138,7 @@ func TestGuidedExplicitIntegrationResumeAndDecline(t *testing.T) {
 func TestGuidedResumeKeepsHandEditedPreparation(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "stack.yaml")
-	first := "no\n1\nnas\ndocker\n192.0.2.1\nkyq\n22\n/opt/test\nskip\nskip\nskip\n2\n" +
+	first := "no\n1\nnas\ndocker\n192.0.2.1\nkyq\n22\n/opt/test\nskip\nskip\nskip\nskip\n2\n" +
 		"kyidentity\nnas\nhttps://identity.example.test\nyes\nidentity\n/data/installer/271333e2-c221-4601-b249-563b3d828530/setup.json\n" +
 		"kynotes\nnas\nhttps://notes.example.test\nyes\nnotes\n/data/installer/setup.json\nyes\nfinish\n"
 	var out bytes.Buffer
@@ -170,7 +170,7 @@ func TestGuidedResumeKeepsHandEditedPreparation(t *testing.T) {
 	}
 	// Change only the SSH login; Enter keeps every other answer, including identity-client.
 	out.Reset()
-	o.In = strings.NewReader("\n\n\n\n\nops\n" + strings.Repeat("\n", 19) + "yes\nfinish\n")
+	o.In = strings.NewReader("\n\n\n\n\nops\n" + strings.Repeat("\n", 20) + "yes\nfinish\n")
 	if err := Run(context.Background(), []string{"plan", "--state", dir}, o); err != nil {
 		t.Fatal(err, out.String())
 	}
