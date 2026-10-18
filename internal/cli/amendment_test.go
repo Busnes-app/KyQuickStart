@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -279,6 +280,24 @@ func TestRetireBootstrap(t *testing.T) {
 		t.Fatalf("without disable-user: %v %q", err, note)
 	}
 	identity.features = []string{"disable-user"}
+	// A failed or malformed capabilities query fails the step: it must not pass while
+	// kyq-bootstrap stays active.
+	for _, broken := range []func() ([]byte, error){
+		func() ([]byte, error) { return nil, errors.New("pod restarting") },
+		func() ([]byte, error) { return []byte("not json"), nil },
+	} {
+		failing := step
+		failing.exec = func(ctx context.Context, args []string) ([]byte, error) {
+			if slices.Contains(args, "--capabilities") {
+				return broken()
+			}
+			return step.exec(ctx, args)
+		}
+		note = ""
+		if failing.Apply(ctx) == nil || failing.Verify(ctx) == nil || note != "" {
+			t.Fatalf("a broken capabilities query passed the step (note %q)", note)
+		}
+	}
 	if err := step.Verify(ctx); err == nil {
 		t.Fatal("active bootstrap verified")
 	}

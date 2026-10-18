@@ -114,6 +114,15 @@ func identitySetup(ctx context.Context, exec identityExec, bundle string, check 
 	}
 	return json.Marshal(report)
 }
+
+// missingCapability is a valid capabilities report that lacks one feature, as opposed to a
+// failed or malformed query.
+type missingCapability string
+
+func (m missingCapability) Error() string {
+	return "KyIdentity lacks setup capability " + string(m) + "; upgrade the product first"
+}
+
 func identityCapabilities(ctx context.Context, exec identityExec, prepare bool, extra ...string) error {
 	b, err := exec(ctx, []string{"apply-setup", "--capabilities"})
 	if err != nil {
@@ -137,7 +146,7 @@ func identityCapabilities(ctx context.Context, exec identityExec, prepare bool, 
 			found = found || f == required
 		}
 		if !found {
-			return fmt.Errorf("KyIdentity lacks setup capability %s; upgrade the product first", required)
+			return missingCapability(required)
 		}
 	}
 	return nil
@@ -412,9 +421,14 @@ func (s retireBootstrapStep) Apply(ctx context.Context) error {
 func (s retireBootstrapStep) Verify(ctx context.Context) error { return s.run(ctx, "unchanged") }
 
 func (s retireBootstrapStep) run(ctx context.Context, want ...string) error {
-	if identityCapabilities(ctx, s.exec, false, "disable-user") != nil {
+	// Only a valid report without disable-user skips: a failed query must not leave the
+	// bootstrap administrator active behind a passing step.
+	var missing missingCapability
+	if err := identityCapabilities(ctx, s.exec, false, "disable-user"); errors.As(err, &missing) && missing == "disable-user" {
 		*s.note = fmt.Sprintf(bootstrapNote, s.bootstrap, s.admin)
 		return nil
+	} else if err != nil {
+		return fmt.Errorf("kyidentity.retire-bootstrap cannot read KyIdentity's capabilities: %w", err)
 	}
 	*s.note = ""
 	b, err := s.exec(ctx, []string{"disable-user", "--username", s.bootstrap, "--require-active-admin", s.admin})
