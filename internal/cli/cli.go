@@ -369,7 +369,7 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 		cat[name] = app
 	}
 	for _, i := range st.Integrations {
-		supported := i.Product == "kyidentity" && i.Identity != nil || i.Product != "kyidentity" && cat[i.Product].OIDC != nil && productAdapters[i.Product].setup != nil
+		supported := i.Product == "kyidentity" && i.Identity != nil || cat[i.Product].OIDC != nil && productAdapters[i.Product].setup != nil
 		if i.Installed(st) && (!supported || !s.placed[i.Product].Kubernetes()) {
 			return nil, fmt.Errorf("integration %s: apply configures only an installed KyIdentity (from its identity settings) and the installed Ky apps that sign in through it, on Kubernetes", i.Product)
 		}
