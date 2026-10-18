@@ -228,9 +228,10 @@ Outstanding human step, unless already done: the KyRecovery custodian ceremony.
 // driveHandover is printed after every apply that installs KyDrive.
 const driveHandover = `
 KyDrive at https://%[1]s/: sign in through KyIdentity as %[2]s (its administrator) or %[5]s.
-  KyIdentity's SCIM connector provisions both, and everyone later assigned to KyDrive, at
-  https://%[1]s/scim/v2; allow it a minute after apply. Its local "admin" break-glass password
-  is in %[3]s/data/initial-admin-password on %[4]s: sign in once, change it and delete the file.
+  KyIdentity's SCIM connector provisions both, and everyone later assigned to KyDrive, at its
+  endpoint https://%[1]s/scim/v2; allow it a minute after apply. Its local "admin" break-glass
+  password is in %[3]s/data/initial-admin-password on %[4]s: sign in once, change it and
+  delete the file.
 `
 
 // pulseTarget is a kyPulse monitoring target: an app's readiness path through its route.
