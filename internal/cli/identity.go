@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -312,6 +313,7 @@ type identitySetupStep struct {
 	i     stack.Integration
 	exec  identityExec
 	input func(context.Context, []string, []byte) ([]byte, error)
+	late  []string // clients other installed apps added to the intent
 }
 
 func (s identitySetupStep) ID() string { return s.i.Product + ".setup" }
@@ -332,7 +334,7 @@ func (s identitySetupStep) Inspect(ctx context.Context) (bool, error) {
 
 func (s identitySetupStep) Apply(ctx context.Context) error {
 	if err := stageIdentity(ctx, s.exec, s.input, s.i.Identity, s.i.Bundle, false); err != nil {
-		return err
+		return s.lateClients(ctx, err)
 	}
 	_, err := identitySetup(ctx, s.exec, s.i.Bundle, false)
 	return err
@@ -344,4 +346,18 @@ func (s identitySetupStep) Verify(ctx context.Context) error {
 	}
 	_, err := identitySetup(ctx, s.exec, s.i.Bundle, true)
 	return err
+}
+
+// lateClients names the real cause when the retained setup matches the intent without the
+// clients other apps added: KyIdentity takes clients only in its first setup.
+func (s identitySetupStep) lateClients(ctx context.Context, err error) error {
+	if len(s.late) == 0 {
+		return err
+	}
+	n := *s.i.Identity
+	n.Clients = slices.DeleteFunc(slices.Clone(n.Clients), func(c stack.IdentityClient) bool { return slices.Contains(s.late, c.ID) })
+	if stageIdentity(ctx, s.exec, s.input, &n, s.i.Bundle, true) != nil {
+		return err
+	}
+	return fmt.Errorf("KyIdentity setup %s was prepared without client %s, and KyIdentity cannot add a client to an existing setup (Busnes-app/KyIdentity-server#110); install KyIdentity afresh with it, or wait for setup amendments", n.SetupID, strings.Join(s.late, ", "))
 }

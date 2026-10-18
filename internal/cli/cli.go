@@ -210,28 +210,29 @@ func (t trustFlag) Set(v string) error {
 }
 
 type session struct {
-	changesPlan  bool          // install, uninstall or unmanage; refused on a runner-owned target
-	owner        *stack.Marker // set by a published handoff: the owner markers now record
-	integrations []stack.Integration
-	allTargets   []stack.Target
-	revision     int    // of the loaded plan; markers on targets record it
-	installation string // stack.yaml's installation_id; marks this installation's NPM hosts
-	saved        string // the published plan's installation_id, which markers record
-	takeOver     string // a target to claim from another plan (apply --take-over-target)
-	trust        trustFlag
-	ack          bool // acknowledge upgrading without a pre-upgrade backup
-	adopt        bool // claim legacy-marked NPM hosts (apply --adopt-edge-hosts)
-	redact       *engine.Redactor
-	demo         bool
-	o            Options
-	state        string
-	cat          catalog.Catalog
-	order        []string
-	placed       map[string]stack.Target // app -> target
-	targets      []stack.Target          // targets holding an app, by name
-	drivers      map[string]driver       // target name -> driver
-	edges        []stack.Edge
-	npms         map[string]*edge.NPM
+	changesPlan      bool          // install, uninstall or unmanage; refused on a runner-owned target
+	owner            *stack.Marker // set by a published handoff: the owner markers now record
+	integrations     []stack.Integration
+	recoveryHandover string // the custodian ceremony, when the plan installs KyRecovery
+	allTargets       []stack.Target
+	revision         int    // of the loaded plan; markers on targets record it
+	installation     string // stack.yaml's installation_id; marks this installation's NPM hosts
+	saved            string // the published plan's installation_id, which markers record
+	takeOver         string // a target to claim from another plan (apply --take-over-target)
+	trust            trustFlag
+	ack              bool // acknowledge upgrading without a pre-upgrade backup
+	adopt            bool // claim legacy-marked NPM hosts (apply --adopt-edge-hosts)
+	redact           *engine.Redactor
+	demo             bool
+	o                Options
+	state            string
+	cat              catalog.Catalog
+	order            []string
+	placed           map[string]stack.Target // app -> target
+	targets          []stack.Target          // targets holding an app, by name
+	drivers          map[string]driver       // target name -> driver
+	edges            []stack.Edge
+	npms             map[string]*edge.NPM
 }
 
 // load validates everything that needs no connection.
@@ -365,9 +366,12 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 		cat[name] = app
 	}
 	for _, i := range st.Integrations {
-		if i.Installed(st) && (i.Product != "kyidentity" || i.Identity == nil || !s.placed[i.Product].Kubernetes()) {
-			return nil, fmt.Errorf("integration %s: apply configures only an installed KyIdentity on Kubernetes, from its identity settings", i.Product)
+		if i.Installed(st) && (i.Product != "kyidentity" || i.Identity == nil) && i.Product != "kyrecovery" || i.Installed(st) && !s.placed[i.Product].Kubernetes() {
+			return nil, fmt.Errorf("integration %s: apply configures only an installed KyIdentity (from its identity settings) and KyRecovery, on Kubernetes", i.Product)
 		}
+	}
+	if err := s.composeRecovery(st); err != nil {
+		return nil, err
 	}
 	return s, nil
 }
@@ -514,6 +518,7 @@ func (s *session) apply(ctx context.Context, publish func() error) error {
 	if err := s.operate(ctx, "", s.deploySteps, publish); err != nil {
 		return err
 	}
+	fmt.Fprint(s.o.Out, s.recoveryHandover)
 	if s.demo {
 		fmt.Fprintln(s.o.Out, "Demo deployment passed its driver checks. Suite SSO, administrator access and backups are not configured.")
 		if t, ok := s.placed["hello"]; ok {
@@ -576,11 +581,11 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 		steps = append(steps, d.steps(name, s.cat[name], s.o.ReleaseSet, s.redact)...)
 		for _, i := range s.integrations {
 			if i.Product == name && i.Target == s.placed[name].Name {
-				exec, input, err := nativeProductExec(d, i, productAdapters[name])
+				step, err := s.setupStep(d, i)
 				if err != nil {
 					return nil, err
 				}
-				steps = append(steps, identitySetupStep{i: i, exec: exec, input: input})
+				steps = append(steps, step)
 			}
 		}
 	}
