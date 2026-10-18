@@ -116,8 +116,9 @@ func TestCatalogKyIdentityRefusals(t *testing.T) {
 type fakeIdentity struct {
 	staged, applied bool
 	pod, stdin      string
-	intent          string // retained at the first staging; a different one is refused
-	export          string // --export-client's frame
+	intent          string            // retained at the first staging; a different one is refused
+	export          string            // --export-client's frame
+	exports         map[string]string // per client, when set
 	calls           []string
 }
 
@@ -146,6 +147,9 @@ func (n *fakeIdentity) stream(_ context.Context, namespace, pod, container strin
 			return errors.New("not applied")
 		}
 		out = n.export
+		if n.exports != nil {
+			out = n.exports[args[slices.Index(args, "--export-client")+1]]
+		}
 	default:
 		if check && !n.applied || !n.staged {
 			return errors.New("not applied")

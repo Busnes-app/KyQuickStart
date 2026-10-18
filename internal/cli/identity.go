@@ -350,17 +350,22 @@ func (s identitySetupStep) Verify(ctx context.Context) error {
 }
 
 // lateClients names the real cause when the retained setup matches the intent without the
-// clients other apps added: KyIdentity takes clients only in its first setup.
+// clients other apps added, all of them or one: KyIdentity takes clients only in its first setup.
 func (s identitySetupStep) lateClients(ctx context.Context, err error) error {
-	if len(s.late) == 0 {
-		return err
+	missing := [][]string{s.late}
+	if len(s.late) > 1 {
+		for _, id := range s.late {
+			missing = append(missing, []string{id})
+		}
 	}
-	n := *s.i.Identity
-	n.Clients = slices.DeleteFunc(slices.Clone(n.Clients), func(c stack.IdentityClient) bool { return slices.Contains(s.late, c.ID) })
-	if stageIdentity(ctx, s.exec, s.input, &n, s.i.Bundle, true) != nil {
-		return err
+	for _, late := range missing {
+		n := *s.i.Identity
+		n.Clients = slices.DeleteFunc(slices.Clone(n.Clients), func(c stack.IdentityClient) bool { return slices.Contains(late, c.ID) })
+		if len(late) > 0 && stageIdentity(ctx, s.exec, s.input, &n, s.i.Bundle, true) == nil {
+			return fmt.Errorf("KyIdentity setup %s was prepared without client %s, and KyIdentity cannot add a client to an existing setup (Busnes-app/KyIdentity-server#110); install KyIdentity afresh with it, or wait for setup amendments", n.SetupID, strings.Join(late, ", "))
+		}
 	}
-	return fmt.Errorf("KyIdentity setup %s was prepared without client %s, and KyIdentity cannot add a client to an existing setup (Busnes-app/KyIdentity-server#110); install KyIdentity afresh with it, or wait for setup amendments", n.SetupID, strings.Join(s.late, ", "))
+	return err
 }
 
 // issuerEnv carries the catalog KyIdentity's issuer, taken from its route.
@@ -368,9 +373,9 @@ const issuerEnv = "KYIDENTITY_ISSUER_URL"
 
 // refuseMovedSetup refuses, before any step runs, a plan that moves a URL an installed
 // KyIdentity's completed setup is bound to: its issuer, which every client and token names,
-// or the redirect of KyRecovery's client in it. The recorded issuer is the one KyIdentity's
-// Deployment runs with; when it differs, the refusal stands unless the running pod's
-// read-only check shows the setup has not run.
+// or the redirect of a client composeClients added to it. The recorded issuer is the one
+// KyIdentity's Deployment runs with; when it differs, the refusal stands unless the running
+// pod's read-only check shows the setup has not run.
 func (s *session) refuseMovedSetup(ctx context.Context) error {
 	t := s.placed["kyidentity"]
 	k := slices.IndexFunc(s.integrations, func(i stack.Integration) bool {
@@ -398,17 +403,18 @@ func (s *session) refuseMovedSetup(ctx context.Context) error {
 			return suite.Errorf(suite.IssuerChanged, "%s, but an issuer cannot change after setup: every client and token names it. Restore the route and client_port; nothing was changed", moved)
 		}
 	}
-	r := slices.IndexFunc(s.integrations, func(x stack.Integration) bool {
-		return x.Product == "kyrecovery" && x.IdentityClient != "" && x.Target == s.placed["kyrecovery"].Name
-	})
-	if r < 0 {
-		return nil
+	for _, id := range s.derived {
+		if err := movedClient(ctx, exec, i, id); err != nil {
+			return err
+		}
 	}
-	c := slices.IndexFunc(i.Identity.Clients, func(c stack.IdentityClient) bool { return c.ID == s.integrations[r].IdentityClient })
-	if c < 0 {
-		return nil
-	}
-	want := i.Identity.Clients[c]
+	return nil
+}
+
+// movedClient refuses a plan that moves the URLs of client id, which composeClients took
+// from the catalog, once KyIdentity's setup has registered it.
+func movedClient(ctx context.Context, exec identityExec, i stack.Integration, id string) error {
+	want := i.Identity.Clients[slices.IndexFunc(i.Identity.Clients, func(c stack.IdentityClient) bool { return c.ID == id })]
 	raw, err := exec(ctx, []string{"apply-setup", "--file", i.Bundle, "--export-client", want.ID})
 	defer clear(raw)
 	if err != nil {
@@ -426,7 +432,7 @@ func (s *session) refuseMovedSetup(ctx context.Context) error {
 		wantDirectory = want.SuiteWebhook.URL
 	}
 	if !slices.Equal(frame.RedirectURIs, want.RedirectURIs) || frame.DirectoryURL != wantDirectory {
-		return suite.Errorf(suite.IssuerChanged, "this plan moves KyRecovery's KyIdentity client from %s to %s (its route hostname or its edge's client_port changed), but KyIdentity cannot change a client after its first setup (Busnes-app/KyIdentity-server#110). Restore the route and client_port; nothing was changed", strings.Join(frame.RedirectURIs, " "), strings.Join(want.RedirectURIs, " "))
+		return suite.Errorf(suite.IssuerChanged, "this plan moves %s's KyIdentity client from %s to %s (its route hostname or its edge's client_port changed), but KyIdentity cannot change a client after its first setup (Busnes-app/KyIdentity-server#110). Restore the route and client_port; nothing was changed", want.Name, strings.Join(frame.RedirectURIs, " "), strings.Join(want.RedirectURIs, " "))
 	}
 	return nil
 }
