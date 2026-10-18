@@ -185,6 +185,14 @@ func TestLoadRejects(t *testing.T) {
 		"node_port unknown port":  {edgeKube("ports: [81, 80]", "{443: 30443}"), compose, "not one of ports"},
 		"node_port out of range":  {edgeKube("ports: [81, 80]", "{80: 8080}"), compose, "30000-32767"},
 		"node_port repeated":      {edgeKube("ports: [81, 80, 443]", "{80: 30080, 443: 30080}"), compose, "unique"},
+
+		"nested bind":         {manifest, compose + "    volumes: [./a/b:/b]\n", "must be ./<name>"},
+		"parent bind":         {manifest, compose + "    volumes: [../x:/x]\n", "must be ./<name>"},
+		"long volume form":    {manifest, compose + "    volumes:\n      - {type: bind, source: ./x, target: /x}\n", "short source:target"},
+		"bind is volume":      {manifest, compose + "    volumes: [./data:/data]\nvolumes:\n  data:\n", "also a named volume"},
+		"other compose func":  {manifest, compose + "    environment: {A: '{{ print 1 }}{{ nope }}'}\n", "nope"},
+		"scim not secret":     {manifest + oidc + "  scim_token_file: /run/secrets/scim\n", compose, "scim_token_file"},
+		"scim outside secret": {manifest + "secrets: [scim]\n" + oidc + "  scim_token_file: /data/scim\n", compose, "scim_token_file"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -279,6 +287,29 @@ func TestWithHost(t *testing.T) {
 	}
 	if k.Env["URL"] != "https://{{host}}/a" {
 		t.Fatal("WithHost changed the catalog's env")
+	}
+}
+
+func TestComposeRoute(t *testing.T) {
+	tmpl := compose + "    environment: {URL: 'https://{{host}}/a'}\n    ports: ['{{forward}}:8080']\n    volumes: [./data:/data, ./data:/again, ./backups:/backups, cache:/cache, /anonymous]\nvolumes:\n  cache:\n"
+	m := manifest + "secrets: [scim]\n" + oidc + "  scim_token_file: /run/secrets/scim\nbackup:\n  volumes: [data, cache]\n"
+	cat, err := Load(fstest.MapFS{"a/manifest.yaml": {Data: []byte(m)}, "a/compose.yaml.tmpl": {Data: []byte(tmpl)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := cat["a"]
+	if !a.UsesRoute() || !slices.Equal(a.Binds, []string{"backups", "data"}) || a.OIDC.SCIMTokenFile != "/run/secrets/scim" {
+		t.Fatalf("app = %+v", a)
+	}
+	got := a.WithRoute("drive.example.com:30443", "192.168.1.91:18443")
+	if got.UsesRoute() || !strings.Contains(string(got.Compose), "URL: 'https://drive.example.com:30443/a'") || !strings.Contains(string(got.Compose), "ports: ['192.168.1.91:18443:8080']") {
+		t.Fatalf("compose:\n%s", got.Compose)
+	}
+	if !a.UsesRoute() {
+		t.Fatal("WithRoute changed the catalog's Compose file")
+	}
+	if a, _ := Load(os.DirFS("testdata/apps")); a["hello"].UsesRoute() || a["hello"].Binds != nil {
+		t.Fatal("hello takes a route or binds")
 	}
 }
 
