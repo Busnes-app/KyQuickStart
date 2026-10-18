@@ -18,7 +18,7 @@ func (s *Stack) validateIntegrations() error {
 	if len(s.Integrations) > 64 {
 		return errors.New("at most 64 product integrations are supported")
 	}
-	products, workloads := map[string]bool{}, map[[4]string]bool{}
+	products, workloads, amendments := map[string]bool{}, map[[4]string]bool{}, map[string]bool{}
 	for _, i := range s.Integrations {
 		t, found := s.Target(i.Target)
 		selected, installed := false, i.Installed(s)
@@ -67,6 +67,13 @@ func (s *Stack) validateIntegrations() error {
 				return errors.New("an installed app's setup needs its identity_client and a bundle at <data>/installer/<setup UUID>/setup.json")
 			}
 		}
+		if i.IdentityAmendment != "" {
+			id, err := uuid.Parse(i.IdentityAmendment)
+			if !installed || i.Product == "kyidentity" || err != nil || id.String() != i.IdentityAmendment || i.IdentityAmendment == i.SetupID() || amendments[i.IdentityAmendment] {
+				return errors.New("identity_amendment needs an installed app's integration and a canonical setup UUID of its own")
+			}
+			amendments[i.IdentityAmendment] = true
+		}
 		workload := [4]string{i.Target, i.Namespace, i.Pod, i.Container}
 		if !installed && workloads[workload] {
 			return errors.New("a container can have only one product integration")
@@ -74,6 +81,9 @@ func (s *Stack) validateIntegrations() error {
 		products[i.Product], workloads[workload] = true, !installed
 	}
 	for _, i := range s.Integrations {
+		if i.Identity != nil && amendments[i.Identity.SetupID] {
+			return errors.New("identity_amendment repeats KyIdentity's setup_id")
+		}
 		// apply checks an installed app's client against the catalog.
 		if i.IdentityClient != "" && (!i.Installed(s) || i.Product == "kyidentity") {
 			if _, _, err := s.IdentitySource(i); err != nil {

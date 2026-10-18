@@ -433,7 +433,8 @@ integrations:
       clients: []
 ```
 
-`apply` then runs `kyidentity.secrets`, `.deploy`, `.health` and `.setup`. The setup step is
+`apply` then runs `kyidentity.secrets`, `.deploy`, `.health`, `.setup`, one `.amend.<app>`
+per setup amendment, and `.retire-bootstrap` (below). The setup step is
 the typed preparation above (`apply-setup --stage`, credentials generated in the pod's data
 directory) followed by `apply-setup`, each read back with `--check`; a rerun skips it, and
 changed intent fails with the product's refusal. `integrate-stack` skips installed apps.
@@ -445,21 +446,34 @@ changed intent fails with the product's refusal. `integrate-stack` skips install
   no administrator yet it also creates `kyq-bootstrap` and writes its password to
   `/data/first-run-password.txt` (0600), deleted after the first sign-in. That account is
   separate from the owner's: setup never adopts an account it did not create.
-- A setup's intent is immutable: KyIdentity 0.4.2 refuses a client added after setup
-  (Busnes-app/KyIdentity-server#110, setup amendments), so every app that signs in must be in
-  the plan before the first `apply`. The clients of catalog KyRecovery and kyPulse are added
-  automatically (next sections); if the setup already ran without one, `kyidentity.setup` fails
-  and names #110 and the missing client.
+- A setup's intent is immutable. A fresh install puts the clients of catalog KyRecovery and
+  kyPulse (next sections) into the first setup. An app installed after it joins through a
+  setup amendment (Busnes-app/KyIdentity-server#110), which needs KyIdentity 0.4.3 or later
+  (capability `setup-amendments`): when the running KyIdentity's retained setup was prepared
+  without an app's client, `apply` records `identity_amendment: <UUID>` on that app's
+  integration and publishes it with the plan once the run passes (a plan change, refused on a
+  runner-owned target). The UUID is derived from the first setup's and the client's, so a run
+  that stops first reuses it. `kyidentity.amend.<app>` then stages, applies and checks the
+  amendment at `/data/installer/<amendment UUID>/setup.json` after `kyidentity.setup`: the
+  client alone, bound to the first setup's owner accounts. The app's credential export reads
+  the amendment. KyIdentity 0.4.2, the catalog image today, has no amendments: there
+  `kyidentity.setup` fails, names #110, the missing client and 0.4.3, and every app that signs
+  in must be in the plan before the first `apply`.
 - The issuer cannot change once setup has run: every client and token names it. Before any
   step, `apply` compares the issuer KyIdentity's Deployment runs with to the plan's; when they
   differ and the pod's read-only `apply-setup --check` passes (or the pod cannot be asked), it
-  refuses with `issuer_changed` and changes nothing. Every added client's registered URLs are
-  compared the same way (#110). Changing the route hostname or `client_port` therefore needs a
-  fresh KyIdentity.
-- Not yet: `kyq-bootstrap` stays an active administrator after setup. KyIdentity 0.4.2
-  can only disable an account through its admin API, which needs a session and a step-up
-  factor KyQuickStart does not hold; retiring it waits on a product command. Until then,
-  disable it in the admin UI after the owner's first sign-in.
+  refuses with `issuer_changed` and changes nothing. Every added client's registered URLs,
+  amended ones included, are compared the same way: setup never changes a registered client,
+  only KyIdentity's own administration does. Changing the route hostname or `client_port`
+  therefore needs a fresh KyIdentity.
+- `kyidentity.retire-bootstrap` follows the setup and its amendments. With KyIdentity 0.4.3 or
+  later (capability `disable-user`) it runs `kyidentity disable-user --username kyq-bootstrap
+  --require-active-admin <owner admin>`, which revokes the account's sessions and deletes
+  `first-run-password.txt`; KyIdentity refuses unless the owner's administrator is another
+  active administrator with no end date. A rerun answers unchanged and skips.
+- Not yet on KyIdentity 0.4.2: it has no `disable-user`, so the step changes nothing and
+  `apply` prints that `kyq-bootstrap` stays an active administrator. Disable it in the admin
+  UI after the owner's first sign-in.
 - Not yet: `TRUSTED_PROXY_CIDRS` is unset, so KyIdentity sees the edge pod as every client;
   Docker placement (no Compose file); SCIM `active:false` proof (gate G2); backups (the
   `data` volume is declared, nothing schedules it).
@@ -493,7 +507,9 @@ integrations:
 KyIdentity's setup intent: `https://<host>/api/auth/callback`, administrator role
 `kyrecovery.admin` for the owner's admin account only (KyRecovery refuses everyday
 identities), and a signed suite directory at `https://<host>/api/installer/directory`. The
-saved plan is unchanged. A hand-written client with that ID must match it exactly.
+saved plan is unchanged. A hand-written client with that ID must match it exactly. When
+KyRecovery is installed after KyIdentity's setup, its client comes in a setup amendment
+instead and `apply` adds `identity_amendment` to this integration (KyIdentity 0.4.3 or later).
 
 `kyrecovery.setup` runs after its health check. It exports the client's credentials from
 KyIdentity in memory, writes the client secret, the directory signing secret and the bundle
@@ -547,8 +563,8 @@ integrations:
 
 Its client is derived the same way: `https://<host>/api/sso/kysignon/callback`, administrator
 role `kypulse.admin` for the owner's admin account, and the signed directory at
-`https://<host>/api/sso/kysignon/sync`. It must join KyIdentity's first setup (#110), so a
-KyIdentity set up without it has to be reinstalled.
+`https://<host>/api/sso/kysignon/sync`. Installed after KyIdentity's setup, it joins through a
+setup amendment on KyIdentity 0.4.3 or later; on 0.4.2 it must be in the first setup (#110).
 
 `kypulse.setup` runs after its health check through the same steps as KyRecovery's, with the
 existing kyPulse adapter: it requires the `monitoring-targets`, `log-sources` and

@@ -283,9 +283,13 @@ handover of admin and everyday logins.
   `apply` runs it after the app's health step against the app's one ready pod, and
   `integrate-stack` skips it. Today only KyIdentity (from its `identity` settings) and the
   installed Ky apps with a catalog `oidc` block and a product adapter (KyRecovery, kyPulse), on
-  Kubernetes. KyIdentity takes clients only in its first setup (KyIdentity-server#110): apply
-  adds each such app's client, derived from its `oidc` block and route, to that intent, and
-  names #110 and the client when the setup ran without it. Before any step, apply refuses
+  Kubernetes. Apply adds each such app's client, derived from its `oidc` block and route, to
+  KyIdentity's first setup intent. When the running KyIdentity's setup ran without it and the
+  KyIdentity advertises `setup-amendments` (0.4.3+, KyIdentity-server#110), apply records the
+  app's `identity_amendment` (UUID derived from parent setup and client) in the plan and
+  `kyidentity.amend.<app>` applies that amendment; otherwise it names #110 and the client.
+  `kyidentity.retire-bootstrap` disables `kyq-bootstrap` through `disable-user` when advertised,
+  else apply prints that it stays active. Before any step, apply refuses
   (`issuer_changed`) a plan that moves the issuer KyIdentity's Deployment runs with, or the URLs
   of an added client its setup exported, once that setup has run (read-only
   `--check`/`--export-client` on the running pod; unreadable refuses). Each app's setup
