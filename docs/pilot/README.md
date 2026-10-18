@@ -88,3 +88,12 @@ workstation (192.168.1.156) the name resolves through the normal resolver and
 `https://identity.k80.urlxl.us:30543/.well-known/openid-configuration` answers 200 with full
 certificate verification and issuer `https://identity.k80.urlxl.us`. A rerun skipped every step.
 KyIdentity's installer setup has not run yet (it needs the owner's admin and everyday logins).
+
+**2026-10-18: KyIdentity installer setup (master cc59590).** The plan gained a `kyidentity`
+integration with pilot-only accounts `k80-admin` and `k80-user` (no mail relay is configured;
+setup needs none). `apply` ran `kyidentity.setup`, which generated both passwords as 0600 files in
+`/data/installer/<setup_id>/` in the pod. Over the LAN route, with full certificate verification
+and each password piped from the pod (never printed), both accounts signed in (200 and a session);
+a wrong password got 401; `k80-admin` read `/api/admin/users` (200) and `k80-user` was refused (403).
+A rerun skipped every step. Still open: `kyq-bootstrap` stays an active administrator until
+KyIdentity-server#109 lands, and no mail relay is set.
