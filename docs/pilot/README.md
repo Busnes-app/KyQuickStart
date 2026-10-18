@@ -110,3 +110,15 @@ its route and KyDNS record, and printed the custodian ceremony as an outstanding
 From the LAN, `k80-admin` signed in to KyIdentity, KyRecovery redirected to it with
 `client_id=kyrecovery` and its `:30543` callback, KyIdentity issued a code, and KyRecovery's
 session reports role `admin`; `k80-user` got `access_denied`. A rerun skipped every step.
+
+**2026-10-18: KyIdentity 0.4.3 and the first setup amendment (master 9389537).** The pilot apps
+were reset once more onto 0.4.3 (the upgrade gate refuses 0.4.2 → 0.4.3 without a verified
+backup). The plan was applied in two passes. First KyIdentity and KyRecovery: setup ran with the
+derived `kyrecovery` client and `kyidentity.retire-bootstrap` disabled `kyq-bootstrap` (its
+first-run password file is gone; `disable-user` now answers `unchanged`). Then kyPulse was added
+to the plan: `apply` found KyIdentity's setup without its client, created setup amendment
+`5481a036-…` (recorded as `identity_amendment` at plan revision 4), ran
+`kyidentity.amend.kypulse`, and set kyPulse up with the client the amendment issued. From the
+LAN, `k80-admin` signed in to KyRecovery (role `admin`) and to kyPulse, whose targets
+`kyidentity` and `kyrecovery` report `ok`; `k80-user` got `access_denied` from both. A rerun
+skipped every step. Adding an app after KyIdentity's setup no longer needs a reset.
