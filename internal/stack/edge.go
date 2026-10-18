@@ -74,6 +74,15 @@ type Route struct {
 	StatusPath    string `yaml:"status_path,omitempty"`
 }
 
+// URLHost is the host an app's route is reached at: its hostname, plus the port when clients
+// reach the edge on another than 443 (a lan edge's client_port).
+func (e Edge) URLHost(r Route) string {
+	if e.ClientPort != 0 && e.ClientPort != 443 {
+		return r.Hostname + ":" + strconv.Itoa(e.ClientPort)
+	}
+	return r.Hostname
+}
+
 // Covers reports whether certificate domain covers host: equal, or a wildcard for its parent.
 func Covers(domain, host string) bool {
 	_, parent, _ := strings.Cut(host, ".")

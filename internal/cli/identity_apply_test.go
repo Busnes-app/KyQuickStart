@@ -43,7 +43,7 @@ func TestCatalogKyIdentityTakesItsRouteAndIntegration(t *testing.T) {
 	if got := s.cat["kyidentity"].Kubernetes.Env["KYIDENTITY_ISSUER_URL"]; got != "https://identity.example.com" {
 		t.Fatalf("issuer = %q", got)
 	}
-	if fresh, _ := catalog.Load(catalog.Embedded()); !fresh["kyidentity"].Kubernetes.UsesHostname() {
+	if fresh, _ := catalog.Load(catalog.Embedded()); !fresh["kyidentity"].Kubernetes.UsesHost() {
 		t.Fatal("hostname leaked into the catalog")
 	}
 
@@ -153,4 +153,21 @@ func (n *fakeIdentity) stream(_ context.Context, namespace, pod, container strin
 	}
 	_, err := io.WriteString(o.Stdout, out)
 	return err
+}
+
+func TestCatalogKyIdentityIssuerCarriesTheClientPort(t *testing.T) {
+	f := newFixture(t, "../catalog/testdata/apps")
+	f.o.Catalog = catalog.Embedded()
+	kc := filepath.Join(t.TempDir(), "kubeconfig")
+	os.WriteFile(kc, nil, 0o600)
+	f.plan(t, "  - name: k1\n    kubeconfig: "+kc+"\napps:\n  - name: npm\n    target: k1\n  - name: kyidentity\n    target: k1\n"+
+		"edges:\n  - target: k1\n    provider: lan\n    npm_url: kube://kyq-npm/app:81\n    allow_cidrs: [192.168.1.0/24]\n    client_port: 30543\n    routes:\n"+
+		"      - app: kyidentity\n        hostname: identity.example.com\n        forward_host: app.kyq-kyidentity.svc.cluster.local\n        forward_port: 5867\n        certificate_id: 1\n")
+	s, err := load(f.state, nil, f.o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.cat["kyidentity"].Kubernetes.Env["KYIDENTITY_ISSUER_URL"]; got != "https://identity.example.com:30543" {
+		t.Fatalf("issuer = %q, want the lan edge's client port in it", got)
+	}
 }
