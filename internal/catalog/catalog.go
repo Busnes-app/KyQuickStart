@@ -48,10 +48,14 @@ type OIDC struct {
 	// DirectoryPath receives KyIdentity's signed suite directory events.
 	DirectoryPath string `yaml:"directory_path"`
 	Public        bool   `yaml:"public"` // PKCE without a client secret
+	// SCIMTokenFile is /run/secrets/<secret>: the app's inbound SCIM bearer token, which its
+	// setup bundle names.
+	SCIMTokenFile string `yaml:"scim_token_file"`
 }
 
-// Backup is what restic takes from the app. Volumes name Compose volumes and, when the
-// app runs on Kubernetes, kubernetes.volumes; Skip entries are volume/path.
+// Backup is what restic takes from the app. Volumes name Compose volumes or ./<name> bind
+// directories and, when the app runs on Kubernetes, kubernetes.volumes; Skip entries are
+// volume/path.
 type Backup struct {
 	Service        string   `yaml:"service"` // Compose service the command runs in
 	Command        []string `yaml:"command"` // stdout is streamed into restic
@@ -110,6 +114,9 @@ type App struct {
 	Manifest
 	Compose  []byte
 	Services []string // sorted
+	// Binds are the ./<name> bind directories of its services, sorted; the Docker driver
+	// creates them private before Compose would create them as root.
+	Binds []string
 }
 
 type Catalog map[string]App
@@ -132,6 +139,14 @@ var (
 // HostRef in a kubernetes.env value stands for the URL host of the app's route: its hostname,
 // plus the port when clients reach the edge on another than 443.
 const HostRef = "{{host}}"
+
+// ForwardRef in a Compose template stands for forward_host:forward_port of the app's route:
+// the one address it publishes its port on, for an edge on another host.
+const ForwardRef = "{{forward}}"
+
+// routeFuncs render a Compose template's {{host}} and {{forward}} as themselves; a session
+// replaces them with the app's route (WithRoute).
+var routeFuncs = template.FuncMap{"host": func() string { return HostRef }, "forward": func() string { return ForwardRef }}
 
 // AdminPort is NPM's admin API port. It is never published outside the cluster.
 const AdminPort = 81
@@ -192,7 +207,7 @@ func loadApp(fsys fs.FS, dir string) (App, error) {
 	case err != nil:
 		return App{}, err
 	}
-	t, err := template.New(dir).Option("missingkey=error").Parse(string(text))
+	t, err := template.New(dir).Option("missingkey=error").Funcs(routeFuncs).Parse(string(text))
 	if err != nil {
 		return App{}, fmt.Errorf("compose.yaml.tmpl: %w", err)
 	}
@@ -207,7 +222,19 @@ func loadApp(fsys fs.FS, dir string) (App, error) {
 	if err := m.validateBackup(&c); err != nil {
 		return App{}, fmt.Errorf("manifest.yaml: backup: %w", err)
 	}
-	return App{Manifest: m, Compose: buf.Bytes(), Services: c.services}, nil
+	return App{Manifest: m, Compose: buf.Bytes(), Services: c.services, Binds: c.binds}, nil
+}
+
+// UsesRoute reports whether the app's Compose file takes its route's host or address.
+func (a App) UsesRoute() bool {
+	return bytes.Contains(a.Compose, []byte(HostRef)) || bytes.Contains(a.Compose, []byte(ForwardRef))
+}
+
+// WithRoute returns a copy whose Compose file has HostRef and ForwardRef replaced.
+func (a App) WithRoute(host, forward string) App {
+	c := bytes.ReplaceAll(a.Compose, []byte(HostRef), []byte(host))
+	a.Compose = bytes.ReplaceAll(c, []byte(ForwardRef), []byte(forward))
+	return a
 }
 
 func (m Manifest) validate(dir string) error {
@@ -260,6 +287,9 @@ func (m Manifest) validate(dir string) error {
 		}
 		if err := m.OIDC.validate(m.Category == "third-party"); err != nil {
 			return fmt.Errorf("oidc.%w", err)
+		}
+		if f := m.OIDC.SCIMTokenFile; f != "" && !slices.Contains(m.Secrets, strings.TrimPrefix(f, "/run/secrets/")) {
+			return fmt.Errorf("oidc.scim_token_file %q must be /run/secrets/<one of secrets>", f)
 		}
 	}
 	if m.PodSecurity != "restricted" && m.PodSecurity != "baseline" {
@@ -498,17 +528,22 @@ func compareVersions(a, b string) int {
 }
 
 type composeFile struct {
-	services []string // sorted
-	volumes  map[string]bool
+	services []string        // sorted
+	volumes  map[string]bool // named volumes and bind directories
+	binds    []string        // sorted
 }
 
-// checkCompose returns the sorted service names and the named volumes, refusing builds
-// and any image the manifest does not pin.
+// bindRE is a bind directory's source: ./<name>, beside compose.yaml.
+var bindRE = regexp.MustCompile(`^\./([a-z][a-z0-9-]{0,30})$`)
+
+// checkCompose returns the sorted service names, the named volumes and the bind directories,
+// refusing builds, any image the manifest does not pin and any other relative bind source.
 func checkCompose(b []byte, images map[string]string) (composeFile, error) {
 	var c struct {
 		Services map[string]struct {
-			Image string `yaml:"image"`
-			Build any    `yaml:"build"`
+			Image   string `yaml:"image"`
+			Build   any    `yaml:"build"`
+			Volumes []any  `yaml:"volumes"`
 		} `yaml:"services"`
 		Volumes map[string]any `yaml:"volumes"`
 	}
@@ -523,6 +558,11 @@ func checkCompose(b []byte, images map[string]string) (composeFile, error) {
 		pinned[ref] = true
 	}
 	var names []string
+	volumes := map[string]bool{}
+	for v := range c.Volumes {
+		volumes[v] = true
+	}
+	var binds []string
 	for name, s := range c.Services {
 		if s.Build != nil {
 			return composeFile{}, fmt.Errorf("service %s: build is not allowed", name)
@@ -531,13 +571,31 @@ func checkCompose(b []byte, images map[string]string) (composeFile, error) {
 			return composeFile{}, fmt.Errorf("service %s: image %q is not one of the manifest's pinned images", name, s.Image)
 		}
 		names = append(names, name)
+		for _, v := range s.Volumes {
+			short, ok := v.(string)
+			if !ok {
+				return composeFile{}, fmt.Errorf("service %s: write volumes in the short source:target form", name)
+			}
+			source, _, _ := strings.Cut(short, ":")
+			if !strings.HasPrefix(source, ".") {
+				continue
+			}
+			m := bindRE.FindStringSubmatch(source)
+			if m == nil {
+				return composeFile{}, fmt.Errorf("service %s: bind source %q must be ./<name>", name, source)
+			}
+			if _, named := c.Volumes[m[1]]; named {
+				return composeFile{}, fmt.Errorf("bind directory %s is also a named volume", m[1])
+			}
+			if !slices.Contains(binds, m[1]) {
+				volumes[m[1]] = true
+				binds = append(binds, m[1])
+			}
+		}
 	}
 	sort.Strings(names)
-	volumes := map[string]bool{}
-	for v := range c.Volumes {
-		volumes[v] = true
-	}
-	return composeFile{services: names, volumes: volumes}, nil
+	sort.Strings(binds)
+	return composeFile{services: names, volumes: volumes, binds: binds}, nil
 }
 
 // cpuMilli reads a quantity cpuRE accepted, such as 100m or 2, as millicores.

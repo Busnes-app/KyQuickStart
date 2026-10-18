@@ -72,11 +72,15 @@ Plain terminal planning and command orchestration for the operator-run installer
   separate from Matrix chat/call access, whose assignment composition remains a gate.
 - KyRecovery setup runs explicitly as `kyrecovery`, activates live, commits exact administrator grants with its keyed SQL audit, and never performs the custodian ceremony.
   `appsetup.go` owns apply's catalog apps that sign in through KyIdentity (KyRecovery,
-  kyPulse): `composeClients` adds each one's catalog-derived client to the installed
+  kyPulse on Kubernetes, KyDrive on Docker): `composeClients` adds each one's catalog-derived client to the installed
   KyIdentity's intent in the session only (the saved plan is unchanged; a hand-written client
   must match), `clientSetupStep` (`<app>.setup`) exports that client, places bundle and secrets
-  with `placeScript` (secrets no-clobber, kyPulse's bundle replaced, compare-only on check) and
-  runs the product adapter's setup; `recoveryCeremony` and `pulseHandover` are what apply prints.
+  with `placeScript` (secrets no-clobber, kyPulse's bundle replaced, compare-only on check)
+  through the app's shell, on another target than KyIdentity's too, and runs the product
+  adapter's setup; on Docker `nativeProductExec` finds the app's one running managed container
+  per call (`dockerAppContainer`). A client without a directory gets no directory secret; an
+  `oidc.scim_token_file` goes into the bundle. `recoveryCeremony`, `pulseHandover` and
+  `driveHandover` are what apply prints.
   `amendLate` (apply only, read-only, before preflight) records an `identity_amendment` for each
   app whose client the running KyIdentity's retained setup lacks, all or one, when it advertises
   `setup-amendments`; composeClients then puts that client in an `identityAmendment`, whose

@@ -165,8 +165,9 @@ func (s *Stack) validateEdges() error {
 		}
 		for j := range e.Routes {
 			r := &e.Routes[j]
-			if apps[r.App] != e.Target {
-				return fmt.Errorf("edge %s: route app %q must be installed on this target", e.Target, r.App)
+			// NPM reaches a Docker host over the LAN; nothing reaches into another cluster.
+			if at, ok := s.Target(apps[r.App]); !ok || at.Name != e.Target && at.Kubernetes() {
+				return fmt.Errorf("edge %s: route app %q must be installed on this target or on a Docker target", e.Target, r.App)
 			}
 			if !Hostname(r.Hostname) || hosts[r.Hostname] {
 				return fmt.Errorf("edge %s: hostname %q must be a unique lowercase DNS name", e.Target, r.Hostname)
