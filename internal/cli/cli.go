@@ -388,6 +388,16 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 		}
 		cat[name] = app
 	}
+	// A cluster edge's egress policy admits an upstream off the cluster by address only.
+	for _, e := range st.Edges {
+		for _, r := range e.Routes {
+			if t, _ := st.Target(e.Target); t.Kubernetes() && s.placed[r.App].Name != e.Target {
+				if ip, err := netip.ParseAddr(r.ForwardHost); err != nil || ip.Zone() != "" {
+					return nil, fmt.Errorf("edge %s: route %s forwards off the cluster, so its forward_host must be an IP address", e.Target, r.Hostname)
+				}
+			}
+		}
+	}
 	for _, i := range st.Integrations {
 		supported := i.Product == "kyidentity" && i.Identity != nil || cat[i.Product].OIDC != nil && productAdapters[i.Product].setup != nil
 		if i.Installed(st) && !supported {
@@ -408,7 +418,7 @@ func (s *session) connect(ctx context.Context, trust trustFlag) error {
 			return err
 		}
 		if k, ok := d.(kubeDriver); ok {
-			k.edge, k.nodePorts = s.edgeApp(t.Name), s.nodePorts(t.Name)
+			k.edge, k.nodePorts, k.upstreams = s.edgeApp(t.Name), s.nodePorts(t.Name), s.upstreams(t.Name)
 			d = k
 		}
 		s.drivers[t.Name] = d
@@ -455,6 +465,21 @@ func (s *session) edgeApp(target string) string {
 		}
 	}
 	return ""
+}
+
+// upstreams are the addresses the edge on target forwards to on other targets, sorted.
+// newSession has checked each is an IP.
+func (s *session) upstreams(target string) []netip.AddrPort {
+	var out []netip.AddrPort
+	for _, e := range s.edges {
+		for _, r := range e.Routes {
+			if e.Target == target && s.placed[r.App].Name != target {
+				out = append(out, netip.AddrPortFrom(netip.MustParseAddr(r.ForwardHost), uint16(r.ForwardPort)))
+			}
+		}
+	}
+	slices.SortFunc(out, func(a, b netip.AddrPort) int { return a.Compare(b) })
+	return slices.Compact(out)
 }
 
 // nodePorts maps each NodePort an app on target publishes, node_ports applied, to the app.

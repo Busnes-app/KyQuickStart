@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/dockerhost"
@@ -123,8 +124,9 @@ type kubeDriver struct {
 	c            *kube.Client
 	needsStorage bool
 	storageClass string
-	edge         string         // the edge app on this cluster, admitted to the other apps' ports
-	nodePorts    map[int]string // NodePort -> the app here publishing it
+	edge         string           // the edge app on this cluster, admitted to the other apps' ports
+	nodePorts    map[int]string   // NodePort -> the app here publishing it
+	upstreams    []netip.AddrPort // where the edge's routes forward off the cluster
 }
 
 func (d kubeDriver) preflight(ctx context.Context) []finding {
@@ -146,7 +148,11 @@ func (d kubeDriver) writeMarker(ctx context.Context, m stack.Marker) error {
 }
 
 func (d kubeDriver) steps(name string, app catalog.App, releaseSet string, redact *engine.Redactor) []engine.Step {
-	return kube.Steps(kube.App{Name: name, Client: d.c, Catalog: app, ReleaseSet: releaseSet, Redact: redact, StorageClass: d.storageClass, Edge: d.edge})
+	a := kube.App{Name: name, Client: d.c, Catalog: app, ReleaseSet: releaseSet, Redact: redact, StorageClass: d.storageClass, Edge: d.edge}
+	if name == d.edge {
+		a.Upstreams = d.upstreams
+	}
+	return kube.Steps(a)
 }
 
 func (d kubeDriver) deployed(ctx context.Context, name string) (managed.Deployed, error) {

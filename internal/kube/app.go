@@ -3,6 +3,7 @@ package kube
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"net/netip"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/engine"
@@ -19,6 +20,9 @@ type App struct {
 	StorageClass string
 	// Edge names the edge app on this cluster, whose pods may reach this app's ports; empty for none.
 	Edge string
+	// Upstreams are the addresses off the cluster the edge app's routes forward to, which its
+	// egress admits; edge app only.
+	Upstreams []netip.AddrPort
 }
 
 func hashOf(parts ...string) string {
