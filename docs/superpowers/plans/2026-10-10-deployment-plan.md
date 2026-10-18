@@ -63,6 +63,13 @@ Ordering from the installer spec: edge → KyIdentity → KyRecovery → kyPulse
    Open: trusted-proxy CIDR, local `admin` password only in the first pod log, Docker placement.
 4. **kyPulse (G4):** catalog entry; preparation that preserves and validates the `monitoring`
    extension; target/log-source registration.
+   **Catalog entry and setup done 2026-10-17** (Kubernetes, fresh installs): 0.4.2 from its
+   attested image; its client joins KyIdentity's first setup (#110), derived like KyRecovery's
+   by the same code; `kypulse.setup` through the existing adapter registers every other routed
+   app's readiness path as a monitoring target. Open: an everyday viewer (KyIdentity's export
+   names the admin only), log sources (no catalog app sends logs yet), alert webhook (UI),
+   kyPulse's directory receiver still verifies the pre-`syncauth` signature, trusted-proxy
+   CIDR, Docker placement.
 5. **rest-server** on the KyRecovery host (append-only, private repos, TLS, separate prune
    credential; preflight refuses NAS storage).
 

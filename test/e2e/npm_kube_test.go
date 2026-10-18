@@ -40,8 +40,8 @@ import (
 
 // TestKubernetesNPMEdge deploys NPM from the catalog into kind, bootstraps it, routes the
 // demo app through it as a cloudflare and then a lan edge, and reruns apply until nothing
-// changes. KyIdentity and KyRecovery join behind the lan edge, so their URLs carry its
-// client_port, which may not change once KyIdentity's setup ran.
+// changes. KyIdentity, KyRecovery and kyPulse join behind the lan edge, so their URLs carry
+// its client_port, which may not change once KyIdentity's setup ran.
 func TestKubernetesNPMEdge(t *testing.T) {
 	ctx := context.Background()
 	work := t.TempDir()
@@ -55,7 +55,7 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	}
 	cs := kubernetes.NewForConfigOrDie(cfg)
 	catalogDir := filepath.Join(work, "catalog")
-	for _, src := range []string{"../../internal/catalog/testdata/apps/hello", "../../internal/catalog/apps/npm", "../../internal/catalog/apps/kyidentity", "../../internal/catalog/apps/kyrecovery"} {
+	for _, src := range []string{"../../internal/catalog/testdata/apps/hello", "../../internal/catalog/apps/npm", "../../internal/catalog/apps/kyidentity", "../../internal/catalog/apps/kyrecovery", "../../internal/catalog/apps/kypulse"} {
 		if err := os.CopyFS(filepath.Join(catalogDir, filepath.Base(src)), os.DirFS(src)); err != nil {
 			t.Fatal(err)
 		}
@@ -243,11 +243,14 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	}
 
 	// The catalog KyIdentity takes its issuer from its route, client_port included, so it
-	// joins behind the lan edge it keeps; KyRecovery's client joins KyIdentity's first setup.
+	// joins behind the lan edge it keeps; KyRecovery's and kyPulse's clients join KyIdentity's
+	// first setup, and kyPulse watches every other routed app.
 	loadCatalogApp(t, name, cs, "kyidentity")
 	loadCatalogApp(t, name, cs, "kyrecovery")
+	loadCatalogApp(t, name, cs, "kypulse")
 	addCatalogIdentity(st, certID)
 	addCatalogRecovery(st, certID)
+	addCatalogPulse(st, certID)
 	b, _ = yaml.Marshal(st)
 	os.WriteFile(plan, b, 0o600)
 	out = apply("identity")
@@ -256,6 +259,7 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	}
 	checkCatalogIdentity(t, ctx, cs, kc, out, viaEdge)
 	recoverySecrets := checkCatalogRecovery(t, ctx, cs, kc, out, viaEdge)
+	pulseSecrets := checkCatalogPulse(t, ctx, cs, kc, out, viaEdge)
 	rerun("identity rerun")
 
 	// Changed setup intent: the product refuses it at kyidentity.setup. Restored, the
@@ -323,13 +327,13 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	st.Edges[0].AllowCIDRs = append(st.Edges[0].AllowCIDRs, podCIDR)
 	b, _ = yaml.Marshal(st)
 	os.WriteFile(plan, b, 0o600)
-	if out := apply("sign-on edge"); status(out, "kyrecovery.setup") != "skipped" {
-		t.Fatal("edge change re-ran KyRecovery's setup")
+	if out := apply("sign-on edge"); status(out, "kyrecovery.setup") != "skipped" || status(out, "kypulse.setup") != "skipped" {
+		t.Fatal("edge change re-ran an app's setup")
 	}
-	recoverySignOn(t, ctx, cs, kc, certPEM, nodeIP)
+	catalogSignOn(t, ctx, cs, kc, certPEM, nodeIP)
 
 	// No credential reached apply output or workstation state.
-	secretsSeen := append([]string{password, token, stored()}, recoverySecrets...)
+	secretsSeen := append(append([]string{password, token, stored()}, recoverySecrets...), pulseSecrets...)
 	for _, o := range outputs {
 		for _, s := range secretsSeen {
 			if strings.Contains(o, s) {

@@ -281,15 +281,18 @@ handover of admin and everyday logins.
   these selections explicitly; `apply` retains deployment scope and does not configure
   recorded existing products. An entry for an installed catalog app names no workload:
   `apply` runs it after the app's health step against the app's one ready pod, and
-  `integrate-stack` skips it. Today only KyIdentity (from its `identity` settings) and
-  KyRecovery, on Kubernetes. KyIdentity takes clients only in its first setup
-  (KyIdentity-server#110): apply adds an installed KyRecovery's client, derived from its
-  catalog `oidc` block and route, to that intent, and names #110 when the setup ran without it.
-  Before any step, apply refuses (`issuer_changed`) a plan that moves the issuer KyIdentity's
-  Deployment runs with, or the URLs of KyRecovery's client its setup exported, once that setup
-  has run (read-only `--check`/`--export-client` on the running pod; unreadable refuses).
-  KyRecovery's setup transfers that client's secrets in memory into private pod files, never
-  replacing one; its custodian ceremony stays human and apply prints it as outstanding.
+  `integrate-stack` skips it. Today only KyIdentity (from its `identity` settings) and the
+  installed Ky apps with a catalog `oidc` block and a product adapter (KyRecovery, kyPulse), on
+  Kubernetes. KyIdentity takes clients only in its first setup (KyIdentity-server#110): apply
+  adds each such app's client, derived from its `oidc` block and route, to that intent, and
+  names #110 and the client when the setup ran without it. Before any step, apply refuses
+  (`issuer_changed`) a plan that moves the issuer KyIdentity's Deployment runs with, or the URLs
+  of an added client its setup exported, once that setup has run (read-only
+  `--check`/`--export-client` on the running pod; unreadable refuses). Each app's setup
+  transfers its client's secrets in memory into private pod files, never replacing one.
+  KyRecovery's custodian ceremony stays human and apply prints it as outstanding. kyPulse's
+  bundle registers every other routed app's readiness path as a monitoring target; that bundle
+  is replaced as targets change, since kyPulse keeps omitted targets and refuses edited ones.
 - Command-line only: no GUI, web UI or full-screen terminal UI. `plan` asks its questions as
   plain terminal prompts, and every command also runs unattended from `stack.yaml`.
 - A Notes integration's explicit `identity_client` selects one declared prepared KyIdentity
@@ -421,8 +424,12 @@ calls and kind nodes must carry their own explicit bounds.
   `kyidentity.deploy`, Deployment and pod unchanged.
   The catalog KyRecovery joins it: restricted uid-10001 pod, its client in KyIdentity's first
   setup, transferred private setup files, live `--check`, health through the edge, the
-  ceremony handover and a skipped rerun; then, with test-only cluster DNS and CA trust, the
-  owner's admin signs in to KyRecovery through KyIdentity and the everyday account is refused.
+  ceremony handover and a skipped rerun. The catalog kyPulse joins too: restricted uid-10001 pod
+  with its audit key on its own claim, its client in the same first setup, its targets for
+  every other routed app in its live `--check`, and health through the edge. Then, with
+  test-only cluster DNS and CA trust, the owner's admin signs in to KyRecovery and kyPulse
+  through KyIdentity, the everyday account is refused by both, and kyPulse reports every
+  target ok.
   Set `KYQ_TEST_IDENTITY_BINARY` to a local static KyIdentity build to additionally test real
   container-local identity setup over SSH and kind, including target-held preparation,
   inspection/resume and changed-intent refusal; SSH additionally refuses lost credentials.

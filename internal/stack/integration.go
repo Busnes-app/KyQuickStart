@@ -61,9 +61,10 @@ func (s *Stack) validateIntegrations() error {
 				return err
 			}
 		}
-		if i.Product == "kyrecovery" && (installed || i.IdentityClient != "") {
-			if !installed || i.Notes != nil || i.Identity != nil || !identitySetupName.MatchString(i.IdentityClient) || i.RecoverySetupID() == "" {
-				return errors.New("KyRecovery setup needs an installed app, its identity_client and a bundle at <data>/installer/<setup UUID>/setup.json")
+		// apply sets up an installed Ky app other than KyIdentity through its KyIdentity client.
+		if installed && i.Product != "kyidentity" {
+			if i.Notes != nil || i.Identity != nil || !identitySetupName.MatchString(i.IdentityClient) || i.SetupID() == "" {
+				return errors.New("an installed app's setup needs its identity_client and a bundle at <data>/installer/<setup UUID>/setup.json")
 			}
 		}
 		workload := [4]string{i.Target, i.Namespace, i.Pod, i.Container}
@@ -73,8 +74,8 @@ func (s *Stack) validateIntegrations() error {
 		products[i.Product], workloads[workload] = true, !installed
 	}
 	for _, i := range s.Integrations {
-		// apply checks an installed KyRecovery's client against the catalog.
-		if i.IdentityClient != "" && i.Product != "kyrecovery" {
+		// apply checks an installed app's client against the catalog.
+		if i.IdentityClient != "" && (!i.Installed(s) || i.Product == "kyidentity") {
 			if _, _, err := s.IdentitySource(i); err != nil {
 				return err
 			}
@@ -93,9 +94,9 @@ func (i Integration) Installed(s *Stack) bool {
 	return false
 }
 
-// RecoverySetupID is the setup UUID naming a KyRecovery bundle's directory,
+// SetupID is the setup UUID naming an installed app's bundle directory,
 // <data>/installer/<UUID>/setup.json, or "" for any other path.
-func (i Integration) RecoverySetupID() string {
+func (i Integration) SetupID() string {
 	dir := path.Dir(i.Bundle)
 	id, err := uuid.Parse(path.Base(dir))
 	if !preparationPath(i.Bundle) || path.Base(i.Bundle) != "setup.json" || path.Base(path.Dir(dir)) != "installer" || err != nil || id.String() != path.Base(dir) {
