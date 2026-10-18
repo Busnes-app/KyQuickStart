@@ -113,6 +113,8 @@ func TestCatalogKyIdentityRefusals(t *testing.T) {
 type fakeIdentity struct {
 	staged, applied bool
 	pod, stdin      string
+	intent          string // retained at the first staging; a different one is refused
+	export          string // --export-client's frame
 }
 
 func (n *fakeIdentity) stream(_ context.Context, namespace, pod, container string, args []string, o remotecommand.StreamOptions) error {
@@ -121,18 +123,24 @@ func (n *fakeIdentity) stream(_ context.Context, namespace, pod, container strin
 	var out string
 	switch {
 	case slices.Contains(args, "--capabilities"):
-		out = `{"schema":"ky.setup-capabilities/1","service":"kyidentity","bundleSchema":"kyidentity.setup/1","features":["local-accounts","confidential-oidc-clients","assigned-only","everyday-assignment","app-role-assignments","scim-connectors","suite-webhook-connectors","directory-groups","app-group-assignments","scim-groups","check","protected-setup-files","bundle-preparation","target-credentials"]}`
+		out = `{"schema":"ky.setup-capabilities/1","service":"kyidentity","bundleSchema":"kyidentity.setup/1","features":["local-accounts","confidential-oidc-clients","assigned-only","everyday-assignment","app-role-assignments","scim-connectors","suite-webhook-connectors","directory-groups","app-group-assignments","scim-groups","check","protected-setup-files","bundle-preparation","target-credentials","client-credential-export"]}`
 	case slices.Contains(args, "--stage"):
 		b, _ := io.ReadAll(o.Stdin)
 		n.stdin = string(b)
-		if check && !n.staged {
-			return errors.New("not staged")
+		if check && !n.staged || n.staged && n.intent != n.stdin {
+			return errors.New("not staged, or intent changed")
 		}
+		n.intent = n.stdin
 		status := "present"
 		if !check && !n.staged {
 			n.staged, status = true, "created"
 		}
 		out = `{"schema":"kyidentity.setup-preparation/1","status":"` + status + `"}`
+	case slices.Contains(args, "--export-client"):
+		if !n.applied {
+			return errors.New("not applied")
+		}
+		out = n.export
 	default:
 		if check && !n.applied || !n.staged {
 			return errors.New("not applied")
