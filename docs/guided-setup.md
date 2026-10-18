@@ -662,13 +662,12 @@ graceful restart and its live `--check`.
 - `KY_APP_URL` is `https://<route URL host>`. The port is published only on
   `forward_host:forward_port`, which must be an IP address of the Docker target; the catalog
   NPM's egress policy admits exactly that address and port.
-- **Firewall.** Binding to the LAN address does not limit who may connect: Docker's published
-  ports bypass the host's INPUT rules. Admit only the edge's source in Docker's `DOCKER-USER`
-  chain. K80's NPM pods leave the cluster through their node's address (SNAT), so on a single
-  node that is `192.168.1.81`:
-  `iptables -I DOCKER-USER -p tcp -m conntrack --ctorigdst 192.168.1.91 --ctorigdstport 18443 ! -s 192.168.1.81 -j DROP`.
-  The installer neither sets nor tests it; persist it the way the host keeps its rules, and
-  widen it to every node if NPM can move.
+- **Firewall: not solved.** Binding to the LAN address does not limit who may connect, so any
+  LAN client can reach the published port directly and skip the edge's allow-list (sign-in
+  still applies). Do not copy a `DOCKER-USER` source rule blindly: on the K80 pilot's Docker
+  host (Docker 29 with firewalld and the userland proxy), a rule admitting only k81's address
+  dropped k81 as well and took the route down until it was removed. Restricting the port needs
+  a rule tested on that host's firewall backend, from the edge node and from another LAN host.
 - Apply's handover names KyDrive's local `admin` break-glass password,
   `<root>/kydrive/data/initial-admin-password` on the target: sign in once (its login form has
   a CAPTCHA; SSO does not), change it and delete the file.
