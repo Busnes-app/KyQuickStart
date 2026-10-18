@@ -1,0 +1,56 @@
+name: kynotes
+description: KyNotes, the suite's end-to-end encrypted notes; signs in through KyIdentity
+category: ky
+version: 0.4.2
+# Release image of v0.4.2 (commit f597e99703316cf53d2efac2224cb6ae66df5752), attested by
+# Busnes-app/KyNotes-server release-image.yml@refs/tags/v0.4.2 (gh attestation verify).
+images:
+  kynotes: ghcr.io/busnes-app/kynotes-server:0.4.2@sha256:85f49161f9e5879d9998507ac5b1ef07e3c5e884854e162173791b7292a06ad9
+# Its setup needs KyIdentity's issuer, client and signed directory.
+depends_on: [kyidentity]
+health:
+  timeout_seconds: 300
+# No SCIM: KyIdentity's signed directory webhook reaches it at directory_path. Everyday
+# accounts are created at first sign-in, so KyIdentity's assignment (user_role) is the gate.
+# Sign-out is local: KyIdentity registers no back-channel logout.
+oidc:
+  name: KyNotes
+  redirect_paths: [/api/v1/auth/oidc/callback]
+  admin_role: kynotes.admin
+  user_role: kynotes.user
+  directory_path: /api/v1/sync/events
+# The database, the keys it generates under /data/secrets and blobs, and the sealed local capsules.
+backup:
+  volumes: [data, backups]
+upgrade:
+  # First catalog release; its SQLite schema migrates forward at startup.
+  min_from: 0.4.2
+  migrates_data: true
+kubernetes:
+  image: kynotes
+  env:
+    PORT: "8080"
+    KYNOTES_DATA_DIR: /data
+    # apply-setup compares its bundle's backup dir and keep with these.
+    KYNOTES_BACKUP_DIR: /backups
+    KYNOTES_BACKUP_KEEP: "7"
+    KYNOTES_BACKUP_DEPOSIT_INTERVAL: 24h
+    GOMEMLIMIT: 384MiB
+  ports: [8080]
+  readiness_path: /healthz
+  # Distroless nonroot.
+  run_as: 65532
+  resources:
+    cpu: "1"
+    # Idle between syncs.
+    cpu_request: 50m
+    memory: 512Mi
+  # Stop drains a running apply-setup for up to 17 minutes.
+  termination_grace_seconds: 1020
+  volumes:
+    - name: data
+      mount: /data
+      size: 10Gi
+    - name: backups
+      mount: /backups
+      size: 5Gi

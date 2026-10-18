@@ -183,6 +183,42 @@ func TestRenderAdmitsEdgeOnly(t *testing.T) {
 	}
 }
 
+// AC3: KyNotes drains apply-setup on stop, runs restricted as 65532 and keeps /data and
+// /backups on private claims.
+func TestRenderKyNotes(t *testing.T) {
+	cat, err := catalog.Load(catalog.Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := App{Name: "kynotes", Catalog: cat["kynotes"]}
+	o := render(a)
+	pod := o.Deployment.Spec.Template.Spec
+	sc := pod.Containers[0].SecurityContext
+	if pod.TerminationGracePeriodSeconds == nil || *pod.TerminationGracePeriodSeconds != 1020 {
+		t.Fatalf("grace = %v", pod.TerminationGracePeriodSeconds)
+	}
+	if *sc.RunAsUser != 65532 || *sc.RunAsGroup != 65532 || !*sc.RunAsNonRoot || !*sc.ReadOnlyRootFilesystem || *sc.AllowPrivilegeEscalation || !*pod.SecurityContext.RunAsNonRoot {
+		t.Fatalf("security context = %+v", sc)
+	}
+	if len(pod.InitContainers) != 1 || pod.InitContainers[0].Name != "private-volumes" || !slices.Equal(pod.InitContainers[0].Command, []string{"mkdir", "-p", "-m", "700", "/volumes/data/private", "/volumes/backups/private"}) {
+		t.Fatalf("init = %+v", pod.InitContainers)
+	}
+	mounts := map[string]string{}
+	for _, m := range pod.Containers[0].VolumeMounts {
+		mounts[m.MountPath] = m.Name + ":" + m.SubPath
+	}
+	if mounts["/data"] != "vol-data:private" || mounts["/backups"] != "vol-backups:private" || len(o.Claims) != 2 {
+		t.Fatalf("mounts = %v, claims %d", mounts, len(o.Claims))
+	}
+	if a.namespaceLabels()[podSecurity] != "restricted" {
+		t.Fatal("namespace not restricted")
+	}
+	// An app without a grace keeps the default and its hash.
+	if renderHello(fixture(t), "rs-1", "").Deployment.Spec.Template.Spec.TerminationGracePeriodSeconds != nil {
+		t.Fatal("default grace rendered")
+	}
+}
+
 func TestNamespaceLevelFailsClosed(t *testing.T) {
 	for level, want := range map[string]string{"baseline": "baseline", "restricted": "restricted", "": "restricted", "privileged": "restricted"} {
 		if got := (App{Catalog: catalog.App{Manifest: catalog.Manifest{PodSecurity: level}}}).namespaceLabels()[podSecurity]; got != want {

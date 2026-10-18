@@ -107,6 +107,34 @@ func TestKyPulseEntry(t *testing.T) {
 	}
 }
 
+// AC2: KyNotes generates its own keys, takes the signed directory instead of SCIM, and its
+// stop drains apply-setup.
+func TestKyNotesEntry(t *testing.T) {
+	cat, err := Load(Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := cat["kynotes"]
+	k, o := a.Kubernetes, a.OIDC
+	if a.Category != "ky" || a.Version != "0.4.2" || a.PodSecurity != "restricted" || a.Compose != nil || len(a.Secrets) != 0 || !slices.Equal(a.DependsOn, []string{"kyidentity"}) {
+		t.Fatalf("manifest = %+v", a.Manifest)
+	}
+	if a.Images[k.Image] != "ghcr.io/busnes-app/kynotes-server:0.4.2@sha256:85f49161f9e5879d9998507ac5b1ef07e3c5e884854e162173791b7292a06ad9" ||
+		k.RunAs != 65532 || k.ReadinessPath != "/healthz" || !slices.Equal(k.Ports, []int{8080}) || k.TerminationGraceSeconds != 1020 || k.UsesHost() {
+		t.Fatalf("kubernetes = %+v", k)
+	}
+	if k.Env["KYNOTES_DATA_DIR"] != k.Volumes[0].Mount || k.Env["KYNOTES_BACKUP_DIR"] != k.Volumes[1].Mount || k.Env["PORT"] != "8080" || k.Env["TRUSTED_PROXY_CIDRS"] != "" || k.Env["BOOTSTRAP_ADMIN_PASS"] != "" {
+		t.Fatalf("env = %v", k.Env)
+	}
+	if o.Name != "KyNotes" || o.AdminRole != "kynotes.admin" || o.UserRole != "kynotes.user" || !slices.Equal(o.RedirectPaths, []string{"/api/v1/auth/oidc/callback"}) ||
+		o.DirectoryPath != "/api/v1/sync/events" || o.SCIMTokenFile != "" || o.BackchannelLogoutPath != "" || o.Public {
+		t.Fatalf("oidc = %+v", o)
+	}
+	if a.Backup == nil || !slices.Equal(a.Backup.Volumes, []string{"data", "backups"}) || a.Upgrade.MinFrom != "0.4.2" || !a.Upgrade.MigratesData {
+		t.Fatalf("upgrade %+v, backup %+v", a.Upgrade, a.Backup)
+	}
+}
+
 func TestKyDriveEntry(t *testing.T) {
 	cat, err := Load(Embedded())
 	if err != nil {
@@ -198,6 +226,8 @@ func TestLoadRejects(t *testing.T) {
 		"same roles":            {manifest + strings.Replace(oidc, "user_role: user", "user_role: Admin", 1), compose, "differ from admin_role"},
 		"third-party no user":   {strings.Replace(manifest, "category: ky", "category: third-party", 1) + strings.Replace(oidc, "  user_role: user\n", "", 1), compose, "everyday role"},
 		"bad directory path":    {manifest + oidc + "  directory_path: api\n", compose, "directory_path"},
+		"negative grace":        {manifest + kube + "  termination_grace_seconds: -1\n", compose, "termination_grace_seconds"},
+		"absurd grace":          {manifest + kube + "  termination_grace_seconds: 86400\n", compose, "termination_grace_seconds"},
 		"empty backup":          {manifest + "backup: {}\n", compose, "command or volumes"},
 		"backup bad service":    {manifest + strings.Replace(backup, "service: web", "service: db", 1), composeVol, "not a Compose service"},
 		"backup no service":     {manifest + strings.Replace(backup, "  service: web\n", "", 1), composeVol, "not a Compose service"},
