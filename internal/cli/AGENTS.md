@@ -79,7 +79,10 @@ Plain terminal planning and command orchestration for the operator-run installer
   through the app's shell, on another target than KyIdentity's too, and runs the product
   adapter's setup; on Docker `nativeProductExec` finds the app's one running managed container
   per call (`dockerAppContainer`). A client without a directory gets no directory secret; an
-  `oidc.scim_token_file` goes into the bundle. `recoveryCeremony`, `pulseHandover` and
+  `oidc.scim_token_file` goes into the bundle, and `scimStep` (`kyidentity.scim.<app>`, which
+  `deploySteps` puts after the edges) reads that token through the app's driver (`appSecret`),
+  places it in KyIdentity's pod with `placeScript` (never replaced) and applies `scimPass`, the
+  registering setup's pass with `scim` added. `recoveryCeremony`, `pulseHandover` and
   `driveHandover` are what apply prints.
   `amendLate` (apply only, read-only, before preflight) records an `identity_amendment` for each
   app whose client the running KyIdentity's retained setup lacks, all or one, when it advertises

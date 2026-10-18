@@ -290,7 +290,12 @@ handover of admin and everyday logins.
   app's `identity_amendment` (UUID derived from parent setup and client) in the plan and
   `kyidentity.amend.<app>` applies that amendment; otherwise it names #110 and the client.
   `kyidentity.retire-bootstrap` disables `kyq-bootstrap` through `disable-user` when advertised,
-  else apply prints that it stays active. Before any step, apply refuses
+  else apply prints that it stays active. An app whose `oidc` names `scim_token_file` (KyDrive)
+  gets `kyidentity.scim.<app>`, after its setup and the edges: its target's token copied
+  privately into KyIdentity's pod, never replaced, and a pass of the setup that registered its
+  client with `scim` added (outside the immutable preparation directories, so no reset).
+  The catalog KyIdentity sets `KYIDENTITY_ALLOW_PRIVATE_CALLBACKS`, since routes resolve to
+  LAN or pod addresses; loopback, link-local and metadata stay refused. Before any step, apply refuses
   (`issuer_changed`) a plan that moves the issuer KyIdentity's Deployment runs with, or the URLs
   of an added client its setup exported, once that setup has run (read-only
   `--check`/`--export-client` on the running pod; unreadable refuses). Each app's setup
@@ -438,8 +443,9 @@ calls and kind nodes must carry their own explicit bounds.
   The catalog KyDrive joins it from an sshd Docker target, routed through the same lan edge to
   the kind gateway: hardened container as the target user, published on that address only, its
   client in the same first setup, secrets crossed to its container over SSH, live `--check`,
-  health through the edge and, later, the owner's admin signed in through KyIdentity (the
-  everyday account refused until SCIM provisions it).
+  health through the edge, KyIdentity's SCIM connector (token copied to KyIdentity's pod, setup
+  pass checked) and, later, both owner accounts provisioned by SCIM and signed in through
+  KyIdentity, the admin as KyDrive's administrator and the everyday account as a user.
   The catalog KyRecovery joins it: restricted uid-10001 pod, its client in KyIdentity's first
   setup, transferred private setup files, live `--check`, health through the edge, the
   ceremony handover and a skipped rerun. The catalog kyPulse joins too: restricted uid-10001 pod
