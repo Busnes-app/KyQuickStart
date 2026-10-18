@@ -99,18 +99,15 @@ func checkCatalogRecovery(t *testing.T, ctx context.Context, cs kubernetes.Inter
 	return secrets
 }
 
-// catalogSignOn signs the owner's accounts in to KyRecovery and kyPulse through KyIdentity,
-// all behind the edge, as a browser would: each app must send the admin to KyIdentity with its
-// own client and accept them back as its administrator, and KyIdentity must refuse the everyday
-// account. Test-only plumbing: cluster DNS names every routed host after the node, whose
-// NodePort is the lan edge, and both apps' pods trust the edge's throwaway certificate.
-func catalogSignOn(t *testing.T, ctx context.Context, cs kubernetes.Interface, kubeconfig string, certPEM []byte, nodeIP string) {
+// testClusterDNS makes cluster DNS name every routed host after the node, whose NodePort is
+// the lan edge. Test-only plumbing.
+func testClusterDNS(t *testing.T, ctx context.Context, cs kubernetes.Interface, nodeIP string) {
 	t.Helper()
 	dns, err := cs.CoreV1().ConfigMaps("kube-system").Get(ctx, "coredns", metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	hosts := strings.Join([]string{catalogIdentityHost, catalogRecoveryHost, catalogPulseHost, "hello.example.test"}, " ")
+	hosts := strings.Join([]string{catalogIdentityHost, catalogRecoveryHost, catalogPulseHost, catalogDriveHost, "hello.example.test"}, " ")
 	corefile := strings.Replace(dns.Data["Corefile"], "    kubernetes cluster.local", "    hosts {\n       "+nodeIP+" "+hosts+"\n       fallthrough\n    }\n    kubernetes cluster.local", 1)
 	if corefile == dns.Data["Corefile"] {
 		t.Fatalf("unexpected Corefile:\n%s", corefile)
@@ -153,6 +150,15 @@ func catalogSignOn(t *testing.T, ctx context.Context, cs kubernetes.Interface, k
 			t.Fatalf("CoreDNS did not come back with the test hosts: %d ready", ready)
 		}
 	}
+}
+
+// catalogSignOn signs the owner's accounts in to KyRecovery and kyPulse through KyIdentity,
+// all behind the edge, as a browser would: each app must send the admin to KyIdentity with its
+// own client and accept them back as its administrator, and KyIdentity must refuse the everyday
+// account. Test-only plumbing: testClusterDNS ran, and both apps' pods trust the edge's
+// throwaway certificate.
+func catalogSignOn(t *testing.T, ctx context.Context, cs kubernetes.Interface, kubeconfig string, certPEM []byte, nodeIP string) {
+	t.Helper()
 	c, err := kube.Connect(kubeconfig, "")
 	if err != nil {
 		t.Fatal(err)
