@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -120,21 +121,39 @@ type fakeIdentity struct {
 	export          string            // --export-client's frame
 	exports         map[string]string // per client, when set
 	calls           []string
+	features        []string                 // capabilities beyond 0.4.2's
+	setups          map[string]*fakeIdentity // amendments, by bundle path
+	parent          *fakeIdentity            // an amendment's
+	disabled        bool                     // disable-user ran
 }
 
-func (n *fakeIdentity) stream(_ context.Context, namespace, pod, container string, args []string, o remotecommand.StreamOptions) error {
+func (n *fakeIdentity) stream(ctx context.Context, namespace, pod, container string, args []string, o remotecommand.StreamOptions) error {
 	n.pod = namespace + "/" + pod + "/" + container
 	n.calls = append(n.calls, strings.Join(args, " "))
+	if f := slices.Index(args, "--file"); f >= 0 && n.setups[args[f+1]] != nil {
+		return n.setups[args[f+1]].stream(ctx, namespace, pod, container, args, o)
+	}
 	check := args[len(args)-1] == "--check"
 	var out string
 	switch {
 	case slices.Contains(args, "--capabilities"):
-		out = `{"schema":"ky.setup-capabilities/1","service":"kyidentity","bundleSchema":"kyidentity.setup/1","features":["local-accounts","confidential-oidc-clients","assigned-only","everyday-assignment","app-role-assignments","scim-connectors","suite-webhook-connectors","directory-groups","app-group-assignments","scim-groups","check","protected-setup-files","bundle-preparation","target-credentials","client-credential-export"]}`
+		features := append([]string{"local-accounts", "confidential-oidc-clients", "assigned-only", "everyday-assignment", "app-role-assignments", "scim-connectors", "suite-webhook-connectors", "directory-groups", "app-group-assignments", "scim-groups", "check", "protected-setup-files", "bundle-preparation", "target-credentials", "client-credential-export"}, n.features...)
+		b, _ := json.Marshal(map[string]any{"schema": "ky.setup-capabilities/1", "service": "kyidentity", "bundleSchema": "kyidentity.setup/1", "features": features})
+		out = string(b)
+	case slices.Contains(args, "disable-user"):
+		if strings.Join(args[1:], " ") != "disable-user --username kyq-bootstrap --require-active-admin owner-admin" || !n.applied {
+			return errors.New("disable-user refused")
+		}
+		status := "unchanged"
+		if !n.disabled {
+			n.disabled, status = true, "disabled"
+		}
+		out = `{"schema":"kyidentity.disable-user/1","username":"kyq-bootstrap","status":"` + status + `"}`
 	case slices.Contains(args, "--stage"):
 		b, _ := io.ReadAll(o.Stdin)
 		n.stdin = string(b)
-		if check && !n.staged || n.staged && n.intent != n.stdin {
-			return errors.New("not staged, or intent changed")
+		if check && !n.staged || n.staged && n.intent != n.stdin || n.parent != nil && !n.parent.applied {
+			return errors.New("not staged, intent changed, or parent not applied")
 		}
 		n.intent = n.stdin
 		status := "present"
@@ -149,6 +168,9 @@ func (n *fakeIdentity) stream(_ context.Context, namespace, pod, container strin
 		out = n.export
 		if n.exports != nil {
 			out = n.exports[args[slices.Index(args, "--export-client")+1]]
+		}
+		if out == "" {
+			return errors.New("no such owned client")
 		}
 	default:
 		if check && !n.applied || !n.staged {

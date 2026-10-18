@@ -4,15 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-
-	"github.com/Busnes-app/kyquickstart/internal/stack"
 )
 
-func stageIdentity(ctx context.Context, exec identityExec, inputExec func(context.Context, []string, []byte) ([]byte, error), n *stack.IdentityPreparation, bundle string, check bool) error {
-	if err := identityCapabilities(ctx, exec, true); err != nil {
+// stageIdentity stages intent: typed preparation settings, or an amendment bundle.
+func stageIdentity(ctx context.Context, exec identityExec, inputExec func(context.Context, []string, []byte) ([]byte, error), intent any, bundle string, check bool, extra ...string) error {
+	if err := identityCapabilities(ctx, exec, true, extra...); err != nil {
 		return err
 	}
-	raw, err := json.Marshal(n)
+	raw, err := json.Marshal(intent)
 	if err != nil || len(raw) > 128<<10 {
 		return errors.New("KyIdentity preparation exceeds native input limit")
 	}
