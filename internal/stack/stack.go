@@ -44,6 +44,9 @@ type Integration struct {
 	Notes          *NotesPreparation    `yaml:"notes,omitempty"`
 	Identity       *IdentityPreparation `yaml:"identity,omitempty"`
 	IdentityClient string               `yaml:"identity_client,omitempty"`
+	// IdentityAmendment is the KyIdentity setup amendment that added an installed app's client
+	// after KyIdentity's first setup; apply records it once.
+	IdentityAmendment string `yaml:"identity_amendment,omitempty"`
 }
 
 // Existing is a reference, never permission to adopt or change a workload.

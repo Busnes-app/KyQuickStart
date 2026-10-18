@@ -113,6 +113,26 @@ func TestRecoveryIntegration(t *testing.T) {
 			t.Errorf("%s accepted", name)
 		}
 	}
+	// A setup amendment that added the client is the app's own canonical UUID.
+	const amendment = "5f4d3125-a512-5221-ae16-90e33394dd45"
+	amended := plan + "  identity_amendment: " + amendment + "\n"
+	if s, err := Parse([]byte(amended)); err != nil || s.Integrations[0].IdentityAmendment != amendment {
+		t.Fatal("amended integration rejected", err)
+	}
+	identity := "- product: kyidentity\n  target: k8s\n  bundle: /data/installer/" + amendment + "/setup.json\n  identity:\n    schema: kyidentity.setup/1\n    setup_id: " + amendment +
+		"\n    admin: {username: owner-admin, email: admin@example.test}\n    everyday: {username: owner, email: owner@example.test}\n    clients: []\n"
+	for name, bad := range map[string]string{
+		"not uuid":        strings.Replace(amended, "identity_amendment: "+amendment, "identity_amendment: amend", 1),
+		"upper":           strings.Replace(amended, "identity_amendment: 5f4d3125", "identity_amendment: 5F4D3125", 1),
+		"own setup id":    strings.Replace(amended, "identity_amendment: "+amendment, "identity_amendment: 0f9a3c1e-5b7d-4e2a-9c8b-1d2e3f4a5b6c", 1),
+		"kyidentity's id": strings.Replace(amended, "integrations:\n", "integrations:\n"+identity, 1),
+		"repeated":        strings.Replace(amended, "- name: kyrecovery\n", "- name: kypulse\n  target: k8s\n- name: kyrecovery\n", 1) + "- product: kypulse\n  target: k8s\n  bundle: /app/data/installer/1f9a3c1e-5b7d-4e2a-9c8b-1d2e3f4a5b6c/setup.json\n  identity_client: kypulse\n  identity_amendment: " + amendment + "\n",
+		"not installed":   strings.Replace(strings.Replace(amended, "- name: kyrecovery\n  target: k8s\n", "", 1), "  identity_client:", "  container: app\n  namespace: kyq-kyrecovery\n  pod: app-1\n  identity_client:", 1) + "existing:\n- product: kyrecovery\n  target: k8s\n  url: https://recovery.example.test\n",
+	} {
+		if _, err := Parse([]byte(bad)); err == nil || !strings.Contains(err.Error(), "identity_amendment") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
 	// Any other installed app takes the same shape.
 	pulse := strings.ReplaceAll(plan, "kyrecovery", "kypulse")
 	if _, err := Parse([]byte(pulse)); err != nil {
