@@ -75,3 +75,16 @@ runner's release set (`0.0.0-pilot.1ac797238207`) differs from the local CLI bui
 `pull-plan` returned revision 2, a CLI `uninstall` was refused `owned_by_runner`, and
 `handoff --revoke` took revision 3 back, deleted the runner's ServiceAccount and bindings, and
 left the runner `Unauthorized`. The runner pod stays deployed with no cluster access.
+
+**2026-10-18: LAN edge and KyIdentity (master 8dc572c + cpu_request).** The plan gained a `lan`
+edge (`allow_cidrs: [192.168.1.0/24]`, `client_port: 30543`) with the `k80` certificate and
+KyDNS LAN DNS, and `kyidentity` routed at `identity.k80.urlxl.us`. The first apply stopped at
+`kyidentity.health`: KyIdentity requested a whole CPU and k81 had about 230m unrequested
+(`ky-stack` requests 94% of it), so the pod stayed Pending. With `cpu_request: 100m` under its
+1-CPU limit it scheduled, and apply ran every step: NPM requested `*.k80.urlxl.us` from Let's
+Encrypt by DNS-01 through the Cloudflare token (issuer YE1, valid to 2027-01-15), KyDNS got an
+A record `identity.k80.urlxl.us → 192.168.1.81`, and NPM serves the route. From a LAN
+workstation (192.168.1.156) the name resolves through the normal resolver and
+`https://identity.k80.urlxl.us:30543/.well-known/openid-configuration` answers 200 with full
+certificate verification and issuer `https://identity.k80.urlxl.us`. A rerun skipped every step.
+KyIdentity's installer setup has not run yet (it needs the owner's admin and everyday logins).
