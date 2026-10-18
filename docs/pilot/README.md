@@ -97,3 +97,16 @@ and each password piped from the pod (never printed), both accounts signed in (2
 a wrong password got 401; `k80-admin` read `/api/admin/users` (200) and `k80-user` was refused (403).
 A rerun skipped every step. Still open: `kyq-bootstrap` stays an active administrator until
 KyIdentity-server#109 lands, and no mail relay is set.
+
+**2026-10-18: KyIdentity reset and KyRecovery with SSO (master 88834c2).** KyIdentity's first
+setup had no clients, and KyIdentity 0.4.2 cannot add one later (KyIdentity-server#110), so the
+pilot KyIdentity was reset: namespace `kyq-kyidentity` and its retained volume deleted (only the
+test accounts were lost; the volume's directory on k81 needs `sudo rm` by hand). The plan then
+gained `kyrecovery` at `recovery.k80.urlxl.us`, a new KyIdentity setup ID, and `10.0.0.0/8`
+(Cilium's pod pool) in the lan edge's `allow_cidrs`, because KyRecovery's pod reaches the issuer
+through NPM. With `{{host}}` the issuer is `https://identity.k80.urlxl.us:30543`. `apply` ran
+every step: KyIdentity setup with the derived `kyrecovery` client, KyRecovery deploy and setup,
+its route and KyDNS record, and printed the custodian ceremony as an outstanding human step.
+From the LAN, `k80-admin` signed in to KyIdentity, KyRecovery redirected to it with
+`client_id=kyrecovery` and its `:30543` callback, KyIdentity issued a code, and KyRecovery's
+session reports role `admin`; `k80-user` got `access_denied`. A rerun skipped every step.
