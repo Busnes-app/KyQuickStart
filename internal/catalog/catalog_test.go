@@ -107,6 +107,42 @@ func TestKyPulseEntry(t *testing.T) {
 	}
 }
 
+func TestKyDriveEntry(t *testing.T) {
+	cat, err := Load(Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := cat["kydrive"]
+	o := a.OIDC
+	if a.Category != "ky" || a.Version != "0.4.2" || a.Kubernetes != nil || !slices.Equal(a.Services, []string{"app"}) || !slices.Equal(a.DependsOn, []string{"kyidentity"}) {
+		t.Fatalf("manifest = %+v", a.Manifest)
+	}
+	if a.Images["kydrive"] != "ghcr.io/busnes-app/kydrive-server:0.4.2@sha256:1b2eec75dd4d197934c98f109ff8f913b4025f39eda1e56b0076cd70428b3e2c" {
+		t.Fatalf("image = %s", a.Images["kydrive"])
+	}
+	// KyDrive refuses a directory webhook and requires its SCIM token in setup.
+	if o.RedirectPaths[0] != "/api/sso/kysignon/callback" || o.AdminRole != "kydrive.admin" || o.UserRole != "kydrive.user" || o.DirectoryPath != "" || o.SCIMTokenFile != "/run/secrets/scim_token" || o.Public {
+		t.Fatalf("oidc = %+v", o)
+	}
+	if !slices.Equal(a.Secrets, []string{"session_secret", "scim_token"}) || !slices.Equal(a.Binds, []string{"backups", "data"}) || !slices.Equal(a.Backup.Volumes, []string{"data", "backups"}) || !a.Upgrade.MigratesData {
+		t.Fatalf("secrets %v, binds %v, backup %+v", a.Secrets, a.Binds, a.Backup)
+	}
+	c := string(a.WithRoute("drive.example.com", "192.168.1.91:18443").Compose)
+	for _, want := range []string{`user: "${KYQ_UID:?}:${KYQ_GID:?}"`, "read_only: true", "cap_drop: [ALL]", "no-new-privileges:true", "stop_grace_period: 20m",
+		`ports: ["192.168.1.91:18443:8080"]`, `KY_APP_URL: "https://drive.example.com"`, "KY_ENV: production", "KY_SSO_AUTO_PROVISION: \"false\"", "KY_SCIM_TOKEN_FILE: /run/secrets/scim_token",
+		"KY_DATA_DIR: /data", "/healthz"} {
+		if !strings.Contains(c, want) {
+			t.Errorf("compose lacks %s", want)
+		}
+	}
+	// No secret value, editor or bulk repository in the Compose file.
+	for _, unwanted := range []string{"KY_SESSION_SECRET:", "KY_SCIM_TOKEN:", "KY_KYSIGNON", "KYDRIVE_EDITOR", "KYDRIVE_BULK", "KY_ADMIN_PASSWORD", "container_name", "0.0.0.0:"} {
+		if strings.Contains(c, unwanted) {
+			t.Errorf("compose has %s", unwanted)
+		}
+	}
+}
+
 const manifest = "name: a\ncategory: ky\nversion: 2.4.0\nimages:\n  web: " + digest + "\nhealth:\n  timeout_seconds: 30\n"
 
 const oidc = "oidc:\n  name: App\n  redirect_paths: [/auth/callback]\n  logout_paths: [/]\n  admin_role: admin\n  user_role: user\n"
