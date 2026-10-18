@@ -238,11 +238,12 @@ type session struct {
 	edges        []stack.Edge
 	npms         map[string]*edge.NPM
 
-	plan         *stack.Stack        // as loaded, or with the amendments amendLate records
-	derived      []string            // KyIdentity clients composeClients took from the catalog
-	amendments   []identityAmendment // setup amendments adding the clients of later apps
-	pulseTargets []pulseTarget       // kyPulse's targets, when the plan installs it
-	handover     string              // printed after apply: what installed apps leave to a human
+	plan          *stack.Stack        // as loaded, or with the amendments amendLate records
+	derived       []string            // KyIdentity clients composeClients took from the catalog
+	amendments    []identityAmendment // setup amendments adding the clients of later apps
+	bootstrapNote string              // printed after apply while KyIdentity keeps its bootstrap admin
+	pulseTargets  []pulseTarget       // kyPulse's targets, when the plan installs it
+	handover      string              // printed after apply: what installed apps leave to a human
 }
 
 // load validates everything that needs no connection.
@@ -529,7 +530,7 @@ func (s *session) apply(ctx context.Context, publish func() error) error {
 	if err := s.operate(ctx, "", s.deploySteps, publish); err != nil {
 		return err
 	}
-	fmt.Fprint(s.o.Out, s.handover)
+	fmt.Fprint(s.o.Out, s.handover+s.bootstrapNote)
 	if s.demo {
 		fmt.Fprintln(s.o.Out, "Demo deployment passed its driver checks. Suite SSO, administrator access and backups are not configured.")
 		if t, ok := s.placed["hello"]; ok {

@@ -124,6 +124,7 @@ type fakeIdentity struct {
 	features        []string                 // capabilities beyond 0.4.2's
 	setups          map[string]*fakeIdentity // amendments, by bundle path
 	parent          *fakeIdentity            // an amendment's
+	disabled        bool                     // disable-user ran
 }
 
 func (n *fakeIdentity) stream(ctx context.Context, namespace, pod, container string, args []string, o remotecommand.StreamOptions) error {
@@ -139,6 +140,15 @@ func (n *fakeIdentity) stream(ctx context.Context, namespace, pod, container str
 		features := append([]string{"local-accounts", "confidential-oidc-clients", "assigned-only", "everyday-assignment", "app-role-assignments", "scim-connectors", "suite-webhook-connectors", "directory-groups", "app-group-assignments", "scim-groups", "check", "protected-setup-files", "bundle-preparation", "target-credentials", "client-credential-export"}, n.features...)
 		b, _ := json.Marshal(map[string]any{"schema": "ky.setup-capabilities/1", "service": "kyidentity", "bundleSchema": "kyidentity.setup/1", "features": features})
 		out = string(b)
+	case slices.Contains(args, "disable-user"):
+		if strings.Join(args[1:], " ") != "disable-user --username kyq-bootstrap --require-active-admin owner-admin" || !n.applied {
+			return errors.New("disable-user refused")
+		}
+		status := "unchanged"
+		if !n.disabled {
+			n.disabled, status = true, "disabled"
+		}
+		out = `{"schema":"kyidentity.disable-user/1","username":"kyq-bootstrap","status":"` + status + `"}`
 	case slices.Contains(args, "--stage"):
 		b, _ := io.ReadAll(o.Stdin)
 		n.stdin = string(b)

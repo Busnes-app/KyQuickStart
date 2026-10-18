@@ -385,6 +385,49 @@ func staleClients(ctx context.Context, exec identityExec, input func(context.Con
 	return nil
 }
 
+// retireBootstrapStep disables KyIdentity's first-start administrator once setup has created
+// the owner's, through disable-user; a KyIdentity without it leaves note for the handover.
+type retireBootstrapStep struct {
+	exec             identityExec
+	bootstrap, admin string
+	note             *string
+}
+
+// bootstrapNote is printed while KyIdentity cannot retire its bootstrap administrator.
+const bootstrapNote = `
+Not yet: KyIdentity's first-start administrator %s stays active. This KyIdentity has no
+  disable-user (0.4.3 or later has); disable it in KyIdentity's admin UI after %s's first sign-in.
+`
+
+func (s retireBootstrapStep) ID() string                            { return "kyidentity.retire-bootstrap" }
+func (s retireBootstrapStep) InputHash() string                     { return s.bootstrap + " " + s.admin }
+func (s retireBootstrapStep) Inspect(context.Context) (bool, error) { return false, nil }
+func (s retireBootstrapStep) Note() string                          { return strings.TrimSpace(*s.note) }
+func (s retireBootstrapStep) Apply(ctx context.Context) error {
+	return s.run(ctx, "disabled", "unchanged")
+}
+
+// Verify reruns disable-user, which has no read-only form: on a disabled account it writes
+// nothing and answers unchanged.
+func (s retireBootstrapStep) Verify(ctx context.Context) error { return s.run(ctx, "unchanged") }
+
+func (s retireBootstrapStep) run(ctx context.Context, want ...string) error {
+	if identityCapabilities(ctx, s.exec, false, "disable-user") != nil {
+		*s.note = fmt.Sprintf(bootstrapNote, s.bootstrap, s.admin)
+		return nil
+	}
+	*s.note = ""
+	b, err := s.exec(ctx, []string{"disable-user", "--username", s.bootstrap, "--require-active-admin", s.admin})
+	if err != nil {
+		return fmt.Errorf("KyIdentity did not disable %s; it refuses unless %s is another active administrator with no end date", s.bootstrap, s.admin)
+	}
+	var r struct{ Schema, Username, Status string }
+	if len(b) > 1024 || json.Unmarshal(b, &r) != nil || r.Schema != "kyidentity.disable-user/1" || r.Username != s.bootstrap || !slices.Contains(want, r.Status) {
+		return fmt.Errorf("KyIdentity's disable-user report for %s is invalid or not %s", s.bootstrap, strings.Join(want, " or "))
+	}
+	return nil
+}
+
 // issuerEnv carries the catalog KyIdentity's issuer, taken from its route.
 const issuerEnv = "KYIDENTITY_ISSUER_URL"
 
