@@ -122,3 +122,17 @@ to the plan: `apply` found KyIdentity's setup without its client, created setup 
 LAN, `k80-admin` signed in to KyRecovery (role `admin`) and to kyPulse, whose targets
 `kyidentity` and `kyrecovery` report `ok`; `k80-user` got `access_denied` from both. A rerun
 skipped every step. Adding an app after KyIdentity's setup no longer needs a reset.
+
+**2026-10-18: KyDrive on a Docker host, joined by amendment (master 5035865).** The plan gained
+Docker target `hlwcdocker02` (192.168.1.91, root `/home/yoshi/kyq`; its ECDSA host key
+`SHA256:F33QGW…` matched `/etc/ssh` on the host and the operator's `known_hosts`) and `kydrive`
+there, routed through K80's lan edge at `drive.k80.urlxl.us` → `192.168.1.91:18443`. `apply`
+created KyIdentity setup amendment `kydrive`, deployed KyDrive (uid 1000, read-only root,
+`cap_drop ALL`, `no-new-privileges`; data and secrets 0700/0600), moved its client secret from
+the K80 pod to the container over SSH stdin, and set it up; NPM's egress now admits exactly that
+IP and port, which Cilium enforces (the route works). From the LAN, `k80-admin` signed in to
+KyDrive through KyIdentity (role `admin`); `k80-user` got 403 "User account not provisioned"
+(KyIdentity's SCIM connector to KyDrive is not built yet). A rerun skipped every step.
+**Open:** port 18443 also answers LAN clients directly (bypassing NPM's allow-list) until the
+operator adds the documented `DOCKER-USER` rule. KyQuickStart needs an SSH agent; with none
+running, start one for the run (`ssh-agent`, `ssh-add`).
