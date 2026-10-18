@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
+	"github.com/Busnes-app/kyquickstart/internal/dockerhost"
 	"github.com/Busnes-app/kyquickstart/internal/engine"
 	"github.com/Busnes-app/kyquickstart/internal/managed"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
@@ -329,7 +330,7 @@ func handoverSection(name string, t stack.Target, version string, hostnames []st
 	if t.Kubernetes() {
 		fmt.Fprintf(b, "It runs in namespace %s; its objects no longer carry %s.\n", "kyq-"+name, managed.Label)
 	} else {
-		fmt.Fprintf(b, "Its Compose project kyq-%s is in %s; run it with `docker compose -p kyq-%s -f compose.yaml -f compose.kyq.yaml up -d` there.\n", name, path.Join(t.Root, name), name)
+		fmt.Fprintf(b, "Its Compose project kyq-%s is in %s; run it with `%s docker compose -p kyq-%s -f compose.yaml -f compose.kyq.yaml up -d` there.\n", name, path.Join(t.Root, name), dockerhost.ComposeEnv, name)
 	}
 	if len(hostnames) > 0 {
 		fmt.Fprintf(b, "Its public hostnames (%s) were disabled in Nginx Proxy Manager. They still carry the installer's ownership marks, so a later apply keeps them disabled; serve the app through a proxy host you create yourself.\n", strings.Join(hostnames, ", "))
