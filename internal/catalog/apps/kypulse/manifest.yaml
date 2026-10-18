@@ -1,0 +1,56 @@
+name: kypulse
+description: kyPulse, the suite's monitor; polls every app's health, alerts and keeps their logs
+category: ky
+version: 0.4.2
+# Release image of v0.4.2, attested by release-image.yml@refs/tags/v0.4.2 (gh attestation verify).
+images:
+  kypulse: ghcr.io/busnes-app/kypulse-server:0.4.2@sha256:4d7232d53e07476592379b7c688c8f50b073e498d89b5c08b94cc3404ed3cc16
+# Its setup needs KyIdentity's issuer, client and signed directory.
+depends_on: [kyidentity]
+health:
+  timeout_seconds: 300
+# Admin-only: KyIdentity's export names the owner's admin account alone, so no viewer is
+# created. Sign-out is local; it has no RP-initiated or back-channel logout endpoint.
+oidc:
+  name: kyPulse
+  redirect_paths: [/api/sso/kysignon/callback]
+  admin_role: kypulse.admin
+  directory_path: /api/sso/kysignon/sync
+# kypulse.db with encryption.key, and audit.key apart from them as upstream keeps it: without
+# the keys the sealed tokens and the audit chain are lost.
+backup:
+  volumes: [data, secrets]
+upgrade:
+  # First release; its SQLite schema migrates at startup.
+  min_from: 0.4.2
+  migrates_data: true
+kubernetes:
+  image: kypulse
+  env:
+    # Production listens beyond loopback and sends Secure cookies; both are needed in a pod.
+    KYPULSE_ENV: production
+    KYPULSE_HOST: 0.0.0.0
+    KYPULSE_PORT: "8080"
+    KYPULSE_APP_URL: https://{{host}}
+    KYPULSE_DATA_DIR: /app/data
+    KYPULSE_AUDIT_KEY_FILE: /app/secrets/audit.key
+    # Only identities its setup created may sign in.
+    KYPULSE_SSO_AUTO_PROVISION: "false"
+    GOMEMLIMIT: 384MiB
+  ports: [8080]
+  readiness_path: /healthz
+  # The image's kypulse user.
+  run_as: 10001
+  resources:
+    cpu: "1"
+    # Idle between 30-second health polls.
+    cpu_request: 50m
+    memory: 512Mi
+  volumes:
+    - name: data
+      mount: /app/data
+      # Database and logs (retention defaults to 1 GiB of payload).
+      size: 5Gi
+    - name: secrets
+      mount: /app/secrets
+      size: 16Mi
