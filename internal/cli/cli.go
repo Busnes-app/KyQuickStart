@@ -174,6 +174,11 @@ func Run(ctx context.Context, args []string, o Options) error {
 		}
 		return nil
 	}
+	if cmd == "apply" {
+		if publishPlan, err = s.amendLate(ctx, *state, publishPlan); err != nil {
+			return err
+		}
+	}
 	if err := s.preflight(ctx); err != nil || cmd == "preflight" {
 		return err
 	}
@@ -233,9 +238,11 @@ type session struct {
 	edges        []stack.Edge
 	npms         map[string]*edge.NPM
 
-	derived      []string      // KyIdentity clients composeClients took from the catalog
-	pulseTargets []pulseTarget // kyPulse's targets, when the plan installs it
-	handover     string        // printed after apply: what installed apps leave to a human
+	plan         *stack.Stack        // as loaded, or with the amendments amendLate records
+	derived      []string            // KyIdentity clients composeClients took from the catalog
+	amendments   []identityAmendment // setup amendments adding the clients of later apps
+	pulseTargets []pulseTarget       // kyPulse's targets, when the plan installs it
+	handover     string              // printed after apply: what installed apps leave to a human
 }
 
 // load validates everything that needs no connection.
@@ -298,7 +305,7 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 	if redact == nil {
 		redact = &engine.Redactor{}
 	}
-	s := &session{revision: st.Revision, installation: st.InstallationID, saved: st.InstallationID, trust: trust, redact: redact, allTargets: st.Targets, integrations: st.Integrations, o: o, state: state, demo: st.Demo, cat: cat, placed: map[string]stack.Target{}, drivers: map[string]driver{}, edges: st.Edges, npms: map[string]*edge.NPM{}}
+	s := &session{plan: st, revision: st.Revision, installation: st.InstallationID, saved: st.InstallationID, trust: trust, redact: redact, allTargets: st.Targets, integrations: st.Integrations, o: o, state: state, demo: st.Demo, cat: cat, placed: map[string]stack.Target{}, drivers: map[string]driver{}, edges: st.Edges, npms: map[string]*edge.NPM{}}
 	var names []string
 	used := map[string]bool{}
 	for _, a := range st.Apps {
@@ -589,11 +596,11 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 		steps = append(steps, d.steps(name, s.cat[name], s.o.ReleaseSet, s.redact)...)
 		for _, i := range s.integrations {
 			if i.Product == name && i.Target == s.placed[name].Name {
-				step, err := s.setupStep(d, i)
+				setup, err := s.setupSteps(d, i)
 				if err != nil {
 					return nil, err
 				}
-				steps = append(steps, step)
+				steps = append(steps, setup...)
 			}
 		}
 	}
