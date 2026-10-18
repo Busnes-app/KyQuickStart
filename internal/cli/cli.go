@@ -349,21 +349,21 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 	}
 	for name, t := range s.placed {
 		app := cat[name]
-		if !t.Kubernetes() || !app.Kubernetes.UsesHostname() {
+		if !t.Kubernetes() || !app.Kubernetes.UsesHost() {
 			continue
 		}
 		var hosts []string
 		for _, e := range st.Edges {
 			for _, r := range e.Routes {
 				if r.App == name {
-					hosts = append(hosts, r.Hostname)
+					hosts = append(hosts, e.URLHost(r))
 				}
 			}
 		}
 		if len(hosts) != 1 {
 			return nil, fmt.Errorf("app %q takes its URL from its route hostname; give it exactly one edge route", name)
 		}
-		app.Kubernetes = app.Kubernetes.WithHostname(hosts[0])
+		app.Kubernetes = app.Kubernetes.WithHost(hosts[0])
 		cat[name] = app
 	}
 	for _, i := range st.Integrations {
@@ -563,9 +563,13 @@ func (s *session) operate(ctx context.Context, holder string, steps func(context
 	return nil
 }
 
-// deploySteps gates every app in s.order on its upgrade rules, then returns its install
-// steps and the edges'. Nothing has changed when a gate refuses.
+// deploySteps refuses a plan that moves a completed KyIdentity setup's URLs and gates every
+// app in s.order on its upgrade rules, then returns its install steps and the edges'.
+// Nothing has changed when either refuses.
 func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
+	if err := s.refuseMovedSetup(ctx); err != nil {
+		return nil, err
+	}
 	var steps []engine.Step
 	for _, name := range s.order {
 		d := s.drivers[s.placed[name].Name]

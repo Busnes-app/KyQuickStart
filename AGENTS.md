@@ -285,6 +285,9 @@ handover of admin and everyday logins.
   KyRecovery, on Kubernetes. KyIdentity takes clients only in its first setup
   (KyIdentity-server#110): apply adds an installed KyRecovery's client, derived from its
   catalog `oidc` block and route, to that intent, and names #110 when the setup ran without it.
+  Before any step, apply refuses (`issuer_changed`) a plan that moves the issuer KyIdentity's
+  Deployment runs with, or the URLs of KyRecovery's client its setup exported, once that setup
+  has run (read-only `--check`/`--export-client` on the running pod; unreadable refuses).
   KyRecovery's setup transfers that client's secrets in memory into private pod files, never
   replacing one; its custodian ceremony stays human and apply prints it as outstanding.
 - Command-line only: no GUI, web UI or full-screen terminal UI. `plan` asks its questions as
@@ -378,7 +381,7 @@ handover of admin and everyday logins.
   default class. A claim's class never changes: `apply` refuses an existing claim of another class.
   A non-root app mounts each claim through a 0700 `private` subdirectory that an init container
   (the pinned BusyBox helper, the app's uid) creates. A `kubernetes.env` value may contain
-  `{{hostname}}`, replaced by the app's one edge route hostname; no other template syntax.
+  `{{host}}`, replaced by the URL host of the app's one edge route (hostname, plus `:client_port` when it is not 443); no other template syntax.
 
 ## Work Guidance
 
@@ -410,9 +413,12 @@ calls and kind nodes must carry their own explicit bounds.
   against a kind cluster (`go run sigs.k8s.io/kind@v0.33.0`), including drift and stale-lock cases.
   Also runs disposable NPM, frpc/frps and cloudflared container tests in `internal/edge`, and
   `TestKubernetesNPMEdge`: catalog NPM on kind with claims, bootstrap, policy probes, a routed
-  request through the NodePort, a skipped rerun and token refresh. It also installs the catalog
-  KyIdentity from its attested image behind that edge: restricted uid-100 pod on a private
-  data directory, staged `apply-setup`, OIDC discovery through the edge, changed-intent refusal.
+  request through the NodePort as a cloudflare and then a lan edge, skipped reruns and token
+  refresh. It then installs the catalog KyIdentity from its attested image behind the lan edge
+  (`client_port` 30443): restricted uid-100 pod on a private data directory, staged
+  `apply-setup`, OIDC discovery through the edge naming the `:30443` issuer, changed-intent
+  refusal, and a later `client_port` change refused (`issuer_changed`) before
+  `kyidentity.deploy`, Deployment and pod unchanged.
   The catalog KyRecovery joins it: restricted uid-10001 pod, its client in KyIdentity's first
   setup, transferred private setup files, live `--check`, health through the edge, the
   ceremony handover and a skipped rerun; then, with test-only cluster DNS and CA trust, the

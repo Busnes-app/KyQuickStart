@@ -25,6 +25,7 @@ const (
 	UpgradeRefused   Code = "upgrade_refused"
 	BackupRequired   Code = "backup_required"
 	AckRequired      Code = "ack_required"
+	IssuerChanged    Code = "issuer_changed" // the plan moves a URL a completed KyIdentity setup is bound to
 	StepFailed       Code = "step_failed"
 	OwnedByRunner    Code = "owned_by_runner"     // the CLI may not change a plan the runner owns
 	OwnedByCLI       Code = "owned_by_cli"        // the runner acts only on a plan handed to it

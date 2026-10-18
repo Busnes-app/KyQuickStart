@@ -17,7 +17,7 @@ func kyidentityApp(t *testing.T) catalog.App {
 		t.Fatal(err)
 	}
 	app := cat["kyidentity"]
-	app.Kubernetes = app.Kubernetes.WithHostname("identity.example.com")
+	app.Kubernetes = app.Kubernetes.WithHost("identity.example.com")
 	return app
 }
 

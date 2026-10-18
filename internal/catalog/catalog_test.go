@@ -51,7 +51,7 @@ func TestKyIdentityEntry(t *testing.T) {
 	if !strings.HasPrefix(a.Images[k.Image], "ghcr.io/busnes-app/kyidentity-server:0.4.2@sha256:") || k.RunAs != 100 || k.WritableRoot || len(k.Capabilities) != 0 {
 		t.Fatalf("kubernetes = %+v", k)
 	}
-	if k.Env["KYIDENTITY_ISSUER_URL"] != "https://"+HostnameRef || k.ReadinessPath != "/readyz" || k.Ports[0] != 5867 || k.Volumes[0].Mount != k.Env["KYIDENTITY_DATA_DIR"] {
+	if k.Env["KYIDENTITY_ISSUER_URL"] != "https://"+HostRef || k.ReadinessPath != "/readyz" || k.Ports[0] != 5867 || k.Volumes[0].Mount != k.Env["KYIDENTITY_DATA_DIR"] {
 		t.Fatalf("env %v, probe %s, volumes %+v", k.Env, k.ReadinessPath, k.Volumes)
 	}
 	if !a.Upgrade.MigratesData || a.Upgrade.MinFrom != "0.4.0" || a.Backup.Volumes[0] != "data" {
@@ -69,7 +69,7 @@ func TestKyRecoveryEntry(t *testing.T) {
 	if a.Category != "ky" || a.Version != "0.4.2" || a.PodSecurity != "restricted" || a.Compose != nil || len(a.Secrets) != 0 || len(a.DependsOn) != 1 || a.DependsOn[0] != "kyidentity" {
 		t.Fatalf("manifest = %+v", a.Manifest)
 	}
-	if !strings.HasPrefix(a.Images[k.Image], "ghcr.io/busnes-app/kyrecovery-server:0.4.2@sha256:") || k.RunAs != 10001 || k.ReadinessPath != "/healthz" || k.Ports[0] != 8095 || k.Volumes[0].Mount != k.Env["KYRECOVERY_DATA_DIR"] || k.UsesHostname() {
+	if !strings.HasPrefix(a.Images[k.Image], "ghcr.io/busnes-app/kyrecovery-server:0.4.2@sha256:") || k.RunAs != 10001 || k.ReadinessPath != "/healthz" || k.Ports[0] != 8095 || k.Volumes[0].Mount != k.Env["KYRECOVERY_DATA_DIR"] || k.UsesHost() {
 		t.Fatalf("kubernetes = %+v", k)
 	}
 	// Admin-only, with the signed directory KyRecovery's setup requires.
@@ -240,19 +240,19 @@ func TestKubernetesBackup(t *testing.T) {
 	}
 }
 
-func TestWithHostname(t *testing.T) {
-	m := manifest + kube + "  env:\n    URL: https://{{hostname}}/a\n    MODE: x\n"
+func TestWithHost(t *testing.T) {
+	m := manifest + kube + "  env:\n    URL: https://{{host}}/a\n    MODE: x\n"
 	cat, err := Load(fstest.MapFS{"a/manifest.yaml": {Data: []byte(m)}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	k := cat["a"].Kubernetes
-	got := k.WithHostname("id.example.com")
-	if !k.UsesHostname() || got.UsesHostname() || got.Env["URL"] != "https://id.example.com/a" || got.Env["MODE"] != "x" {
+	got := k.WithHost("id.example.com")
+	if !k.UsesHost() || got.UsesHost() || got.Env["URL"] != "https://id.example.com/a" || got.Env["MODE"] != "x" {
 		t.Fatalf("env = %v", got.Env)
 	}
-	if k.Env["URL"] != "https://{{hostname}}/a" {
-		t.Fatal("WithHostname changed the catalog's env")
+	if k.Env["URL"] != "https://{{host}}/a" {
+		t.Fatal("WithHost changed the catalog's env")
 	}
 }
 

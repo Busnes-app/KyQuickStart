@@ -347,3 +347,15 @@ func TestLANEdge(t *testing.T) {
 		t.Fatal("cloudflare accepted no connector_cidr")
 	}
 }
+
+func TestURLHost(t *testing.T) {
+	r := Route{Hostname: "identity.example.com"}
+	for _, c := range []struct {
+		port int
+		want string
+	}{{0, "identity.example.com"}, {443, "identity.example.com"}, {30543, "identity.example.com:30543"}} {
+		if got := (Edge{ClientPort: c.port}).URLHost(r); got != c.want {
+			t.Errorf("client_port %d: URLHost = %q, want %q", c.port, got, c.want)
+		}
+	}
+}
