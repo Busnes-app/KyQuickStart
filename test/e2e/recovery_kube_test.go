@@ -27,6 +27,9 @@ import (
 // catalogRecoveryHost is where TestKubernetesNPMEdge routes the catalog KyRecovery.
 const catalogRecoveryHost = "recovery.example.test"
 
+// catalogRecoveryURLHost is its URL host behind the lan edge.
+const catalogRecoveryURLHost = catalogRecoveryHost + ":30443"
+
 const recoverySetupDir = "/app/data/installer/6a1f0c2e-3b4d-4e5f-8a9b-0c1d2e3f4a5b"
 
 // addCatalogRecovery installs the catalog KyRecovery behind the edge and selects its setup;
@@ -49,7 +52,7 @@ func checkCatalogRecovery(t *testing.T, ctx context.Context, cs kubernetes.Inter
 			t.Fatalf("%s = %q", id, status(out, id))
 		}
 	}
-	if !strings.Contains(out, "Outstanding human step, unless already done: the KyRecovery custodian ceremony.") || !strings.Contains(out, "https://"+catalogRecoveryHost+"/ through KyIdentity as prepared-admin") {
+	if !strings.Contains(out, "Outstanding human step, unless already done: the KyRecovery custodian ceremony.") || !strings.Contains(out, "https://"+catalogRecoveryURLHost+"/ through KyIdentity as prepared-admin") {
 		t.Fatal("custodian ceremony not handed over")
 	}
 	c, err := kube.Connect(kubeconfig, "")
@@ -99,19 +102,15 @@ func checkCatalogRecovery(t *testing.T, ctx context.Context, cs kubernetes.Inter
 // recoverySignOn signs the owner's accounts in to KyRecovery through KyIdentity, both behind
 // the edge, as a browser would: KyRecovery must send the admin to KyIdentity with its own
 // client and accept them back as its administrator, and KyIdentity must refuse the everyday
-// account. Test-only plumbing: cluster DNS names both hosts after NPM's Service, and
-// KyRecovery's pod trusts the edge's throwaway certificate.
+// account. Test-only plumbing: cluster DNS names both hosts after the node, whose NodePort is
+// the lan edge, and KyRecovery's pod trusts the edge's throwaway certificate.
 func recoverySignOn(t *testing.T, ctx context.Context, cs kubernetes.Interface, kubeconfig string, certPEM []byte, nodeIP string) {
 	t.Helper()
-	npm, err := cs.CoreV1().Services("kyq-npm").Get(ctx, "app-public", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
 	dns, err := cs.CoreV1().ConfigMaps("kube-system").Get(ctx, "coredns", metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	corefile := strings.Replace(dns.Data["Corefile"], "    kubernetes cluster.local", "    hosts {\n       "+npm.Spec.ClusterIP+" "+catalogIdentityHost+" "+catalogRecoveryHost+"\n       fallthrough\n    }\n    kubernetes cluster.local", 1)
+	corefile := strings.Replace(dns.Data["Corefile"], "    kubernetes cluster.local", "    hosts {\n       "+nodeIP+" "+catalogIdentityHost+" "+catalogRecoveryHost+"\n       fallthrough\n    }\n    kubernetes cluster.local", 1)
 	if corefile == dns.Data["Corefile"] {
 		t.Fatalf("unexpected Corefile:\n%s", corefile)
 	}
@@ -161,13 +160,13 @@ func recoverySignOn(t *testing.T, ctx context.Context, cs kubernetes.Interface, 
 	// Certificate and hostname verification stay on; only the dial goes to the NodePort.
 	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}
 	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-		if address != catalogIdentityHost+":443" && address != catalogRecoveryHost+":443" {
+		if address != catalogIdentityURLHost && address != catalogRecoveryURLHost {
 			return nil, errors.New("unselected destination " + address)
 		}
 		return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, network, net.JoinHostPort(nodeIP, "30443"))
 	}
 	t.Cleanup(transport.CloseIdleConnections)
-	identity, recovery := "https://"+catalogIdentityHost, "https://"+catalogRecoveryHost
+	identity, recovery := "https://"+catalogIdentityURLHost, "https://"+catalogRecoveryURLHost
 	setupDir := "/data/installer/" + identityFixturePreparation().SetupID
 	for _, account := range []struct {
 		username, passwordFile string
@@ -218,7 +217,7 @@ func recoverySignOn(t *testing.T, ctx context.Context, cs kubernetes.Interface, 
 
 		r, b = send("GET", recovery+"/api/auth/login", nil, "")
 		authorize, err := r.Location()
-		if err != nil || r.StatusCode != 302 || authorize.Host != catalogIdentityHost {
+		if err != nil || r.StatusCode != 302 || authorize.Host != catalogIdentityURLHost {
 			t.Fatalf("KyRecovery sign-in start: %d %s", r.StatusCode, b)
 		}
 		q := authorize.Query()
@@ -227,7 +226,7 @@ func recoverySignOn(t *testing.T, ctx context.Context, cs kubernetes.Interface, 
 		}
 		r, _ = send("GET", authorize.String(), nil, "")
 		callback, _ := r.Location()
-		got := callback != nil && callback.Host == catalogRecoveryHost && callback.Path == "/api/auth/callback" && callback.Query().Get("code") != "" && callback.Query().Get("state") == q.Get("state")
+		got := callback != nil && callback.Host == catalogRecoveryURLHost && callback.Path == "/api/auth/callback" && callback.Query().Get("code") != "" && callback.Query().Get("state") == q.Get("state")
 		if !account.admin {
 			if got {
 				t.Fatal("KyIdentity issued a KyRecovery code to the everyday account")

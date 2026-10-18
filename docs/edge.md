@@ -86,6 +86,10 @@ edges:
     routes: [...]                   # as for any edge
 ```
 
+Apps that take their URL from their route (`{{host}}`, KyIdentity's issuer) carry `client_port`
+when it is not 443. Once KyIdentity's setup has run, `apply` refuses a `client_port` or hostname
+change that moves its issuer or KyRecovery's client (`issuer_changed`, `guided-setup.md`).
+
 `connector_cidr`, `connector` and `proxy_port` are refused. Each `allow_cidrs` entry must be a
 canonical prefix (host bits zero, as `netip` prints it) no wider than /8 for IPv4 or /32 for
 IPv6, so `0.0.0.0/0` and `::/0` are refused. Validation does not check that a prefix is

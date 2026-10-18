@@ -266,7 +266,7 @@ operation's `error`. A code's HTTP status, when the runner answers with it direc
 | 400 | `invalid_request` (413 when the body exceeds 64 KiB; 405 for a wrong method) |
 | 404 | `not_found` only: KyYard reads any 404 as an operation the runner does not know |
 | 409 | `id_conflict`, `busy`, `plan_stale`, `target_locked`, `owned_by_runner`, `owned_by_cli`, `owned_by_other_plan` |
-| 422 | `unknown_app`, `unknown_target`, `already_installed`, `not_installed`, `dependency`, `upgrade_refused`, `backup_required`, `ack_required` |
+| 422 | `unknown_app`, `unknown_target`, `already_installed`, `not_installed`, `dependency`, `upgrade_refused`, `backup_required`, `ack_required`, `issuer_changed` |
 | 500 | `step_failed`, `internal` |
 
 ## KyYard

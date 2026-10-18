@@ -563,9 +563,13 @@ func (s *session) operate(ctx context.Context, holder string, steps func(context
 	return nil
 }
 
-// deploySteps gates every app in s.order on its upgrade rules, then returns its install
-// steps and the edges'. Nothing has changed when a gate refuses.
+// deploySteps refuses a plan that moves a completed KyIdentity setup's URLs and gates every
+// app in s.order on its upgrade rules, then returns its install steps and the edges'.
+// Nothing has changed when either refuses.
 func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
+	if err := s.refuseMovedSetup(ctx); err != nil {
+		return nil, err
+	}
 	var steps []engine.Step
 	for _, name := range s.order {
 		d := s.drivers[s.placed[name].Name]
