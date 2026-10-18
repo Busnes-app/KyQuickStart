@@ -23,6 +23,11 @@ kubernetes:
     KYIDENTITY_PORT: "5867"
     # The first-start administrator, kept apart from the owner's accounts apply-setup creates.
     BOOTSTRAP_ADMIN_USER: kyq-bootstrap
+    # Its SCIM and directory connectors deliver to the suite's apps through their routes, which
+    # resolve to the edge's LAN or pod address; KyIdentity refuses private destinations without
+    # this. It opens RFC 1918, ULA and carrier-grade NAT only: loopback, link-local and cloud
+    # metadata addresses stay refused, and device-supplied push endpoints never get it.
+    KYIDENTITY_ALLOW_PRIVATE_CALLBACKS: "true"
     # Argon2id takes 64 MiB per hash, up to 8 at once; stay under the limit.
     GOMEMLIMIT: 640MiB
   ports: [5867]
