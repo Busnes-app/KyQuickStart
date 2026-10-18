@@ -447,12 +447,13 @@ changed intent fails with the product's refusal. `integrate-stack` skips install
   separate from the owner's: setup never adopts an account it did not create.
 - A setup's intent is immutable: KyIdentity 0.4.2 refuses a client added after setup
   (Busnes-app/KyIdentity-server#110, setup amendments), so every app that signs in must be in
-  the plan before the first `apply`. Catalog KyRecovery's client is added automatically (next
-  section); if the setup already ran without it, `kyidentity.setup` fails and names #110.
+  the plan before the first `apply`. The clients of catalog KyRecovery and kyPulse are added
+  automatically (next sections); if the setup already ran without one, `kyidentity.setup` fails
+  and names #110 and the missing client.
 - The issuer cannot change once setup has run: every client and token names it. Before any
   step, `apply` compares the issuer KyIdentity's Deployment runs with to the plan's; when they
   differ and the pod's read-only `apply-setup --check` passes (or the pod cannot be asked), it
-  refuses with `issuer_changed` and changes nothing. KyRecovery's registered client URLs are
+  refuses with `issuer_changed` and changes nothing. Every added client's registered URLs are
   compared the same way (#110). Changing the route hostname or `client_port` therefore needs a
   fresh KyIdentity.
 - Not yet: `kyq-bootstrap` stays an active administrator after setup. KyIdentity 0.4.2
@@ -518,6 +519,66 @@ secrets never reach the workstation, its output or its state.
 - Not yet: `KYRECOVERY_TRUSTED_PROXIES` is unset, so its rate limits see the edge pod as every
   client; Docker placement; the pod reaches KyIdentity at its public issuer URL, so cluster DNS
   and the edge must answer that name from inside the cluster.
+
+## Catalog kyPulse on Kubernetes
+
+The catalog's `kypulse` app installs kyPulse 0.4.2 from its attested release image. Like
+KyRecovery it depends on the catalog `kyidentity`, needs one edge route, and its integration
+names its client and a bundle whose directory is its own setup UUID:
+
+```yaml
+apps:
+  - name: kypulse
+    target: k80
+edges:
+  - target: k80
+    routes:
+      - app: kypulse
+        hostname: pulse.k80.example.com
+        forward_host: app.kyq-kypulse.svc.cluster.local
+        forward_port: 8080
+        certificate: k80
+integrations:
+  - product: kypulse
+    target: k80
+    bundle: /app/data/installer/<a third setup UUID>/setup.json
+    identity_client: kypulse
+```
+
+Its client is derived the same way: `https://<host>/api/sso/kysignon/callback`, administrator
+role `kypulse.admin` for the owner's admin account, and the signed directory at
+`https://<host>/api/sso/kysignon/sync`. It must join KyIdentity's first setup (#110), so a
+KyIdentity set up without it has to be reinstalled.
+
+`kypulse.setup` runs after its health check through the same steps as KyRecovery's, with the
+existing kyPulse adapter: it requires the `monitoring-targets`, `log-sources` and
+`offboarding-alerts` capabilities, applies, waits for kyPulse's graceful restart and its live
+`--check`. Its bundle carries kyPulse's `monitoring` extension: one target per other app the plan
+installs that has a readiness path and one route, at `https://<route URL host><readiness path>`,
+so kyPulse watches each app as a user reaches it, edge included. NPM has no route and is not
+watched; kyPulse never watches itself. Apply prints both lists. Targets follow the plan: the
+bundle is replaced when they change (the secrets never are), kyPulse adds new targets, keeps one
+the bundle no longer names, and refuses an edited one, a foreign one of the same name and any
+other installation's.
+
+- The pod runs as the image's `kypulse` user (uid 10001) under Pod Security `restricted`, with
+  `KYPULSE_ENV=production` and `KYPULSE_HOST=0.0.0.0` (it listens on loopback otherwise),
+  `KYPULSE_APP_URL` from the route and SSO auto-provisioning off: only the owner's admin
+  account, which setup creates, signs in. `/app/data` holds the database and `encryption.key`;
+  `audit.key` sits on its own claim at `/app/secrets`, as upstream keeps it. Back both up.
+- The owner's admin account must not be named `admin`: kyPulse's first start creates a local
+  `admin` and setup never adopts an existing name. That account's password is printed once,
+  to its first pod's log (`kubectl -n kyq-kypulse logs deployment/app`); apply's handover says so.
+- The pod probes each target at its public URL, so cluster DNS must resolve the route hostnames
+  and the edge must admit the pod network (on K80, `10.0.0.0/8` in `allow_cidrs`).
+- Not yet, needs a human or a product change: no everyday viewer (KyIdentity's export names only
+  the owner's admin account, and KyIdentity refuses the everyday one for this client); no log
+  sources (none of the catalog apps sends logs yet: a source needs a sender holding its token,
+  such as `kypulse-send` or the offboarding bridge); the alert webhook is set in its UI;
+  KyRecovery pairing and backups wait on the ceremony; `KYPULSE_TRUSTED_PROXIES` is unset;
+  Docker placement. kyPulse 0.4.2 verifies directory events as an HMAC of the body alone while
+  KyIdentity 0.4.2 signs them with `syncauth` v1, so directory offboarding events to kyPulse are
+  expected to be refused until kyPulse adopts `syncauth` (read from both sources, not run).
 
 ## Existing KyIdentity setup
 

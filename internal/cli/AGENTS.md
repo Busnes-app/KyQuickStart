@@ -23,8 +23,8 @@ Plain terminal planning and command orchestration for the operator-run installer
 - Explicit existing KyIdentity container setup and capability checks: `identity.go`, documented in `../../docs/guided-setup.md`.
   It also owns `identitySetupStep`, apply's staged setup for a catalog KyIdentity, reusing the same
   staging and setup functions; `nativeProductExec` finds an installed app's pod per call.
-  `refuseMovedSetup`, first in `deploySteps`, refuses a moved issuer or KyRecovery client of a
-  completed setup with `issuer_changed`.
+  `refuseMovedSetup`, first in `deploySteps`, refuses a moved issuer or catalog-derived client
+  of a completed setup with `issuer_changed`.
 - `preparation.go` owns shared bounded native preparation receipts/readback and typed Identity
   staging; product-specific metadata and credentials remain native product responsibilities.
 - `credential_transfer.go` owns explicit Notes `identity_client` transfer: require both native
@@ -61,6 +61,8 @@ Plain terminal planning and command orchestration for the operator-run installer
   keys and native IDs; credentials stay in protected target files. Its optional binary SSH
   fixture verifies account/configuration activation plus live monitoring enrollment and
   source capability without adopting foreign objects or mutating live installations.
+  Apply's catalog kyPulse reuses that adapter (`pulseSetup`) through `clientSetupStep`;
+  `pulseTargets` makes its bundle's `monitoring` targets, one per other routed app.
 - KyYard uses the common contract with zero-restart activation, signed directory updates
   and exact `kyyard.admin` assignments. Platform administrators receive no implicit tenant
   access; organization/endpoint composition and shared upgrade orchestration remain gates.
@@ -69,12 +71,14 @@ Plain terminal planning and command orchestration for the operator-run installer
 - KyMessages uses the common contract and graceful activation; exact console grants stay
   separate from Matrix chat/call access, whose assignment composition remains a gate.
 - KyRecovery setup runs explicitly as `kyrecovery`, activates live, commits exact administrator grants with its keyed SQL audit, and never performs the custodian ceremony.
-  `recovery.go` owns apply's catalog KyRecovery: `composeRecovery` adds its catalog-derived
-  client to the installed KyIdentity's intent in the session only (the saved plan is
-  unchanged; a hand-written client must match), `recoverySetupStep` exports that client,
-  places bundle and secrets with `placeScript` (no-clobber, compare-only on check) and runs
-  `recoverySetup`, and `recoveryCeremony` is the handover apply prints. `identitySetupStep`
-  names KyIdentity-server#110 when the retained intent matches without the added clients.
+  `appsetup.go` owns apply's catalog apps that sign in through KyIdentity (KyRecovery,
+  kyPulse): `composeClients` adds each one's catalog-derived client to the installed
+  KyIdentity's intent in the session only (the saved plan is unchanged; a hand-written client
+  must match), `clientSetupStep` (`<app>.setup`) exports that client, places bundle and secrets
+  with `placeScript` (secrets no-clobber, kyPulse's bundle replaced, compare-only on check) and
+  runs the product adapter's setup; `recoveryCeremony` and `pulseHandover` are what apply prints.
+  `identitySetupStep` names KyIdentity-server#110 when the retained intent matches without the
+  added clients, all or one.
 - KyDNS uses the common contract, exact administrator subjects and live setup; its interface refuses ordinary identities and unsupported installer backup enrollment.
 - `notes.go` maps the native KyNotes version-1 capability/report contract, requires `dedicated-admin`, `protected-setup-files` and present-only read-only inspection; older mixed-use or unprotected-file builds are refused before setup. It does not replace KyNotes security or backup logic.
 - Morning test instructions and supported scope: `../../docs/guided-setup.md`.
