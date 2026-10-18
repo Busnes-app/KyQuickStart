@@ -99,18 +99,19 @@ func checkCatalogRecovery(t *testing.T, ctx context.Context, cs kubernetes.Inter
 	return secrets
 }
 
-// recoverySignOn signs the owner's accounts in to KyRecovery through KyIdentity, both behind
-// the edge, as a browser would: KyRecovery must send the admin to KyIdentity with its own
-// client and accept them back as its administrator, and KyIdentity must refuse the everyday
-// account. Test-only plumbing: cluster DNS names both hosts after the node, whose NodePort is
-// the lan edge, and KyRecovery's pod trusts the edge's throwaway certificate.
-func recoverySignOn(t *testing.T, ctx context.Context, cs kubernetes.Interface, kubeconfig string, certPEM []byte, nodeIP string) {
+// catalogSignOn signs the owner's accounts in to KyRecovery and kyPulse through KyIdentity,
+// all behind the edge, as a browser would: each app must send the admin to KyIdentity with its
+// own client and accept them back as its administrator, and KyIdentity must refuse the everyday
+// account. Test-only plumbing: cluster DNS names every routed host after the node, whose
+// NodePort is the lan edge, and both apps' pods trust the edge's throwaway certificate.
+func catalogSignOn(t *testing.T, ctx context.Context, cs kubernetes.Interface, kubeconfig string, certPEM []byte, nodeIP string) {
 	t.Helper()
 	dns, err := cs.CoreV1().ConfigMaps("kube-system").Get(ctx, "coredns", metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	corefile := strings.Replace(dns.Data["Corefile"], "    kubernetes cluster.local", "    hosts {\n       "+nodeIP+" "+catalogIdentityHost+" "+catalogRecoveryHost+"\n       fallthrough\n    }\n    kubernetes cluster.local", 1)
+	hosts := strings.Join([]string{catalogIdentityHost, catalogRecoveryHost, catalogPulseHost, "hello.example.test"}, " ")
+	corefile := strings.Replace(dns.Data["Corefile"], "    kubernetes cluster.local", "    hosts {\n       "+nodeIP+" "+hosts+"\n       fallthrough\n    }\n    kubernetes cluster.local", 1)
 	if corefile == dns.Data["Corefile"] {
 		t.Fatalf("unexpected Corefile:\n%s", corefile)
 	}
@@ -156,33 +157,8 @@ func recoverySignOn(t *testing.T, ctx context.Context, cs kubernetes.Interface, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, before, _, err := c.AppPod(ctx, "kyrecovery")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := cs.CoreV1().ConfigMaps("kyq-kyrecovery").Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "test-ca"}, Data: map[string]string{"ca.pem": string(certPEM)}}, metav1.CreateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	dep, err := cs.AppsV1().Deployments("kyq-kyrecovery").Get(ctx, "app", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	spec := &dep.Spec.Template.Spec
-	spec.Volumes = append(spec.Volumes, corev1.Volume{Name: "test-ca", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "test-ca"}}}})
-	spec.Containers[0].VolumeMounts = append(spec.Containers[0].VolumeMounts, corev1.VolumeMount{Name: "test-ca", MountPath: "/test-ca", ReadOnly: true})
-	spec.Containers[0].Env = append(spec.Containers[0].Env, corev1.EnvVar{Name: "SSL_CERT_FILE", Value: "/test-ca/ca.pem"})
-	if _, err := cs.AppsV1().Deployments("kyq-kyrecovery").Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	for deadline := time.Now().Add(3 * time.Minute); ; time.Sleep(2 * time.Second) {
-		_, pod, _, err := c.AppPod(ctx, "kyrecovery")
-		if err == nil && pod != before {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("KyRecovery did not restart with the test CA")
-		}
-	}
+	trustTestCA(t, ctx, cs, c, "kyrecovery", certPEM)
+	trustTestCA(t, ctx, cs, c, "kypulse", certPEM)
 
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(certPEM) {
@@ -191,13 +167,17 @@ func recoverySignOn(t *testing.T, ctx context.Context, cs kubernetes.Interface, 
 	// Certificate and hostname verification stay on; only the dial goes to the NodePort.
 	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}
 	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-		if address != catalogIdentityURLHost && address != catalogRecoveryURLHost {
+		if address != catalogIdentityURLHost && address != catalogRecoveryURLHost && address != catalogPulseURLHost {
 			return nil, errors.New("unselected destination " + address)
 		}
 		return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, network, net.JoinHostPort(nodeIP, "30443"))
 	}
 	t.Cleanup(transport.CloseIdleConnections)
-	identity, recovery := "https://"+catalogIdentityURLHost, "https://"+catalogRecoveryURLHost
+	identity := "https://" + catalogIdentityURLHost
+	apps := []struct{ client, origin, login, callback string }{
+		{"kyrecovery", "https://" + catalogRecoveryURLHost, "/api/auth/login", "/api/auth/callback"},
+		{"kypulse", "https://" + catalogPulseURLHost, "/api/sso/kysignon/login", "/api/sso/kysignon/callback"},
+	}
 	setupDir := "/data/installer/" + identityFixturePreparation().SetupID
 	for _, account := range []struct {
 		username, passwordFile string
@@ -246,40 +226,78 @@ func recoverySignOn(t *testing.T, ctx context.Context, cs kubernetes.Interface, 
 			t.Fatalf("%s password sign-in: %d", account.username, r.StatusCode)
 		}
 
-		r, b = send("GET", recovery+"/api/auth/login", nil, "")
-		authorize, err := r.Location()
-		if err != nil || r.StatusCode != 302 || authorize.Host != catalogIdentityURLHost {
-			t.Fatalf("KyRecovery sign-in start: %d %s", r.StatusCode, b)
-		}
-		q := authorize.Query()
-		if q.Get("client_id") != "kyrecovery" || q.Get("redirect_uri") != recovery+"/api/auth/callback" || q.Get("code_challenge_method") != "S256" || q.Get("nonce") == "" || q.Get("state") == "" {
-			t.Fatalf("authorization request: %s", authorize)
-		}
-		r, _ = send("GET", authorize.String(), nil, "")
-		callback, _ := r.Location()
-		got := callback != nil && callback.Host == catalogRecoveryURLHost && callback.Path == "/api/auth/callback" && callback.Query().Get("code") != "" && callback.Query().Get("state") == q.Get("state")
-		if !account.admin {
-			if got {
-				t.Fatal("KyIdentity issued a KyRecovery code to the everyday account")
+		for _, app := range apps {
+			r, b = send("GET", app.origin+app.login, nil, "")
+			authorize, err := r.Location()
+			if err != nil || r.StatusCode != 302 || authorize.Host != catalogIdentityURLHost {
+				t.Fatalf("%s sign-in start: %d %s", app.client, r.StatusCode, b)
 			}
-			t.Logf("everyday account refused by KyIdentity: HTTP %d %v", r.StatusCode, callback)
-			continue
+			q := authorize.Query()
+			if q.Get("client_id") != app.client || q.Get("redirect_uri") != app.origin+app.callback || q.Get("code_challenge_method") != "S256" || q.Get("nonce") == "" || q.Get("state") == "" {
+				t.Fatalf("authorization request: %s", authorize)
+			}
+			r, _ = send("GET", authorize.String(), nil, "")
+			callback, _ := r.Location()
+			got := callback != nil && "https://"+callback.Host == app.origin && callback.Path == app.callback && callback.Query().Get("code") != "" && callback.Query().Get("state") == q.Get("state")
+			if !account.admin {
+				if got {
+					t.Fatalf("KyIdentity issued a %s code to the everyday account", app.client)
+				}
+				t.Logf("everyday account refused %s by KyIdentity: HTTP %d %v", app.client, r.StatusCode, callback)
+				continue
+			}
+			if r.StatusCode != 302 || !got {
+				t.Fatalf("KyIdentity authorization for %s: %d %v", app.client, r.StatusCode, callback)
+			}
+			r, b = send("GET", callback.String(), nil, "")
+			if r.StatusCode != 302 || r.Header.Get("Location") != "/" {
+				t.Fatalf("%s callback: %d %s", app.client, r.StatusCode, b)
+			}
+			_, b = send("GET", app.origin+"/api/auth/me", nil, "")
+			var me struct {
+				Authenticated bool
+				User          struct{ Name, Username, Role string }
+			}
+			if json.Unmarshal(b, &me) != nil || !me.Authenticated || me.User.Role != "admin" {
+				t.Fatalf("%s session: %s", app.client, b)
+			}
+			t.Logf("owner admin signed in to %s through KyIdentity as %q, role %s", app.client, me.User.Name+me.User.Username, me.User.Role)
+			if app.client == "kypulse" {
+				pulseTargetsHealthy(t, ctx, send, app.origin)
+			}
 		}
-		if r.StatusCode != 302 || !got {
-			t.Fatalf("KyIdentity authorization: %d %v", r.StatusCode, callback)
+	}
+}
+
+// trustTestCA restarts app with the edge's throwaway certificate as its only trusted root.
+func trustTestCA(t *testing.T, ctx context.Context, cs kubernetes.Interface, c *kube.Client, app string, certPEM []byte) {
+	t.Helper()
+	ns := "kyq-" + app
+	_, before, _, err := c.AppPod(ctx, app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cs.CoreV1().ConfigMaps(ns).Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "test-ca"}, Data: map[string]string{"ca.pem": string(certPEM)}}, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	dep, err := cs.AppsV1().Deployments(ns).Get(ctx, "app", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := &dep.Spec.Template.Spec
+	spec.Volumes = append(spec.Volumes, corev1.Volume{Name: "test-ca", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "test-ca"}}}})
+	spec.Containers[0].VolumeMounts = append(spec.Containers[0].VolumeMounts, corev1.VolumeMount{Name: "test-ca", MountPath: "/test-ca", ReadOnly: true})
+	spec.Containers[0].Env = append(spec.Containers[0].Env, corev1.EnvVar{Name: "SSL_CERT_FILE", Value: "/test-ca/ca.pem"})
+	if _, err := cs.AppsV1().Deployments(ns).Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(3 * time.Minute); ; time.Sleep(2 * time.Second) {
+		_, pod, _, err := c.AppPod(ctx, app)
+		if err == nil && pod != before {
+			return
 		}
-		r, b = send("GET", callback.String(), nil, "")
-		if r.StatusCode != 302 || r.Header.Get("Location") != "/" {
-			t.Fatalf("KyRecovery callback: %d %s", r.StatusCode, b)
+		if time.Now().After(deadline) {
+			t.Fatalf("%s did not restart with the test CA", app)
 		}
-		_, b = send("GET", recovery+"/api/auth/me", nil, "")
-		var me struct {
-			Authenticated bool
-			User          struct{ Name, Role string }
-		}
-		if json.Unmarshal(b, &me) != nil || !me.Authenticated || me.User.Role != "admin" {
-			t.Fatalf("KyRecovery session: %s", b)
-		}
-		t.Logf("owner admin signed in to KyRecovery through KyIdentity as %q, role %s", me.User.Name, me.User.Role)
 	}
 }

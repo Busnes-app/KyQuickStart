@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -77,6 +78,31 @@ func TestKyRecoveryEntry(t *testing.T) {
 		t.Fatalf("oidc = %+v", o)
 	}
 	if !a.Upgrade.MigratesData || a.Backup.Volumes[0] != "data" {
+		t.Fatalf("upgrade %+v, backup %+v", a.Upgrade, a.Backup)
+	}
+}
+
+func TestKyPulseEntry(t *testing.T) {
+	cat, err := Load(Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := cat["kypulse"]
+	k, o := a.Kubernetes, a.OIDC
+	if a.Category != "ky" || a.Version != "0.4.2" || a.PodSecurity != "restricted" || a.Compose != nil || len(a.Secrets) != 0 || len(a.DependsOn) != 1 || a.DependsOn[0] != "kyidentity" {
+		t.Fatalf("manifest = %+v", a.Manifest)
+	}
+	// It binds loopback unless both are set.
+	if k.Env["KYPULSE_ENV"] != "production" || k.Env["KYPULSE_HOST"] != "0.0.0.0" || k.Env["KYPULSE_APP_URL"] != "https://{{host}}" || k.Env["KYPULSE_SSO_AUTO_PROVISION"] != "false" {
+		t.Fatalf("env = %v", k.Env)
+	}
+	if !strings.HasPrefix(a.Images[k.Image], "ghcr.io/busnes-app/kypulse-server:0.4.2@sha256:") || k.RunAs != 10001 || k.ReadinessPath != "/healthz" || k.Ports[0] != 8080 || k.Volumes[0].Mount != k.Env["KYPULSE_DATA_DIR"] || k.Volumes[1].Mount+"/audit.key" != k.Env["KYPULSE_AUDIT_KEY_FILE"] {
+		t.Fatalf("kubernetes = %+v", k)
+	}
+	if o.AdminRole != "kypulse.admin" || o.UserRole != "" || o.RedirectPaths[0] != "/api/sso/kysignon/callback" || o.DirectoryPath != "/api/sso/kysignon/sync" || len(o.LogoutPaths) != 0 || o.BackchannelLogoutPath != "" || o.Public {
+		t.Fatalf("oidc = %+v", o)
+	}
+	if !a.Upgrade.MigratesData || !slices.Equal(a.Backup.Volumes, []string{"data", "secrets"}) {
 		t.Fatalf("upgrade %+v, backup %+v", a.Upgrade, a.Backup)
 	}
 }

@@ -233,7 +233,9 @@ type session struct {
 	edges        []stack.Edge
 	npms         map[string]*edge.NPM
 
-	recoveryHandover string // the custodian ceremony, when the plan installs KyRecovery
+	derived      []string      // KyIdentity clients composeClients took from the catalog
+	pulseTargets []pulseTarget // kyPulse's targets, when the plan installs it
+	handover     string        // printed after apply: what installed apps leave to a human
 }
 
 // load validates everything that needs no connection.
@@ -367,12 +369,12 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 		cat[name] = app
 	}
 	for _, i := range st.Integrations {
-		supported := i.Product == "kyidentity" && i.Identity != nil || i.Product == "kyrecovery"
+		supported := i.Product == "kyidentity" && i.Identity != nil || cat[i.Product].OIDC != nil && productAdapters[i.Product].setup != nil
 		if i.Installed(st) && (!supported || !s.placed[i.Product].Kubernetes()) {
-			return nil, fmt.Errorf("integration %s: apply configures only an installed KyIdentity (from its identity settings) and KyRecovery, on Kubernetes", i.Product)
+			return nil, fmt.Errorf("integration %s: apply configures only an installed KyIdentity (from its identity settings) and the installed Ky apps that sign in through it, on Kubernetes", i.Product)
 		}
 	}
-	if err := s.composeRecovery(st); err != nil {
+	if err := s.composeClients(st); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -520,7 +522,7 @@ func (s *session) apply(ctx context.Context, publish func() error) error {
 	if err := s.operate(ctx, "", s.deploySteps, publish); err != nil {
 		return err
 	}
-	fmt.Fprint(s.o.Out, s.recoveryHandover)
+	fmt.Fprint(s.o.Out, s.handover)
 	if s.demo {
 		fmt.Fprintln(s.o.Out, "Demo deployment passed its driver checks. Suite SSO, administrator access and backups are not configured.")
 		if t, ok := s.placed["hello"]; ok {

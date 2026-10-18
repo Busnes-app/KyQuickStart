@@ -49,8 +49,8 @@ func TestKyRecoveryClientFromCatalog(t *testing.T) {
 	if b, _ := json.Marshal(clients); len(clients) != 1 || "["+wantRecoveryClient+"]" != string(b) {
 		t.Fatalf("derived clients = %s", b)
 	}
-	if !strings.Contains(s.recoveryHandover, "https://recovery.example.com/ through KyIdentity as owner-admin") {
-		t.Fatalf("handover = %q", s.recoveryHandover)
+	if !strings.Contains(s.handover, "https://recovery.example.com/ through KyIdentity as owner-admin") {
+		t.Fatalf("handover = %q", s.handover)
 	}
 	// The saved plan keeps only what the operator wrote.
 	if after, _ := os.ReadFile(filepath.Join(f.state, "stack.yaml")); string(after) != string(saved) {
