@@ -445,8 +445,10 @@ changed intent fails with the product's refusal. `integrate-stack` skips install
   no administrator yet it also creates `kyq-bootstrap` and writes its password to
   `/data/first-run-password.txt` (0600), deleted after the first sign-in. That account is
   separate from the owner's: setup never adopts an account it did not create.
-- A setup's intent is immutable: adding a client later is refused by the product, so list the
-  clients the plan needs before the first `apply`.
+- A setup's intent is immutable: KyIdentity 0.4.2 refuses a client added after setup
+  (Busnes-app/KyIdentity-server#110, setup amendments), so every app that signs in must be in
+  the plan before the first `apply`. Catalog KyRecovery's client is added automatically (next
+  section); if the setup already ran without it, `kyidentity.setup` fails and names #110.
 - Not yet: `kyq-bootstrap` stays an active administrator after setup. KyIdentity 0.4.2
   can only disable an account through its admin API, which needs a session and a step-up
   factor KyQuickStart does not hold; retiring it waits on a product command. Until then,
@@ -454,6 +456,62 @@ changed intent fails with the product's refusal. `integrate-stack` skips install
 - Not yet: `TRUSTED_PROXY_CIDRS` is unset, so KyIdentity sees the edge pod as every client;
   Docker placement (no Compose file); SCIM `active:false` proof (gate G2); backups (the
   `data` volume is declared, nothing schedules it).
+
+## Catalog KyRecovery on Kubernetes
+
+The catalog's `kyrecovery` app installs KyRecovery 0.4.2 from its attested release image. It
+depends on the catalog `kyidentity` in the same plan and needs one edge route. Its integration
+names its KyIdentity client and a bundle path whose directory is its stable setup UUID:
+
+```yaml
+apps:
+  - name: kyrecovery
+    target: k80
+edges:
+  - target: k80
+    routes:
+      - app: kyrecovery
+        hostname: recovery.k80.example.com
+        forward_host: app.kyq-kyrecovery.svc.cluster.local
+        forward_port: 8095
+        certificate: k80
+integrations:
+  - product: kyrecovery
+    target: k80
+    bundle: /app/data/installer/<another setup UUID>/setup.json
+    identity_client: kyrecovery
+```
+
+`apply` derives the client from the catalog's `oidc` block and the route and adds it to
+KyIdentity's setup intent: `https://<host>/api/auth/callback`, administrator role
+`kyrecovery.admin` for the owner's admin account only (KyRecovery refuses everyday
+identities), and a signed suite directory at `https://<host>/api/installer/directory`. The
+saved plan is unchanged. A hand-written client with that ID must match it exactly.
+
+`kyrecovery.setup` runs after its health check. It exports the client's credentials from
+KyIdentity in memory, writes the client secret, the directory signing secret and the bundle
+as 0600 files in the bundle's directory through the pod's shell (KyRecovery 0.4.2 has no
+staging or import command), and runs `apply-setup` with the owner's admin account as the
+exact administrator, then its live `--check`. An existing file is never replaced: if it
+differs, for example after KyIdentity was reinstalled, the step fails and keeps it. The
+secrets never reach the workstation, its output or its state.
+
+- The pod runs as the image's `kyrecovery` user (uid 10001) under Pod Security `restricted`,
+  on a private data directory (`kyrecovery.db`, `secret.key`, `capsules/`; back them up
+  together). `KYRECOVERY_COOKIE_SECURE` is `true`: it is always behind the TLS edge.
+- **Human step: the custodian ceremony.** Every `apply` that installs KyRecovery ends by
+  printing it: sign in through KyIdentity as the owner's admin account, open `/admin/ceremony`,
+  choose k of n and print the cards. Until then KyRecovery refuses every pairing with 409, so
+  `apply` mints no pairing codes and nothing should before the ceremony.
+- KyRecovery 0.4.2 prints its local `admin` break-glass password once, to its first pod's log
+  (`kubectl -n kyq-kyrecovery logs deployment/app`), and it is lost when that pod is replaced.
+- Pairing a product (`kyrecovery pair generate --service <name>` in the pod, then the
+  product's claim) comes after the ceremony and with each product's own backup setup; no
+  catalog product pairs yet. The backup status and restore-start screens are KyRecovery's own;
+  restic status needs `KYRECOVERY_RESTIC_DIR` and the rest-server, which is not installed yet.
+- Not yet: `KYRECOVERY_TRUSTED_PROXIES` is unset, so its rate limits see the edge pod as every
+  client; Docker placement; the pod reaches KyIdentity at its public issuer URL, so cluster DNS
+  and the edge must answer that name from inside the cluster.
 
 ## Existing KyIdentity setup
 

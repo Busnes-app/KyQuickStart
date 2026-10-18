@@ -281,7 +281,12 @@ handover of admin and everyday logins.
   these selections explicitly; `apply` retains deployment scope and does not configure
   recorded existing products. An entry for an installed catalog app names no workload:
   `apply` runs it after the app's health step against the app's one ready pod, and
-  `integrate-stack` skips it. Today only KyIdentity on Kubernetes, from its `identity` settings.
+  `integrate-stack` skips it. Today only KyIdentity (from its `identity` settings) and
+  KyRecovery, on Kubernetes. KyIdentity takes clients only in its first setup
+  (KyIdentity-server#110): apply adds an installed KyRecovery's client, derived from its
+  catalog `oidc` block and route, to that intent, and names #110 when the setup ran without it.
+  KyRecovery's setup transfers that client's secrets in memory into private pod files, never
+  replacing one; its custodian ceremony stays human and apply prints it as outstanding.
 - Command-line only: no GUI, web UI or full-screen terminal UI. `plan` asks its questions as
   plain terminal prompts, and every command also runs unattended from `stack.yaml`.
 - A Notes integration's explicit `identity_client` selects one declared prepared KyIdentity
@@ -408,6 +413,10 @@ calls and kind nodes must carry their own explicit bounds.
   request through the NodePort, a skipped rerun and token refresh. It also installs the catalog
   KyIdentity from its attested image behind that edge: restricted uid-100 pod on a private
   data directory, staged `apply-setup`, OIDC discovery through the edge, changed-intent refusal.
+  The catalog KyRecovery joins it: restricted uid-10001 pod, its client in KyIdentity's first
+  setup, transferred private setup files, live `--check`, health through the edge, the
+  ceremony handover and a skipped rerun; then, with test-only cluster DNS and CA trust, the
+  owner's admin signs in to KyRecovery through KyIdentity and the everyday account is refused.
   Set `KYQ_TEST_IDENTITY_BINARY` to a local static KyIdentity build to additionally test real
   container-local identity setup over SSH and kind, including target-held preparation,
   inspection/resume and changed-intent refusal; SSH additionally refuses lost credentials.

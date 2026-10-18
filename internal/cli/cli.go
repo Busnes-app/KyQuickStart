@@ -232,6 +232,8 @@ type session struct {
 	drivers      map[string]driver       // target name -> driver
 	edges        []stack.Edge
 	npms         map[string]*edge.NPM
+
+	recoveryHandover string // the custodian ceremony, when the plan installs KyRecovery
 }
 
 // load validates everything that needs no connection.
@@ -365,9 +367,13 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 		cat[name] = app
 	}
 	for _, i := range st.Integrations {
-		if i.Installed(st) && (i.Product != "kyidentity" || i.Identity == nil || !s.placed[i.Product].Kubernetes()) {
-			return nil, fmt.Errorf("integration %s: apply configures only an installed KyIdentity on Kubernetes, from its identity settings", i.Product)
+		supported := i.Product == "kyidentity" && i.Identity != nil || i.Product == "kyrecovery"
+		if i.Installed(st) && (!supported || !s.placed[i.Product].Kubernetes()) {
+			return nil, fmt.Errorf("integration %s: apply configures only an installed KyIdentity (from its identity settings) and KyRecovery, on Kubernetes", i.Product)
 		}
+	}
+	if err := s.composeRecovery(st); err != nil {
+		return nil, err
 	}
 	return s, nil
 }
@@ -514,6 +520,7 @@ func (s *session) apply(ctx context.Context, publish func() error) error {
 	if err := s.operate(ctx, "", s.deploySteps, publish); err != nil {
 		return err
 	}
+	fmt.Fprint(s.o.Out, s.recoveryHandover)
 	if s.demo {
 		fmt.Fprintln(s.o.Out, "Demo deployment passed its driver checks. Suite SSO, administrator access and backups are not configured.")
 		if t, ok := s.placed["hello"]; ok {
@@ -576,11 +583,11 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 		steps = append(steps, d.steps(name, s.cat[name], s.o.ReleaseSet, s.redact)...)
 		for _, i := range s.integrations {
 			if i.Product == name && i.Target == s.placed[name].Name {
-				exec, input, err := nativeProductExec(d, i, productAdapters[name])
+				step, err := s.setupStep(d, i)
 				if err != nil {
 					return nil, err
 				}
-				steps = append(steps, identitySetupStep{i: i, exec: exec, input: input})
+				steps = append(steps, step)
 			}
 		}
 	}

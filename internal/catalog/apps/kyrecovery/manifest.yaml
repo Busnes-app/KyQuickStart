@@ -1,0 +1,48 @@
+name: kyrecovery
+description: KyRecovery, the suite's blind backup store; keeps sealed capsules only k custodians can open
+category: ky
+version: 0.4.2
+# Release image of v0.4.2, attested by release-image.yml@refs/tags/v0.4.2 (gh attestation verify).
+images:
+  kyrecovery: ghcr.io/busnes-app/kyrecovery-server:0.4.2@sha256:61bd690877d202579dd14952cd37d6232ce988e71406083b7438d66321e19eae
+# Its setup needs KyIdentity's issuer, client and signed directory.
+depends_on: [kyidentity]
+health:
+  timeout_seconds: 300
+# Admin-only: setup refuses everyday identities. Sign-out is local; it has no
+# RP-initiated or back-channel logout endpoint.
+oidc:
+  name: KyRecovery
+  redirect_paths: [/api/auth/callback]
+  admin_role: kyrecovery.admin
+  directory_path: /api/installer/directory
+# kyrecovery.db, secret.key and capsules/ together: without secret.key the sealed
+# replication credentials, SSO client secret and audit chain key are lost.
+backup:
+  volumes: [data]
+upgrade:
+  # First release; its SQLite schema migrates at startup.
+  min_from: 0.4.2
+  migrates_data: true
+kubernetes:
+  image: kyrecovery
+  env:
+    KYRECOVERY_DATA_DIR: /app/data
+    # Always behind the TLS edge.
+    KYRECOVERY_COOKIE_SECURE: "true"
+    # Deposits are read whole (up to 384 MiB, 4 at once); suite capsules are far smaller.
+    GOMEMLIMIT: 384MiB
+  ports: [8095]
+  readiness_path: /healthz
+  # The image's kyrecovery user, which apply-setup must run as.
+  run_as: 10001
+  resources:
+    cpu: "1"
+    # Idle between deposits and integrity sweeps.
+    cpu_request: 50m
+    memory: 512Mi
+  volumes:
+    - name: data
+      mount: /app/data
+      # Capsules: size for the retention policy.
+      size: 10Gi
