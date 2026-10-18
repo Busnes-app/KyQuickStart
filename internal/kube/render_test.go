@@ -2,6 +2,7 @@ package kube
 
 import (
 	"encoding/json"
+	"net/netip"
 	"os"
 	"slices"
 	"strings"
@@ -100,6 +101,22 @@ func TestRenderPrivateVolumes(t *testing.T) {
 	}
 	if npm := render(App{Name: "npm", Catalog: npmApp(t)}).Deployment.Spec.Template.Spec; len(npm.InitContainers) != 0 || npm.Containers[0].VolumeMounts[2].SubPath != "" {
 		t.Fatal("a root app's claims changed")
+	}
+}
+
+// An edge's egress reaches its upstreams off the cluster at exactly their address and port,
+// and a change of upstream redeploys it.
+func TestRenderEdgeUpstreams(t *testing.T) {
+	a := App{Name: "npm", Catalog: npmApp(t)}
+	before := render(a)
+	a.Upstreams = []netip.AddrPort{netip.MustParseAddrPort("192.168.1.91:18443")}
+	o := render(a)
+	e := o.Policy.Spec.Egress
+	if len(e) != 4 || e[3].To[0].IPBlock.CIDR != "192.168.1.91/32" || len(e[3].Ports) != 1 || e[3].Ports[0].Port.IntValue() != 18443 || len(e[3].To[0].IPBlock.Except) != 0 {
+		t.Fatalf("egress = %+v", e)
+	}
+	if o.hash() == before.hash() {
+		t.Fatal("upstream change keeps the deployment hash")
 	}
 }
 

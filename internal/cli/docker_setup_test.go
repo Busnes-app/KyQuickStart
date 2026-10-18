@@ -164,6 +164,11 @@ func TestKyDriveOnDockerSetup(t *testing.T) {
 	if !strings.Contains(c, `ports: ["192.0.2.1:18443:8080"]`) || !strings.Contains(c, `KY_APP_URL: "https://drive.example.com"`) || s.cat["kydrive"].UsesRoute() {
 		t.Fatalf("compose:\n%s", c)
 	}
+	// The cluster's edge may reach KyDrive's forward address, and nothing else off the cluster.
+	fresh, _ := load(f.state, nil, f.o) // driveSteps dropped the edges
+	if u := fresh.upstreams("k1"); len(u) != 1 || u[0].String() != "192.0.2.1:18443" || len(fresh.upstreams("nas")) != 0 {
+		t.Fatalf("upstreams = %v", u)
+	}
 	const wantClient = `{"id":"kydrive","name":"KyDrive","redirectUris":["https://drive.example.com/api/sso/kysignon/callback"],"postLogoutUris":null,"administratorRole":"kydrive.admin","everydayRole":"kydrive.user"}`
 	if b, _ := json.Marshal(s.integrations[0].Identity.Clients); string(b) != "["+wantClient+"]" {
 		t.Fatalf("derived clients = %s", b)
@@ -279,5 +284,24 @@ func TestKyDriveOnDockerAddedByAmendment(t *testing.T) {
 	}
 	if !slices.Contains(amendment.calls, "/usr/local/bin/kyidentity apply-setup --file "+bundle+" --export-client kydrive") || !drive.applied || drive.files[filepath.Dir(driveBundle)+"/client.secret"] != driveSecret {
 		t.Fatalf("export calls %q, KyDrive applied %v", amendment.calls, drive.applied)
+	}
+}
+
+// A cluster edge admits an upstream off the cluster by address, so a route to a Docker app
+// must forward to an IP.
+func TestClusterEdgeForwardsOffClusterToAnAddress(t *testing.T) {
+	f := newFixture(t, "../catalog/testdata/apps")
+	kc := filepath.Join(t.TempDir(), "kubeconfig")
+	os.WriteFile(kc, nil, 0o600)
+	plan := "  - name: k1\n    kubeconfig: " + kc + "\napps:\n  - name: hello\n    target: nas\n" +
+		"edges:\n  - target: k1\n    provider: lan\n    npm_url: kube://kyq-npm/app:81\n    allow_cidrs: [192.168.1.0/24]\n    routes:\n" +
+		"      - app: hello\n        hostname: hello.example.com\n        forward_host: FORWARD\n        forward_port: 18080\n        certificate_id: 1\n"
+	f.plan(t, strings.Replace(plan, "FORWARD", "nas.example.com", 1))
+	if _, err := load(f.state, nil, f.o); err == nil || !strings.Contains(err.Error(), "forward_host must be an IP address") {
+		t.Fatalf("hostname upstream off the cluster: %v", err)
+	}
+	f.plan(t, strings.Replace(plan, "FORWARD", "192.0.2.1", 1))
+	if s, err := load(f.state, nil, f.o); err != nil || len(s.upstreams("k1")) != 1 {
+		t.Fatalf("address upstream: %v", err)
 	}
 }
