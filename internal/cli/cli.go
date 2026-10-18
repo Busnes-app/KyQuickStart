@@ -10,11 +10,13 @@ import (
 	"io"
 	"io/fs"
 	"maps"
+	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -359,27 +361,37 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 	}
 	for name, t := range s.placed {
 		app := cat[name]
-		if !t.Kubernetes() || !app.Kubernetes.UsesHost() {
+		if t.Kubernetes() && !app.Kubernetes.UsesHost() || !t.Kubernetes() && !app.UsesRoute() {
 			continue
 		}
 		var hosts []string
+		var routes []stack.Route
 		for _, e := range st.Edges {
 			for _, r := range e.Routes {
 				if r.App == name {
-					hosts = append(hosts, e.URLHost(r))
+					hosts, routes = append(hosts, e.URLHost(r)), append(routes, r)
 				}
 			}
 		}
 		if len(hosts) != 1 {
 			return nil, fmt.Errorf("app %q takes its URL from its route hostname; give it exactly one edge route", name)
 		}
-		app.Kubernetes = app.Kubernetes.WithHost(hosts[0])
+		if t.Kubernetes() {
+			app.Kubernetes = app.Kubernetes.WithHost(hosts[0])
+		} else {
+			// Docker publishes the port on exactly the address the edge forwards to.
+			ip, err := netip.ParseAddr(routes[0].ForwardHost)
+			if err != nil || ip.IsUnspecified() || ip.Zone() != "" {
+				return nil, fmt.Errorf("app %q publishes its port on its route's forward_host, which must be an IP address of %s", name, t.Name)
+			}
+			app = app.WithRoute(hosts[0], net.JoinHostPort(ip.String(), strconv.Itoa(routes[0].ForwardPort)))
+		}
 		cat[name] = app
 	}
 	for _, i := range st.Integrations {
 		supported := i.Product == "kyidentity" && i.Identity != nil || cat[i.Product].OIDC != nil && productAdapters[i.Product].setup != nil
-		if i.Installed(st) && (!supported || !s.placed[i.Product].Kubernetes()) {
-			return nil, fmt.Errorf("integration %s: apply configures only an installed KyIdentity (from its identity settings) and the installed Ky apps that sign in through it, on Kubernetes", i.Product)
+		if i.Installed(st) && !supported {
+			return nil, fmt.Errorf("integration %s: apply configures only an installed KyIdentity (from its identity settings) and the installed Ky apps that sign in through it", i.Product)
 		}
 	}
 	if err := s.composeClients(st); err != nil {
