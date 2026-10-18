@@ -446,8 +446,8 @@ changed intent fails with the product's refusal. `integrate-stack` skips install
   no administrator yet it also creates `kyq-bootstrap` and writes its password to
   `/data/first-run-password.txt` (0600), deleted after the first sign-in. That account is
   separate from the owner's: setup never adopts an account it did not create.
-- A setup's intent is immutable. A fresh install puts the clients of catalog KyRecovery and
-  kyPulse (next sections) into the first setup. An app installed after it joins through a
+- A setup's intent is immutable. A fresh install puts the clients of catalog KyRecovery,
+  kyPulse and KyDrive (next sections) into the first setup. An app installed after it joins through a
   setup amendment (Busnes-app/KyIdentity-server#110), which needs KyIdentity 0.4.3 or later
   (capability `setup-amendments`): when the running KyIdentity's retained setup was prepared
   without an app's client, `apply` records `identity_amendment: <UUID>` on that app's
@@ -595,6 +595,88 @@ other installation's.
   Docker placement. kyPulse 0.4.2 verifies directory events as an HMAC of the body alone while
   KyIdentity 0.4.2 signs them with `syncauth` v1, so directory offboarding events to kyPulse are
   expected to be refused until kyPulse adopts `syncauth` (read from both sources, not run).
+
+## Catalog KyDrive on Docker
+
+The catalog's `kydrive` app installs KyDrive 0.4.2 from its attested release image on a Docker
+target; it has no Kubernetes deployment, and placing it on a cluster is refused. It depends on
+the catalog `kyidentity` in the same plan, which may run on another target. Its one route may
+sit on the cluster's `lan` edge: NPM reaches the Docker host over the LAN.
+
+```yaml
+targets:
+  - name: docker02
+    host: 192.168.1.91
+    user: yoshi
+    root: /home/yoshi/kyq
+apps:
+  - name: kydrive
+    target: docker02
+edges:
+  - target: k80
+    routes:
+      - app: kydrive
+        hostname: drive.k80.example.com
+        forward_host: 192.168.1.91      # an IP of docker02: KyDrive publishes only there
+        forward_port: 18443
+        certificate: k80
+        status_path: /healthz
+integrations:
+  - product: kydrive
+    target: docker02
+    bundle: /data/installer/<a setup UUID>/setup.json
+    identity_client: kydrive
+```
+
+Its client is `https://<route URL host>/api/sso/kysignon/callback` with roles `kydrive.admin`
+(the owner's admin account) and `kydrive.user` (the everyday account), and no signed
+directory: KyDrive refuses one and takes people and groups by SCIM. On KyIdentity 0.4.2 it
+must be in the first setup; installed later, it joins through a setup amendment on 0.4.3.
+
+`kydrive.setup` runs after its health check. It exports the client from KyIdentity on
+KyIdentity's target, holds it in memory, and sends the client secret and the bundle over SSH
+stdin to `docker exec -i` in KyDrive's one running installer-managed container (Compose project
+`kyq-kydrive`), whose shell writes them as 0600 files in the bundle's directory and never
+replaces one. Nothing reaches the workstation's disk, output or state. The bundle names the
+client secret file and KyDrive's own SCIM token, `/run/secrets/scim_token`, which its setup
+requires. Then `apply-setup` with the owner's admin account as administrator, KyDrive's
+graceful restart and its live `--check`.
+
+- The Compose file is KyDrive's own, adapted: it runs as the target user
+  (`${KYQ_UID}:${KYQ_GID}`, which every installer Compose command sets), who owns its secrets
+  and directories; read-only root, all capabilities dropped, `no-new-privileges`, 1 GiB, and
+  20 minutes to stop. `<root>/kydrive/data` (database, `encryption.key`, files) is mounted at
+  `/data` and `<root>/kydrive/backups` (its sealed capsules) at `/backups`, both 0700 and created
+  by the installer. Data is not at `/app/data`: KyDrive's setup socket refuses a parent
+  directory (`/app`, the image's uid 1000) owned by another user.
+- `session_secret` and `scim_token` are generated on the target in `<root>/kydrive/secrets`.
+  KyDrive reads its session secret only from the environment, so its entrypoint reads the file
+  and exports it to the server process: never in Compose or `docker inspect`, readable in the
+  process environment by the same uid only.
+- `KY_APP_URL` is `https://<route URL host>`. The port is published only on
+  `forward_host:forward_port`, which must be an IP address of the Docker target; the catalog
+  NPM's egress policy admits exactly that address and port.
+- **Firewall.** Binding to the LAN address does not limit who may connect: Docker's published
+  ports bypass the host's INPUT rules. Admit only the edge's source in Docker's `DOCKER-USER`
+  chain. K80's NPM pods leave the cluster through their node's address (SNAT), so on a single
+  node that is `192.168.1.81`:
+  `iptables -I DOCKER-USER -p tcp -m conntrack --ctorigdst 192.168.1.91 --ctorigdstport 18443 ! -s 192.168.1.81 -j DROP`.
+  The installer neither sets nor tests it; persist it the way the host keeps its rules, and
+  widen it to every node if NPM can move.
+- Apply's handover names KyDrive's local `admin` break-glass password,
+  `<root>/kydrive/data/initial-admin-password` on the target: sign in once (its login form has
+  a CAPTCHA; SSO does not), change it and delete the file.
+- Not yet: KyIdentity's SCIM connector to KyDrive, so KyDrive refuses the owner's everyday
+  account and everyone but the admin until one is configured at `https://<host>/scim/v2` with
+  the token in `<root>/kydrive/secrets/scim_token`. KyIdentity's setup, first or amendment,
+  can carry it (`clients[].scim` with `url` and a `token_file` inside KyIdentity's pod), but
+  apply would have to copy KyDrive's token into that pod before `kyidentity.setup`, and the
+  pod must resolve and trust KyDrive's route; neither is built.
+- Not yet: the Euro-Office editor (`KYDRIVE_EDITOR_URL` unset); document backups
+  (`KYDRIVE_BULK_BACKUP_REPOSITORY` unset: they need an independent restic repository, and the
+  `backups` directory, on the same disk as `data`, is not one); recovery pairing;
+  `KY_TRUSTED_PROXIES` (unset, so KyDrive sees the edge as every client and `verify-edge`
+  fails for its route); kyPulse does not watch it (no readiness path on Docker).
 
 ## Existing KyIdentity setup
 
