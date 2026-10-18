@@ -59,9 +59,31 @@ func TestKyIdentityEntry(t *testing.T) {
 	}
 }
 
+func TestKyRecoveryEntry(t *testing.T) {
+	cat, err := Load(Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := cat["kyrecovery"]
+	k, o := a.Kubernetes, a.OIDC
+	if a.Category != "ky" || a.Version != "0.4.2" || a.PodSecurity != "restricted" || a.Compose != nil || len(a.Secrets) != 0 || len(a.DependsOn) != 1 || a.DependsOn[0] != "kyidentity" {
+		t.Fatalf("manifest = %+v", a.Manifest)
+	}
+	if !strings.HasPrefix(a.Images[k.Image], "ghcr.io/busnes-app/kyrecovery-server:0.4.2@sha256:") || k.RunAs != 10001 || k.ReadinessPath != "/healthz" || k.Ports[0] != 8095 || k.Volumes[0].Mount != k.Env["KYRECOVERY_DATA_DIR"] || k.UsesHostname() {
+		t.Fatalf("kubernetes = %+v", k)
+	}
+	// Admin-only, with the signed directory KyRecovery's setup requires.
+	if o.AdminRole != "kyrecovery.admin" || o.UserRole != "" || o.RedirectPaths[0] != "/api/auth/callback" || o.DirectoryPath != "/api/installer/directory" || len(o.LogoutPaths) != 0 || o.BackchannelLogoutPath != "" || o.Public {
+		t.Fatalf("oidc = %+v", o)
+	}
+	if !a.Upgrade.MigratesData || a.Backup.Volumes[0] != "data" {
+		t.Fatalf("upgrade %+v, backup %+v", a.Upgrade, a.Backup)
+	}
+}
+
 const manifest = "name: a\ncategory: ky\nversion: 2.4.0\nimages:\n  web: " + digest + "\nhealth:\n  timeout_seconds: 30\n"
 
-const oidc = "oidc:\n  redirect_paths: [/auth/callback]\n  logout_paths: [/]\n  roles: [admin, user]\n"
+const oidc = "oidc:\n  name: App\n  redirect_paths: [/auth/callback]\n  logout_paths: [/]\n  admin_role: admin\n  user_role: user\n"
 
 const backup = "secrets: [db]\nbackup:\n  service: web\n  command: [pg_dump, -Fc]\n  volumes: [data]\n  skip: [data/cache]\n  capsule_secrets: [db]\n  restore_order: [web]\n"
 
@@ -108,7 +130,12 @@ func TestLoadRejects(t *testing.T) {
 		"absolute redirect url": {manifest + strings.Replace(oidc, "/auth/callback", "https://evil.example/cb", 1), compose, "redirect_paths"},
 		"dot-dot redirect":      {manifest + strings.Replace(oidc, "/auth/callback", "/a/../b", 1), compose, "redirect_paths"},
 		"bad backchannel":       {manifest + oidc + "  backchannel_logout_path: logout\n", compose, "backchannel_logout_path"},
-		"roles without admin":   {manifest + strings.Replace(oidc, "[admin, user]", "[user]", 1), compose, "admin and user"},
+		"no client name":        {manifest + strings.Replace(oidc, "  name: App\n", "", 1), compose, "oidc.name"},
+		"no admin role":         {manifest + strings.Replace(oidc, "  admin_role: admin\n", "", 1), compose, "admin_role"},
+		"bad admin role":        {manifest + strings.Replace(oidc, "admin_role: admin", "admin_role: .admin", 1), compose, "admin_role"},
+		"same roles":            {manifest + strings.Replace(oidc, "user_role: user", "user_role: Admin", 1), compose, "differ from admin_role"},
+		"third-party no user":   {strings.Replace(manifest, "category: ky", "category: third-party", 1) + strings.Replace(oidc, "  user_role: user\n", "", 1), compose, "everyday role"},
+		"bad directory path":    {manifest + oidc + "  directory_path: api\n", compose, "directory_path"},
 		"empty backup":          {manifest + "backup: {}\n", compose, "command or volumes"},
 		"backup bad service":    {manifest + strings.Replace(backup, "service: web", "service: db", 1), composeVol, "not a Compose service"},
 		"backup no service":     {manifest + strings.Replace(backup, "  service: web\n", "", 1), composeVol, "not a Compose service"},

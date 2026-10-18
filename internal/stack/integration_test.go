@@ -86,3 +86,30 @@ func TestInstalledIntegrationNamesNoWorkload(t *testing.T) {
 		}
 	}
 }
+
+// An installed KyRecovery's setup names its KyIdentity client and a UUID-scoped bundle.
+func TestRecoveryIntegration(t *testing.T) {
+	const bundle = "/app/data/installer/0f9a3c1e-5b7d-4e2a-9c8b-1d2e3f4a5b6c/setup.json"
+	plan := "version: 1\ntargets:\n- name: k8s\n  kubeconfig: /tmp/fixture-kubeconfig\napps:\n- name: kyidentity\n  target: k8s\n- name: kyrecovery\n  target: k8s\n" +
+		"integrations:\n- product: kyrecovery\n  target: k8s\n  bundle: " + bundle + "\n  identity_client: kyrecovery\n"
+	s, err := Parse([]byte(plan))
+	if err != nil {
+		t.Fatal("KyRecovery integration rejected", err)
+	}
+	if s.Integrations[0].RecoverySetupID() != "0f9a3c1e-5b7d-4e2a-9c8b-1d2e3f4a5b6c" {
+		t.Fatal("setup id not read from the bundle path")
+	}
+	for name, bad := range map[string]string{
+		"no client":      strings.Replace(plan, "  identity_client: kyrecovery\n", "", 1),
+		"bad client":     strings.Replace(plan, "identity_client: kyrecovery", "identity_client: -x", 1),
+		"no uuid":        strings.Replace(plan, "0f9a3c1e-5b7d-4e2a-9c8b-1d2e3f4a5b6c", "setup", 1),
+		"upper uuid":     strings.Replace(plan, "0f9a3c1e", "0F9A3C1E", 1),
+		"not installer":  strings.Replace(plan, "/installer/", "/other/", 1),
+		"other filename": strings.Replace(plan, "/setup.json", "/bundle.json", 1),
+		"not installed":  strings.Replace(plan, "- name: kyrecovery\n  target: k8s\n", "", 1) + "existing:\n- product: kyrecovery\n  target: k8s\n  url: https://recovery.example.test\n",
+	} {
+		if _, err := Parse([]byte(bad)); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}

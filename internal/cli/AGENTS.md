@@ -67,6 +67,12 @@ Plain terminal planning and command orchestration for the operator-run installer
 - KyMessages uses the common contract and graceful activation; exact console grants stay
   separate from Matrix chat/call access, whose assignment composition remains a gate.
 - KyRecovery setup runs explicitly as `kyrecovery`, activates live, commits exact administrator grants with its keyed SQL audit, and never performs the custodian ceremony.
+  `recovery.go` owns apply's catalog KyRecovery: `composeRecovery` adds its catalog-derived
+  client to the installed KyIdentity's intent in the session only (the saved plan is
+  unchanged; a hand-written client must match), `recoverySetupStep` exports that client,
+  places bundle and secrets with `placeScript` (no-clobber, compare-only on check) and runs
+  `recoverySetup`, and `recoveryCeremony` is the handover apply prints. `identitySetupStep`
+  names KyIdentity-server#110 when the retained intent matches without the added clients.
 - KyDNS uses the common contract, exact administrator subjects and live setup; its interface refuses ordinary identities and unsupported installer backup enrollment.
 - `notes.go` maps the native KyNotes version-1 capability/report contract, requires `dedicated-admin`, `protected-setup-files` and present-only read-only inspection; older mixed-use or unprotected-file builds are refused before setup. It does not replace KyNotes security or backup logic.
 - Morning test instructions and supported scope: `../../docs/guided-setup.md`.
