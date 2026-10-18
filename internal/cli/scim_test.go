@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
+	"github.com/Busnes-app/kyquickstart/internal/edge"
 	"k8s.io/client-go/tools/remotecommand"
 )
 
@@ -79,13 +81,21 @@ func TestKyDriveSCIMConnector(t *testing.T) {
 	identity := &fakeSCIMPass{identity: &fakeIdentity{export: driveExport(driveSecret)}, files: map[string]string{}}
 	drive := &fakeDrive{files: map[string]string{}}
 	s, steps := driveSteps(t, f, identity.stream, drive)
-
+	var err error
+	// After KyDrive's setup and the edge's routes: the connector's first push finds both.
+	s.edges = s.plan.Edges
+	if s.npms["k1"], err = edge.NewNPM("kube://kyq-npm/app:81", "token", "test-installation", func(context.Context, string, string) (net.Conn, error) {
+		return nil, errors.New("no NPM in this test")
+	}); err != nil {
+		t.Fatal(err)
+	}
 	list, err := s.deploySteps(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	order := ids(list)
-	if order[len(order)-1] != "kyidentity.scim.kydrive" || slices.Index(order, "kydrive.setup") > slices.Index(order, "kyidentity.scim.kydrive") {
+	routes := slices.IndexFunc(order, func(id string) bool { return strings.HasPrefix(id, "k1.edge.") })
+	if order[len(order)-1] != "kyidentity.scim.kydrive" || routes < slices.Index(order, "kydrive.setup") || slices.Contains(order[:routes], "kyidentity.scim.kydrive") {
 		t.Fatalf("steps = %v", order)
 	}
 	connector := steps["kyidentity.scim.kydrive"]
