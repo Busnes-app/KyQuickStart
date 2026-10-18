@@ -77,8 +77,13 @@ Plain terminal planning and command orchestration for the operator-run installer
   must match), `clientSetupStep` (`<app>.setup`) exports that client, places bundle and secrets
   with `placeScript` (secrets no-clobber, kyPulse's bundle replaced, compare-only on check) and
   runs the product adapter's setup; `recoveryCeremony` and `pulseHandover` are what apply prints.
-  `identitySetupStep` names KyIdentity-server#110 when the retained intent matches without the
-  added clients, all or one.
+  `amendLate` (apply only, read-only, before preflight) records an `identity_amendment` for each
+  app whose client the running KyIdentity's retained setup lacks, all or one, when it advertises
+  `setup-amendments`; composeClients then puts that client in an `identityAmendment`, whose
+  bundle `identitySetupStep` stages as `kyidentity.amend.<app>` and whose path the app's export
+  and `movedClient` read. Without the capability `identitySetupStep` names
+  KyIdentity-server#110 and 0.4.3. `retireBootstrapStep` (`kyidentity.retire-bootstrap`) runs
+  `disable-user` when advertised, else leaves `bootstrapNote` for apply to print.
 - KyDNS uses the common contract, exact administrator subjects and live setup; its interface refuses ordinary identities and unsupported installer backup enrollment.
 - `notes.go` maps the native KyNotes version-1 capability/report contract, requires `dedicated-admin`, `protected-setup-files` and present-only read-only inspection; older mixed-use or unprotected-file builds are refused before setup. It does not replace KyNotes security or backup logic.
 - Morning test instructions and supported scope: `../../docs/guided-setup.md`.
