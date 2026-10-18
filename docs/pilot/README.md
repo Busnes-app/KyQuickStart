@@ -110,3 +110,13 @@ its route and KyDNS record, and printed the custodian ceremony as an outstanding
 From the LAN, `k80-admin` signed in to KyIdentity, KyRecovery redirected to it with
 `client_id=kyrecovery` and its `:30543` callback, KyIdentity issued a code, and KyRecovery's
 session reports role `admin`; `k80-user` got `access_denied`. A rerun skipped every step.
+
+**2026-10-18: kyPulse, with KyIdentity and KyRecovery reset again (branch feat/catalog-kypulse).**
+kyPulse needs a KyIdentity client and KyIdentity 0.4.2 can't add one after setup (#110), so
+`kyq-kyidentity` and `kyq-kyrecovery` and their volumes were deleted (no ceremony had been run)
+and the plan got new setup IDs plus `kypulse` at `pulse.k80.urlxl.us`. `apply` set up KyIdentity
+with the derived `kyrecovery` and `kypulse` clients, KyRecovery, and kyPulse, which watches
+`kyidentity` and `kyrecovery` through the edge (NPM has no route, so it is not watched). From the
+LAN, `k80-admin` signed in to KyRecovery (role `admin`) and to kyPulse (`/api/sso/kysignon/login`),
+where both targets report `ok`; `k80-user` got `access_denied` from both. A rerun skipped every
+step. k81 had about 80m CPU unrequested before kyPulse's 50m request.
