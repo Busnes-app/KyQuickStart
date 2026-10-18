@@ -24,7 +24,7 @@ import (
 
 const parentSetup = "271333e2-c221-4601-b249-563b3d828530"
 
-var amendmentFeatures = []string{"setup-amendments"}
+var amendmentFeatures = []string{"setup-amendments", "disable-user"}
 
 // setUpIdentity is a KyIdentity whose first setup ran from the plan before KyRecovery joined it.
 func setUpIdentity(t *testing.T, f *fixture, features []string) *fakeIdentity {
@@ -81,7 +81,7 @@ func setupStepsOf(t *testing.T, s *session) []engine.Step {
 		t.Fatal(err)
 	}
 	return slices.DeleteFunc(all, func(st engine.Step) bool {
-		return !strings.HasPrefix(st.ID(), "kyidentity.amend.") && !strings.HasSuffix(st.ID(), ".setup")
+		return !strings.HasPrefix(st.ID(), "kyidentity.amend.") && !strings.HasSuffix(st.ID(), ".setup") && st.ID() != "kyidentity.retire-bootstrap"
 	})
 }
 
@@ -140,7 +140,7 @@ func TestRecoveryAddedByAmendment(t *testing.T) {
 
 	steps := setupStepsOf(t, s)
 	amendment.calls = nil // deploySteps' read-only export: not registered yet
-	if got := strings.Join(ids(steps), " "); got != "kyidentity.setup kyidentity.amend.kyrecovery kyrecovery.setup" {
+	if got := strings.Join(ids(steps), " "); got != "kyidentity.setup kyidentity.amend.kyrecovery kyidentity.retire-bootstrap kyrecovery.setup" {
 		t.Fatalf("steps = %s", got)
 	}
 	var out bytes.Buffer
@@ -159,8 +159,8 @@ func TestRecoveryAddedByAmendment(t *testing.T) {
 	}; !slices.Equal(got, want) {
 		t.Fatalf("amendment calls\n got %q\nwant %q", got, want)
 	}
-	if amendment.intent != want {
-		t.Fatalf("staged %s", amendment.intent)
+	if amendment.intent != want || !identity.disabled {
+		t.Fatalf("staged %s, bootstrap disabled %v", amendment.intent, identity.disabled)
 	}
 	if slices.ContainsFunc(identity.calls, func(c string) bool { return strings.Contains(c, "--export-client") && !strings.Contains(c, bundle) }) {
 		t.Fatal("export read the first setup")
@@ -172,7 +172,7 @@ func TestRecoveryAddedByAmendment(t *testing.T) {
 
 	// Rerun: every step skips.
 	out.Reset()
-	if err := e.Run(ctx, steps); err != nil || strings.Count(out.String(), "skipped") != 3 {
+	if err := e.Run(ctx, steps); err != nil || strings.Count(out.String(), "skipped") != 4 {
 		t.Fatalf("rerun: %v\n%s", err, out.String())
 	}
 
@@ -190,7 +190,7 @@ func TestRecoveryAddedByAmendment(t *testing.T) {
 		t.Fatalf("second apply changed the plan: %v", err)
 	}
 	out.Reset()
-	if err := e.Run(ctx, setupStepsOf(t, s)); err != nil || strings.Count(out.String(), "skipped") != 3 {
+	if err := e.Run(ctx, setupStepsOf(t, s)); err != nil || strings.Count(out.String(), "skipped") != 4 {
 		t.Fatalf("after publish: %v\n%s", err, out.String())
 	}
 
@@ -255,5 +255,36 @@ func TestAmendedClientMoveRefused(t *testing.T) {
 	_, err := movedSetupSteps(t, f, "https://identity.example.com", identity, true)
 	if code(err) != suite.IssuerChanged || !strings.Contains(err.Error(), "to https://recovery.example.com/api/auth/callback") || !strings.Contains(err.Error(), "KyIdentity's own administration") {
 		t.Fatalf("moved amended client: %v", err)
+	}
+}
+
+func TestRetireBootstrap(t *testing.T) {
+	ctx := context.Background()
+	identity := &fakeIdentity{applied: true}
+	var note string
+	step := retireBootstrapStep{exec: func(ctx context.Context, args []string) ([]byte, error) {
+		var out bytes.Buffer
+		err := identity.stream(ctx, "kyq-kyidentity", "app-1", "app", append([]string{identityBinary}, args...), remotecommand.StreamOptions{Stdout: &out})
+		return out.Bytes(), err
+	}, bootstrap: "kyq-bootstrap", admin: "owner-admin", note: &note}
+
+	// 0.4.2: nothing runs, the handover says so.
+	if err := step.Apply(ctx); err != nil || step.Verify(ctx) != nil || !strings.Contains(note, "Not yet") || slices.ContainsFunc(identity.calls, func(c string) bool { return strings.Contains(c, "disable-user") }) {
+		t.Fatalf("without disable-user: %v %q", err, note)
+	}
+	identity.features = []string{"disable-user"}
+	if err := step.Verify(ctx); err == nil {
+		t.Fatal("active bootstrap verified")
+	}
+	if err := step.Apply(ctx); err != nil || !identity.disabled || note != "" || step.Verify(ctx) != nil {
+		t.Fatalf("disable: %v %q", err, note)
+	}
+	if err := step.Apply(ctx); err != nil {
+		t.Fatalf("rerun: %v", err)
+	}
+	// The guard is the owner's administrator; KyIdentity refuses any other.
+	step.admin = "someone"
+	if err := step.Apply(ctx); err == nil || !strings.Contains(err.Error(), "another active administrator") {
+		t.Fatalf("guard: %v", err)
 	}
 }

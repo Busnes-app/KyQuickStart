@@ -378,8 +378,9 @@ func (s clientSetupStep) run(ctx context.Context, check bool) error {
 	return nil
 }
 
-// setupSteps are apply's setup for an installed app's integration: KyIdentity's (its setup
-// and the setup amendments), or an app's that signs in through it, on Kubernetes (newSession refuses anything else).
+// setupSteps are apply's setup for an installed app's integration: KyIdentity's (its setup,
+// the setup amendments and the bootstrap administrator's retirement), or an app's that signs
+// in through it, on Kubernetes (newSession refuses anything else).
 func (s *session) setupSteps(d driver, i stack.Integration) ([]engine.Step, error) {
 	adapter := productAdapters[i.Product]
 	exec, input, err := nativeProductExec(d, i, adapter)
@@ -390,6 +391,9 @@ func (s *session) setupSteps(d driver, i stack.Integration) ([]engine.Step, erro
 		steps := []engine.Step{identitySetupStep{id: "kyidentity.setup", i: i, intent: i.Identity, exec: exec, input: input, late: s.derived}}
 		for _, a := range s.amendments {
 			steps = append(steps, identitySetupStep{id: "kyidentity.amend." + a.app, i: a.source, intent: a.bundle, caps: []string{"setup-amendments"}, exec: exec, input: input})
+		}
+		if bootstrap := s.cat["kyidentity"].Kubernetes.Env["BOOTSTRAP_ADMIN_USER"]; bootstrap != "" {
+			steps = append(steps, retireBootstrapStep{exec: exec, bootstrap: bootstrap, admin: i.Identity.Admin.Username, note: &s.bootstrapNote})
 		}
 		return steps, nil
 	}
