@@ -118,8 +118,39 @@ func recoverySignOn(t *testing.T, ctx context.Context, cs kubernetes.Interface, 
 	if _, err := cs.CoreV1().ConfigMaps("kube-system").Update(ctx, dns, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := cs.CoreV1().Pods("kube-system").DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: "k8s-app=kube-dns"}); err != nil {
+	dnsSel := metav1.ListOptions{LabelSelector: "k8s-app=kube-dns"}
+	old, err := cs.CoreV1().Pods("kube-system").List(ctx, dnsSel)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if err := cs.CoreV1().Pods("kube-system").DeleteCollection(ctx, metav1.DeleteOptions{}, dnsSel); err != nil {
+		t.Fatal(err)
+	}
+	// Lookups fail until replacements serve the new Corefile: wait for every replica to be a
+	// new, ready pod.
+	stale := map[string]bool{}
+	for _, p := range old.Items {
+		stale[p.Name] = true
+	}
+	for deadline := time.Now().Add(2 * time.Minute); ; time.Sleep(time.Second) {
+		dep, err := cs.AppsV1().Deployments("kube-system").Get(ctx, "coredns", metav1.GetOptions{})
+		pods, perr := cs.CoreV1().Pods("kube-system").List(ctx, dnsSel)
+		ready := 0
+		if err == nil && perr == nil {
+			for _, p := range pods.Items {
+				for _, c := range p.Status.Conditions {
+					if !stale[p.Name] && p.DeletionTimestamp == nil && c.Type == corev1.PodReady && c.Status == corev1.ConditionTrue {
+						ready++
+					}
+				}
+			}
+			if ready == int(*dep.Spec.Replicas) && len(pods.Items) == ready {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("CoreDNS did not come back with the test hosts: %d ready", ready)
+		}
 	}
 	c, err := kube.Connect(kubeconfig, "")
 	if err != nil {
