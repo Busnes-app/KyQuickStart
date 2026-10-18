@@ -194,6 +194,12 @@ func TestRecoveryAddedByAmendment(t *testing.T) {
 		t.Fatalf("after publish: %v\n%s", err, out.String())
 	}
 
+	// A recorded amendment on a KyIdentity without amendments fails its own step.
+	identity.features = []string{"disable-user"}
+	if err := setupStepsOf(t, s)[1].Verify(ctx); err == nil || !strings.Contains(err.Error(), "setup-amendments") {
+		t.Fatalf("amendment without the capability: %v", err)
+	}
+
 	// A hand-written client cannot also come in the amendment.
 	b2, _ := os.ReadFile(filepath.Join(f.state, "stack.yaml"))
 	written := strings.Replace(string(b2), "clients: []", "clients:\n            - {id: kyrecovery, name: KyRecovery, redirect_uris: ['https://recovery.example.com/api/auth/callback']}", 1)
