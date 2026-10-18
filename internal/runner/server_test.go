@@ -323,7 +323,7 @@ func TestHTTPStatusTable(t *testing.T) {
 		suite.InvalidRequest: 400, suite.NotFound: 404,
 		suite.IDConflict: 409, suite.Busy: 409, suite.PlanStale: 409, suite.TargetLocked: 409, suite.OwnedByRunner: 409, suite.OwnedByCLI: 409, suite.OwnedByOtherPlan: 409,
 		suite.UnknownApp: 422, suite.UnknownTarget: 422, suite.AlreadyInstalled: 422, suite.NotInstalled: 422, suite.Dependency: 422,
-		suite.UpgradeRefused: 422, suite.BackupRequired: 422, suite.AckRequired: 422,
+		suite.UpgradeRefused: 422, suite.BackupRequired: 422, suite.AckRequired: 422, suite.IssuerChanged: 422,
 		suite.StepFailed: 500, suite.Internal: 500,
 	}
 	for c, status := range want {

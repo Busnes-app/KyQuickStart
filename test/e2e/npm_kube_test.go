@@ -11,6 +11,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io/fs"
 	"math/big"
@@ -28,6 +29,7 @@ import (
 	"github.com/Busnes-app/kyquickstart/internal/kube"
 	"github.com/Busnes-app/kyquickstart/internal/managed"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
+	"github.com/Busnes-app/kyquickstart/internal/suite"
 	"go.yaml.in/yaml/v3"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -37,7 +39,9 @@ import (
 )
 
 // TestKubernetesNPMEdge deploys NPM from the catalog into kind, bootstraps it, routes the
-// demo app through it and reruns apply until nothing changes.
+// demo app through it as a cloudflare and then a lan edge, and reruns apply until nothing
+// changes. KyIdentity and KyRecovery join behind the lan edge, so their URLs carry its
+// client_port, which may not change once KyIdentity's setup ran.
 func TestKubernetesNPMEdge(t *testing.T) {
 	ctx := context.Background()
 	work := t.TempDir()
@@ -153,15 +157,9 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	st.Edges = []stack.Edge{{Target: "k8s", Provider: "cloudflare", NPMURL: "kube://kyq-npm/app:81", ConnectorCIDR: ip(client) + "/32", Routes: []stack.Route{{
 		App: "hello", Hostname: "hello.example.test", ForwardHost: "app.kyq-hello.svc.cluster.local", ForwardPort: 8080, CertificateID: certID,
 	}}}}
-	// The catalog KyIdentity takes its issuer from its route, so it joins with the edge;
-	// KyRecovery's client joins KyIdentity's first setup.
-	loadCatalogApp(t, name, cs, "kyidentity")
-	loadCatalogApp(t, name, cs, "kyrecovery")
-	addCatalogIdentity(st, certID)
-	addCatalogRecovery(st, certID)
 	b, _ := yaml.Marshal(st)
 	os.WriteFile(plan, b, 0o600)
-	out = apply("route")
+	apply("route")
 	if st, err = stack.Load(plan); err != nil || st.InstallationID == "" || st.Revision != 1 {
 		t.Fatalf("installation id not published: %+v %v", st, err)
 	}
@@ -179,22 +177,21 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	if code := docker(t, "exec", node, "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-m", "10", "http://"+nodeIP+":30080/"); code != "200" {
 		t.Fatalf("NodePort 30080 answered %s", code)
 	}
-	viaEdge := func(host, path string) string {
-		return docker(t, "exec", client, "curl", "-sk", "-m", "10", "--resolve", host+":30443:"+nodeIP, "-H", "CF-Connecting-IP: 203.0.113.7", "https://"+host+":30443"+path)
-	}
-	checkCatalogIdentity(t, ctx, cs, kc, out, viaEdge)
-	recoverySecrets := checkCatalogRecovery(t, ctx, cs, kc, out, viaEdge)
 
 	// Rerun: nothing changes.
-	out = apply("rerun")
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		if f := strings.Fields(line); len(f) >= 2 && strings.Contains(f[0], ".") && f[1] != "skipped" {
-			t.Errorf("rerun step not skipped: %s", line)
+	rerun := func(name string) {
+		t.Helper()
+		out := apply(name)
+		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+			if f := strings.Fields(line); len(f) >= 2 && strings.Contains(f[0], ".") && f[1] != "skipped" {
+				t.Errorf("%s step not skipped: %s", name, line)
+			}
+		}
+		if status(out, "npm.bootstrap") != "skipped" || status(out, "k8s.edge.removed") != "skipped" {
+			t.Fatalf("%s did not report the bootstrap and edge steps", name)
 		}
 	}
-	if status(out, "npm.bootstrap") != "skipped" || status(out, "k8s.edge.removed") != "skipped" {
-		t.Fatal("rerun did not report the bootstrap and edge steps")
-	}
+	rerun("rerun")
 
 	// lan: the client reaches NPM directly, only allow_cidrs is served, no forwarding header
 	// is trusted. kind's network is inside the private ranges NPM's http block trusts.
@@ -245,6 +242,22 @@ func TestKubernetesNPMEdge(t *testing.T) {
 		t.Fatal("bootstrap not idempotent after refresh")
 	}
 
+	// The catalog KyIdentity takes its issuer from its route, client_port included, so it
+	// joins behind the lan edge it keeps; KyRecovery's client joins KyIdentity's first setup.
+	loadCatalogApp(t, name, cs, "kyidentity")
+	loadCatalogApp(t, name, cs, "kyrecovery")
+	addCatalogIdentity(st, certID)
+	addCatalogRecovery(st, certID)
+	b, _ = yaml.Marshal(st)
+	os.WriteFile(plan, b, 0o600)
+	out = apply("identity")
+	viaEdge := func(host, path string) string {
+		return docker(t, "exec", client, "curl", "-sk", "-m", "10", "--resolve", host+":30443:"+nodeIP, "https://"+host+":30443"+path)
+	}
+	checkCatalogIdentity(t, ctx, cs, kc, out, viaEdge)
+	recoverySecrets := checkCatalogRecovery(t, ctx, cs, kc, out, viaEdge)
+	rerun("identity rerun")
+
 	// Changed setup intent: the product refuses it at kyidentity.setup. Restored, the
 	// read-only check passes again, so the refusal changed nothing.
 	saved, _ := os.ReadFile(plan)
@@ -262,6 +275,41 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	if out := apply("intent restored"); status(out, "kyidentity.setup") != "ok" || status(out, "kyidentity.deploy") != "skipped" {
 		t.Fatal("restored KyIdentity intent did not check clean")
 	}
+
+	// A client_port change would move the issuer of a set-up KyIdentity: refused before
+	// kyidentity.deploy, so its Deployment and pod keep the issuer every client knows.
+	issuer := func() (string, string) {
+		dep, err := cs.AppsV1().Deployments("kyq-kyidentity").Get(ctx, "app", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, pod, _, err := connected.AppPod(ctx, "kyidentity")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range dep.Spec.Template.Spec.Containers[0].Env {
+			if e.Name == "KYIDENTITY_ISSUER_URL" {
+				return e.Value, pod
+			}
+		}
+		return "", pod
+	}
+	issuerBefore, podBefore := issuer()
+	moved, _ := stack.Load(plan)
+	moved.Edges[0].ClientPort = 30444
+	b, _ = yaml.Marshal(moved)
+	os.WriteFile(plan, b, 0o600)
+	refused.Reset()
+	err = cli.Run(ctx, []string{"apply", "--state", state}, cli.Options{Catalog: os.DirFS(catalogDir), ReleaseSet: "e2e", Out: &refused})
+	var se *suite.Error
+	if !errors.As(err, &se) || se.Code != suite.IssuerChanged || !strings.Contains(err.Error(), "from https://"+catalogIdentityURLHost+" to https://"+catalogIdentityHost+":30444") || status(refused.String(), "kyidentity.deploy") != "" {
+		t.Fatalf("client_port change after setup: %v\n%s", err, refused.String())
+	}
+	outputs = append(outputs, refused.String())
+	if after, pod := issuer(); after != issuerBefore || after != "https://"+catalogIdentityURLHost || pod != podBefore {
+		t.Fatalf("refused client_port change still moved KyIdentity: issuer %s, pod %s (was %s)", after, pod, podBefore)
+	}
+	os.WriteFile(plan, saved, 0o600)
 
 	// Sign-on: the lan edge also admits this host (the network's gateway) and the cluster's
 	// pods, whose requests to KyIdentity go through it like a browser's.

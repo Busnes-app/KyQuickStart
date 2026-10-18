@@ -27,6 +27,23 @@ func (c *Client) Deployed(ctx context.Context, app string) (managed.Deployed, er
 	return managed.Deployed{Found: true, Managed: owned(ns), ReleaseSet: l[managed.ReleaseSetLabel], Version: l[managed.VersionLabel]}, nil
 }
 
+// AppEnv reads env var name of the app's Deployment container; found is false when the
+// Deployment or the variable is absent.
+func (c *Client) AppEnv(ctx context.Context, app, name string) (value string, found bool, err error) {
+	dep, found, err := getOwned(ctx, c.cs.AppsV1().Deployments(namespaceOf(app)), "deployment", appName)
+	if !found || err != nil {
+		return "", false, err
+	}
+	for _, ctr := range dep.Spec.Template.Spec.Containers {
+		for _, e := range ctr.Env {
+			if ctr.Name == appName && e.Name == name {
+				return e.Value, true, nil
+			}
+		}
+	}
+	return "", false, nil
+}
+
 // RemoveSteps deletes the app's Deployment and Services. The namespace, its claims, Secret
 // and default-deny policy stay, so a later install finds the data.
 func RemoveSteps(a App) []engine.Step { return []engine.Step{removeStep{a}} }

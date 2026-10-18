@@ -106,6 +106,9 @@ func testIdentityKubernetesPreparation(t *testing.T, ctx context.Context, cs kub
 // catalogIdentityHost is where TestKubernetesNPMEdge routes the catalog KyIdentity.
 const catalogIdentityHost = "identity.example.test"
 
+// catalogIdentityURLHost is its URL host: the lan edge's clients reach NPM on NodePort 30443.
+const catalogIdentityURLHost = catalogIdentityHost + ":30443"
+
 // loadCatalogApp pulls a catalog app's attested image and loads it into kind.
 // A failing test logs the app's pods and events before the cluster goes.
 func loadCatalogApp(t *testing.T, cluster string, cs kubernetes.Interface, app string) {
@@ -195,7 +198,7 @@ func checkCatalogIdentity(t *testing.T, ctx context.Context, cs kubernetes.Inter
 		Issuer string `json:"issuer"`
 	}
 	body := get(catalogIdentityHost, "/.well-known/openid-configuration")
-	if json.Unmarshal([]byte(body), &discovery) != nil || discovery.Issuer != "https://"+catalogIdentityHost {
+	if json.Unmarshal([]byte(body), &discovery) != nil || discovery.Issuer != "https://"+catalogIdentityURLHost {
 		t.Fatalf("discovery through the edge:\n%s", body)
 	}
 }
