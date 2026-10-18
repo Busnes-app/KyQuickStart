@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -247,5 +248,44 @@ func TestPulseClientMoveAfterSetupRefused(t *testing.T) {
 	want := fmt.Sprintf("this plan moves kyPulse's KyIdentity client from https://%s/api/sso/kysignon/callback to https://pulse.example.com/api/sso/kysignon/callback", "pulse.example.com:30443")
 	if code(err) != suite.IssuerChanged || !strings.Contains(err.Error(), want) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// placeScript under a real sh: write never replaces, replace swaps in a regular file only,
+// check only compares, and a symlink is never followed.
+func TestPlaceScript(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "new", "f")
+	run := func(mode, path, in string) error {
+		c := exec.Command("sh", "-c", placeScript, "sh", mode, path)
+		c.Stdin = strings.NewReader(in)
+		return c.Run()
+	}
+	read := func() string { b, _ := os.ReadFile(f); return string(b) }
+	if run("check", f, "a") == nil || run("write", f, "a") != nil || read() != "a" || run("check", f, "a") != nil || run("write", f, "a") != nil {
+		t.Fatal("write or check")
+	}
+	if fi, _ := os.Stat(f); fi.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %v", fi.Mode())
+	}
+	if run("write", f, "b") == nil || run("check", f, "b") == nil || read() != "a" {
+		t.Fatal("write replaced a file")
+	}
+	if run("replace", f, "b") != nil || read() != "b" {
+		t.Fatal("replace")
+	}
+	link := filepath.Join(dir, "link")
+	os.Symlink(f, link)
+	os.Mkdir(filepath.Join(dir, "d"), 0o700)
+	for _, c := range [][2]string{{"write", link}, {"replace", link}, {"check", link}, {"replace", filepath.Join(dir, "d")}} {
+		if run(c[0], c[1], "c") == nil {
+			t.Errorf("%s %s accepted", c[0], c[1])
+		}
+	}
+	if read() != "b" {
+		t.Fatal("followed a symlink")
+	}
+	if entries, _ := os.ReadDir(filepath.Join(dir, "d")); len(entries) != 0 {
+		t.Fatal("replace wrote into a directory")
 	}
 }
