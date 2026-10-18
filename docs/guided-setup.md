@@ -434,7 +434,8 @@ integrations:
 ```
 
 `apply` then runs `kyidentity.secrets`, `.deploy`, `.health`, `.setup`, one `.amend.<app>`
-per setup amendment, and `.retire-bootstrap` (below). The setup step is
+per setup amendment, and `.retire-bootstrap` (below), and last, after the edges, one
+`.scim.<app>` per app whose catalog `oidc` names a SCIM token (KyDrive). The setup step is
 the typed preparation above (`apply-setup --stage`, credentials generated in the pod's data
 directory) followed by `apply-setup`, each read back with `--check`; a rerun skips it, and
 changed intent fails with the product's refusal. `integrate-stack` skips installed apps.
@@ -466,6 +467,11 @@ changed intent fails with the product's refusal. `integrate-stack` skips install
   amended ones included, are compared the same way: setup never changes a registered client,
   only KyIdentity's own administration does. Changing the route hostname or `client_port`
   therefore needs a fresh KyIdentity.
+- `KYIDENTITY_ALLOW_PRIVATE_CALLBACKS=true`: its SCIM and directory connectors deliver to the
+  suite's apps through their routes, which resolve to the edge's LAN or pod address, and
+  KyIdentity refuses private destinations without it. It opens RFC 1918, ULA and
+  carrier-grade NAT (`100.64.0.0/10`) only; loopback, link-local and cloud metadata addresses
+  stay refused, and device-supplied push endpoints never get it.
 - `kyidentity.retire-bootstrap` follows the setup and its amendments. With KyIdentity 0.4.3 or
   later (capability `disable-user`) it runs `kyidentity disable-user --username kyq-bootstrap
   --require-active-admin <owner admin>`, which revokes the account's sessions and deletes
@@ -666,12 +672,23 @@ graceful restart and its live `--check`.
 - Apply's handover names KyDrive's local `admin` break-glass password,
   `<root>/kydrive/data/initial-admin-password` on the target: sign in once (its login form has
   a CAPTCHA; SSO does not), change it and delete the file.
-- Not yet: KyIdentity's SCIM connector to KyDrive, so KyDrive refuses the owner's everyday
-  account and everyone but the admin until one is configured at `https://<host>/scim/v2` with
-  the token in `<root>/kydrive/secrets/scim_token`. KyIdentity's setup, first or amendment,
-  can carry it (`clients[].scim` with `url` and a `token_file` inside KyIdentity's pod), but
-  apply would have to copy KyDrive's token into that pod before `kyidentity.setup`, and the
-  pod must resolve and trust KyDrive's route; neither is built.
+- `kyidentity.scim.kydrive` adds KyIdentity's SCIM connector to KyDrive's client, so
+  KyIdentity provisions the owner's admin and everyday accounts, and everyone later assigned
+  to KyDrive, at `https://<route URL host>/scim/v2` (KyDrive refuses an account it has not
+  been given: "User account not provisioned"). It reads KyDrive's token from
+  `<root>/kydrive/secrets/scim_token` over SSH (0600, owned by the target user, nothing
+  symlinked), places it as `/data/installer/scim-kydrive.token` (0600, uid 100) in
+  KyIdentity's pod, never replacing one, and runs `apply-setup` on
+  `/data/installer/scim-kydrive.json`: a pass of the setup that registered the client
+  (KyIdentity's first, or its amendment) with the same setup ID and client intent, the paths
+  its preparation generated, and `scim` added. KyIdentity takes a connector on such a later
+  pass, outside its immutable preparation directories, so the retained intent keeps no
+  `scim` and an applied setup or amendment gains the connector without a reset. A second
+  amendment naming the client is refused. The step runs after `kydrive.setup`, which creates
+  the owner's admin in KyDrive (KyDrive refuses to adopt an account KyIdentity pushed first),
+  and after the edges, so the first delivery finds the route; KyIdentity retries a failed one
+  from 30 seconds, doubling. KyIdentity's pod must resolve the route's hostname and trust its
+  certificate through the system roots.
 - Not yet: the Euro-Office editor (`KYDRIVE_EDITOR_URL` unset); document backups
   (`KYDRIVE_BULK_BACKUP_REPOSITORY` unset: they need an independent restic repository, and the
   `backups` directory, on the same disk as `data`, is not one); recovery pairing;

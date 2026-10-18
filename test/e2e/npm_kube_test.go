@@ -255,6 +255,12 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	addCatalogPulse(st, certID)
 	addCatalogDrive(st, certID, drive)
 	trust = []string{"--trust-host-key", "nas=" + drive.fp}
+	// KyIdentity's SCIM connector reaches KyDrive through the edge from its pod, as on K80:
+	// test-only cluster DNS names every routed host after the node, and the edge admits the
+	// cluster's pods, whose requests to KyIdentity go through it like a browser's.
+	testClusterDNS(t, ctx, cs, nodeIP)
+	podCIDR := mustNode(t, ctx, cs, node).Spec.PodCIDR
+	st.Edges[0].AllowCIDRs = append(st.Edges[0].AllowCIDRs, podCIDR)
 	b, _ = yaml.Marshal(st)
 	os.WriteFile(plan, b, 0o600)
 	out = apply("identity")
@@ -265,6 +271,10 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	recoverySecrets := checkCatalogRecovery(t, ctx, cs, kc, out, viaEdge)
 	pulseSecrets := checkCatalogPulse(t, ctx, cs, kc, out, viaEdge)
 	driveSecrets := checkCatalogDrive(t, out, drive, viaEdge)
+	checkDriveConnector(t, ctx, connected, out, driveSecrets[1])
+	// Test-only: KyIdentity trusts the edge's throwaway certificate. Its deliveries so far
+	// failed and are retried with backoff.
+	trustTestCA(t, ctx, cs, connected, "kyidentity", certPEM)
 	rerun("identity rerun")
 
 	// Changed setup intent: the product refuses it at kyidentity.setup. Restored, the
@@ -320,24 +330,22 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	}
 	os.WriteFile(plan, saved, 0o600)
 
-	// Sign-on: the lan edge also admits this host (the network's gateway) and the cluster's
-	// pods, whose requests to KyIdentity go through it like a browser's.
+	// Sign-on: the lan edge also admits this host (the network's gateway).
 	st, _ = stack.Load(plan)
-	podCIDR := mustNode(t, ctx, cs, node).Spec.PodCIDR
 	for _, gw := range strings.Fields(docker(t, "network", "inspect", "kind", "--format", "{{range .IPAM.Config}}{{.Gateway}} {{end}}")) {
 		if strings.Contains(gw, ".") {
 			st.Edges[0].AllowCIDRs = append(st.Edges[0].AllowCIDRs, gw+"/32")
 		}
 	}
 	// KyDrive, on the Docker target, reaches KyIdentity through the edge from its relay.
-	st.Edges[0].AllowCIDRs = append(st.Edges[0].AllowCIDRs, podCIDR, drive.relayIP(t)+"/32")
+	st.Edges[0].AllowCIDRs = append(st.Edges[0].AllowCIDRs, drive.relayIP(t)+"/32")
 	b, _ = yaml.Marshal(st)
 	os.WriteFile(plan, b, 0o600)
-	if out := apply("sign-on edge"); status(out, "kyrecovery.setup") != "skipped" || status(out, "kypulse.setup") != "skipped" || status(out, "kydrive.setup") != "skipped" {
+	if out := apply("sign-on edge"); status(out, "kyrecovery.setup") != "skipped" || status(out, "kypulse.setup") != "skipped" || status(out, "kydrive.setup") != "skipped" || status(out, "kyidentity.scim.kydrive") != "skipped" {
 		t.Fatal("edge change re-ran an app's setup")
 	}
 	catalogSignOn(t, ctx, cs, kc, certPEM, nodeIP)
-	driveSignOn(t, ctx, kc, certPEM, nodeIP)
+	driveSignOn(t, ctx, kc, certPEM, nodeIP, driveSecrets[1])
 
 	// No credential reached apply output or workstation state.
 	secretsSeen := append(append(append([]string{password, token, stored()}, recoverySecrets...), pulseSecrets...), driveSecrets...)

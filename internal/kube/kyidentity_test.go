@@ -37,7 +37,8 @@ func TestRenderKyIdentity(t *testing.T) {
 	for _, e := range c.Env {
 		env[e.Name] = e.Value
 	}
-	if env["KYIDENTITY_ISSUER_URL"] != "https://identity.example.com" || env["KYIDENTITY_DATA_DIR"] != "/data" || env["BOOTSTRAP_ADMIN_USER"] != "kyq-bootstrap" || env["BOOTSTRAP_ADMIN_PASS"] != "" {
+	if env["KYIDENTITY_ISSUER_URL"] != "https://identity.example.com" || env["KYIDENTITY_DATA_DIR"] != "/data" || env["BOOTSTRAP_ADMIN_USER"] != "kyq-bootstrap" || env["BOOTSTRAP_ADMIN_PASS"] != "" ||
+		env["KYIDENTITY_ALLOW_PRIVATE_CALLBACKS"] != "true" {
 		t.Fatalf("env = %v", env)
 	}
 	if p := c.ReadinessProbe.HTTPGet; p.Path != "/readyz" || p.Port.IntValue() != 5867 {
