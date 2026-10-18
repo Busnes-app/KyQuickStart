@@ -115,6 +115,16 @@ func TestKubeNPMURL(t *testing.T) {
 	if _, err := Parse([]byte(onDocker)); err == nil || !strings.Contains(err.Error(), "needs a Kubernetes target") {
 		t.Fatalf("kube:// on a Docker target: %v", err)
 	}
+	// The cluster's edge routes to an app on a Docker host; a Docker edge never reaches into a cluster.
+	crossDocker := strings.Replace(kubeEdgeStack, "  - name: hello\n    target: k8s", "  - name: hello\n    target: nas", 1)
+	if _, err := Parse([]byte(crossDocker)); err != nil {
+		t.Fatalf("lan route to a Docker app: %v", err)
+	}
+	crossCluster := strings.Replace(edgeStack, "  - name: nas\n", "  - name: k8s\n    kubeconfig: /kc\n  - name: nas\n", 1)
+	crossCluster = strings.Replace(crossCluster, "    target: nas\nedges", "    target: k8s\nedges", 1)
+	if _, err := Parse([]byte(crossCluster)); err == nil || !strings.Contains(err.Error(), "on this target or on a Docker target") {
+		t.Fatalf("Docker edge route into a cluster: %v", err)
+	}
 	admin := strings.Replace(kubeEdgeStack, "forward_host: app.kyq-hello.svc.cluster.local\n        forward_port: 8080", "forward_host: app.kyq-npm.svc\n        forward_port: 82", 1)
 	admin = strings.Replace(admin, "kube://kyq-npm/app:81", "kube://kyq-npm/app:82", 1)
 	if _, err := Parse([]byte(admin)); err == nil || !strings.Contains(err.Error(), "administration endpoint") {
