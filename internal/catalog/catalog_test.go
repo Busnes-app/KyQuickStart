@@ -59,6 +59,28 @@ func TestKyIdentityEntry(t *testing.T) {
 	}
 }
 
+func TestKyRecoveryEntry(t *testing.T) {
+	cat, err := Load(Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := cat["kyrecovery"]
+	k, o := a.Kubernetes, a.OIDC
+	if a.Category != "ky" || a.Version != "0.4.2" || a.PodSecurity != "restricted" || a.Compose != nil || len(a.Secrets) != 0 || len(a.DependsOn) != 1 || a.DependsOn[0] != "kyidentity" {
+		t.Fatalf("manifest = %+v", a.Manifest)
+	}
+	if !strings.HasPrefix(a.Images[k.Image], "ghcr.io/busnes-app/kyrecovery-server:0.4.2@sha256:") || k.RunAs != 10001 || k.ReadinessPath != "/healthz" || k.Ports[0] != 8095 || k.Volumes[0].Mount != k.Env["KYRECOVERY_DATA_DIR"] || k.UsesHostname() {
+		t.Fatalf("kubernetes = %+v", k)
+	}
+	// Admin-only, with the signed directory KyRecovery's setup requires.
+	if o.AdminRole != "kyrecovery.admin" || o.UserRole != "" || o.RedirectPaths[0] != "/api/auth/callback" || o.DirectoryPath != "/api/installer/directory" || len(o.LogoutPaths) != 0 || o.BackchannelLogoutPath != "" || o.Public {
+		t.Fatalf("oidc = %+v", o)
+	}
+	if !a.Upgrade.MigratesData || a.Backup.Volumes[0] != "data" {
+		t.Fatalf("upgrade %+v, backup %+v", a.Upgrade, a.Backup)
+	}
+}
+
 const manifest = "name: a\ncategory: ky\nversion: 2.4.0\nimages:\n  web: " + digest + "\nhealth:\n  timeout_seconds: 30\n"
 
 const oidc = "oidc:\n  name: App\n  redirect_paths: [/auth/callback]\n  logout_paths: [/]\n  admin_role: admin\n  user_role: user\n"
