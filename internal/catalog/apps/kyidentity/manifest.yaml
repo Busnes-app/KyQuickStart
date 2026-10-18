@@ -1,12 +1,11 @@
 name: kyidentity
 description: KyIdentity, the suite's identity provider (OIDC, MFA, SCIM); every other app signs in through it
 category: ky
-version: 0.4.2
-# Release image of v0.4.2, attested by release-image.yml@refs/tags/v0.4.2 (gh attestation verify).
-# Setup amendments (later apps' clients) and disable-user (retiring kyq-bootstrap) need >= 0.4.3;
-# apply gates both on the advertised capabilities, so 0.4.2 keeps their refusal and note.
+version: 0.4.3
+# Release image of v0.4.3, attested by release-image.yml@refs/tags/v0.4.3 (gh attestation verify;
+# source commit 65dcae6 = v0.4.3^{commit}). It advertises setup amendments and disable-user.
 images:
-  kyidentity: ghcr.io/busnes-app/kyidentity-server:0.4.2@sha256:37f55af96a8addda8804931ea83124b7e128f2b65653a7d34e981047958baec9
+  kyidentity: ghcr.io/busnes-app/kyidentity-server:0.4.3@sha256:dbf81b355d6307f23b3501c40ad368b06f9ea2fdfdd6e1d09f40d5de87bbc419
 health:
   timeout_seconds: 300
 # Its signing, session and encryption keys are generated in the data directory on first start.
