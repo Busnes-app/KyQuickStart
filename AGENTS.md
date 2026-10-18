@@ -378,7 +378,7 @@ handover of admin and everyday logins.
   default class. A claim's class never changes: `apply` refuses an existing claim of another class.
   A non-root app mounts each claim through a 0700 `private` subdirectory that an init container
   (the pinned BusyBox helper, the app's uid) creates. A `kubernetes.env` value may contain
-  `{{hostname}}`, replaced by the app's one edge route hostname; no other template syntax.
+  `{{host}}`, replaced by the URL host of the app's one edge route (hostname, plus `:client_port` when it is not 443); no other template syntax.
 
 ## Work Guidance
 

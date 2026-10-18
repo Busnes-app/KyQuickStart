@@ -17,7 +17,7 @@ upgrade:
 kubernetes:
   image: kyidentity
   env:
-    KYIDENTITY_ISSUER_URL: https://{{hostname}}
+    KYIDENTITY_ISSUER_URL: https://{{host}}
     KYIDENTITY_DATA_DIR: /data
     KYIDENTITY_PORT: "5867"
     # The first-start administrator, kept apart from the owner's accounts apply-setup creates.
