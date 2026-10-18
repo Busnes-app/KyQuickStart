@@ -552,8 +552,11 @@ func showPlan(out io.Writer, st *stack.Stack, cat catalog.Catalog) {
 		if i.Identity != nil {
 			fmt.Fprintln(out, "    Prepare KyIdentity metadata and generate private owner/everyday/client credentials on target; resume preserves retained files.")
 		}
+		if i.Installed(st) && i.IdentityClient != "" {
+			fmt.Fprintf(out, "  Add the catalog's %s client %s to KyIdentity's first setup and transfer its credentials in memory.\n", i.Product, i.IdentityClient)
+		}
 		if i.Product == "kyrecovery" && i.IdentityClient != "" {
-			fmt.Fprintf(out, "  Add the catalog's KyRecovery client %s to KyIdentity's first setup and transfer its credentials in memory; the custodian ceremony stays a human step.\n", i.IdentityClient)
+			fmt.Fprintln(out, "  The KyRecovery custodian ceremony stays a human step.")
 		}
 		if i.Notes != nil {
 			if i.IdentityClient != "" {
