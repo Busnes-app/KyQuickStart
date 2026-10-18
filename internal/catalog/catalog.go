@@ -37,11 +37,17 @@ type Manifest struct {
 
 // OIDC is the app's client in KyIdentity. Paths are relative to the app's public origin.
 type OIDC struct {
+	Name                  string   `yaml:"name"` // shown in KyIdentity
 	RedirectPaths         []string `yaml:"redirect_paths"`
 	LogoutPaths           []string `yaml:"logout_paths"`
 	BackchannelLogoutPath string   `yaml:"backchannel_logout_path"`
-	Roles                 []string `yaml:"roles"`  // must include admin and user
-	Public                bool     `yaml:"public"` // PKCE without a client secret
+	// The app roles KyIdentity issues to the owner's admin and everyday identities. No
+	// user_role makes the client admin-only; third-party apps need both.
+	AdminRole string `yaml:"admin_role"`
+	UserRole  string `yaml:"user_role"`
+	// DirectoryPath receives KyIdentity's signed suite directory events.
+	DirectoryPath string `yaml:"directory_path"`
+	Public        bool   `yaml:"public"` // PKCE without a client secret
 }
 
 // Backup is what restic takes from the app. Volumes name Compose volumes and, when the
@@ -116,7 +122,7 @@ var (
 	volRE   = regexp.MustCompile(`^[a-z][a-z0-9-]{0,30}$`)
 	mountRE = regexp.MustCompile(`^(/[A-Za-z0-9._-]+)+$`)
 	envRE   = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,63}$`)
-	roleRE  = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
+	roleRE  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$`) // KyIdentity's app-role grammar
 	// No segment starts with a dot, so no . or .. components.
 	urlPathRE = regexp.MustCompile(`^/([A-Za-z0-9_~-][A-Za-z0-9._~-]*/?)*$`)
 	skipRE    = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)+$`)
@@ -251,7 +257,7 @@ func (m Manifest) validate(dir string) error {
 		if m.Category == "edge" {
 			return fmt.Errorf("oidc: edge components have no sign-in")
 		}
-		if err := m.OIDC.validate(); err != nil {
+		if err := m.OIDC.validate(m.Category == "third-party"); err != nil {
 			return fmt.Errorf("oidc.%w", err)
 		}
 	}
@@ -358,7 +364,10 @@ func (k Kubernetes) WithHostname(host string) *Kubernetes {
 	return &k
 }
 
-func (o OIDC) validate() error {
+func (o OIDC) validate(thirdParty bool) error {
+	if o.Name == "" || len(o.Name) > 128 || strings.ContainsAny(o.Name, "\r\n\t") {
+		return fmt.Errorf("name %q must be 1-128 characters on one line", o.Name)
+	}
 	if len(o.RedirectPaths) == 0 {
 		return fmt.Errorf("redirect_paths: at least one is required")
 	}
@@ -371,11 +380,16 @@ func (o OIDC) validate() error {
 	if o.BackchannelLogoutPath != "" && !urlPathRE.MatchString(o.BackchannelLogoutPath) {
 		return fmt.Errorf("backchannel_logout_path %q must be an absolute path", o.BackchannelLogoutPath)
 	}
-	if err := check(o.Roles, roleRE.MatchString); err != nil {
-		return fmt.Errorf("roles: %w must be unique and match %s", err, roleRE)
+	if o.DirectoryPath != "" && !urlPathRE.MatchString(o.DirectoryPath) {
+		return fmt.Errorf("directory_path %q must be an absolute path", o.DirectoryPath)
 	}
-	if !slices.Contains(o.Roles, "admin") || !slices.Contains(o.Roles, "user") {
-		return fmt.Errorf("roles must include admin and user")
+	switch {
+	case !roleRE.MatchString(o.AdminRole):
+		return fmt.Errorf("admin_role %q must match %s", o.AdminRole, roleRE)
+	case o.UserRole == "" && thirdParty:
+		return fmt.Errorf("user_role: third-party apps need an everyday role")
+	case o.UserRole != "" && (!roleRE.MatchString(o.UserRole) || strings.EqualFold(o.UserRole, o.AdminRole)):
+		return fmt.Errorf("user_role %q must match %s and differ from admin_role", o.UserRole, roleRE)
 	}
 	return nil
 }
