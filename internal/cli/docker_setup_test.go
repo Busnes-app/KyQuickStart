@@ -247,3 +247,37 @@ func TestDockerAppContainer(t *testing.T) {
 		}
 	}
 }
+
+// The live path: KyDrive on a Docker host joins a KyIdentity on a cluster whose first setup
+// already ran, through a setup amendment, and its export reads that amendment.
+func TestKyDriveOnDockerAddedByAmendment(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, "../catalog/testdata/apps")
+	f.o.Catalog = catalog.Embedded()
+	identity := setUpIdentity(t, f, amendmentFeatures)
+	drivePlan(t, f, "192.0.2.1")
+	id := amendmentID(parentSetup, "kydrive")
+	bundle := "/data/installer/" + id + "/setup.json"
+	amendment := &fakeIdentity{parent: identity, export: strings.Replace(driveExport(driveSecret), parentSetup, id, 1)}
+	identity.setups[bundle] = amendment
+	drive := &fakeDrive{files: map[string]string{}}
+
+	s := runningSession(t, f, identity, &fakeRecovery{files: map[string]string{}})
+	s.drivers["nas"] = sshDriver{t: s.placed["kydrive"], c: f.h}
+	f.h.exec = drive.exec(t)
+	if _, err := s.amendLate(ctx, f.state, nil); err != nil || len(s.amendments) != 1 || s.amendments[0].app != "kydrive" {
+		t.Fatalf("no amendment recorded: %v", err)
+	}
+	steps := setupStepsOf(t, s)
+	if got := strings.Join(ids(steps), " "); got != "kyidentity.setup kyidentity.amend.kydrive kyidentity.retire-bootstrap kydrive.setup" {
+		t.Fatalf("steps = %s", got)
+	}
+	var out bytes.Buffer
+	e := &engine.Engine{Dir: t.TempDir(), Out: &out, Redact: &engine.Redactor{}}
+	if err := e.Run(ctx, steps); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if !slices.Contains(amendment.calls, "/usr/local/bin/kyidentity apply-setup --file "+bundle+" --export-client kydrive") || !drive.applied || drive.files[filepath.Dir(driveBundle)+"/client.secret"] != driveSecret {
+		t.Fatalf("export calls %q, KyDrive applied %v", amendment.calls, drive.applied)
+	}
+}
