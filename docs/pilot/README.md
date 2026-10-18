@@ -136,3 +136,14 @@ KyDrive through KyIdentity (role `admin`); `k80-user` got 403 "User account not 
 **Open:** port 18443 also answers LAN clients directly (bypassing NPM's allow-list) until the
 operator adds the documented `DOCKER-USER` rule. KyQuickStart needs an SSH agent; with none
 running, start one for the run (`ssh-agent`, `ssh-add`).
+
+**2026-10-18: KyIdentity SCIM to KyDrive (master 41f9e27).** `apply` restarted KyIdentity (its
+env gained `KYIDENTITY_ALLOW_PRIVATE_CALLBACKS`) and ran `kyidentity.scim.kydrive`, which copied
+KyDrive's SCIM token from hlwcdocker02 into KyIdentity's pod and applied a connector pass of the
+existing `kydrive` amendment. Delivery first failed: the operator had added the documented
+`DOCKER-USER` rule (`! -s 192.168.1.81 -j DROP` for port 18443), and on this host (Docker 29,
+firewalld, userland proxy) it dropped k81 too, so NPM got no answer and the drive route hung
+after TLS. With the rule removed, the route answered and KyIdentity's retry provisioned
+`k80-user` within about two minutes; `k80-user` then signed in to KyDrive with role `user` and
+`k80-admin` with role `admin`. A rerun skipped every step. KyDrive's port is again reachable
+from the LAN directly; restricting it is open.
