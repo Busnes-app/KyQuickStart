@@ -72,3 +72,16 @@ func (c *Client) SetLANDNSLedger(ctx context.Context, ledger []byte) error {
 	}
 	return nil
 }
+
+// AppSecret reads one of app's generated secrets from its installer-owned Secret.
+func (c *Client) AppSecret(ctx context.Context, app, key string) ([]byte, error) {
+	s, found, err := getOwned(ctx, c.cs.CoreV1().Secrets(namespaceOf(app)), "secret", secretName)
+	if err != nil || !found {
+		return nil, fmt.Errorf("%s's secrets are absent or not installer-owned", app)
+	}
+	v := s.Data[key]
+	if len(v) == 0 || len(v) > 16384 {
+		return nil, fmt.Errorf("%s's secret %s is absent, empty or oversized", app, key)
+	}
+	return v, nil
+}

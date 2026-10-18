@@ -617,7 +617,7 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 	if err := s.refuseMovedSetup(ctx); err != nil {
 		return nil, err
 	}
-	var steps []engine.Step
+	var steps, connectors []engine.Step
 	for _, name := range s.order {
 		d := s.drivers[s.placed[name].Name]
 		deployed, err := d.deployed(ctx, name)
@@ -634,11 +634,14 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 		steps = append(steps, d.steps(name, s.cat[name], s.o.ReleaseSet, s.redact)...)
 		for _, i := range s.integrations {
 			if i.Product == name && i.Target == s.placed[name].Name {
-				setup, err := s.setupSteps(d, i)
+				setup, connector, err := s.setupSteps(d, i)
 				if err != nil {
 					return nil, err
 				}
 				steps = append(steps, setup...)
+				if connector != nil {
+					connectors = append(connectors, connector)
+				}
 			}
 		}
 	}
@@ -652,7 +655,8 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 			steps = append(steps, connector...)
 		}
 	}
-	return steps, nil
+	// SCIM connectors last: their first delivery goes through the routes the edges just made.
+	return append(steps, connectors...), nil
 }
 
 // lock takes every target's lock and refuses a target whose plan marker is newer than this

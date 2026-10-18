@@ -17,9 +17,11 @@ import (
 	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -210,17 +212,47 @@ func checkCatalogDrive(t *testing.T, out string, d driveTarget, get func(host, p
 	return secrets
 }
 
+// checkDriveConnector proves kyidentity.scim.kydrive: KyDrive's token, read on its target, in
+// a private file in KyIdentity's pod, and the setup pass naming it checks clean with the
+// connector KyIdentity created.
+func checkDriveConnector(t *testing.T, ctx context.Context, c *kube.Client, out, token string) {
+	t.Helper()
+	if status(out, "kyidentity.scim.kydrive") != "ok" {
+		t.Fatalf("kyidentity.scim.kydrive = %q", status(out, "kyidentity.scim.kydrive"))
+	}
+	ns, pod, container, err := c.AppPod(ctx, "kyidentity")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const tokenFile, pass = "/data/installer/scim-kydrive.token", "/data/installer/scim-kydrive.json"
+	stat, err := c.Exec(ctx, ns, pod, container, []string{"stat", "-c", "%n %a %u", tokenFile, pass})
+	if err != nil || strings.TrimSpace(string(stat)) != tokenFile+" 600 100\n"+pass+" 600 100" {
+		t.Fatalf("connector files:\n%s %v", stat, err)
+	}
+	if b, err := c.Exec(ctx, ns, pod, container, []string{"cat", tokenFile}); err != nil || string(b) != token {
+		t.Fatal("KyIdentity's copy of KyDrive's SCIM token differs", err)
+	}
+	report, err := c.Exec(ctx, ns, pod, container, []string{"/usr/local/bin/kyidentity", "apply-setup", "--file", pass, "--check"})
+	var r struct {
+		Created []json.RawMessage
+		Reused  []struct{ Kind, Name string }
+	}
+	if err != nil || json.Unmarshal(report, &r) != nil || len(r.Created) != 0 || !slices.ContainsFunc(r.Reused, func(o struct{ Kind, Name string }) bool { return o.Kind == "connector" && o.Name == "kydrive" }) {
+		t.Fatalf("connector check:\n%s %v", report, err)
+	}
+}
+
 // relayIP is the address KyDrive's requests to KyIdentity reach the lan edge from.
 func (d driveTarget) relayIP(t *testing.T) string {
 	t.Helper()
 	return docker(t, "inspect", d.relay, "--format", `{{(index .NetworkSettings.Networks "kind").IPAddress}}`)
 }
 
-// driveSignOn signs the owner's admin in to KyDrive through KyIdentity, both behind the
-// cluster's edge, as a browser would: KyDrive must send it to KyIdentity as client kydrive and
-// accept it back. The everyday account gets a KyIdentity code but KyDrive refuses it: no SCIM
-// connector has provisioned it yet.
-func driveSignOn(t *testing.T, ctx context.Context, kubeconfig string, certPEM []byte, nodeIP string) {
+// driveSignOn waits for KyIdentity's SCIM connector to provision the owner's accounts in
+// KyDrive, then signs both in to KyDrive through KyIdentity, behind the cluster's edge, as a
+// browser would: KyDrive must send each to KyIdentity as client kydrive and accept the admin
+// back as its administrator and the everyday account as an ordinary user.
+func driveSignOn(t *testing.T, ctx context.Context, kubeconfig string, certPEM []byte, nodeIP, scimToken string) {
 	t.Helper()
 	c, err := kube.Connect(kubeconfig, "")
 	if err != nil {
@@ -240,6 +272,7 @@ func driveSignOn(t *testing.T, ctx context.Context, kubeconfig string, certPEM [
 	t.Cleanup(transport.CloseIdleConnections)
 	identity, drive := "https://"+catalogIdentityURLHost, "https://"+catalogDriveURLHost
 	setupDir := "/data/installer/" + identityFixturePreparation().SetupID
+	waitForSCIMUsers(t, ctx, &http.Client{Transport: transport, Timeout: 30 * time.Second}, drive, scimToken)
 	for _, account := range []struct {
 		username, passwordFile string
 		admin                  bool
@@ -301,13 +334,6 @@ func driveSignOn(t *testing.T, ctx context.Context, kubeconfig string, certPEM [
 			t.Fatalf("KyIdentity authorization of %s for kydrive: %d %v", account.username, r.StatusCode, callback)
 		}
 		r, b = send("GET", callback.String(), nil, "")
-		if !account.admin {
-			if r.StatusCode != http.StatusForbidden {
-				t.Fatalf("KyDrive accepted the unprovisioned everyday account: %d %s", r.StatusCode, b)
-			}
-			t.Logf("everyday account refused by KyDrive until SCIM provisions it: HTTP %d %s", r.StatusCode, b)
-			continue
-		}
 		if r.StatusCode != 302 || r.Header.Get("Location") != "/" {
 			t.Fatalf("KyDrive callback: %d %s", r.StatusCode, b)
 		}
@@ -319,9 +345,43 @@ func driveSignOn(t *testing.T, ctx context.Context, kubeconfig string, certPEM [
 		if json.Unmarshal(b, &me) != nil || !me.Authenticated {
 			t.Fatalf("KyDrive session: %s", b)
 		}
-		t.Logf("owner admin signed in to KyDrive through KyIdentity: username %v, role %v", me.User["username"], me.User["role"])
-		if me.User["username"] != "prepared-admin" || me.User["role"] != "admin" {
+		role := map[bool]string{true: "admin", false: "user"}[account.admin]
+		t.Logf("%s signed in to KyDrive through KyIdentity: username %v, role %v", account.username, me.User["username"], me.User["role"])
+		if me.User["username"] != account.username || me.User["role"] != role {
 			t.Fatalf("KyDrive user: %s", b)
 		}
 	}
+}
+
+// waitForSCIMUsers waits until KyDrive's SCIM endpoint lists both of the owner's accounts,
+// active and bound to a KyIdentity subject. KyIdentity retries a failed delivery with backoff
+// (30 s doubling), and its first ones ran before it trusted the edge's certificate.
+func waitForSCIMUsers(t *testing.T, ctx context.Context, client *http.Client, drive, token string) {
+	t.Helper()
+	start := time.Now()
+	for _, username := range []string{"prepared-admin", "prepared-user"} {
+		for {
+			req, _ := http.NewRequestWithContext(ctx, "GET", drive+"/scim/v2/Users?filter="+url.QueryEscape(`userName eq "`+username+`"`), nil)
+			req.Header.Set("Authorization", "Bearer "+token)
+			var list struct {
+				Resources []struct {
+					ExternalID string `json:"externalId"`
+					Active     bool   `json:"active"`
+				}
+			}
+			r, err := client.Do(req)
+			if err == nil {
+				b, _ := io.ReadAll(io.LimitReader(r.Body, 64<<10))
+				r.Body.Close()
+				if r.StatusCode == 200 && json.Unmarshal(b, &list) == nil && len(list.Resources) == 1 && list.Resources[0].Active && list.Resources[0].ExternalID != "" {
+					break
+				}
+			}
+			if time.Since(start) > 9*time.Minute {
+				t.Fatalf("KyIdentity's SCIM connector did not provision %s in KyDrive: %v", username, err)
+			}
+			time.Sleep(5 * time.Second)
+		}
+	}
+	t.Logf("KyDrive lists both accounts by SCIM %s after the wait began", time.Since(start).Round(time.Second))
 }

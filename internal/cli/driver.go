@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/netip"
+	"path"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/dockerhost"
@@ -36,6 +37,7 @@ type driver interface {
 	unmanageSteps(name string, app catalog.App) []engine.Step
 	edgeAccess(context.Context, stack.Edge) ([]byte, edge.Dial, error) // NPM token, and tunnel for kube://
 	edgeSecrets() edge.Secrets                                         // referenced edge credentials; nil on Docker
+	appSecret(ctx context.Context, app, name string) ([]byte, error)   // a secret the target generated for app
 	checkConnector(context.Context, stack.Edge) error
 	connectorSteps(context.Context, stack.Edge, string, *engine.Redactor) ([]engine.Step, error)
 	execRunner(ctx context.Context, r handoffRecord, serve string, stdin io.Reader) ([]byte, error)
@@ -107,6 +109,10 @@ func (d sshDriver) execRunner(ctx context.Context, r handoffRecord, serve string
 // edgeSecrets is nil: stack validation keeps Secret references to Kubernetes edges.
 func (d sshDriver) edgeSecrets() edge.Secrets { return nil }
 
+func (d sshDriver) appSecret(ctx context.Context, app, name string) ([]byte, error) {
+	return remote.ReadSecret(ctx, d.c, path.Join(d.t.Root, app, "secrets", name))
+}
+
 func (d sshDriver) edgeAccess(ctx context.Context, _ stack.Edge) ([]byte, edge.Dial, error) {
 	token, err := remote.ReadSecret(ctx, d.c, d.t.Root+"/edge/secrets/npm_token")
 	return token, nil, err
@@ -175,6 +181,10 @@ func (d kubeDriver) execRunner(ctx context.Context, r handoffRecord, serve strin
 }
 
 func (d kubeDriver) edgeSecrets() edge.Secrets { return d.c }
+
+func (d kubeDriver) appSecret(ctx context.Context, app, name string) ([]byte, error) {
+	return d.c.AppSecret(ctx, app, name)
+}
 
 func (d kubeDriver) edgeAccess(ctx context.Context, e stack.Edge) ([]byte, edge.Dial, error) {
 	ns, svc, port, ok := stack.KubeService(e.NPMURL)
