@@ -468,8 +468,11 @@ func validateSelection(st *stack.Stack, cat catalog.Catalog) error {
 		if !ok {
 			return fmt.Errorf("%s is unavailable", app.Name)
 		}
-		if t.Kubernetes() && a.Kubernetes == nil || !t.Kubernetes() && a.Compose == nil {
-			return fmt.Errorf("%s cannot run on %s", app.Name, app.Target)
+		switch {
+		case t.Kubernetes() && a.Kubernetes == nil:
+			return fmt.Errorf("%s cannot run on %s: it has no Kubernetes deployment; place it on a Docker host", app.Name, app.Target)
+		case !t.Kubernetes() && a.Compose == nil:
+			return fmt.Errorf("%s cannot run on %s: it has no Compose deployment; place it on a Kubernetes target", app.Name, app.Target)
 		}
 	}
 	_, err := plan.Order(names, cat)
@@ -554,6 +557,9 @@ func showPlan(out io.Writer, st *stack.Stack, cat catalog.Catalog) {
 		}
 		if i.Installed(st) && i.IdentityClient != "" {
 			fmt.Fprintf(out, "  Add the catalog's %s client %s to KyIdentity's first setup and transfer its credentials in memory.\n", i.Product, i.IdentityClient)
+		}
+		if i.Product == "kynotes" && i.Installed(st) {
+			fmt.Fprintln(out, "  KyNotes' route is added only after its setup creates its administrator, so its first-run web setup is never exposed.")
 		}
 		if i.Product == "kyrecovery" && i.IdentityClient != "" {
 			fmt.Fprintln(out, "  The KyRecovery custodian ceremony stays a human step.")

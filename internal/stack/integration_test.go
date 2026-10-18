@@ -139,3 +139,29 @@ func TestRecoveryIntegration(t *testing.T) {
 		t.Fatal("kyPulse integration rejected", err)
 	}
 }
+
+// AC4: an installed KyNotes stages only at its fixed path, and apply derives its settings.
+func TestInstalledNotesIntegration(t *testing.T) {
+	plan := "version: 1\ntargets:\n- name: k8s\n  kubeconfig: /tmp/fixture-kubeconfig\napps:\n- name: kyidentity\n  target: k8s\n- name: kynotes\n  target: k8s\n" +
+		"integrations:\n- product: kynotes\n  target: k8s\n  bundle: /data/installer/setup.json\n  identity_client: kynotes\n"
+	if _, err := Parse([]byte(plan)); err != nil {
+		t.Fatal("installed KyNotes integration rejected", err)
+	}
+	if _, err := Parse([]byte(plan + "  identity_amendment: 5f4d3125-a512-5221-ae16-90e33394dd45\n")); err != nil {
+		t.Fatal("amended KyNotes integration rejected", err)
+	}
+	notes := "  notes:\n    version: 1\n    sso:\n      issuer_url: https://identity.example.test\n      client_id: kynotes\n      client_secret_file: /data/installer/client.secret\n      redirect_uri: https://notes.example.test/api/v1/auth/oidc/callback\n"
+	for name, bad := range map[string]string{
+		"notes block": plan + notes,
+		"container":   plan + "  container: app\n",
+		"pod":         plan + "  namespace: kyq-kynotes\n  pod: app-1\n",
+		"no client":   strings.Replace(plan, "  identity_client: kynotes\n", "", 1),
+		"uuid bundle": strings.Replace(plan, "/data/installer/setup.json", "/data/installer/0f9a3c1e-5b7d-4e2a-9c8b-1d2e3f4a5b6c/setup.json", 1),
+		"data bundle": strings.Replace(plan, "/data/installer/setup.json", "/data/setup.json", 1),
+		"other data":  strings.Replace(plan, "/data/installer/setup.json", "/app/data/installer/setup.json", 1),
+	} {
+		if _, err := Parse([]byte(bad)); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}

@@ -610,6 +610,11 @@ func (s *session) operate(ctx context.Context, holder string, steps func(context
 	return nil
 }
 
+// routedFirst are the apps whose setup runs after the edges route to KyIdentity and before
+// their own route: KyNotes' setup probes the issuer through its route, and its first-run web
+// setup stays open until that setup creates its administrator.
+var routedFirst = []string{"kynotes"}
+
 // deploySteps refuses a plan that moves a completed KyIdentity setup's URLs and gates every
 // app in s.order on its upgrade rules, then returns its install steps and the edges'.
 // Nothing has changed when either refuses.
@@ -617,7 +622,7 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 	if err := s.refuseMovedSetup(ctx); err != nil {
 		return nil, err
 	}
-	var steps, connectors []engine.Step
+	var steps, held, connectors []engine.Step
 	for _, name := range s.order {
 		d := s.drivers[s.placed[name].Name]
 		deployed, err := d.deployed(ctx, name)
@@ -638,6 +643,10 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 				if err != nil {
 					return nil, err
 				}
+				if slices.Contains(routedFirst, name) {
+					held = append(held, setup...)
+					continue
+				}
 				steps = append(steps, setup...)
 				if connector != nil {
 					connectors = append(connectors, connector)
@@ -645,16 +654,24 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 			}
 		}
 	}
-	for _, edge := range s.edges {
-		steps = append(steps, s.npms[edge.Target].Steps(edge)...)
-		if edge.Connector != nil {
-			connector, err := s.drivers[edge.Target].connectorSteps(ctx, edge, s.o.ReleaseSet, s.redact)
+	var routes []engine.Step // the routes of routedFirst apps, after their setup
+	for _, e := range s.edges {
+		for _, st := range s.npms[e.Target].Steps(e) {
+			if slices.Contains(routedFirst, edge.RouteApp(st)) {
+				routes = append(routes, st)
+			} else {
+				steps = append(steps, st)
+			}
+		}
+		if e.Connector != nil {
+			connector, err := s.drivers[e.Target].connectorSteps(ctx, e, s.o.ReleaseSet, s.redact)
 			if err != nil {
-				return nil, fmt.Errorf("edge %s: %w", edge.Target, err)
+				return nil, fmt.Errorf("edge %s: %w", e.Target, err)
 			}
 			steps = append(steps, connector...)
 		}
 	}
+	steps = append(append(steps, held...), routes...)
 	// SCIM connectors last: their first delivery goes through the routes the edges just made.
 	return append(steps, connectors...), nil
 }
