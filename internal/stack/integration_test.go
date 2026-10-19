@@ -188,3 +188,25 @@ func TestInstalledCalendarIntegration(t *testing.T) {
 		}
 	}
 }
+
+// An installed KyPost on a Docker host takes the generic installed-app rule: its client and a
+// UUID bundle under /kypost/private/installer, in its one container found per call.
+func TestInstalledPostIntegration(t *testing.T) {
+	plan := "version: 1\ntargets:\n- name: k8s\n  kubeconfig: /tmp/fixture-kubeconfig\n- name: nas\n  host: nas.example.test\n  user: kyq\napps:\n- name: kyidentity\n  target: k8s\n- name: kypost\n  target: nas\n" +
+		"integrations:\n- product: kypost\n  target: nas\n  bundle: /kypost/private/installer/0f9a3c1e-5b7d-4e2a-9c8b-1d2e3f4a5b6c/setup.json\n  identity_client: kypost\n"
+	if _, err := Parse([]byte(plan)); err != nil {
+		t.Fatal("installed KyPost integration rejected", err)
+	}
+	notes := "  notes:\n    version: 1\n    sso:\n      issuer_url: https://identity.example.test\n      client_id: kypost\n      client_secret_file: /kypost/private/installer/client.secret\n      redirect_uri: https://post.example.test/api/auth/oidc/callback\n"
+	for name, bad := range map[string]string{
+		"notes block": plan + notes,
+		"container":   plan + "  container: app\n",
+		"no client":   strings.Replace(plan, "  identity_client: kypost\n", "", 1),
+		"no uuid":     strings.Replace(plan, "0f9a3c1e-5b7d-4e2a-9c8b-1d2e3f4a5b6c/", "", 1),
+		"not a uuid":  strings.Replace(plan, "0f9a3c1e-5b7d-4e2a-9c8b-1d2e3f4a5b6c", "setup", 1),
+	} {
+		if _, err := Parse([]byte(bad)); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}

@@ -67,12 +67,13 @@ Plain terminal planning and command orchestration for the operator-run installer
   and exact `kyyard.admin` assignments. Platform administrators receive no implicit tenant
   access; organization/endpoint composition and shared upgrade orchestration remain gates.
 - `post.go` maps KyPost native capability/configuration reports, requires nonmutating inspection, preserves external readiness blockers and runs Docker setup explicitly as `kypost`.
+  It also holds the catalog KyPost's native bundle (`postBundle`) and handover (`postHandover`).
 - KyCalendar uses the common contract and graceful activation; owned issuer bindings and application grants remain separate from personal calendars and CalDAV, and sign-in settings are read-only in its administration screen.
 - KyMessages uses the common contract and graceful activation; exact console grants stay
   separate from Matrix chat/call access, whose assignment composition remains a gate.
 - KyRecovery setup runs explicitly as `kyrecovery`, activates live, commits exact administrator grants with its keyed SQL audit, and never performs the custodian ceremony.
   `appsetup.go` owns apply's catalog apps that sign in through KyIdentity (KyRecovery,
-  kyPulse, KyNotes and KyCalendar on Kubernetes, KyDrive and KyDNS on Docker): `composeClients` adds each one's catalog-derived client to the installed
+  kyPulse, KyNotes and KyCalendar on Kubernetes, KyDrive, KyPost and KyDNS on Docker): `composeClients` adds each one's catalog-derived client to the installed
   KyIdentity's intent in the session only (the saved plan is unchanged; a hand-written client
   must match), `clientSetupStep` (`<app>.setup`) exports that client, places bundle and secrets
   with `placeScript` (secrets no-clobber, kyPulse's bundle replaced, compare-only on check)
@@ -86,8 +87,11 @@ Plain terminal planning and command orchestration for the operator-run installer
   adds `everyday`, the owner's everyday account, whose subject `everydaySubject` takes from
   KyIdentity's read-only `--check` of its first setup (the one reused `user` with the plan's
   everyday username; any other report is a fixed refusal). `calendarAccounts` (plan, review
-  and apply) refuses owner usernames KyCalendar's setup would refuse. `recoveryCeremony`,
-  `pulseHandover`, `calendarHandover`, `driveHandover` and `dnsHandover` are what apply prints.
+  and apply) refuses owner usernames KyCalendar's setup would refuse. KyPost's step sets
+  `native` to `postBundle`, its version-1 bundle (sign-in with `autoProvision`, `clientSecretFile`
+  beside it), placed and applied as `kypost` through `postSetup`; KyPost has no directory (it
+  cannot verify KyIdentity's generated webhook secret), so no directory secret. `recoveryCeremony`,
+  `pulseHandover`, `calendarHandover`, `driveHandover`, `postHandover` and `dnsHandover` are what apply prints.
   KyDNS's distroless image has no shell, so `hostPlace` runs `placeScript` on its Docker host
   over SSH as the target user, mapping the bundle's `/data/installer/<uuid>/` to
   `<root>/kydns/data/installer/<uuid>/` (anything else refused, symlinked directories refused),

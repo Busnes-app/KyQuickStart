@@ -31,7 +31,7 @@ func fakeApp(r remote.Runner) App {
 	}
 }
 
-func deployOf(a App) deployStep { return Steps(a)[1].(deployStep) }
+func deployOf(a App) deployStep { return Steps(a)[0].(deployStep) }
 
 func TestOverrideLabelsEveryService(t *testing.T) {
 	var o struct {
