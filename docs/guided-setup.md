@@ -207,35 +207,54 @@ ssh -p 22 kyq@nas.example.lan cat /opt/kyquickstart/kydrive/secrets/restic_passw
 ```
 
 **Restore.** `restore APP` lists the app's snapshots (ID, time, host) and changes nothing.
-`restore APP --snapshot ID` (8 or 64 lowercase hex) restores one:
+`restore APP --snapshot ID` (8 or 64 lowercase hex) restores one; `--replace` and `--yes` are
+refused without `--snapshot`:
 
-1. It refuses (`restore_refused`, nothing changed) a snapshot not tagged for this app and
-   installation, a running app, and an app with any non-empty bind directory or secret file
-   unless `--replace`, which moves them to `<root>/<app>/.replaced-<UTC time>/` and never
-   deletes them. If `restic_password` is gone, it reads the recorded one from stdin (without
-   echo on a terminal, one line otherwise) and saves it only once the files are restored.
+1. It refuses (`restore_refused`, nothing changed) a running app and an app with any non-empty
+   bind directory or secret file unless `--replace`, which moves them to
+   `<root>/<app>/.replaced-<UTC time>/` and never deletes them; neither refusal contacts the
+   repository. It then refuses a snapshot not tagged for this app and installation. If
+   `restic_password` is gone, it reads the recorded one from stdin (without echo on a
+   terminal; piped, on its own line, followed by the app name, or alone with `--yes`) and saves
+   it only once the files are restored.
 2. It shows the snapshot's time, host and paths and wants the app name typed back, or `--yes`.
-3. It restores into a private staging directory in the app's directory, moves the volumes and
-   secrets into place (secrets 0600), deploys through apply's own steps, starting
-   `restore_order` in order (with a dump command: only `service` first, then the dump into
-   `restore_command`, then the rest), and runs the app's health and its setup's read-only check.
+3. It restores into a private staging directory in the app's directory and moves the volumes
+   and secrets into place (secrets 0600), refusing any that the snapshot holds as a symlink
+   (a snapshot written from a compromised target cannot point the app at another host path).
+   It deploys through apply's own steps, starting `restore_order` in order (with a dump
+   command: only `service` first, then the dump into `restore_command`, then the rest), and
+   waits for the app's health.
 4. **People from KyIdentity.** For an app with an `oidc` block it first refuses unless the
    plan's KyIdentity deployment record (`kyquickstart/version`) is v0.4.4 or later ("restore
    needs KyIdentity v0.4.4 or later, which replays removals on resync"), and refuses an
-   `existing` KyIdentity, whose version is unknown. After the checks it runs
-   `kyidentity resync-system --client <client> --wait 10m` in KyIdentity's pod: KyIdentity
-   re-sends the connector's state, deactivations included (a deletion comes back as a retained,
-   inactive account), and restore reports success only when the connector's whole queue is
-   `delivered`. Anything else is `restore_incomplete`, naming the connector, with the app left
-   running: fix the connector and rerun `restore`.
+   `existing` KyIdentity, whose version is unknown, or one on a Docker target. As soon as the
+   app is healthy it runs `kyidentity resync-system --client <client> --wait 10m` in
+   KyIdentity's pod: KyIdentity re-sends the connector's state, deactivations included (a
+   deletion comes back as a retained, inactive account), and restore goes on only when the
+   connector's whole queue is `delivered`. Anything else, or any failure after the app started
+   and before that, is `restore_incomplete` (or the step's error) with the app **stopped**: fix
+   the connector and rerun `restore`, which starts the app and replays again.
+5. It runs the app's setup read-only check and reports the app restored.
 
 A rerun of `restore` after any step died resumes from `<root>/<app>/.restore-pending`, or
 refuses naming what to do (`--replace` when files were already moved into place, removing a
 stale lock by hand). Residuals: a removed person's restored sessions stay valid from the app's
-start until the replayed deactivation arrives (bounded by restore's wait); the gate trusts the
-installer's deployment record, not the running binary; whoever controls a live target can read
-that app's backups; and the restore was not tested behind another proxy, above the end-to-end
-test's size, or on hosts without Docker's userland proxy.
+start until the replayed deactivation arrives (3.8 s in the end-to-end test, from 32.9 s before the replay moved ahead of the setup checks and KyDrive's healthcheck gained a 2 s start interval; a failed replay
+stops the app); the gate trusts the installer's deployment record, not the running binary;
+whoever controls a live target can read that app's backups; and the restore was not tested
+behind another proxy, above the end-to-end test's size, or on hosts without Docker's userland
+proxy.
+
+**After losing the target.** Keep the state directory (`stack.yaml`, `known_hosts`) and the
+recorded password. Prepare the new host as before (SSH user, the credential and CA files),
+then, for KyDrive:
+
+```sh
+./kyquickstart restore kydrive --state ./morning-test                 # list; paste the password when asked
+./kyquickstart restore kydrive --snapshot 1a2b3c4d --state ./morning-test   # password, then type kydrive
+```
+
+Piped instead: `printf '%s\nkydrive\n' "$PW" | ./kyquickstart restore kydrive --snapshot 1a2b3c4d`.
 
 ## Hand-off to KyYard
 

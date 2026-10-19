@@ -46,13 +46,17 @@ Plain terminal planning and command orchestration for the operator-run installer
   the app's target lock (restore also KyIdentity's) and are refused under `owner: runner`.
   `dockerhost.Store` does the target work. `removalGate` refuses restoring an app with an
   `oidc` block unless the plan's KyIdentity deployment record is `replayVersion` (0.4.4) or
-  later (an `existing` KyIdentity is refused); `replayRemovals` runs `resync-system --client
+  later (an `existing` or Docker-placed KyIdentity is refused); `replayRemovals` runs `resync-system --client
   <identity_client> --wait 10m` in KyIdentity's pod (`kube.ExecReport`, which keeps the report
   on failure) and accepts only `delivered`, else `restore_incomplete`. `restoreLocked` refuses a
-  foreign snapshot, a running app and existing data without `--replace`, wants the typed name
+  running app and existing data without `--replace` before contacting the repository, then a
+  foreign snapshot; `--replace`/`--yes` without `--snapshot` are refused; it wants the typed name
   or `--yes`, reads a lost password from `Options.Stdin` (no echo on a terminal) and records
   its stage in `.restore-pending`, so a rerun resumes. `finishRestore` deploys through
-  `dockerhost.RestoreSteps` and `Steps`, then runs the setup steps' `Verify`. `backupLines` adds
+  `dockerhost.RestoreSteps` and `Steps`, replays removals as soon as the app is healthy, then
+  runs the setup steps' `Verify`; for a gated app any failure before the replay is delivered
+  stops the app (decision 11). A cold `backup` says it stops the app and, on failure, whether
+  it runs again. `backupLines` adds
   the backup, restore and password-record lines to apply's handover.
 - Product adapter discovery, bounded reports and activation verification: `product.go`; only implemented product interfaces enter its registry.
 - `immich.go` owns initial setup dispatch for the pinned community Immich module on

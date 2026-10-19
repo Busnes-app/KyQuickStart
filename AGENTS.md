@@ -368,9 +368,10 @@ handover of admin and everyday logins.
 - Restores run in `kyquickstart restore`, never inside KyRecovery: typed confirmation, refusal
   of a running app and, without `--replace` (which moves data aside, never deletes), of any
   existing data. An app whose people come from KyIdentity restores only when the plan's
-  KyIdentity is v0.4.4 or later and reports success only after `resync-system` delivered the
-  replay of removals (`restore_incomplete` otherwise), so a restore never readmits someone
-  removed after the snapshot.
+  KyIdentity is v0.4.4 or later, replays removals with `resync-system` as soon as the app is
+  healthy and keeps the app stopped until that is delivered (`restore_incomplete` otherwise), so
+  a removed person is readmitted only for the measured seconds between the app's start and the
+  replay. A snapshot's symlinked volume, secret or dump is refused.
 - Secrets are generated once on their targets and read back on re-run; the workstation state
   directory never holds a secret.
   Docker generation uses the target's `/dev/urandom` and private temporary files, with
@@ -463,7 +464,8 @@ calls and kind nodes must carry their own explicit bounds.
   `cmd/kyquickstart/release_test.go` runs `scripts/release-binaries.sh` (the stamp in all four
   binaries, its refusals) and checks `release-image.yml`'s job graph, permissions and pins.
 - `make workflow-lint`: needs Docker (CI runs it in `vulncheck`); actionlint v1.7.12 on every
-  workflow and offline, digest-pinned zizmor (medium and up) on `release-image.yml`.
+  workflow and offline, digest-pinned zizmor (medium and up) on `release-image.yml` and
+  `kyoffboard-image.yml`.
 - `make e2e`: needs Docker; runs `apply` against an sshd container on the local Docker socket and
   against a kind cluster (`go run sigs.k8s.io/kind@v0.33.0`), including drift and stale-lock cases.
   Also runs disposable NPM, frpc/frps and cloudflared container tests in `internal/edge`, and
