@@ -28,9 +28,9 @@ e2e:
 		KYQ_TEST_FORGEJO_QUEUE=1 KYQ_TEST_FORGEJO_SCIM=1 KYQ_TEST_FORGEJO_REACTIVATE=1 \
 		go test -race -count=1 -v -timeout 5m -run '^TestNativeAccountInspectionAndOffboarding$$' ./internal/adapters/forgejo
 
-# Needs Docker. Gates release-image.yml; zizmor 1.31.1, offline, no network.
+# Needs Docker. Gates the publishing workflows; zizmor 1.31.1, offline, no network.
 ZIZMOR := ghcr.io/zizmorcore/zizmor@sha256:42d409dbb851d4c5d35a058cf042b828bea1e3f2884378c526eb0974780e18d9
 workflow-lint:
 	go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 	docker run --rm --network none -v "$(CURDIR)/.github:/src/.github:ro" $(ZIZMOR) \
-		--offline --min-severity medium /src/.github/workflows/release-image.yml
+		--offline --min-severity medium /src/.github/workflows/release-image.yml /src/.github/workflows/kyoffboard-image.yml
