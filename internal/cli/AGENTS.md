@@ -72,7 +72,7 @@ Plain terminal planning and command orchestration for the operator-run installer
   separate from Matrix chat/call access, whose assignment composition remains a gate.
 - KyRecovery setup runs explicitly as `kyrecovery`, activates live, commits exact administrator grants with its keyed SQL audit, and never performs the custodian ceremony.
   `appsetup.go` owns apply's catalog apps that sign in through KyIdentity (KyRecovery,
-  kyPulse and KyNotes on Kubernetes, KyDrive on Docker): `composeClients` adds each one's catalog-derived client to the installed
+  kyPulse, KyNotes and KyCalendar on Kubernetes, KyDrive on Docker): `composeClients` adds each one's catalog-derived client to the installed
   KyIdentity's intent in the session only (the saved plan is unchanged; a hand-written client
   must match), `clientSetupStep` (`<app>.setup`) exports that client, places bundle and secrets
   with `placeScript` (secrets no-clobber, kyPulse's bundle replaced, compare-only on check)
@@ -82,8 +82,12 @@ Plain terminal planning and command orchestration for the operator-run installer
   `oidc.scim_token_file` goes into the bundle, and `scimStep` (`kyidentity.scim.<app>`, which
   `deploySteps` puts after the edges) reads that token through the app's driver (`appSecret`),
   places it in KyIdentity's pod with `placeScript` (never replaced) and applies `scimPass`, the
-  registering setup's pass with `scim` added. `recoveryCeremony`, `pulseHandover` and
-  `driveHandover` are what apply prints.
+  registering setup's pass with `scim` added. KyCalendar admits only the identities its setup names: its step
+  adds `everyday`, the owner's everyday account, whose subject `everydaySubject` takes from
+  KyIdentity's read-only `--check` of its first setup (the one reused `user` with the plan's
+  everyday username; any other report is a fixed refusal). `calendarAccounts` (plan, review
+  and apply) refuses owner usernames KyCalendar's setup would refuse. `recoveryCeremony`,
+  `pulseHandover`, `calendarHandover` and `driveHandover` are what apply prints.
   KyNotes' distroless image has no shell: `notesSetupStep` (`kynotes.setup`) reuses
   `transferNotesCredentials` and `notesSetup` with the preparation `notesPreparation` derives
   (catalog client, KyIdentity's issuer, secrets beside the fixed bundle, backup from its env);
