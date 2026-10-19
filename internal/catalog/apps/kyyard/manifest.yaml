@@ -1,0 +1,71 @@
+name: kyyard
+description: KyYard, the suite's fleet administration; runs the suite runner beside it
+category: ky
+version: 0.4.3
+# Release image of v0.4.3 (commit 0bf5e1cb43dcc50ec8ecf2a80edc7b0373050050), attested by
+# Busnes-app/KyYard-server release-image.yml@refs/tags/v0.4.3 (gh attestation verify; the
+# certificate names KyYard-server, so that spelling is the one that verifies).
+images:
+  kyyard: ghcr.io/busnes-app/kyyard:0.4.3@sha256:94c1b9cff3cff2f42e636680979f3535ac07220c99e6f4479b857683d2820756
+# Its setup needs KyIdentity's issuer, client and signed directory.
+depends_on: [kyidentity]
+health:
+  timeout_seconds: 300
+# Admin-only: fleet administration has no everyday workflow, so KyIdentity assigns only the
+# owner's admin account and refuses everyone else. No SCIM (KyYard answers 404) and no
+# automatic provisioning: only the identity its setup creates signs in. Sign-out is local.
+oidc:
+  name: KyYard
+  redirect_paths: [/api/sso/kyidentity/callback]
+  admin_role: kyyard.admin
+  directory_path: /api/installer/directory
+# The SQLite database with its generated session and encryption keys, and the sealed local
+# capsules under /data/backups. The runner's state is not here: handoff recreates it.
+backup:
+  volumes: [data]
+upgrade:
+  # First catalog release (0.4.2 reads no KyIdentity roles); its schema migrates at startup.
+  min_from: 0.4.3
+  migrates_data: true
+kubernetes:
+  image: kyyard
+  env:
+    KY_HOST: 0.0.0.0
+    KY_PORT: "9273"
+    # Ingress is limited to the edge's pods by NetworkPolicy.
+    KY_ALLOW_PLAINTEXT_BIND: "true"
+    # KyYard refuses HTTPS without a trusted proxy. Only this pod's own processes connect over
+    # loopback, so the edge's forwarded headers stay untrusted and no client can spoof its address.
+    KY_TRUSTED_PROXIES: 127.0.0.1
+    KY_APP_NAME: KyYard
+    # Its setup requires the callback to be this plus /api/sso/kyidentity/callback.
+    KY_APP_URL: https://{{host}}
+    KY_DB_DRIVER: sqlite
+    KY_DATA_DIR: /data
+    # Empty disables the local Docker connection: a pod has no Docker socket.
+    KY_DOCKER_SOCKET: ""
+    # Setup refuses either enabled.
+    KY_SSO_ENABLED: "false"
+    KY_SCIM_ENABLED: "false"
+    KY_BACKUP_DIR: /data/backups
+    KY_BACKUP_KEEP: "7"
+    KY_BACKUP_DEPOSIT_INTERVAL: 24h
+    # The runner's socket, for KyYard's Suite page.
+    KY_SUITE_RUNNER_SOCKET: /run/kyquickstart/sock/runner.sock
+    GOMEMLIMIT: 384MiB
+  ports: [9273]
+  readiness_path: /health/ready
+  # The image's kyyard user, which the runner sidecar shares.
+  run_as: 10001
+  resources:
+    cpu: "1"
+    # Idle between requests.
+    cpu_request: 50m
+    memory: 512Mi
+  # Stop drains HTTP (5 s) and a backup deposit already on the wire (17 min).
+  termination_grace_seconds: 1200
+  volumes:
+    - name: data
+      mount: /data
+      size: 10Gi
+  suite_runner: true

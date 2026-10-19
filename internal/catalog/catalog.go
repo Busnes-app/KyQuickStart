@@ -94,7 +94,16 @@ type Kubernetes struct {
 	NodePorts map[int]int `yaml:"node_ports"`
 	// TerminationGraceSeconds lets a stopping pod drain this long; 0 keeps Kubernetes' default.
 	TerminationGraceSeconds int64 `yaml:"termination_grace_seconds"`
+	// SuiteRunner adds the suite runner (kyquickstart serve) as a sidecar sharing only its
+	// socket directory with the app, which runs as the runner's uid and is told the socket.
+	SuiteRunner bool `yaml:"suite_runner"`
 }
+
+const (
+	SuiteRunnerUID    = 10001                                  // the runner image's user
+	SuiteRunnerMount  = "/run/kyquickstart"                    // in both containers
+	SuiteRunnerSocket = SuiteRunnerMount + "/sock/runner.sock" // KY_SUITE_RUNNER_SOCKET
+)
 
 // Resources are both the requests and the limits, except that CPURequest, when set, is a
 // lower CPU request: an app idle between short bursts need not reserve a whole limit.
@@ -122,6 +131,9 @@ type App struct {
 }
 
 type Catalog map[string]App
+
+// Pinned reports whether an image reference is pinned by digest, as the catalog requires.
+func Pinned(ref string) bool { return imageRE.MatchString(ref) }
 
 var (
 	keyRE   = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
@@ -362,6 +374,10 @@ func (k Kubernetes) validate(images map[string]string, baseline, edge bool) erro
 		return fmt.Errorf("node_ports: only edge components publish ports; apps are reached through the edge")
 	case k.TerminationGraceSeconds < 0 || k.TerminationGraceSeconds > 3600:
 		return fmt.Errorf("termination_grace_seconds %d must be 0-3600", k.TerminationGraceSeconds)
+	case k.SuiteRunner && k.RunAs != SuiteRunnerUID:
+		return fmt.Errorf("suite_runner needs run_as %d: the socket admits its own uid only", SuiteRunnerUID)
+	case k.SuiteRunner && k.Env["KY_SUITE_RUNNER_SOCKET"] != SuiteRunnerSocket:
+		return fmt.Errorf("suite_runner needs env KY_SUITE_RUNNER_SOCKET %s", SuiteRunnerSocket)
 	}
 	if err := check(k.Capabilities, func(c string) bool { return slices.Contains(baselineCaps, c) }); err != nil {
 		return fmt.Errorf("capabilities: %w must be unique and one of %v", err, baselineCaps)
@@ -387,13 +403,13 @@ func (k Kubernetes) validate(images map[string]string, baseline, edge bool) erro
 	if !sizeRE.MatchString(k.Resources.Memory) {
 		return fmt.Errorf("resources.memory %q must look like 64Mi or 1Gi", k.Resources.Memory)
 	}
-	mounts := map[string]bool{"/tmp": true, "/run/secrets": true}
+	mounts := map[string]bool{"/tmp": true, "/run/secrets": true, SuiteRunnerMount: k.SuiteRunner}
 	for _, v := range k.Volumes {
 		switch {
 		case !volRE.MatchString(v.Name):
 			return fmt.Errorf("volumes: name %q must match %s", v.Name, volRE)
 		case !mountRE.MatchString(v.Mount) || mounts[v.Mount]:
-			return fmt.Errorf("volumes: mount %q must be a unique absolute path, not /tmp or /run/secrets", v.Mount)
+			return fmt.Errorf("volumes: mount %q must be a unique absolute path, not /tmp, /run/secrets or the runner's", v.Mount)
 		case !sizeRE.MatchString(v.Size):
 			return fmt.Errorf("volumes: size %q must look like 1Gi", v.Size)
 		}

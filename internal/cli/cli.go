@@ -74,6 +74,9 @@ type Options struct {
 	// and its SSH key file in place of the agent.
 	RunnerID string
 	SSHKey   string
+	// RunnerImage is the digest-pinned suite runner image the catalog KyYard runs beside it.
+	// Without one the workstation refuses to deploy KyYard.
+	RunnerImage string
 }
 
 func Run(ctx context.Context, args []string, o Options) error {
@@ -145,7 +148,12 @@ func Run(ctx context.Context, args []string, o Options) error {
 	if *takeOver != "" && !slices.ContainsFunc(s.targets, func(t stack.Target) bool { return t.Name == *takeOver }) {
 		return suite.Errorf(suite.UnknownTarget, "--take-over-target %q is not a target this plan deploys to", *takeOver)
 	}
-	s.adopt, s.takeOver = *adopt, *takeOver
+	s.adopt, s.takeOver, s.deploys = *adopt, *takeOver, cmd == "apply"
+	if cmd != "verify-edge" {
+		if err := s.runnerImage(); err != nil {
+			return err
+		}
+	}
 	var publishPlan func() error
 	if cmd == "apply" {
 		if publishPlan, err = s.ensureInstallation(*state); err != nil {
@@ -217,6 +225,7 @@ func (t trustFlag) Set(v string) error {
 
 type session struct {
 	changesPlan  bool          // install, uninstall or unmanage; refused on a runner-owned target
+	deploys      bool          // apply or upgrade: redeploys every app in order
 	owner        *stack.Marker // set by a published handoff: the owner markers now record
 	integrations []stack.Integration
 	allTargets   []stack.Target
@@ -330,6 +339,9 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 	if s.order, err = plan.Order(names, cat); err != nil {
 		return nil, err
 	}
+	if err := yardPlan(st); err != nil {
+		return nil, err
+	}
 	for name, t := range s.placed {
 		app := cat[name]
 		switch {
@@ -437,7 +449,7 @@ func (s *session) connect(ctx context.Context, trust trustFlag) error {
 			return err
 		}
 		if k, ok := d.(kubeDriver); ok {
-			k.edge, k.nodePorts, k.upstreams = s.edgeApp(t.Name), s.nodePorts(t.Name), s.upstreams(t.Name)
+			k.edge, k.nodePorts, k.upstreams, k.runnerImage = s.edgeApp(t.Name), s.nodePorts(t.Name), s.upstreams(t.Name), s.o.RunnerImage
 			d = k
 		}
 		s.drivers[t.Name] = d
@@ -643,6 +655,11 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 	}
 	var steps, held, connectors []engine.Step
 	for _, name := range s.order {
+		if s.o.RunnerID != "" && hostsRunner(s.cat[name]) {
+			// Neither read nor written: redeploying it would stop this runner mid-operation.
+			steps = append(steps, noteStep{id: name + ".runner", note: runnerSelfNote})
+			continue
+		}
 		d := s.drivers[s.placed[name].Name]
 		deployed, err := d.deployed(ctx, name)
 		if err != nil {
@@ -785,6 +802,8 @@ func (s *session) guard(target string, m stack.Marker) error {
 		return suite.Errorf(suite.OwnedByRunner, "%s is owned by runner %s, not this runner; rerun kyquickstart handoff to move it here", target, m.RunnerID)
 	case s.o.RunnerID == "" && m.Owner == "runner" && s.changesPlan:
 		return suite.Errorf(suite.OwnedByRunner, "%s is managed by the KyYard suite runner; change it from KyYard's Suite page, or run kyquickstart handoff --revoke", target)
+	case s.o.RunnerID == "" && m.Owner == "runner" && s.deploys && slices.ContainsFunc(s.order, func(a string) bool { return hostsRunner(s.cat[a]) }):
+		return suite.Errorf(suite.OwnedByRunner, "%s is managed by the suite runner in KyYard's pod, which this command could replace mid-operation; run kyquickstart handoff --revoke, then this command, then handoff again", target)
 	}
 	return nil
 }

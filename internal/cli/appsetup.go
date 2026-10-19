@@ -121,6 +121,8 @@ func (s *session) composeClients(st *stack.Stack) error {
 		case "kydns":
 			e, r := appRoute(st, "kydns")
 			s.handover += fmt.Sprintf(dnsHandover, host, n.Admin.Username, net.JoinHostPort(r.ForwardHost, "53"), s.placed["kydns"].Name, r.ForwardHost, r.ForwardPort, e.EgressAddress)
+		case "kyyard":
+			s.handover += yardHandover(s.state, host, n.Admin.Username, s.placed["kyyard"])
 		case "kycalendar":
 			s.handover += fmt.Sprintf(calendarHandover, host, n.Admin.Username, n.Everyday.Username, kubectl(s.state, s.placed["kycalendar"]))
 		case "kypost":
