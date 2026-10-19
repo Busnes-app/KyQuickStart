@@ -474,9 +474,9 @@ func checkBackupHandover(t *testing.T, out, app string, target stack.Target) {
 	t.Helper()
 	want := []string{
 		app + " backups: kyquickstart backup " + app + " takes an encrypted snapshot to " + target.Backup.Repository + "/" + app + "; nothing runs on a schedule.",
-		"  Restore: kyquickstart restore " + app + " lists its snapshots; add --snapshot ID to restore one.",
 		"  After the first backup, read its repository password once into your printed record (a lost",
 		"  target cannot be restored without it): ssh -p " + strconv.Itoa(target.Port) + " " + target.User + "@" + target.Host + " cat " + target.Root + "/" + app + "/secrets/restic_password",
+		"  Restore: kyquickstart restore " + app + " lists its snapshots; add --snapshot ID to restore one.",
 	}
 	lines := strings.Split(out, "\n")
 	for i, l := range lines {
