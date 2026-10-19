@@ -991,6 +991,116 @@ Limits and unproven:
 - Not configured: replicas, DHCP, blocklists and upstreams (KyDNS's defaults), back-channel
   logout, installer backup enrollment.
 
+## Catalog KyPost on Docker
+
+The catalog's `kypost` app installs KyPost 0.4.2, a webmail client for mail accounts the owner
+already has, from its attested release image (`ghcr.io/busnes-app/kypost-server:0.4.2@sha256:23b5…2353`,
+built by `Busnes-app/KyPost-Server` `release-image.yml@refs/tags/v0.4.2` from commit
+`621b4d18`). Docker only: a plan placing it on a cluster is refused by `plan`, `review` and
+`apply` before any connection. It depends on the catalog `kyidentity`, which may run on another
+target, and its one route may sit on the cluster's `lan` edge, as KyDrive's does.
+
+```yaml
+apps:
+  - name: kypost
+    target: docker02
+edges:
+  - target: k80
+    routes:
+      - app: kypost
+        hostname: post.k80.example.com
+        forward_host: 192.168.1.91      # an IP of docker02: KyPost publishes only there
+        forward_port: 18866
+        certificate: k80
+        status_path: /api/installer/network
+integrations:
+  - product: kypost
+    target: docker02
+    bundle: /kypost/private/installer/<a setup UUID>/setup.json
+    identity_client: kypost
+```
+
+Its client is `https://<route URL host>/api/auth/oidc/callback` with roles `kypost.admin` (the
+owner's admin account) and `kypost.user` (the everyday account), and no directory or SCIM.
+Installed with KyIdentity, the client is in KyIdentity's first setup; installed later, it joins
+through a setup amendment (`kyidentity.amend.kypost`, KyIdentity 0.4.3 or later).
+
+What apply does:
+
+- `kypost.deploy` and `kypost.health`: KyPost's own Compose service without its root
+  entrypoint. The stock entrypoint starts as root to chown its volumes and needs CHOWN, SETUID,
+  SETGID and DAC_OVERRIDE; the catalog runs the same bootstrap, migration and supervisor
+  (`kypost-server --mode bootstrap-admin && kypost-server migrate-native && exec supervisord`)
+  as `kypost` (uid 1000) with every capability dropped, `no-new-privileges`, a read-only root,
+  8 GiB, 4 CPUs, 512 PIDs and 36 minutes to stop (API and daemon each drain up to 1000 s, one
+  after the other). Its named volumes `config`, `private`, `state`, `logs` and `ollama-models`
+  start from the image's kypost-owned 0700 directories. Two tmpfs mounts are needed and no more:
+  `/tmp` (supervisord refuses to start without a temporary directory) and `/home/kypost` (Ollama
+  writes its key under `~/.ollama`). Health is its `/api/health`, with a 180 s start allowance.
+- `SERVER_BASE_URL` is `https://<route URL host>`: its callback, and Secure session cookies.
+  Native mail, receiving and the receiver are off. The catalog sets no `PAIRING_SECRET`,
+  `POW_SECRET`, `BOOTSTRAP_ADMIN_*`, `TRUSTED_PROXY_CIDRS`, TLS or SMTP settings: KyPost
+  generates its own keys in `/kypost/private` at first start, and its break-glass password goes
+  to a file, never into `docker inspect`.
+- `kypost.setup`, after its health and before the edges (KyPost's setup makes no call to
+  KyIdentity; discovery happens at sign-in): KyIdentity's `--export-client` frame is read into
+  memory, the client secret and then KyPost's native bundle are placed as 0600 files, as
+  `kypost`, in the bundle's directory through `docker exec` over SSH, never replacing one. The
+  bundle is `{"version":1,"sso":{"enabled":true,"issuerUrl":…,"clientId":"kypost","autoProvision":true},"clientSecretFile":…}`.
+  Then `apply-setup` runs as `kypost`, SSO applies live (KyPost re-reads it per request), and
+  KyIdentity is re-exported to confirm nothing changed. KyPost's report always lists its
+  external gates as pending: relay, receiving, everyday assignment, backup/restore and
+  HTTPS/proxy. A rerun skips.
+
+Who signs in: KyPost creates an account at first sign-in for anyone KyIdentity lets through,
+binding it to KyIdentity's issuer and subject, never to a username (a taken name gets a
+suffix). KyIdentity's assignment to the `kypost` client is the gate: assign `kypost.user` to
+anyone else who should sign in. `kypost.admin` in the token's roles makes an administrator.
+
+Mail ports: KyPost 0.4.2 has no IMAP, POP3, SMTP or submission listener; it reads and sends
+through each user's existing provider, outbound. So apply publishes only HTTP 5866, on the
+forward address, and nothing for mail. Inbound port 25 exists only with KyPost's receiving
+overlay (an operator-supplied Maddy binary, receiving TLS, MX/DNS, a domain challenge and a
+relay), which upstream calls a qualification profile and has not shipped for production; apply
+installs none of it, and no `domains`, relay or native mail. KyPost refuses a user's mail server
+on a private address unless `SANDBOX_PRIVATE_HOSTS` names it; the catalog leaves it empty.
+
+Handover: apply prints KyPost's URL, the admin account (for administration only; in this
+release it can also add mail accounts, so keep mail to the everyday account), the everyday
+account, the assignment rule above and the mail-port facts. Outstanding human steps it names:
+
+- The local break-glass `admin`, created with a must-change password in
+  `/kypost/config/first-run-password.txt` (0600, owned by kypost). On the Docker target:
+  `docker exec --user kypost kyq-kypost-app-1 cat /kypost/config/first-run-password.txt`. Sign in
+  once and change it; only then delete the file (the same command with `rm`). Apply never reads
+  it.
+- Offboarding: KyPost has no directory, so disabling or unassigning someone in KyIdentity stops
+  new sign-ins but not a live KyPost session. Sessions live in memory: `docker restart
+  kyq-kypost-app-1` on the target ends every one (the kind test proves it).
+- Pairing with KyRecovery, after its custodian ceremony, with a fresh one-time code from
+  KyRecovery's administrator.
+
+Limits and residuals:
+
+- No directory: KyPost verifies the signed webhook only against its own pairing key or SSO
+  client secret, while KyIdentity signs with a secret it generates. Handing KyIdentity KyPost's
+  pairing key would also give it KyPost's pickup and device-pairing authority, so the catalog
+  gives KyPost no `directory_path`. Back-channel logout is not registered either.
+- Forwarded headers are untrusted (`TRUSTED_PROXY_CIDRS` empty), so no client can spoof its
+  address, but KyPost sees the edge as every client: everyone shares one rate-limit bucket, and
+  `verify-edge` fails for its route. The Docker NAT on a host can also hide the edge's own
+  address, so an exact trusted proxy cannot be proven there.
+- Ollama pulls its model (`nemotron-3-nano:4b`, about 2.9 GB) by tag at first start and retries
+  until it has it. Weights are data, not code, and the image's hash-pinned embedding sorter
+  labels mail meanwhile. KyPost also checks GitHub for new releases.
+- The port is published only on the forward address, but, as for KyDrive, that does not limit
+  who on the LAN may connect: see the firewall note under KyDrive.
+- Unproven: separation of the admin account from mail (an upstream gate in this mode), and real
+  IMAP/SMTP mail exchange; the kind test proves sign-in and sessions only. Not configured: native
+  mail and receiving, KyRecovery pairing, bulk restic backups, mobile or desktop pairing, push
+  relays, CAPTCHA and Kubernetes placement. kyPulse does not watch it (no readiness path on
+  Docker).
+
 ## Existing KyIdentity setup
 
 The first real product adapter is `integrate-identity`. It runs the selected
