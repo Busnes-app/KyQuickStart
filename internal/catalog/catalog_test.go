@@ -135,6 +135,39 @@ func TestKyNotesEntry(t *testing.T) {
 	}
 }
 
+func TestKyCalendarEntry(t *testing.T) {
+	cat, err := Load(Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := cat["kycalendar"]
+	k, o := a.Kubernetes, a.OIDC
+	if a.Category != "ky" || a.Version != "0.4.2" || a.PodSecurity != "restricted" || a.Compose != nil || len(a.Secrets) != 0 || !slices.Equal(a.DependsOn, []string{"kyidentity"}) {
+		t.Fatalf("manifest = %+v", a.Manifest)
+	}
+	if a.Images[k.Image] != "ghcr.io/busnes-app/kycalendar:0.4.2@sha256:7ed435458a08c9dd02674657cc55aa6aaef96a254256c14880e27fc93c1cf75b" ||
+		k.RunAs != 10001 || k.ReadinessPath != "/api/installer/network" || !slices.Equal(k.Ports, []int{8080}) || k.TerminationGraceSeconds != 1200 || !k.UsesHost() {
+		t.Fatalf("kubernetes = %+v", k)
+	}
+	// Setup refuses SCIM, automatic provisioning and a set admin password; forwarded headers stay untrusted.
+	for _, name := range []string{"KY_ADMIN_PASSWORD", "KY_SCIM_TOKEN", "KY_SCIM_ENABLED", "KY_TRUSTED_PROXIES"} {
+		if _, ok := k.Env[name]; ok {
+			t.Errorf("env sets %s", name)
+		}
+	}
+	if k.Env["KY_SSO_AUTO_PROVISION"] != "false" || k.Env["KY_SSO_ENABLED"] != "true" || k.Env["KY_APP_URL"] != "https://{{host}}" ||
+		k.Env["KY_DATA_DIR"] != k.Volumes[0].Mount || k.Env["KYCALENDAR_BACKUP_DIR"] != k.Volumes[1].Mount {
+		t.Fatalf("env = %v", k.Env)
+	}
+	if o.Name != "KyCalendar" || o.AdminRole != "kycalendar.admin" || o.UserRole != "kycalendar.user" || !slices.Equal(o.RedirectPaths, []string{"/api/sso/kysignon/callback"}) ||
+		o.DirectoryPath != "/api/sso/kysignon/sync" || o.SCIMTokenFile != "" || o.BackchannelLogoutPath != "" || o.Public {
+		t.Fatalf("oidc = %+v", o)
+	}
+	if a.Backup == nil || !slices.Equal(a.Backup.Volumes, []string{"data", "backups"}) || a.Upgrade.MinFrom != "0.4.2" || !a.Upgrade.MigratesData {
+		t.Fatalf("upgrade %+v, backup %+v", a.Upgrade, a.Backup)
+	}
+}
+
 func TestKyDriveEntry(t *testing.T) {
 	cat, err := Load(Embedded())
 	if err != nil {

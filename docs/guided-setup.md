@@ -679,6 +679,96 @@ Limits:
   back-channel logout); a directory event (offboarding) reaching KyNotes is not proven live;
   KyRecovery pairing, `KYNOTES_BLOB_TARGET` and restic/K8up blob backups are not configured.
 
+## Catalog KyCalendar on Kubernetes
+
+The catalog's `kycalendar` app installs KyCalendar 0.4.2 from its attested release image
+(`ghcr.io/busnes-app/kycalendar:0.4.2@sha256:7ed4…f75b`, built by `Busnes-app/KyCalendar`
+`release-image.yml@refs/tags/v0.4.2` from commit `5b7b3c60`). It depends on the catalog
+`kyidentity` and needs one edge route. Kubernetes only: a plan placing it on a Docker host is
+refused by `plan`, `review` and `apply` before any connection. Its integration names its client
+and a bundle whose directory is its own setup UUID:
+
+```yaml
+apps:
+  - name: kycalendar
+    target: k80
+edges:
+  - target: k80
+    routes:
+      - app: kycalendar
+        hostname: calendar.k80.example.com
+        forward_host: app.kyq-kycalendar.svc.cluster.local
+        forward_port: 8080
+        certificate: k80
+integrations:
+  - product: kycalendar
+    target: k80
+    bundle: /app/data/installer/<its own setup UUID>/setup.json
+    identity_client: kycalendar
+```
+
+Its client is derived from the catalog: `https://<host>/api/sso/kysignon/callback`,
+administrator role `kycalendar.admin` for the owner's admin account, everyday role
+`kycalendar.user`, and KyIdentity's signed directory webhook at
+`https://<host>/api/sso/kysignon/sync` (KyCalendar refuses SCIM). Installed with KyIdentity, the
+client is in KyIdentity's first setup; installed later, it joins through a setup amendment
+(`kyidentity.amend.kycalendar`, KyIdentity 0.4.3 or later).
+
+Owner usernames: KyCalendar's setup accepts only `^[A-Za-z0-9_.-]{3,64}$` (3 to 64 letters,
+digits, `.`, `_` or `-`; no spaces or `@`) and never adopts an existing account, and its first
+start creates a local `admin`. `plan`, `review` and `apply` therefore refuse, before connecting,
+a plan installing KyCalendar whose KyIdentity admin or everyday username breaks that rule or is
+`admin` in any case. The message names which of the two to change.
+
+What apply does:
+
+- `kycalendar.deploy` and `kycalendar.health`: a restricted pod as the image's user (uid 10001),
+  read-only root, `/app/data` and `/app/backups` on private claim subdirectories, and a 20-minute
+  termination grace (5 s HTTP drain plus a backup deposit already on the wire). It has no health
+  endpoint; readiness is `GET /api/installer/network`. SSO is on, automatic provisioning off,
+  `KY_APP_URL` comes from the route, and `KY_TRUSTED_PROXIES` is unset, so forwarded headers
+  from the edge are ignored and no client can spoof its address.
+- `kycalendar.setup`, after its health and before the edges, like kyPulse's (KyCalendar does
+  not probe the issuer at setup and has no open first-run web setup): KyIdentity's
+  `--export-client` frame is read into memory; KyIdentity's read-only `apply-setup --check` of
+  its first setup gives the everyday account's subject (the one reused `user` object with the
+  plan's everyday username; a missing, duplicate or created entry is refused). The client and
+  directory secrets, then the bundle, are placed as 0600 files through the pod's shell, never
+  replacing one: a changed secret or subject is refused, not overwritten. The bundle names the
+  owner's admin account (subject from the export) in `admins` and the everyday account in
+  `everyday`. Then `apply-setup` runs, KyCalendar restarts gracefully, its live `--check` passes,
+  and KyIdentity is re-exported to confirm nothing changed. A rerun skips.
+
+KyCalendar admits only those two identities: it creates no account at sign-in, and the
+directory webhook updates only accounts its setup created. More users need a later setup
+amendment, which apply does not yet make.
+
+Before signing in: KyCalendar fetches KyIdentity's discovery at the first sign-in and exchanges
+tokens at KyIdentity's public URL from its pod. So cluster DNS must resolve the route
+hostnames, the edge must admit the pod network (on K80, `10.0.0.0/8` in `allow_cidrs`), and the
+pod must trust the edge's certificate (a public CA does; the kind test adds its throwaway CA).
+
+Handover: apply prints KyCalendar's URL, the admin account (its console only: it cannot open
+calendars, app passwords or CalDAV) and the everyday account (calendars; it cannot reach
+administration). Outstanding human steps it names:
+
+- The local break-glass `admin`: its one-time password is in `/app/data/initial-admin-password`
+  (0600). The handover prints the commands with the target's kubeconfig (and context, if set):
+  `kubectl --kubeconfig <target kubeconfig> -n kyq-kycalendar exec deployment/app -- cat
+  /app/data/initial-admin-password`. Sign in with it once and change it; only then delete the
+  file (the same command with `rm`), since it is the only copy. Apply never reads it and never
+  sets `KY_ADMIN_PASSWORD`.
+- Pairing with KyRecovery: on the Backup & recovery screen, a one-time code from KyRecovery's
+  administrator, or the suite public key pinned by hand. KyCalendar makes no backups until then.
+
+Limits:
+
+- Not yet, or unproven: Docker placement; everyday accounts beyond the owner's; sign-out is
+  local (no back-channel logout); a directory event (offboarding) reaching KyCalendar is not
+  proven live; real CalDAV clients with app passwords are not tested (the kind test proves the
+  web/API session only); KyRecovery pairing, PostgreSQL mode, MCP access and ICS subscriptions
+  are not configured.
+
 ## Catalog KyDrive on Docker
 
 The catalog's `kydrive` app installs KyDrive 0.4.2 from its attested release image on a Docker
