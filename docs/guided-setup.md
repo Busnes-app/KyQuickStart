@@ -940,15 +940,23 @@ What apply does:
   sends `GET http://<forward_host>:<forward_port>/api/v1/installer/network` with
   `X-Forwarded-Proto: https`, and the step passes only on 403. Anything else fails apply,
   naming `egress_address`: KyDNS trusts a peer other than the edge. If the workstation cannot
-  reach that port, the step fails too (nothing was proven); run apply from a LAN host that
-  does. A KyYard runner pod on the node running NPM would be seen as the edge and fail it.
+  reach that port, the step fails too (nothing was proven, nothing changed): KyDNS is installed
+  and set up, and rerunning apply from a LAN host that reaches the port finishes. A KyYard
+  runner pod on the node running NPM would be seen as the edge and fail it.
+- `kydns.edge`, after the edges: from the catalog NPM's pod, where its proxied requests leave
+  from, `curl` asks the same URL with `X-Forwarded-Proto: https`, and the step passes only on
+  200 with `proxyHeadersTrusted: true` and scheme `https`. Otherwise apply fails, naming the
+  edge and `egress_address`: KyDNS's admin UI would answer 403 through the route (NPM moved
+  node, a wrong address, or a Docker host that hides client addresses). Both checks only read.
+  KyDNS's route must be on the catalog NPM on a cluster; any other edge is refused before any
+  step runs.
 
 With no local password, KyDNS's setup creates a disabled local admin slot, which closes its
 token-gated first-run `/setup` (it redirects to `/login`). The `setup-token` it wrote on first
 start is dead from then on; it stays on the target only.
 
 Handover: apply prints KyDNS's URL, the admin account (the one account it admits), the DNS
-address `<forward_host>:53`, and these outstanding human steps:
+address `<forward_host>:53`, then these outstanding human steps, then its notes:
 
 - Point clients at `forward_host` for DNS: the router's DHCP DNS server, or each client by
   hand. Apply changes no resolver, DHCP server or the edge's `lan_dns`.
@@ -958,9 +966,9 @@ address `<forward_host>:53`, and these outstanding human steps:
 - Pair with KyRecovery on the Backups screen, signed in as that local administrator: a managed
   (KyIdentity) administrator cannot enroll KyDNS's first recovery key.
 
-It also names the firewall facts: ports 53 and `forward_port` are open on `forward_host`; the
-admin UI trusts forwarded requests only from `egress_address` (apply checked it refuses the
-workstation); DNS answers the private ranges KyDNS sees (its default `allow_query`). Both rest
+The notes name the firewall facts: ports 53 and `forward_port` are open on `forward_host`; the
+admin UI trusts forwarded requests only from `egress_address` (apply checked the edge is trusted
+and the workstation refused); DNS answers the private ranges KyDNS sees (its default `allow_query`). Both rest
 on the Docker host showing KyDNS real client addresses, so it tells the operator to restrict
 both ports to the LAN and the edge at the host or network firewall.
 
@@ -970,7 +978,7 @@ Limits and unproven:
   `allow_query` see the peer address Docker hands the container. On this workstation (Docker
   29, iptables backend, userland proxy on) every connection to a published port arrives from
   the `kyq-kydns_default` network's gateway, whatever its source. There KyDNS refuses the edge
-  (403 through the route): fail closed, and the admin UI is unusable. Do not set
+  (403 through the route) and `kydns.edge` fails apply: fail closed. Do not set
   `egress_address` to that gateway: every peer would pass the gate with a forged
   `X-Forwarded-Proto`, and every DNS client would look private. `kydns.gate` refuses that
   setting. Whether hosts with the userland proxy off, firewalld or nftables keep client

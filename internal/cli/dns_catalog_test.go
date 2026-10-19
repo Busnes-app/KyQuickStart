@@ -165,9 +165,9 @@ func TestKyDNSClientFromCatalog(t *testing.T) {
 	for _, want := range []string{
 		"KyDNS at https://dns.example.com/: sign in through KyIdentity as owner-admin, the one account it admits",
 		"It answers DNS at 192.0.2.1:53 (UDP and TCP)",
-		"ports 53 and 18053 are open on 192.0.2.1. Its admin UI on 18053 trusts forwarded\n  requests only from egress_address 192.168.1.20, and apply checked that it refuses this workstation.",
-		"restrict both ports to your LAN and the edge at the host or network firewall",
-		"KyDNS is not\n  supported on such a host. Never set egress_address to a Docker network gateway",
+		"Firewall: ports 53 and 18053 are open on 192.0.2.1. Its admin UI on 18053 trusts forwarded\n    requests only from egress_address 192.168.1.20; apply checked that the edge is trusted and this\n    workstation is refused.",
+		"restrict both ports to your LAN and the edge at\n    the host or network firewall",
+		"Never set egress_address to a Docker network gateway",
 		"Point clients at 192.0.2.1 for DNS: your router's DHCP DNS server",
 		"From an interactive shell on nas\n     (ssh -t, so the password does not echo), set one:\n       docker exec -it kyq-kydns-app-1 /usr/local/bin/kydns admin reset-password",
 		"Pair it with KyRecovery",
@@ -175,6 +175,10 @@ func TestKyDNSClientFromCatalog(t *testing.T) {
 		if !strings.Contains(s.handover, want) {
 			t.Errorf("handover lacks %q:\n%s", want, s.handover)
 		}
+	}
+	// The steps every operator must take come before the notes.
+	if steps, notes := strings.Index(s.handover, "Outstanding human steps:"), strings.Index(s.handover, "  Notes:"); steps < 0 || notes < steps || strings.Index(s.handover, "Firewall:") < notes {
+		t.Errorf("handover order:\n%s", s.handover)
 	}
 	// The compose file the session deploys: the route's address and the edge's egress address.
 	c := string(s.cat["kydns"].Compose)
@@ -552,8 +556,16 @@ func TestKyDNSSetupBeforeEdges(t *testing.T) {
 	setup := slices.Index(order, "kydns.setup")
 	firstEdge := slices.IndexFunc(order, func(id string) bool { return strings.HasPrefix(id, "k1.edge.") })
 	route := slices.IndexFunc(list, func(st engine.Step) bool { return edge.RouteApp(st) == "kydns" })
-	if gate := slices.Index(order, "kydns.gate"); setup < 1 || order[setup-1] != "kydns.health" || gate != setup+1 || firstEdge < 0 || gate > firstEdge || route < firstEdge {
+	if gate := slices.Index(order, "kydns.gate"); setup < 1 || order[setup-1] != "kydns.health" || gate != setup+1 || firstEdge < 0 || gate > firstEdge || route < firstEdge || order[len(order)-1] != "kydns.edge" {
 		t.Fatalf("steps = %v", order)
+	}
+	if e, ok := list[len(list)-1].(edgeTrustStep); !ok || e.url != "http://192.0.2.1:18053/api/v1/installer/network" || e.egress != "192.168.1.20" || e.edge != "k1" {
+		t.Fatalf("edge check = %+v", list[len(list)-1])
+	}
+	// The check asks from the catalog NPM's pod; another edge cannot be checked and is refused.
+	delete(s.placed, "npm")
+	if _, err := s.deploySteps(context.Background()); err == nil || !strings.Contains(err.Error(), "catalog NPM on a cluster") {
+		t.Fatalf("edge without the catalog NPM: %v", err)
 	}
 }
 
@@ -615,7 +627,39 @@ func TestKyDNSGate(t *testing.T) {
 		}
 	}
 	peer.Close()
-	if err := g.Apply(ctx); err == nil || !strings.Contains(err.Error(), "could not reach KyDNS's admin port") {
+	if err := g.Apply(ctx); err == nil || !strings.Contains(err.Error(), "could not reach KyDNS's admin port") || !strings.Contains(err.Error(), "read-only") ||
+		!strings.Contains(err.Error(), "KyDNS is installed and set up; rerunning apply from a LAN host that reaches port "+g.port()+" is safe") {
 		t.Fatalf("unreachable: %v", err)
+	}
+}
+
+// kydns.edge passes only when KyDNS, asked from NPM's pod with the edge's header, reports the
+// edge's headers trusted over https.
+func TestKyDNSEdgeTrust(t *testing.T) {
+	ctx := context.Background()
+	var args []string
+	for _, c := range []struct {
+		out  string
+		err  error
+		pass bool
+	}{
+		{`{"clientIp":"192.168.1.20","proxyHeadersTrusted":true,"scheme":"https"}`, nil, true},
+		{`{"clientIp":"192.168.16.1","proxyHeadersTrusted":false,"scheme":"http"}`, nil, false},
+		{`{"proxyHeadersTrusted":true,"scheme":"http"}`, nil, false},
+		{"", errors.New("exit status 7"), false}, // KyDNS unreachable
+		{"not json", nil, false},
+	} {
+		e := edgeTrustStep{url: "http://192.0.2.1:18053/api/v1/installer/network", edge: "k1", egress: "192.168.1.20",
+			curl: func(_ context.Context, a []string) ([]byte, error) { args = a; return []byte(c.out), c.err }}
+		err := e.Verify(ctx)
+		if c.pass != (err == nil) || err != nil && !strings.Contains(err.Error(), "KyDNS does not trust edge k1 at egress_address 192.168.1.20") {
+			t.Errorf("%q: %v", c.out, err)
+		}
+		if done, _ := e.Inspect(ctx); done != c.pass {
+			t.Errorf("%q: inspected done = %v", c.out, done)
+		}
+	}
+	if !slices.Equal(args, []string{"-sS", "-m", "10", "-H", "X-Forwarded-Proto: https", "http://192.0.2.1:18053/api/v1/installer/network"}) {
+		t.Fatalf("curl args = %q", args)
 	}
 }

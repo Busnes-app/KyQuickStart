@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"path"
 	"path/filepath"
 	"reflect"
@@ -277,14 +278,6 @@ KyCalendar at https://%[1]s/: sign in through KyIdentity as %[2]s (its console o
 const dnsHandover = `
 KyDNS at https://%[1]s/: sign in through KyIdentity as %[2]s, the one account it admits
   (KyIdentity refuses everyone else). It answers DNS at %[3]s (UDP and TCP).
-  Firewall: ports 53 and %[6]d are open on %[5]s. Its admin UI on %[6]d trusts forwarded
-  requests only from egress_address %[7]s, and apply checked that it refuses this workstation.
-  DNS answers the private ranges KyDNS sees. Both rest on the Docker host showing KyDNS real
-  client addresses; restrict both ports to your LAN and the edge at the host or network firewall.
-  If its UI answers 403 through the edge, KyDNS does not see the edge at %[7]s: NPM moved node,
-  or the Docker host hides client addresses (Docker's userland proxy does). KyDNS is not
-  supported on such a host. Never set egress_address to a Docker network gateway: every peer
-  looks like it.
   Outstanding human steps:
   1. Point clients at %[5]s for DNS: your router's DHCP DNS server, or each client by hand.
   2. Its local recovery administrator has no password. From an interactive shell on %[4]s
@@ -293,6 +286,13 @@ KyDNS at https://%[1]s/: sign in through KyIdentity as %[2]s, the one account it
      It asks for the password twice. Use it only to recover, at https://%[1]s/login.
   3. Pair it with KyRecovery on its Backups screen, signed in as that local administrator:
      %[2]s cannot enroll its first recovery key. It makes no backups until then.
+  Notes:
+  - Firewall: ports 53 and %[6]d are open on %[5]s. Its admin UI on %[6]d trusts forwarded
+    requests only from egress_address %[7]s; apply checked that the edge is trusted and this
+    workstation is refused. DNS answers the private ranges KyDNS sees. Both rest on the Docker
+    host showing KyDNS real client addresses: restrict both ports to your LAN and the edge at
+    the host or network firewall.
+  - Never set egress_address to a Docker network gateway: every peer can look like it.
 `
 
 // appRoute is app's one edge route and its edge, which routeHost has found.
@@ -737,7 +737,18 @@ func (s *session) setupSteps(d driver, i stack.Integration) (steps []engine.Step
 		}
 		step.setup = waitForSocket(host.c, path.Join(host.t.Root, "kydns/data/installer/setup.sock"), host.t.Name, adapter.setup)
 		e, r := appRoute(s.plan, "kydns")
-		return []engine.Step{step, gateStep{url: "http://" + net.JoinHostPort(r.ForwardHost, strconv.Itoa(r.ForwardPort)) + "/api/v1/installer/network", edge: e.Target, egress: e.EgressAddress, target: host.t.Name}}, nil, nil
+		network := "http://" + net.JoinHostPort(r.ForwardHost, strconv.Itoa(r.ForwardPort)) + "/api/v1/installer/network"
+		npm, ok := s.drivers[e.Target].(kubeDriver)
+		if !ok || s.placed["npm"].Name != e.Target {
+			return nil, nil, fmt.Errorf("KyDNS's route must be on the catalog NPM on a cluster, which apply checks KyDNS trusts; edge %s is not", e.Target)
+		}
+		curl, _, err := nativeProductExec(npm, stack.Integration{Product: "npm"}, productAdapter{binary: "curl"})
+		if err != nil {
+			return nil, nil, err
+		}
+		// kydns.edge runs after the edges, as connectors do: it asks from NPM's pod.
+		return []engine.Step{step, gateStep{url: network, edge: e.Target, egress: e.EgressAddress, target: host.t.Name}},
+			edgeTrustStep{url: network, edge: e.Target, egress: e.EgressAddress, curl: curl}, nil
 	}
 	if step.place, err = place(d, i, adapter.runtimeUser); err != nil {
 		return nil, nil, err
@@ -830,6 +841,12 @@ func (g gateStep) InputHash() string                         { return g.url + " 
 func (g gateStep) Inspect(ctx context.Context) (bool, error) { return g.Verify(ctx) == nil, nil }
 func (g gateStep) Apply(ctx context.Context) error           { return g.Verify(ctx) }
 
+// port is the admin port the probe asks.
+func (g gateStep) port() string {
+	u, _ := url.Parse(g.url)
+	return u.Port()
+}
+
 func (g gateStep) Verify(ctx context.Context) error {
 	c := g.client
 	if c == nil {
@@ -843,11 +860,36 @@ func (g gateStep) Verify(ctx context.Context) error {
 	req.Header.Set("X-Forwarded-Proto", "https")
 	res, err := c.Do(req)
 	if err != nil {
-		return fmt.Errorf("could not reach KyDNS's admin port at %s from this workstation to prove it refuses every peer but the edge; run apply from a host on the LAN that reaches it", g.url)
+		return fmt.Errorf("could not reach KyDNS's admin port %s from this workstation. This read-only probe proves KyDNS refuses every peer but the edge. KyDNS is installed and set up; rerunning apply from a LAN host that reaches port %s is safe and finishes", g.url, g.port())
 	}
 	res.Body.Close()
 	if res.StatusCode != http.StatusForbidden {
-		return fmt.Errorf("KyDNS trusted this workstation's forwarded request (HTTP %d at %s): egress_address %s on edge %s is not the edge's alone. A Docker host that hides client addresses (Docker's userland proxy does) shows KyDNS every peer from one gateway; KyDNS is not supported there. Set egress_address to the edge's own address and rerun apply. KyDNS runs with this setting until then; to stop it, on %s run docker compose -p kyq-kydns stop", res.StatusCode, g.url, g.egress, g.edge, g.target)
+		return fmt.Errorf("KyDNS trusted this workstation's forwarded request (HTTP %d at %s): egress_address %s on edge %s is not the edge's alone. A Docker host that hides client addresses (Docker's userland proxy can) shows KyDNS every peer from one gateway; KyDNS is not supported there. Set egress_address to the edge's own address and rerun apply. KyDNS runs with this setting until then; to stop it, on %s run docker compose -p kyq-kydns stop", res.StatusCode, g.url, g.egress, g.edge, g.target)
 	}
 	return nil
+}
+
+// edgeTrustStep (kydns.edge) proves KyDNS trusts its edge: from NPM's pod, the source its
+// proxied requests leave from, it asks KyDNS's admin port with the edge's X-Forwarded-Proto and
+// passes only on 200 with proxyHeadersTrusted and scheme https. It reads, never changes.
+type edgeTrustStep struct {
+	url, edge, egress string
+	curl              identityExec // curl in NPM's pod
+}
+
+func (e edgeTrustStep) ID() string                                { return "kydns.edge" }
+func (e edgeTrustStep) InputHash() string                         { return e.url + " " + e.egress }
+func (e edgeTrustStep) Inspect(ctx context.Context) (bool, error) { return e.Verify(ctx) == nil, nil }
+func (e edgeTrustStep) Apply(ctx context.Context) error           { return e.Verify(ctx) }
+
+func (e edgeTrustStep) Verify(ctx context.Context) error {
+	out, err := e.curl(ctx, []string{"-sS", "-m", "10", "-H", "X-Forwarded-Proto: https", e.url})
+	var n struct {
+		ProxyHeadersTrusted bool   `json:"proxyHeadersTrusted"`
+		Scheme              string `json:"scheme"`
+	}
+	if err == nil && len(out) <= 4<<10 && json.Unmarshal(out, &n) == nil && n.ProxyHeadersTrusted && n.Scheme == "https" {
+		return nil
+	}
+	return fmt.Errorf("KyDNS does not trust edge %s at egress_address %s, so its admin UI answers 403 through the route: NPM moved node, the address is wrong, or this Docker host hides client addresses and KyDNS is not supported on it. Fix egress_address and rerun apply", e.edge, e.egress)
 }

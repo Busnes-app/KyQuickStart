@@ -95,6 +95,9 @@ Plain terminal planning and command orchestration for the operator-run installer
   healthcheck). `gateStep` (`kydns.gate`, after its setup, before the edges) sends the
   workstation's direct request with `X-Forwarded-Proto: https` to its admin port and passes only
   on 403, so an `egress_address` other peers share (a Docker gateway hiding clients) fails apply.
+  `edgeTrustStep` (`kydns.edge`, setupSteps' second return, so it runs after the edges) curls
+  the same URL from the catalog NPM's pod and passes only when KyDNS reports the edge's headers
+  trusted over https; KyDNS's route on any other edge is refused.
   `withRoute` fills a Compose template's route references for both `newSession`
   and `validateSelection`, so `{{edge_address}}` without the edge's `egress_address` is refused
   by `plan` and `review` too.
