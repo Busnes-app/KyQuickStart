@@ -1,0 +1,29 @@
+# From KyDNS v0.4.2's docker-compose.yml, on a bridge network instead of a LAN address: DNS and
+# the admin UI publish only on the route's forward_host. It runs as the target user, who owns
+# data, so the installer places its setup files from the host (the image has no shell).
+services:
+  app:
+    image: {{ .Images.kydns }}
+    platform: linux/amd64
+    user: "${KYQ_UID:?}:${KYQ_GID:?}"
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    # Lets a non-root process bind 53; per network namespace, not the host's.
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "0"
+    # The image's VOLUME is tmpfs, so Docker leaves no anonymous volume behind.
+    tmpfs: [/tmp, "/var/lib/kydns:size=1m"]
+    mem_limit: 256m
+    memswap_limit: 256m
+    cpus: 1
+    pids_limit: 128
+    # 8053 serves only the edge (its transport gate); DNS answers private ranges only.
+    ports: ["{{forward}}:8053", "{{forward_addr}}:53:53/udp", "{{forward_addr}}:53:53/tcp"]
+    environment:
+      KYDNS_DATA_DIR: /data
+      KYDNS_TRUSTED_PROXIES: "{{edge_address}}"
+      KYDNS_BACKUP_ALLOW_PRIVATE_RECOVERY: "false"
+      GOMEMLIMIT: 192MiB
+    volumes: ["./data:/data"]

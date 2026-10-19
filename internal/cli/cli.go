@@ -10,7 +10,6 @@ import (
 	"io"
 	"io/fs"
 	"maps"
-	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -360,33 +359,9 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 		cat[a.Name] = app
 	}
 	for name, t := range s.placed {
-		app := cat[name]
-		if t.Kubernetes() && !app.Kubernetes.UsesHost() || !t.Kubernetes() && !app.UsesRoute() {
-			continue
+		if cat[name], err = withRoute(st, name, t, cat[name]); err != nil {
+			return nil, err
 		}
-		var hosts []string
-		var routes []stack.Route
-		for _, e := range st.Edges {
-			for _, r := range e.Routes {
-				if r.App == name {
-					hosts, routes = append(hosts, e.URLHost(r)), append(routes, r)
-				}
-			}
-		}
-		if len(hosts) != 1 {
-			return nil, fmt.Errorf("app %q takes its URL from its route hostname; give it exactly one edge route", name)
-		}
-		if t.Kubernetes() {
-			app.Kubernetes = app.Kubernetes.WithHost(hosts[0])
-		} else {
-			// Docker publishes the port on exactly the address the edge forwards to.
-			ip, err := netip.ParseAddr(routes[0].ForwardHost)
-			if err != nil || ip.IsUnspecified() || ip.Zone() != "" {
-				return nil, fmt.Errorf("app %q publishes its port on its route's forward_host, which must be an IP address of %s", name, t.Name)
-			}
-			app = app.WithRoute(hosts[0], net.JoinHostPort(ip.String(), strconv.Itoa(routes[0].ForwardPort)))
-		}
-		cat[name] = app
 	}
 	// A cluster edge's egress policy admits an upstream off the cluster by address only.
 	for _, e := range st.Edges {
@@ -414,6 +389,44 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 		return nil, err
 	}
 	return s, nil
+}
+
+// withRoute fills app's route references from its one edge route: the URL host, and on Docker
+// the address it publishes on and its edge's egress_address. It needs no connection.
+func withRoute(st *stack.Stack, name string, t stack.Target, app catalog.App) (catalog.App, error) {
+	if t.Kubernetes() && !app.Kubernetes.UsesHost() || !t.Kubernetes() && !app.UsesRoute() {
+		return app, nil
+	}
+	var hosts []string
+	var routes []stack.Route
+	var edges []stack.Edge
+	for _, e := range st.Edges {
+		for _, r := range e.Routes {
+			if r.App == name {
+				hosts, routes, edges = append(hosts, e.URLHost(r)), append(routes, r), append(edges, e)
+			}
+		}
+	}
+	if len(hosts) != 1 {
+		return app, fmt.Errorf("app %q takes its URL from its route hostname; give it exactly one edge route", name)
+	}
+	if t.Kubernetes() {
+		app.Kubernetes = app.Kubernetes.WithHost(hosts[0])
+		return app, nil
+	}
+	// Docker publishes the port on exactly the address the edge forwards to.
+	ip, err := netip.ParseAddr(routes[0].ForwardHost)
+	if err != nil || ip.IsUnspecified() || ip.Zone() != "" {
+		return app, fmt.Errorf("app %q publishes its port on its route's forward_host, which must be an IP address of %s", name, t.Name)
+	}
+	if app.UsesEdgeAddress() && edges[0].EgressAddress == "" {
+		return app, fmt.Errorf("app %q trusts exactly the address its edge connects from: set egress_address on edge %s to the one address %s sees that edge's requests from", name, edges[0].Target, t.Name)
+	}
+	addr := ip.String()
+	if strings.Contains(addr, ":") {
+		addr = "[" + addr + "]" // Docker's port syntax
+	}
+	return app.WithRoute(catalog.Route{Host: hosts[0], Forward: addr + ":" + strconv.Itoa(routes[0].ForwardPort), ForwardAddr: addr, EdgeAddress: edges[0].EgressAddress}), nil
 }
 
 func (s *session) connect(ctx context.Context, trust trustFlag) error {
