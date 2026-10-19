@@ -18,9 +18,10 @@ lint:
 
 ci: tidy-check lint test-race
 
-# Needs Docker. The kind TLS helper runs the test executable in distroless.
+# Needs Docker. The kind TLS helper runs the test executable in distroless. test/e2e measured
+# 26.6 min on the workstation with KYQ_TEST_IDENTITY_BINARY set (TestKubernetesRestore 8 min).
 e2e:
-	CGO_ENABLED=0 go test -tags e2e -count=1 -v -timeout 30m ./test/e2e/ ./internal/edge/
+	CGO_ENABLED=0 go test -tags e2e -count=1 -v -timeout 35m ./test/e2e/ ./internal/edge/
 # Real Forgejo: revocation, refused reactivation (no session revocation upstream), revoke again.
 	KYQ_TEST_FORGEJO_IMAGE=codeberg.org/forgejo/forgejo:16.0.5-rootless@sha256:5effb7305584aca479b29fde6f9631a6dbe86ae798ae02eeea33a3666f0c0bf8 \
 		KYQ_TEST_FORGEJO_QUEUE=1 KYQ_TEST_FORGEJO_SCIM=1 KYQ_TEST_FORGEJO_REACTIVATE=1 \

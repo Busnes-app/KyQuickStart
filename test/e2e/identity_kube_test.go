@@ -99,7 +99,8 @@ func testIdentityKubernetesPreparation(t *testing.T, ctx context.Context, cs kub
 	}
 
 	n := identityFixturePreparation()
-	st := &stack.Stack{Version: 1, Targets: []stack.Target{{Name: "k8s", Kubeconfig: kubeconfig}}, Existing: []stack.Existing{{Product: "kyidentity", Target: "k8s", URL: "https://identity.example.test"}}, Integrations: []stack.Integration{{Product: "kyidentity", Target: "k8s", Namespace: namespace, Pod: "identity", Container: "identity", Bundle: "/data/installer/" + n.SetupID + "/setup.json", Identity: n}}}
+	// The cluster is TestKubernetesApply's, whose installation holds its marker.
+	st := &stack.Stack{Version: 1, InstallationID: kubeInstallation, Targets: []stack.Target{{Name: "k8s", Kubeconfig: kubeconfig}}, Existing: []stack.Existing{{Product: "kyidentity", Target: "k8s", URL: "https://identity.example.test"}}, Integrations: []stack.Integration{{Product: "kyidentity", Target: "k8s", Namespace: namespace, Pod: "identity", Container: "identity", Bundle: "/data/installer/" + n.SetupID + "/setup.json", Identity: n}}}
 	runPreparedIdentityStack(t, ctx, st, nil)
 }
 
