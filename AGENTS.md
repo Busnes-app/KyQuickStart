@@ -283,8 +283,8 @@ handover of admin and everyday logins.
   `apply` runs it after the app's health step against the app's one ready pod, and
   `integrate-stack` skips it. Today only KyIdentity (from its `identity` settings) and the
   installed Ky apps with a catalog `oidc` block and a product adapter: KyRecovery, kyPulse,
-  KyNotes and KyCalendar on Kubernetes, KyDrive on Docker (its one running managed container, through `docker
-  exec` over SSH). An installed KyNotes' entry is exactly `bundle: /data/installer/setup.json`
+  KyNotes and KyCalendar on Kubernetes, KyDrive and KyDNS on Docker (its one running managed container, through `docker
+  exec` over SSH; KyDNS's shell-less image gets its setup files placed from the host). An installed KyNotes' entry is exactly `bundle: /data/installer/setup.json`
   and its `identity_client` (no `notes` block): apply derives its native preparation, and its
   setup runs after the edge routes KyIdentity and before KyNotes' own route; a routed KyNotes
   without that entry is refused. Apply adds each such app's client, derived from its `oidc`
@@ -405,8 +405,10 @@ handover of admin and everyday logins.
   (the pinned BusyBox helper, the app's uid) creates. `kubernetes.termination_grace_seconds`
   (0-3600, 0 keeps the default) sets the pod's termination grace. A `kubernetes.env` value may contain
   `{{host}}`, replaced by the URL host of the app's one edge route (hostname, plus `:client_port` when it is not 443); no other template syntax.
-- A Compose template may write `{{host}}` and `{{forward}}` (the route's
-  `forward_host:forward_port`, an IP of the Docker target, where the app publishes its port).
+- A Compose template may write `{{host}}`, `{{forward}}` (the route's
+  `forward_host:forward_port`, an IP of the Docker target, where the app publishes its port),
+  `{{forward_addr}}` (that IP alone) and `{{edge_address}}` (the route's edge's
+  `egress_address`; a plan whose edge has none is refused before connecting).
   Compose runs with `KYQ_UID`/`KYQ_GID` set to the target user's; `./<name>` bind directories
   are created private by the driver before Compose, and no other relative bind source is
   accepted.
@@ -469,6 +471,11 @@ calls and kind nodes must carry their own explicit bounds.
   files and its 0600 break-glass password file, live `--check` naming both owner identities,
   readiness through the edge, the handover, admin and everyday sign-in with its admin separation
   (`/api/admin/users` 200/403, `/api/calendars` 403/200), and a skipped rerun.
+  The catalog KyDNS joins the Docker target by amendment: hardened container as the target
+  user, setup files placed from the host, live `--check`, authoritative NXDOMAIN over UDP and
+  TCP on the forward address, its transport gate trusting only the edge's `egress_address`
+  (403 directly), the closed `/setup`, admin sign-in with a Secure session, the everyday
+  account refused by KyIdentity, and a skipped rerun.
   Set `KYQ_TEST_IDENTITY_BINARY` to a local static KyIdentity build to additionally test real
   container-local identity setup over SSH and kind, including target-held preparation,
   inspection/resume and changed-intent refusal; SSH additionally refuses lost credentials.

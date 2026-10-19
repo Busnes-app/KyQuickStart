@@ -861,6 +861,120 @@ graceful restart and its live `--check`.
   `KY_TRUSTED_PROXIES` (unset, so KyDrive sees the edge as every client and `verify-edge`
   fails for its route); kyPulse does not watch it (no readiness path on Docker).
 
+## Catalog KyDNS on Docker
+
+The catalog's `kydns` app installs KyDNS 0.4.2 from its attested release image
+(`ghcr.io/busnes-app/kydns-server:0.4.2@sha256:ceb8…405b`, the index built by
+`Busnes-app/KyDNS-server` `release.yml@refs/tags/v0.4.2` from commit `ca8d7723`). It depends on
+the catalog `kyidentity`, which may run on another target, and needs one edge route.
+
+**Docker only.** `plan`, `review` and `apply` refuse it on a Kubernetes target before
+connecting, because:
+
+- LAN resolvers need port 53 itself. On Kubernetes that takes `hostPort` or `hostNetwork`,
+  which Pod Security `restricted` and `baseline` forbid, or a LoadBalancer the installer does
+  not manage; a NodePort (30000-32767) is useless to resolvers.
+- Its admin listener trusts exact proxy addresses only, and an NPM pod's address changes when
+  the pod restarts.
+- Its image is distroless with no shell and no credential import, so its setup files cannot be
+  placed inside a pod. On Docker its data is a bind directory the target user owns, so apply
+  places them from the host.
+
+```yaml
+apps:
+  - name: kydns
+    target: docker02
+edges:
+  - target: k80
+    provider: lan
+    egress_address: 192.168.1.81    # the one address KyDNS sees the edge's requests from
+    routes:
+      - app: kydns
+        hostname: dns.k80.example.com
+        forward_host: 192.168.1.91    # an IP of docker02: KyDNS publishes only there
+        forward_port: 18053
+        certificate: k80
+        status_path: /healthz
+integrations:
+  - product: kydns
+    target: docker02
+    bundle: /data/installer/<its own setup UUID>/setup.json
+    identity_client: kydns
+```
+
+`egress_address` is required: without it `plan`, `review` and `apply` refuse KyDNS and name the
+field and the edge (`edge.md`). `forward_host` must be an IP of the Docker target. The bundle
+must be `/data/installer/<UUID>/setup.json`; anything else is refused before any write.
+
+Its client is derived from the catalog: `https://<host>/auth/sso/callback`, administrator role
+`kydns.admin` for the owner's admin account, **no everyday role** (KyIdentity refuses everyone
+else KyDNS's client), and KyIdentity's signed directory webhook at
+`https://<host>/api/v1/installer/directory`. KyDNS refuses SCIM, an everyday account and
+installer backup enrollment. Installed with KyIdentity, the client is in its first setup;
+installed later, it joins through a setup amendment (`kyidentity.amend.kydns`, KyIdentity 0.4.3
+or later).
+
+What apply does:
+
+- `kydns.deploy` and `kydns.health`: KyDNS's Compose file, adapted. It runs as the target user
+  (`${KYQ_UID}:${KYQ_GID}`), read-only root, all capabilities dropped, `no-new-privileges`, and
+  one namespaced sysctl, `net.ipv4.ip_unprivileged_port_start=0`, so it can bind 53 without
+  root (it changes the container's network namespace, not the host's). 256 MiB, one CPU.
+  `<root>/kydns/data` (0700) is mounted at `/data` (`KYDNS_DATA_DIR`); the image's
+  `/var/lib/kydns` volume is a tmpfs, so Docker leaves no anonymous volume. It publishes
+  `forward_host:forward_port` for its admin UI (8053 inside) and `forward_host:53` UDP and TCP,
+  never `0.0.0.0`: that avoids systemd-resolved's `127.0.0.53` stub. `KYDNS_TRUSTED_PROXIES` is
+  exactly `egress_address`; `KYDNS_BACKUP_ALLOW_PRIVATE_RECOVERY` is `false`. There is no
+  Compose healthcheck (the image has no client for one); health means the container runs.
+- `kydns.setup`, after its health and before the edges (so its route appears only once setup
+  has closed the first-run `/setup`): KyIdentity's `--export-client` frame is read into memory,
+  then the client secret, the directory secret and the bundle are written over SSH, as the
+  target user, to `<root>/kydns/data/installer/<UUID>/` (0700 directory, 0600 files): the
+  payload on stdin, never in argv; an existing file is compared, never replaced; a symlinked
+  directory on the way is refused. The bundle names the container paths
+  (`/data/installer/<UUID>/…`) and the owner's admin account in `admins`. Apply waits up to a
+  minute for KyDNS's setup socket, then runs `apply-setup` through `docker exec` in its one
+  running managed container (Compose project `kyq-kydns`). Setup is live: no restart. KyIdentity
+  is re-exported to confirm nothing changed. A rerun skips.
+
+With no local password, KyDNS's setup creates a disabled local admin slot, which closes its
+token-gated first-run `/setup` (it redirects to `/login`). The `setup-token` it wrote on first
+start is dead from then on; it stays on the target only.
+
+Handover: apply prints KyDNS's URL, the admin account (the one account it admits), the DNS
+address `<forward_host>:53`, and these outstanding human steps:
+
+- Point clients at `forward_host` for DNS: the router's DHCP DNS server, or each client by
+  hand. Apply changes no resolver, DHCP server or the edge's `lan_dns`.
+- Set the local recovery administrator's password on the target:
+  `docker exec -it kyq-kydns-app-1 /usr/local/bin/kydns admin reset-password` (it asks twice;
+  `-t` keeps it off the screen). Use it only to recover, at `/login`.
+- Pair with KyRecovery on the Backups screen, signed in as that local administrator: a managed
+  (KyIdentity) administrator cannot enroll KyDNS's first recovery key.
+
+It also names the firewall facts: ports 53 and `forward_port` are open on `forward_host`; the
+admin UI serves only the edge (KyDNS answers 403 to every other peer, from its transport gate);
+DNS answers private address ranges only (KyDNS's default `allow_query`).
+
+Limits and unproven:
+
+- **Client addresses through Docker's NAT.** KyDNS's transport gate and `allow_query` both see
+  the peer address Docker hands the container. Measured on this workstation (Docker 29,
+  iptables backend, userland proxy on): every connection to a published port arrives from the
+  `kyq-kydns_default` network's gateway, so `egress_address` must be that gateway, and then any
+  peer that reaches `forward_host:forward_port` and sends `X-Forwarded-Proto: https` passes the
+  gate (sign-in through KyIdentity still applies), and every DNS client looks private, so
+  `allow_query` limits nothing. Whether a host with the userland proxy off, firewalld or
+  nftables keeps client addresses is unproven. If the edge's address does not arrive, KyDNS
+  answers the edge 403: fail closed. No `DOCKER-USER` rule is prescribed (see KyDrive's
+  section); restrict 53 and `forward_port` to the LAN at the host or network firewall.
+- A service already bound on `forward_host:53` makes `kydns.deploy` fail with Docker's error;
+  there is no plan-time probe.
+- `egress_address` is not derived from where NPM runs: if NPM moves node, set it again.
+- Not proven live: a directory event (offboarding) reaching KyDNS; K80 placement.
+- Not configured: replicas, DHCP, blocklists and upstreams (KyDNS's defaults), back-channel
+  logout, installer backup enrollment.
+
 ## Existing KyIdentity setup
 
 The first real product adapter is `integrate-identity`. It runs the selected
