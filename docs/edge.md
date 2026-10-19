@@ -54,6 +54,20 @@ never routes into a cluster. An app whose Compose file publishes on `{{forward}}
 KyDrive) binds exactly `forward_host:forward_port`, so `forward_host` must be an IP of its
 Docker target; firewall it to the edge's source (`guided-setup.md`, "Catalog KyDrive on Docker").
 
+`egress_address` (optional) is the one address upstreams off the cluster see this edge's
+requests from. It must be a single IP literal: no prefix, hostname, zone, loopback or
+unspecified address. An app whose Compose file writes `{{edge_address}}` (catalog KyDNS)
+trusts forwarded headers from exactly that address, and `plan`, `review` and `apply` refuse it
+until its route's edge sets the field. For an NPM pod on a cluster, pods leave through their
+node's address, so it is the IP of the node running NPM, unless the Docker host rewrites the
+source: Docker's userland proxy hands a container every published-port connection from its
+Compose network's gateway (`docker network inspect kyq-<app>_default`), and then that gateway
+is the address, and every peer reaching the port looks like the edge (see
+`guided-setup.md`, "Catalog KyDNS on Docker"). It is not derived: if NPM moves to another node
+or the address the app sees changes, the app refuses the edge (KyDNS answers 403) until the
+field is fixed and `apply` reruns. That fails closed. The same template may write `{{forward_addr}}`, the route's
+`forward_host` alone (bracketed if IPv6), for ports published beside `forward_port`.
+
 The connector address must be a free fixed IPv4 address on the existing Docker network. NPM
 and the connector must be able to reach each other there; the NPM hostname must resolve inside the container and its
 certificate must cover each routed hostname. The management URL must resolve to private or
