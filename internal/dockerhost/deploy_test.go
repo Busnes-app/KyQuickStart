@@ -55,7 +55,7 @@ func TestDeployApplyOrder(t *testing.T) {
 	if err := d.Apply(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"pwd -P", "rm -f '/opt/kyq/hello/.input-hash'", "cat > '/opt/kyq/hello/compose.yaml'", "cat > '/opt/kyq/hello/compose.kyq.yaml'", "pull --quiet", "up -d --remove-orphans", "> '/opt/kyq/hello/.input-hash'"}
+	want := []string{"test -e '/opt/kyq/hello/.restore-pending'", "pwd -P", "rm -f '/opt/kyq/hello/.input-hash'", "cat > '/opt/kyq/hello/compose.yaml'", "cat > '/opt/kyq/hello/compose.kyq.yaml'", "pull --quiet", "up -d --remove-orphans", "> '/opt/kyq/hello/.input-hash'"}
 	if len(f.calls) != len(want) {
 		t.Fatalf("calls = %v", f.calls)
 	}
@@ -64,14 +64,14 @@ func TestDeployApplyOrder(t *testing.T) {
 			t.Errorf("call %d = %q, want %q", i, f.calls[i].cmd, w)
 		}
 	}
-	if f.calls[2].stdin != string(a.Catalog.Compose) || !strings.Contains(f.calls[3].stdin, managed.Value) {
-		t.Errorf("stdin: %q / %q", f.calls[2].stdin, f.calls[3].stdin)
+	if f.calls[3].stdin != string(a.Catalog.Compose) || !strings.Contains(f.calls[4].stdin, managed.Value) {
+		t.Errorf("stdin: %q / %q", f.calls[3].stdin, f.calls[4].stdin)
 	}
-	if !strings.Contains(f.calls[5].cmd, "-p 'kyq-hello'") {
-		t.Errorf("project name missing: %q", f.calls[5].cmd)
+	if !strings.Contains(f.calls[6].cmd, "-p 'kyq-hello'") {
+		t.Errorf("project name missing: %q", f.calls[6].cmd)
 	}
-	if !strings.Contains(f.calls[6].cmd, d.hash) {
-		t.Errorf("hash not written: %q", f.calls[6].cmd)
+	if !strings.Contains(f.calls[7].cmd, d.hash) {
+		t.Errorf("hash not written: %q", f.calls[7].cmd)
 	}
 }
 

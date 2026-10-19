@@ -178,7 +178,7 @@ func backup(ctx context.Context, state, name string, trust trustFlag, o Options)
 				if up, rerr := st.Running(ctx); rerr == nil && up {
 					fmt.Fprintf(s.o.Out, "%s is running again.\n", name)
 				} else {
-					fmt.Fprintf(s.o.Out, "%s is NOT running: start it with kyquickstart apply, or on %s: docker compose -p kyq-%s start\n", name, t.Name, name)
+					fmt.Fprintf(s.o.Out, "%s is NOT running: start it with ssh -p %d %s@%s docker compose -p kyq-%s start\n", name, t.Port, t.User, t.Host, name)
 				}
 			}
 			return err
@@ -446,7 +446,9 @@ func (s *session) finishRestore(ctx context.Context, st dockerhost.Store, id, st
 			}
 		}
 	}
-	steps := dockerhost.Steps(st.App)
+	restoring := st.App
+	restoring.Restoring = true
+	steps := dockerhost.Steps(restoring)
 	if err := e.Run(ctx, steps); err != nil {
 		return &suite.Error{Code: suite.StepFailed, Message: err.Error(), Err: err}
 	}
@@ -494,7 +496,7 @@ type resyncReport struct {
 
 // replayRemovals has KyIdentity re-send the app's connector state, deactivations included,
 // and waits until the connector's whole queue is delivered. Anything else is
-// restore_incomplete: the app stays running for a rerun.
+// restore_incomplete: finishRestore stops the app until a rerun delivers it.
 func (s *session) replayRemovals(ctx context.Context, name string) error {
 	client := name
 	if i := slices.IndexFunc(s.integrations, func(i stack.Integration) bool { return i.Product == name && i.IdentityClient != "" }); i >= 0 {

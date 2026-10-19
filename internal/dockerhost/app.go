@@ -27,6 +27,9 @@ type App struct {
 	ForceRecreate bool // connector credential replacement requires a fresh process
 	// Only, when set, is the one service deploy starts: restore starts its services in order.
 	Only string
+	// Restoring is set by restore alone: deploy refuses an app with an unfinished restore
+	// (.restore-pending), whose removal replay has not been delivered.
+	Restoring bool
 }
 
 func (a App) dir() string { return path.Join(a.Root, a.Name) }
@@ -62,7 +65,7 @@ func Steps(a App) []engine.Step {
 
 // RestoreSteps are the app's secrets and a deploy that starts only service first.
 func RestoreSteps(a App, first string) []engine.Step {
-	a.Only = first
+	a.Only, a.Restoring = first, true
 	steps := Steps(a)
 	return steps[:len(steps)-1]
 }

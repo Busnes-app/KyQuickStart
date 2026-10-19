@@ -16,6 +16,7 @@ import (
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/dockerhost/fakedocker"
+	"github.com/Busnes-app/kyquickstart/internal/engine"
 	"github.com/Busnes-app/kyquickstart/internal/kube"
 	"github.com/Busnes-app/kyquickstart/internal/managed"
 	"github.com/Busnes-app/kyquickstart/internal/remote"
@@ -427,6 +428,19 @@ func TestFailedReplayStopsTheApp(t *testing.T) {
 	}
 	if up := fakedocker.Running(t, fake); up["db"] || up["web"] {
 		t.Fatalf("the app runs without the replay: %v", up)
+	}
+	// Apply's own steps for the app (the plan's edges need a live NPM here) refuse to start it.
+	s, err := load(f.state, nil, f.o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nas := s.placed["dumpdemo"]
+	e := &engine.Engine{Dir: filepath.Join(f.state, "results"), Out: io.Discard, Redact: &engine.Redactor{}}
+	if err := e.Run(ctx, sshDriver{t: nas, c: k}.steps("dumpdemo", s.cat["dumpdemo"], "test", s.redact)); err == nil || !strings.Contains(err.Error(), "finish it with kyquickstart restore dumpdemo") {
+		t.Fatalf("apply over the unfinished restore: %v", err)
+	}
+	if up := fakedocker.Running(t, fake); up["db"] || up["web"] {
+		t.Fatalf("apply started the app without the replay: %v", up)
 	}
 	status = "delivered"
 	if err := f.runIn("", "restore", "dumpdemo", "--snapshot", id, "--yes"); err != nil {
