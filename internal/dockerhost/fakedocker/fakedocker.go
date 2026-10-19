@@ -367,6 +367,13 @@ func copyTree(src, dst string, skip func(string) bool) error {
 			return err
 		}
 		target := dst + rel
+		if d.Type()&fs.ModeSymlink != 0 { // restic keeps links as links
+			link, err := os.Readlink(p)
+			if err != nil {
+				return err
+			}
+			return os.Symlink(link, target)
+		}
 		if d.IsDir() {
 			if err := os.MkdirAll(target, 0o700); err != nil {
 				return err

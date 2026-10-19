@@ -224,6 +224,10 @@ func TestBackupConvergesAfterKill(t *testing.T) {
 				if !dump && !slices.Equal(upServices(t, fake), []string{"app"}) && !restartKilled {
 					t.Fatalf("cold backup killed at %d left the app stopped", n)
 				}
+				// The plaintext dump never outlives a run, unless the kill hit its removal.
+				if _, err := os.Stat(st.scratch()); !errors.Is(err, os.ErrNotExist) && !strings.Contains(k.killed, "rm -rf") {
+					t.Fatalf("n %d: the scratch dump outlived a failed backup (killed %s)", n, k.killed)
+				}
 				pw, _ := os.ReadFile(st.PasswordFile())
 				os.MkdirAll(st.scratch(), 0o700)
 				os.WriteFile(filepath.Join(st.scratch(), "dump"), []byte("stale"), 0o600)
@@ -260,4 +264,53 @@ func upServices(t *testing.T, fake string) []string {
 	}
 	slices.Sort(up)
 	return up
+}
+
+// A snapshot from a compromised target cannot point the app at another host path: a
+// symlinked volume, secret or dump is refused and nothing is moved into place.
+func TestRestoreRefusesSymlinks(t *testing.T) {
+	ctx := context.Background()
+	for _, which := range []string{"volumes/files", "secrets/db_password", "dump"} {
+		st, fake := backupFixture(t, true)
+		id, _, err := st.Backup(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		snap := filepath.Join(fake, "repo", "rest_https___backup.lan_8000_nas_fixture", "snapshots", id, "kyq", which)
+		victim := filepath.Join(t.TempDir(), "victim")
+		os.WriteFile(victim, []byte("host file"), 0o644)
+		os.RemoveAll(snap)
+		if err := os.Symlink(victim, snap); err != nil {
+			t.Fatal(err)
+		}
+		os.RemoveAll(st.App.dir())
+		pw, _ := os.ReadFile(filepath.Join(fake, "repo", "rest_https___backup.lan_8000_nas_fixture", "config"))
+		received, err := st.ReceivePassword(ctx, pw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = st.RestoreFiles(ctx, received, id)
+		if which == "dump" {
+			if err != nil {
+				t.Fatalf("dump: files: %v", err)
+			}
+			err = st.RestoreDump(ctx)
+		}
+		if err == nil {
+			t.Fatalf("%s: a symlink was restored", which)
+		}
+		info, _ := os.Stat(victim)
+		if b, _ := os.ReadFile(victim); string(b) != "host file" || info.Mode().Perm() != 0o644 {
+			t.Fatalf("%s: the link target changed", which)
+		}
+		if l, err := os.Lstat(filepath.Join(st.App.dir(), "files")); which == "volumes/files" && err == nil && l.Mode()&os.ModeSymlink != 0 {
+			t.Fatal("a symlinked volume was moved into place")
+		}
+		if _, err := os.Lstat(filepath.Join(st.App.dir(), "secrets", "db_password")); which == "secrets/db_password" && err == nil {
+			t.Fatal("a symlinked secret was linked into place")
+		}
+		if b, _ := os.ReadFile(filepath.Join(fake, "loaded")); which == "dump" && len(b) > 0 {
+			t.Fatal("a symlinked dump was read")
+		}
+	}
 }
