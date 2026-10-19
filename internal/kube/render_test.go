@@ -219,6 +219,50 @@ func TestRenderKyNotes(t *testing.T) {
 	}
 }
 
+func TestRenderKyCalendar(t *testing.T) {
+	cat, err := catalog.Load(catalog.Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := cat["kycalendar"]
+	c.Kubernetes = c.Kubernetes.WithHost("calendar.example.com")
+	a := App{Name: "kycalendar", Catalog: c}
+	o := render(a)
+	pod := o.Deployment.Spec.Template.Spec
+	ctr := pod.Containers[0]
+	sc := ctr.SecurityContext
+	if pod.TerminationGracePeriodSeconds == nil || *pod.TerminationGracePeriodSeconds != 1200 {
+		t.Fatalf("grace = %v", pod.TerminationGracePeriodSeconds)
+	}
+	if *sc.RunAsUser != 10001 || *sc.RunAsGroup != 10001 || !*sc.RunAsNonRoot || !*sc.ReadOnlyRootFilesystem || *sc.AllowPrivilegeEscalation || !*pod.SecurityContext.RunAsNonRoot {
+		t.Fatalf("security context = %+v", sc)
+	}
+	if len(pod.InitContainers) != 1 || pod.InitContainers[0].Name != "private-volumes" || !slices.Equal(pod.InitContainers[0].Command, []string{"mkdir", "-p", "-m", "700", "/volumes/data/private", "/volumes/backups/private"}) {
+		t.Fatalf("init = %+v", pod.InitContainers)
+	}
+	mounts := map[string]string{}
+	for _, m := range ctr.VolumeMounts {
+		mounts[m.MountPath] = m.Name + ":" + m.SubPath
+	}
+	tmp := slices.IndexFunc(pod.Volumes, func(v corev1.Volume) bool { return v.Name == "tmp" && v.EmptyDir != nil })
+	if mounts["/app/data"] != "vol-data:private" || mounts["/app/backups"] != "vol-backups:private" || mounts["/tmp"] != "tmp:" || tmp < 0 || len(o.Claims) != 2 {
+		t.Fatalf("mounts = %v, claims %d", mounts, len(o.Claims))
+	}
+	if p := ctr.ReadinessProbe; p == nil || p.HTTPGet.Path != "/api/installer/network" || p.HTTPGet.Port.IntValue() != 8080 {
+		t.Fatalf("readiness = %+v", p)
+	}
+	env := map[string]string{}
+	for _, e := range ctr.Env {
+		env[e.Name] = e.Value
+	}
+	if env["KY_APP_URL"] != "https://calendar.example.com" {
+		t.Fatalf("env = %v", env)
+	}
+	if a.namespaceLabels()[podSecurity] != "restricted" {
+		t.Fatal("namespace not restricted")
+	}
+}
+
 func TestNamespaceLevelFailsClosed(t *testing.T) {
 	for level, want := range map[string]string{"baseline": "baseline", "restricted": "restricted", "": "restricted", "privileged": "restricted"} {
 		if got := (App{Catalog: catalog.App{Manifest: catalog.Manifest{PodSecurity: level}}}).namespaceLabels()[podSecurity]; got != want {
