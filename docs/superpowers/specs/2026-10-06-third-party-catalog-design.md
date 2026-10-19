@@ -208,6 +208,20 @@ so:
   password. Backup and `check` results also reach kyPulse, which alerts on failed or stale
   backups.
 
+**What runs today (Docker).** `kyquickstart backup <app>` and `kyquickstart restore <app>`,
+run by hand: no timer, no retention, no KyRecovery or kyPulse status, and no K8up yet. The
+rest-server is the operator's (`--append-only --private-repos`, TLS, off the app's host), named
+per Docker target in `stack.yaml` (`backup.repository`, `credential_file`, `ca_file`). The
+catalog `backup` block's `command` writes the dump to a private scratch file before restic runs
+(an empty or failed dump takes no snapshot), its `restore_command` reads it back on stdin in the
+same `service`, which `restore_order` starts first; an app without a dump command is backed up
+cold (stopped, then always started again). `capsule_secrets` travel inside the restic snapshot,
+encrypted by restic; sealing them, and the repository password, to KyRecovery is not built. The
+password is generated on the target and recorded once by the owner from the handover's command.
+Restore of an app whose people come from KyIdentity needs KyIdentity v0.4.4 or later and runs
+its `resync-system`, so removals after the snapshot are replayed. `docs/guided-setup.md`
+("Backups and restore on Docker") is the operator's procedure.
+
 | App | Backup command (streamed to restic) | Volumes | Skip |
 |---|---|---|---|
 | Immich | built-in daily dump in `UPLOAD_LOCATION/backups` (verified) | `library`, `upload`, `profile`, `backups` | `thumbs`, `encoded-video` |
