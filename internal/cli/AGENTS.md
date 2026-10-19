@@ -10,6 +10,8 @@ Plain terminal planning and command orchestration for the operator-run installer
   markers record it only once published. `--adopt-edge-hosts` and `--take-over-target` are
   apply-only. A `kube://` edge gets its token and tunnel from the
   Kubernetes driver; an app's `node_ports` override the catalog's in the session only.
+  `version` prints the release set; `version --runner-image` prints `Options.RunnerImage` or
+  fails "this build pins no suite runner image (source build)".
 - `suite.go` owns `install`, `uninstall`, `unmanage`, `upgrade` and `status`, the upgrade gate
   and plan publication. The exported `Install`, `Uninstall`, `Unmanage`, `Upgrade` and `Status`
   take a context, state directory and `Options` (with `Progress`) so the suite runner calls
@@ -70,7 +72,8 @@ Plain terminal planning and command orchestration for the operator-run installer
   with no everyday account): `yardPlan` (plan, review, every command) refuses it off Kubernetes
   and owner admin usernames its setup refuses; `runnerImage`/`checkRunnerImage` (plan, review,
   preflight, apply, install, upgrade on the workstation) refuse deploying an app with
-  `kubernetes.suite_runner` without a digest-pinned `Options.RunnerImage`; `yardHandover`
+  `kubernetes.suite_runner` without a digest-pinned `Options.RunnerImage` (empty: "source builds
+  pin no runner image; use a release binary"); `yardHandover`
   prints the break-glass and `handoff` lines. Under the runner (`Options.RunnerID`),
   `deploySteps` replaces that app's workload with the `<app>.runner` note step, reading and
   writing nothing of it, and `refuseOwnPod` refuses `install`, `uninstall`, `unmanage` and
