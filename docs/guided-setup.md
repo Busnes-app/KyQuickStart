@@ -864,6 +864,12 @@ again. Edge routes still reconcile.
 
 Limits:
 
+- **The admin's sign-in fails with KyIdentity 0.4.3.** KyYard 0.4.2 reads app roles from an
+  `app_roles` claim; KyIdentity issues them as `roles`. KyYard answers 403 ("Application role
+  no longer matches the assigned identity") and marks the identity inactive, after which its
+  setup check reports drift and `kyyard.setup` fails until resolved by hand. This needs a KyYard
+  release that reads `roles`; the refusal of real installs (no runner release) keeps anyone from
+  reaching it today.
 - KyYard 0.4.2 does not read `KY_SUITE_RUNNER_SOCKET`: its Suite page and `/api/suite/*` exist
   only on KyYard-Server master, unreleased. Until a KyYard release ships them, manage apps from
   the workstation. Even on master, starting a suite operation requires a local password
