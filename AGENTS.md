@@ -516,6 +516,17 @@ calls and kind nodes must carry their own explicit bounds.
   port, private setup files, live `--check`, health and an untrusted-proxy network status
   through the edge, admin and everyday sign-in (`/api/users` 200/403), the handover's
   break-glass read and session-ending restart run verbatim on the target, and a skipped rerun.
+  Backups (`test/e2e/backup_test.go`) go to a disposable append-only TLS rest-server on its own
+  network, published on the default bridge's gateway. `TestApply` backs up and restores the
+  test-only `dumpdemo` (Postgres dump, a file volume with a `skip` path, a capsule secret) from
+  its own root; `TestKubernetesNPMEdge` gives the Docker target a destination, asserts KyDrive's
+  handover lines, backs KyDrive up cold and proves restore is refused on KyIdentity 0.4.3 before
+  any restic call. With `KYQ_TEST_IDENTITY_BINARY` (a KyIdentity-server PR #119 build),
+  `TestKubernetesRestore` runs the KyDrive drill on its own kind cluster: disaster restore with
+  the handover's password, refusals, `--replace`, a refused `forget`, and no readmission of a
+  person unassigned or deleted after the snapshot. Its KyIdentity is the catalog's 0.4.3 image
+  with the build's binary, served from a disposable digest-pinned registry (kind resolves
+  `@sha256` references only from a registry); CI skips the drill until v0.4.4.
   Set `KYQ_TEST_IDENTITY_BINARY` to a local static KyIdentity build to additionally test real
   container-local identity setup over SSH and kind, including target-held preparation,
   inspection/resume and changed-intent refusal; SSH additionally refuses lost credentials.

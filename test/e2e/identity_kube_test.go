@@ -110,9 +110,24 @@ const catalogIdentityHost = "identity.example.test"
 const catalogIdentityURLHost = catalogIdentityHost + ":30443"
 
 // loadCatalogApp pulls a catalog app's attested image and loads it into kind.
-// A failing test logs the app's pods and events before the cluster goes.
 func loadCatalogApp(t *testing.T, cluster string, cs kubernetes.Interface, app string) {
 	t.Helper()
+	logAppOnFailure(t, cs, app)
+	cat, err := catalog.Load(catalog.Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := cat[app].Images[cat[app].Kubernetes.Image]
+	docker(t, "pull", "-q", ref)
+	// kind load of a digest reference leaves a broken image record; load the tag. The pod
+	// still names the digest, which containerd checks.
+	tag, _, _ := strings.Cut(ref, "@")
+	docker(t, "tag", ref, tag)
+	kind(t, "load", "docker-image", tag, "--name", cluster)
+}
+
+// logAppOnFailure logs app's pods and events if the test fails, before the cluster goes.
+func logAppOnFailure(t *testing.T, cs kubernetes.Interface, app string) {
 	t.Cleanup(func() {
 		if !t.Failed() {
 			return
@@ -132,17 +147,6 @@ func loadCatalogApp(t *testing.T, cluster string, cs kubernetes.Interface, app s
 			t.Logf("event %s %s: %s", e.InvolvedObject.Name, e.Reason, e.Message)
 		}
 	})
-	cat, err := catalog.Load(catalog.Embedded())
-	if err != nil {
-		t.Fatal(err)
-	}
-	ref := cat[app].Images[cat[app].Kubernetes.Image]
-	docker(t, "pull", "-q", ref)
-	// kind load of a digest reference leaves a broken image record; load the tag. The pod
-	// still names the digest, which containerd checks.
-	tag, _, _ := strings.Cut(ref, "@")
-	docker(t, "tag", ref, tag)
-	kind(t, "load", "docker-image", tag, "--name", cluster)
 }
 
 // addCatalogIdentity installs the catalog KyIdentity behind the edge and selects its setup.
