@@ -380,13 +380,37 @@ func (s Store) RestoreFiles(ctx context.Context, password, id string) error {
 	from := path.Join(s.staging(), strings.TrimPrefix(ctrData, "/"))
 	// A snapshot may come from a compromised target: a symlinked volume or secret would point
 	// the app's bind mount, or chmod, at another host path. find -prune does not follow links.
-	cmd := "umask 077; cd " + remote.Quote(s.App.dir()) + " || exit 1\nf=" + remote.Quote(from) + "\nfor v in " + quoteAll(b.Volumes) + `; do
+	// Every directory between the trusted staging directory and an entry is checked too: a
+	// symlinked kyq, volumes or secrets would redirect the whole tree. All entries are checked
+	// before any moves.
+	var parents []string
+	if len(b.Volumes) > 0 {
+		parents = append(parents, "volumes")
+	}
+	if len(b.CapsuleSecrets) > 0 {
+		parents = append(parents, "secrets")
+	}
+	dumpCheck := ""
+	if len(b.Command) > 0 {
+		dumpCheck = `[ ! -L "$f/dump" ] && [ -n "$(find "$f/dump" -prune -type f)" ] || { echo "the snapshot has no dump file" >&2; exit 1; }`
+	}
+	cmd := "umask 077; cd " + remote.Quote(s.App.dir()) + " || exit 1\nf=" + remote.Quote(from) + `
+for p in "$f" ` + quoteAll(parents) + `; do
+  [ "$p" = "$f" ] || p="$f/$p"
+  [ ! -L "$p" ] && [ -n "$(find "$p" -prune -type d)" ] || { echo "the snapshot's $p is not a directory" >&2; exit 1; }
+done
+` + dumpCheck + `
+for v in ` + quoteAll(b.Volumes) + `; do
   [ ! -L "$f/volumes/$v" ] && [ -n "$(find "$f/volumes/$v" -prune -type d)" ] || { echo "the snapshot has no volume directory $v" >&2; exit 1; }
+done
+for n in ` + quoteAll(b.CapsuleSecrets) + `; do
+  [ ! -L "$f/secrets/$n" ] && [ -n "$(find "$f/secrets/$n" -prune -type f)" ] || { echo "the snapshot has no secret file $n" >&2; exit 1; }
+done
+for v in ` + quoteAll(b.Volumes) + `; do
   if [ -d "$v" ]; then rmdir "$v" || exit 1; fi
   mv "$f/volumes/$v" "$v" || exit 1
 done
 for n in ` + quoteAll(b.CapsuleSecrets) + `; do
-  [ ! -L "$f/secrets/$n" ] && [ -n "$(find "$f/secrets/$n" -prune -type f)" ] || { echo "the snapshot has no secret file $n" >&2; exit 1; }
   chmod 600 "$f/secrets/$n" && ln "$f/secrets/$n" secrets/"$n" || exit 1
 done`
 	if _, err := s.App.Runner.Run(ctx, cmd, nil); err != nil {
@@ -399,8 +423,8 @@ done`
 func (s Store) RestoreDump(ctx context.Context) error {
 	b := s.App.Catalog.Backup
 	dump := path.Join(s.staging(), strings.TrimPrefix(ctrData, "/"), "dump")
-	d := remote.Quote(dump)
-	cmd := "{ [ ! -L " + d + " ] && [ -n \"$(find " + d + " -prune -type f)\" ]; } || { echo 'the snapshot has no dump file' >&2; exit 1; }\n" +
+	d, f := remote.Quote(dump), remote.Quote(path.Dir(dump))
+	cmd := "{ [ ! -L " + f + " ] && [ -n \"$(find " + f + " -prune -type d)\" ] && [ ! -L " + d + " ] && [ -n \"$(find " + d + " -prune -type f)\" ]; } || { echo 'the snapshot has no dump file' >&2; exit 1; }\n" +
 		s.App.compose("exec -T "+remote.Quote(b.Service)+" "+quoteAll(b.RestoreCommand)) + " < " + d
 	if _, err := s.App.Runner.Run(ctx, cmd, nil); err != nil {
 		return fmt.Errorf("restore_command: %w", err)
