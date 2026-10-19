@@ -19,12 +19,31 @@ type Finding struct {
 
 // Preflight checks a Docker host and changes nothing.
 func Preflight(ctx context.Context, r remote.Runner, t stack.Target) []Finding {
-	return []Finding{
+	f := []Finding{
 		versionCheck(ctx, r, "docker engine", "docker version --format '{{.Server.Version}}'", 24, 0),
 		versionCheck(ctx, r, "docker compose", "docker compose version --short", 2, 21),
 		rootCheck(ctx, r, t.Root),
 		secretToolsCheck(ctx, r),
 	}
+	if t.Backup != nil {
+		f = append(f, BackupFilesCheck(ctx, r, *t.Backup))
+	}
+	return f
+}
+
+// BackupFilesCheck passes when the rest-server credential is a 0600 regular file and the CA,
+// if any, a regular file, both owned by this user. find does not follow a symlink.
+func BackupFilesCheck(ctx context.Context, r remote.Runner, b stack.BackupDestination) Finding {
+	cmd := "uid=$(id -u); test -n \"$(find " + remote.Quote(b.CredentialFile) + " -prune -type f -user \"$uid\" -perm 600)\""
+	detail := b.CredentialFile + " is a mode 0600 regular file owned by this user"
+	if b.CAFile != "" {
+		cmd += " && test -n \"$(find " + remote.Quote(b.CAFile) + " -prune -type f -user \"$uid\")\""
+		detail += "; " + b.CAFile + " is a regular file owned by this user"
+	}
+	if _, err := r.Run(ctx, cmd, nil); err != nil {
+		return Finding{"backup files", false, "want: " + detail + " (not a symlink)"}
+	}
+	return Finding{"backup files", true, detail}
 }
 
 func versionCheck(ctx context.Context, r remote.Runner, check, cmd string, major, minor int) Finding {
