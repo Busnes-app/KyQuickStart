@@ -382,7 +382,7 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 	if err := routedNeedsSetup(st); err != nil {
 		return nil, err
 	}
-	if err := calendarAccounts(st); err != nil {
+	if err := ownerAccounts(st); err != nil {
 		return nil, err
 	}
 	if err := s.composeClients(st); err != nil {

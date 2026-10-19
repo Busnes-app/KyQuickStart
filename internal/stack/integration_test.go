@@ -188,3 +188,25 @@ func TestInstalledCalendarIntegration(t *testing.T) {
 		}
 	}
 }
+
+// An installed KyMessages takes the generic installed-app rule too: no stack change.
+func TestInstalledMessageIntegration(t *testing.T) {
+	plan := "version: 1\ntargets:\n- name: k8s\n  kubeconfig: /tmp/fixture-kubeconfig\napps:\n- name: kyidentity\n  target: k8s\n- name: kymessage\n  target: k8s\n" +
+		"integrations:\n- product: kymessage\n  target: k8s\n  bundle: /app/data/installer/0f9a3c1e-5b7d-4e2a-9c8b-1d2e3f4a5b6c/setup.json\n  identity_client: kymessage\n"
+	if _, err := Parse([]byte(plan)); err != nil {
+		t.Fatal("installed KyMessages integration rejected", err)
+	}
+	notes := "  notes:\n    version: 1\n    sso:\n      issuer_url: https://identity.example.test\n      client_id: kymessage\n      client_secret_file: /app/data/installer/client.secret\n      redirect_uri: https://message.example.test/api/sso/kyidentity/callback\n"
+	for name, bad := range map[string]string{
+		"notes block": plan + notes,
+		"container":   plan + "  container: app\n",
+		"pod":         plan + "  namespace: kyq-kymessage\n  pod: app-1\n",
+		"no client":   strings.Replace(plan, "  identity_client: kymessage\n", "", 1),
+		"no uuid":     strings.Replace(plan, "0f9a3c1e-5b7d-4e2a-9c8b-1d2e3f4a5b6c/", "", 1),
+		"not a uuid":  strings.Replace(plan, "0f9a3c1e-5b7d-4e2a-9c8b-1d2e3f4a5b6c", "setup", 1),
+	} {
+		if _, err := Parse([]byte(bad)); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}

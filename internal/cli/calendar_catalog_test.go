@@ -29,30 +29,51 @@ import (
 
 const (
 	calendarSetupID = "3c8f1b2a-7d4e-4f5a-9b6c-0d1e2f3a4b5c"
-	calendarBundle  = "/app/data/installer/" + calendarSetupID + "/setup.json"
 	ownerSubject    = "9b1d4e7a-2c3f-4a5b-8d6e-7f8091a2b3c4"
 	adminSubject    = "5e0c8a52-6d1b-4f7e-9a3c-2b1d0e9f8a7c"
 )
 
-// calendarPlan adds the catalog KyCalendar, routed at calendar.example.com, to the catalog
-// KyIdentity plan.
-func calendarPlan(t *testing.T, f *fixture, clients string) {
-	catalogIdentityPlan(t, f, "kyidentity", "  - product: kycalendar\n    target: k1\n    bundle: "+calendarBundle+"\n    identity_client: kycalendar\n")
+// everydayApp is a catalog Ky app whose setup names the owner's admin and everyday accounts
+// (KyCalendar, KyMessages), routed at host on k1 and set up from bundle setupID.
+type everydayApp struct {
+	app, name, host, setupID string
+	sso                      string // its SSO path prefix, e.g. /api/sso/kysignon
+}
+
+var calendarApp = everydayApp{"kycalendar", "KyCalendar", "calendar.example.com", calendarSetupID, "/api/sso/kysignon"}
+
+func (a everydayApp) bundle() string   { return "/app/data/installer/" + a.setupID + "/setup.json" }
+func (a everydayApp) callback() string { return "https://" + a.host + a.sso + "/callback" }
+func (a everydayApp) sync() string     { return "https://" + a.host + a.sso + "/sync" }
+
+// plan adds the catalog app, routed at its host, to the catalog KyIdentity plan.
+func (a everydayApp) plan(t *testing.T, f *fixture, clients string) {
+	catalogIdentityPlan(t, f, "kyidentity", "  - product: "+a.app+"\n    target: k1\n    bundle: "+a.bundle()+"\n    identity_client: "+a.app+"\n")
 	p := filepath.Join(f.state, "stack.yaml")
 	b, _ := os.ReadFile(p)
-	y := strings.Replace(string(b), "    target: k1\nedges:", "    target: k1\n  - name: kycalendar\n    target: k1\nedges:", 1)
-	y = strings.Replace(y, "integrations:", "      - app: kycalendar\n        hostname: calendar.example.com\n        forward_host: app.kyq-kycalendar.svc.cluster.local\n        forward_port: 8080\n        certificate_id: 1\nintegrations:", 1)
+	y := strings.Replace(string(b), "    target: k1\nedges:", "    target: k1\n  - name: "+a.app+"\n    target: k1\nedges:", 1)
+	y = strings.Replace(y, "integrations:", "      - app: "+a.app+"\n        hostname: "+a.host+"\n        forward_host: app.kyq-"+a.app+".svc.cluster.local\n        forward_port: 8080\n        certificate_id: 1\nintegrations:", 1)
 	y = strings.Replace(y, "      clients: []\n", clients, 1)
 	os.WriteFile(p, []byte(y), 0o600)
 }
 
-const wantCalendarClient = `{"id":"kycalendar","name":"KyCalendar","redirectUris":["https://calendar.example.com/api/sso/kysignon/callback"],"postLogoutUris":null,"administratorRole":"kycalendar.admin","everydayRole":"kycalendar.user","suiteWebhook":{"url":"https://calendar.example.com/api/sso/kysignon/sync"}}`
+func calendarPlan(t *testing.T, f *fixture, clients string) { calendarApp.plan(t, f, clients) }
 
-func calendarExport(setupID string) string {
-	return `{"schema":"kyidentity.client-credentials/1","setupId":"` + setupID + `","issuerUrl":"https://identity.example.com","clientId":"kycalendar",` +
-		`"redirectUris":["https://calendar.example.com/api/sso/kysignon/callback"],"directoryUrl":"https://calendar.example.com/api/sso/kysignon/sync",` +
+// client is the KyIdentity client composeClients derives for the app.
+func (a everydayApp) client() string {
+	return `{"id":"` + a.app + `","name":"` + a.name + `","redirectUris":["` + a.callback() + `"],"postLogoutUris":null,"administratorRole":"` + a.app + `.admin","everydayRole":"` + a.app + `.user","suiteWebhook":{"url":"` + a.sync() + `"}}`
+}
+
+// writtenClient is that client as a plan writes it.
+func (a everydayApp) writtenClient() string {
+	return "      clients:\n        - id: " + a.app + "\n          name: " + a.name + "\n          redirect_uris: [" + a.callback() + "]\n          administrator_role: " + a.app + ".admin\n          everyday_role: " + a.app + ".user\n          suite_webhook: {url: " + a.sync() + "}\n"
+}
+
+func (a everydayApp) export(setupID string) string {
+	return `{"schema":"kyidentity.client-credentials/1","setupId":"` + setupID + `","issuerUrl":"https://identity.example.com","clientId":"` + a.app + `",` +
+		`"redirectUris":["` + a.callback() + `"],"directoryUrl":"` + a.sync() + `",` +
 		`"clientSecret":"` + clientSecret + `","directorySecret":"` + directorySecret + `",` +
-		`"administrator":{"subject":"` + adminSubject + `","username":"owner-admin","role":"kycalendar.admin"}}`
+		`"administrator":{"subject":"` + adminSubject + `","username":"owner-admin","role":"` + a.app + `.admin"}}`
 }
 
 // firstSetupCheck is KyIdentity's --check report of its first setup: both owner accounts reused.
@@ -67,14 +88,7 @@ var ownerReused = `{"kind":"user","name":"owner","id":"` + ownerSubject + `"},`
 func TestKyCalendarClientFromCatalog(t *testing.T) {
 	f := newFixture(t, "../catalog/testdata/apps")
 	f.o.Catalog = catalog.Embedded()
-	calendarPlan(t, f, "      clients: []\n")
-	s, err := load(f.state, nil, f.o)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if b, _ := json.Marshal(s.integrations[0].Identity.Clients); string(b) != "["+wantCalendarClient+"]" || len(s.amendments) != 0 || !slices.Equal(s.derived, []string{"kycalendar"}) {
-		t.Fatalf("derived clients = %s, amendments %d", b, len(s.amendments))
-	}
+	s := derivedClient(t, f, calendarApp)
 	kubectl := "kubectl --kubeconfig '" + s.placed["kycalendar"].Kubeconfig + "' -n kyq-kycalendar exec deployment/app -- "
 	for _, want := range []string{"KyCalendar at https://calendar.example.com/", "as owner-admin (its console only", "or owner (calendars)",
 		kubectl + "cat /app/data/initial-admin-password", `local "admin" break-glass`, "pair it with KyRecovery"} {
@@ -86,27 +100,50 @@ func TestKyCalendarClientFromCatalog(t *testing.T) {
 	if change, rm := strings.Index(s.handover, "change it. Only after that"), strings.Index(s.handover, kubectl+"rm /app/data/initial-admin-password"); change < 0 || rm < change {
 		t.Errorf("break-glass steps out of order: %s", s.handover)
 	}
-	written := "      clients:\n        - id: kycalendar\n          name: KyCalendar\n          redirect_uris: [https://calendar.example.com/api/sso/kysignon/callback]\n          administrator_role: kycalendar.admin\n          everyday_role: kycalendar.user\n          suite_webhook: {url: https://calendar.example.com/api/sso/kysignon/sync}\n"
-	calendarPlan(t, f, written)
+	handWrittenClient(t, f, calendarApp)
+}
+
+// derivedClient loads a plan installing KyIdentity and a in one apply: a's catalog client joins
+// KyIdentity's first setup, with no amendment.
+func derivedClient(t *testing.T, f *fixture, a everydayApp) *session {
+	t.Helper()
+	a.plan(t, f, "      clients: []\n")
+	s, err := load(f.state, nil, f.o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := json.Marshal(s.integrations[0].Identity.Clients); string(b) != "["+a.client()+"]" || len(s.amendments) != 0 || !slices.Equal(s.derived, []string{a.app}) {
+		t.Fatalf("derived clients = %s, amendments %d", b, len(s.amendments))
+	}
+	return s
+}
+
+// handWrittenClient: a hand-written client equal to the app's catalog one is kept; any other
+// is refused.
+func handWrittenClient(t *testing.T, f *fixture, a everydayApp) {
+	t.Helper()
+	written := a.writtenClient()
+	a.plan(t, f, written)
 	if s, err := load(f.state, nil, f.o); err != nil || len(s.integrations[0].Identity.Clients) != 1 {
 		t.Fatalf("matching hand-written client: %v", err)
 	}
-	calendarPlan(t, f, strings.Replace(written, "kycalendar.user", "user", 1))
-	if _, err := load(f.state, nil, f.o); err == nil || !strings.Contains(err.Error(), "differs from the catalog's KyCalendar client") {
+	a.plan(t, f, strings.Replace(written, a.app+".user", "user", 1))
+	if _, err := load(f.state, nil, f.o); err == nil || !strings.Contains(err.Error(), "differs from the catalog's "+a.name+" client") {
 		t.Fatalf("different hand-written client: %v", err)
 	}
 }
 
-// fakeCalendar is KyCalendar's pod: its shell's private files and its apply-setup, which
+// fakeApp is an everydayApp's pod: its shell's private files and its apply-setup, which
 // activates by graceful restart.
-type fakeCalendar struct {
+type fakeApp struct {
+	a                everydayApp
 	files            map[string]string
 	placed           []string // placeScript's mode and path, in order
 	calls            []string // apply-setup arguments
 	applied, pending bool
 }
 
-func (c *fakeCalendar) stream(args []string, o remotecommand.StreamOptions) (string, error) {
+func (c *fakeApp) stream(args []string, o remotecommand.StreamOptions) (string, error) {
 	if args[0] == "sh" {
 		if args[2] != placeScript {
 			return "", errors.New("unexpected script")
@@ -126,13 +163,13 @@ func (c *fakeCalendar) stream(args []string, o remotecommand.StreamOptions) (str
 		c.files[p] = string(b)
 		return "", nil
 	}
-	if args[0] != "/app/kycalendar" {
+	if args[0] != productAdapters[c.a.app].binary {
 		return "", errors.New("unexpected binary " + args[0])
 	}
 	c.calls = append(c.calls, strings.Join(args[1:], " "))
 	switch {
 	case slices.Contains(args, "--capabilities"):
-		return `{"schema":"ky.setup-capabilities/1","service":"kycalendar","bundleSchema":"ky.product-setup/1","features":["kyidentity-oidc","directory-webhook","dedicated-admin","local-backup-config","check","restart"]}`, nil
+		return `{"schema":"ky.setup-capabilities/1","service":"` + c.a.app + `","bundleSchema":"ky.product-setup/1","features":["kyidentity-oidc","directory-webhook","dedicated-admin","local-backup-config","check","restart"]}`, nil
 	case slices.Contains(args, "--restart"):
 		c.pending = false
 		return "", nil
@@ -148,12 +185,12 @@ func (c *fakeCalendar) stream(args []string, o remotecommand.StreamOptions) (str
 	if c.pending {
 		pending = `[{"kind":"activation","name":"restart"}]`
 	}
-	return `{"schema":"ky.product-setup-report/1","service":"kycalendar","setupId":"` + calendarSetupID + `","created":` + created + `,"present":[],"pending":` + pending + `}`, nil
+	return `{"schema":"ky.product-setup-report/1","service":"` + c.a.app + `","setupId":"` + c.a.setupID + `","created":` + created + `,"present":[],"pending":` + pending + `}`, nil
 }
 
-// calendarSession loads the plan over ready KyIdentity and KyCalendar pods; running adds
-// KyIdentity's Deployment, as an apply after its first setup sees it.
-func calendarSession(t *testing.T, f *fixture, identity *fakeIdentity, cal *fakeCalendar, running bool) *session {
+// appSession loads the plan over ready KyIdentity and app pods; running adds KyIdentity's
+// Deployment, as an apply after its first setup sees it.
+func appSession(t *testing.T, f *fixture, identity *fakeIdentity, cal *fakeApp, running bool) *session {
 	t.Helper()
 	ctx := context.Background()
 	s, err := load(f.state, nil, f.o)
@@ -168,7 +205,7 @@ func calendarSession(t *testing.T, f *fixture, identity *fakeIdentity, cal *fake
 			}}}}},
 		}, metav1.CreateOptions{})
 	}
-	for _, app := range []string{"kyidentity", "kycalendar"} {
+	for _, app := range []string{"kyidentity", cal.a.app} {
 		f.cs.CoreV1().Pods("kyq-"+app).Create(ctx, &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{Name: "app-1", Labels: map[string]string{"app.kubernetes.io/name": app, managed.Label: managed.Value}},
 			Status:     corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
@@ -193,44 +230,55 @@ func calendarSession(t *testing.T, f *fixture, identity *fakeIdentity, cal *fake
 // read-only inspection of its first setup, places the secrets and the bundle, applies and
 // re-exports. Verify only checks.
 func TestKyCalendarSetup(t *testing.T) {
+	setup := everydaySetup(t, calendarApp)
+	// Golden from origin/master eca04d6, before KyMessages shared the everyday path.
+	if h := setup.InputHash(); h != "226358e905fa7132cad9ce5f50744b56ef19869844bc826f6e661ee5d73ba89f" {
+		t.Errorf("kycalendar.setup input hash = %s", h)
+	}
+}
+
+// everydaySetup proves a's setup step and returns it.
+func everydaySetup(t *testing.T, a everydayApp) engine.Step {
+	t.Helper()
 	ctx := context.Background()
 	f := newFixture(t, "../catalog/testdata/apps")
 	f.o.Catalog = catalog.Embedded()
-	calendarPlan(t, f, "      clients: []\n")
-	identity := &fakeIdentity{exports: map[string]string{"kycalendar": calendarExport(parentSetup)}}
-	cal := &fakeCalendar{files: map[string]string{}}
-	steps := stepsByID(t, calendarSession(t, f, identity, cal, false))
+	a.plan(t, f, "      clients: []\n")
+	identity := &fakeIdentity{exports: map[string]string{a.app: a.export(parentSetup)}}
+	cal := &fakeApp{a: a, files: map[string]string{}}
+	steps := stepsByID(t, appSession(t, f, identity, cal, false))
 	if err := steps["kyidentity.setup"].Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
 	identity.checkReport = firstSetupCheck(ownerReused)
-	setup := steps["kycalendar.setup"]
+	setup := steps[a.app+".setup"]
 	if done, _ := setup.Inspect(ctx); done || len(cal.files) != 0 {
-		t.Fatal("fresh KyCalendar inspected as done, or inspection wrote")
+		t.Fatal("fresh app inspected as done, or inspection wrote")
 	}
 	identity.calls, cal.calls, cal.placed = nil, nil, nil
 	if err := setup.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
 	first := "/data/installer/" + parentSetup + "/setup.json"
-	export := "/usr/local/bin/kyidentity apply-setup --file " + first + " --export-client kycalendar"
+	export := "/usr/local/bin/kyidentity apply-setup --file " + first + " --export-client " + a.app
 	calls := slices.DeleteFunc(slices.Clone(identity.calls), func(c string) bool { return strings.Contains(c, "--capabilities") })
 	if !slices.Equal(calls, []string{export, "/usr/local/bin/kyidentity apply-setup --file " + first + " --check", export}) {
 		t.Fatalf("KyIdentity calls %q", identity.calls)
 	}
-	dir := path.Dir(calendarBundle)
-	if !slices.Equal(cal.placed, []string{"write " + dir + "/client.secret", "write " + dir + "/directory.secret", "write " + calendarBundle}) {
+	bundle := a.bundle()
+	dir := path.Dir(bundle)
+	if !slices.Equal(cal.placed, []string{"write " + dir + "/client.secret", "write " + dir + "/directory.secret", "write " + bundle}) {
 		t.Fatalf("placed %q", cal.placed)
 	}
-	if !slices.Equal(cal.calls, []string{"apply-setup --capabilities", "apply-setup --file " + calendarBundle, "apply-setup --restart", "apply-setup --file " + calendarBundle + " --check"}) {
-		t.Fatalf("KyCalendar calls %q", cal.calls)
+	if !slices.Equal(cal.calls, []string{"apply-setup --capabilities", "apply-setup --file " + bundle, "apply-setup --restart", "apply-setup --file " + bundle + " --check"}) {
+		t.Fatalf("%s calls %q", a.name, cal.calls)
 	}
 	want := `{"admins":[{"issuer":"https://identity.example.com","subject":"` + adminSubject + `","username":"owner-admin"}],` +
 		`"everyday":[{"issuer":"https://identity.example.com","subject":"` + ownerSubject + `","username":"owner"}],` +
-		`"schema":"ky.product-setup/1","service":"kycalendar","setupId":"` + calendarSetupID + `",` +
-		`"sso":{"clientId":"kycalendar","clientSecretFile":"` + dir + `/client.secret","directorySecretFile":"` + dir + `/directory.secret","issuerUrl":"https://identity.example.com","redirectUri":"https://calendar.example.com/api/sso/kysignon/callback"}}`
-	if cal.files[calendarBundle] != want {
-		t.Fatalf("bundle\n got %s\nwant %s", cal.files[calendarBundle], want)
+		`"schema":"ky.product-setup/1","service":"` + a.app + `","setupId":"` + a.setupID + `",` +
+		`"sso":{"clientId":"` + a.app + `","clientSecretFile":"` + dir + `/client.secret","directorySecretFile":"` + dir + `/directory.secret","issuerUrl":"https://identity.example.com","redirectUri":"` + a.callback() + `"}}`
+	if cal.files[bundle] != want {
+		t.Fatalf("bundle\n got %s\nwant %s", cal.files[bundle], want)
 	}
 	if cal.files[dir+"/client.secret"] != clientSecret || cal.files[dir+"/directory.secret"] != directorySecret {
 		t.Fatal("secrets misplaced")
@@ -248,7 +296,7 @@ func TestKyCalendarSetup(t *testing.T) {
 		}
 	}
 	readOnly(t, cal.calls)
-	readOnly(t, slices.DeleteFunc(identity.calls, func(c string) bool { return strings.HasSuffix(c, "--export-client kycalendar") }))
+	readOnly(t, slices.DeleteFunc(identity.calls, func(c string) bool { return strings.HasSuffix(c, "--export-client "+a.app) }))
 	if after := snapshot(cal.files); after != before {
 		t.Fatal("Verify wrote")
 	}
@@ -266,7 +314,7 @@ func TestKyCalendarSetup(t *testing.T) {
 	} {
 		identity.checkReport = report
 		saved := *cal
-		*cal = fakeCalendar{files: map[string]string{}}
+		*cal = fakeApp{a: a, files: map[string]string{}}
 		err := setup.Apply(ctx)
 		if err == nil || err.Error() != fixed || len(cal.placed) != 0 {
 			t.Errorf("%s: %v, placed %q", name, err, cal.placed)
@@ -280,7 +328,7 @@ func TestKyCalendarSetup(t *testing.T) {
 	// A changed subject on rerun is refused: the retained bundle is compared, never replaced.
 	identity.checkReport = firstSetupCheck(strings.Replace(ownerReused, ownerSubject, "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d", 1))
 	err := setup.Apply(ctx)
-	if err == nil || !strings.Contains(err.Error(), "KyCalendar's setup.json is missing, unsafe or differs") || cal.files[calendarBundle] != want {
+	if err == nil || !strings.Contains(err.Error(), a.name+"'s setup.json is missing, unsafe or differs") || cal.files[bundle] != want {
 		t.Fatalf("changed subject: %v", err)
 	}
 	errs = append(errs, err.Error())
@@ -300,6 +348,7 @@ func TestKyCalendarSetup(t *testing.T) {
 	if c.InputHash() == h {
 		t.Fatal("everyday username not in the input hash")
 	}
+	return setup
 }
 
 func snapshot(m map[string]string) string {
@@ -356,20 +405,23 @@ func TestBundlesWithoutEveryday(t *testing.T) {
 
 // AC6: KyCalendar joining after KyIdentity's first setup comes in a setup amendment, applied
 // before kycalendar.setup; its export reads the amendment, its everyday subject the first setup.
-func TestKyCalendarAddedByAmendment(t *testing.T) {
+func TestKyCalendarAddedByAmendment(t *testing.T) { everydayAmendment(t, calendarApp) }
+
+func everydayAmendment(t *testing.T, a everydayApp) {
+	t.Helper()
 	ctx := context.Background()
 	f := newFixture(t, "../catalog/testdata/apps")
 	f.o.Catalog = catalog.Embedded()
 	identity := setUpIdentity(t, f, amendmentFeatures)
 	identity.checkReport = firstSetupCheck(ownerReused)
-	calendarPlan(t, f, "      clients: []\n")
-	id := amendmentID(parentSetup, "kycalendar")
+	a.plan(t, f, "      clients: []\n")
+	id := amendmentID(parentSetup, a.app)
 	bundle := "/data/installer/" + id + "/setup.json"
-	amendment := &fakeIdentity{parent: identity, export: calendarExport(id)}
+	amendment := &fakeIdentity{parent: identity, export: a.export(id)}
 	identity.setups[bundle] = amendment
-	cal := &fakeCalendar{files: map[string]string{}}
+	cal := &fakeApp{a: a, files: map[string]string{}}
 
-	s := calendarSession(t, f, identity, cal, true)
+	s := appSession(t, f, identity, cal, true)
 	prior, err := s.ensureInstallation(f.state)
 	if err != nil {
 		t.Fatal(err)
@@ -379,15 +431,15 @@ func TestKyCalendarAddedByAmendment(t *testing.T) {
 		t.Fatalf("no amendment recorded: %v", err)
 	}
 	readOnly(t, identity.calls)
-	if !strings.Contains(f.out.String(), "ran without kycalendar's client: adding it with setup amendment "+id) {
+	if !strings.Contains(f.out.String(), "ran without "+a.app+"'s client: adding it with setup amendment "+id) {
 		t.Fatalf("output = %q", f.out.String())
 	}
-	want := `{"schema":"kyidentity.setup/1","setupId":"` + id + `","extends":"` + parentSetup + `","clients":[` + wantCalendarClient + `]}`
+	want := `{"schema":"kyidentity.setup/1","setupId":"` + id + `","extends":"` + parentSetup + `","clients":[` + a.client() + `]}`
 	if got := string(s.amendments[0].bundle); got != want {
 		t.Fatalf("amendment bundle\n got %s\nwant %s", got, want)
 	}
 	steps := setupStepsOf(t, s)
-	if got := strings.Join(ids(steps), " "); got != "kyidentity.setup kyidentity.amend.kycalendar kyidentity.retire-bootstrap kycalendar.setup" {
+	if got := strings.Join(ids(steps), " "); got != "kyidentity.setup kyidentity.amend."+a.app+" kyidentity.retire-bootstrap "+a.app+".setup" {
 		t.Fatalf("steps = %s", got)
 	}
 	identity.calls = nil
@@ -396,8 +448,8 @@ func TestKyCalendarAddedByAmendment(t *testing.T) {
 	if err := e.Run(ctx, steps); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
-	if amendment.intent != want || !cal.applied || !strings.Contains(cal.files[calendarBundle], `"subject":"`+ownerSubject+`"`) {
-		t.Fatalf("staged %s, KyCalendar applied %v, bundle %s", amendment.intent, cal.applied, cal.files[calendarBundle])
+	if amendment.intent != want || !cal.applied || !strings.Contains(cal.files[a.bundle()], `"subject":"`+ownerSubject+`"`) {
+		t.Fatalf("staged %s, %s applied %v, bundle %s", amendment.intent, a.name, cal.applied, cal.files[a.bundle()])
 	}
 	if !slices.Contains(identity.calls, "/usr/local/bin/kyidentity apply-setup --file /data/installer/"+parentSetup+"/setup.json --check") ||
 		slices.ContainsFunc(identity.calls, func(c string) bool { return strings.Contains(c, "--export-client") && !strings.Contains(c, bundle) }) {
@@ -413,14 +465,17 @@ func TestKyCalendarAddedByAmendment(t *testing.T) {
 }
 
 // AC9: KyCalendar's setup follows its health and precedes every edge step, as kyPulse's.
-func TestKyCalendarSetupBeforeEdges(t *testing.T) {
-	if slices.Contains(routedFirst, "kycalendar") {
-		t.Fatal("kycalendar in routedFirst")
+func TestKyCalendarSetupBeforeEdges(t *testing.T) { setupBeforeEdges(t, calendarApp) }
+
+func setupBeforeEdges(t *testing.T, a everydayApp) {
+	t.Helper()
+	if slices.Contains(routedFirst, a.app) {
+		t.Fatal(a.app + " in routedFirst")
 	}
 	f := newFixture(t, "../catalog/testdata/apps")
 	f.o.Catalog = catalog.Embedded()
-	calendarPlan(t, f, "      clients: []\n")
-	s := calendarSession(t, f, &fakeIdentity{}, &fakeCalendar{files: map[string]string{}}, false)
+	a.plan(t, f, "      clients: []\n")
+	s := appSession(t, f, &fakeIdentity{}, &fakeApp{a: a, files: map[string]string{}}, false)
 	s.edges = s.plan.Edges
 	var err error
 	if s.npms["k1"], err = edge.NewNPM("kube://kyq-npm/app:81", "token", "test-installation", func(context.Context, string, string) (net.Conn, error) {
@@ -433,31 +488,37 @@ func TestKyCalendarSetupBeforeEdges(t *testing.T) {
 		t.Fatal(err)
 	}
 	order := ids(list)
-	setup := slices.Index(order, "kycalendar.setup")
+	setup := slices.Index(order, a.app+".setup")
 	firstEdge := slices.IndexFunc(order, func(id string) bool { return strings.HasPrefix(id, "k1.edge.") })
-	route := slices.IndexFunc(list, func(st engine.Step) bool { return edge.RouteApp(st) == "kycalendar" })
-	if setup < 1 || order[setup-1] != "kycalendar.health" || firstEdge < 0 || setup > firstEdge || route < firstEdge {
+	route := slices.IndexFunc(list, func(st engine.Step) bool { return edge.RouteApp(st) == a.app })
+	if slices.Contains(order, "kyidentity.scim."+a.app) {
+		t.Fatalf("SCIM step for %s: %v", a.app, order)
+	}
+	if setup < 1 || order[setup-1] != a.app+".health" || firstEdge < 0 || setup > firstEdge || route < firstEdge {
 		t.Fatalf("steps = %v", order)
 	}
 }
 
 // AC8: owner usernames KyCalendar's setup would refuse are refused before any connection.
-func TestKyCalendarUsernamesRefused(t *testing.T) {
+func TestKyCalendarUsernamesRefused(t *testing.T) { usernamesRefused(t, calendarApp) }
+
+func usernamesRefused(t *testing.T, a everydayApp) {
+	t.Helper()
 	f := newFixture(t, "../catalog/testdata/apps")
 	f.o.Catalog = catalog.Embedded()
 	dialTarget = func(context.Context, stack.Target, remote.SSHConfig, bool) (driver, error) {
 		t.Fatal("connected")
 		return nil, nil
 	}
-	set := func(calendar bool, account, name string) {
-		calendarPlan(t, f, "      clients: []\n")
+	set := func(installed bool, account, name string) {
+		a.plan(t, f, "      clients: []\n")
 		p := filepath.Join(f.state, "stack.yaml")
 		b, _ := os.ReadFile(p)
 		y := strings.Replace(string(b), account+": {username: "+map[string]string{"admin": "owner-admin", "everyday": "owner"}[account]+",", account+": {username: "+name+",", 1)
-		if !calendar {
-			y = strings.Replace(y, "  - name: kycalendar\n    target: k1\n", "", 1)
-			y = strings.Replace(y, "      - app: kycalendar\n", "      - app: npm\n", 1)
-			y = strings.Replace(y, "  - product: kycalendar\n    target: k1\n    bundle: "+calendarBundle+"\n    identity_client: kycalendar\n", "", 1)
+		if !installed {
+			y = strings.Replace(y, "  - name: "+a.app+"\n    target: k1\n", "", 1)
+			y = strings.Replace(y, "      - app: "+a.app+"\n", "      - app: npm\n", 1)
+			y = strings.Replace(y, "  - product: "+a.app+"\n    target: k1\n    bundle: "+a.bundle()+"\n    identity_client: "+a.app+"\n", "", 1)
 		}
 		os.WriteFile(p, []byte(y), 0o600)
 	}
@@ -465,31 +526,36 @@ func TestKyCalendarUsernamesRefused(t *testing.T) {
 		set(true, c[0], c[1])
 		for _, cmd := range [][]string{{"review"}, {"plan", "--noninteractive"}, {"apply"}} {
 			err := f.run(cmd...)
-			if err == nil || !strings.Contains(err.Error(), `KyCalendar cannot take the KyIdentity `+c[0]+` username "`+c[1]+`"`) || !strings.Contains(err.Error(), "3 to 64 letters, digits") || !strings.Contains(err.Error(), "identity."+c[0]+".username") {
+			// KyCalendar's text as job 002 shipped it, with the product's name.
+			want := a.name + ` cannot take the KyIdentity ` + c[0] + ` username "` + c[1] + `": its usernames are 3 to 64 letters, digits, ".", "_" or "-", and "admin" is its own break-glass account. Change identity.` + c[0] + `.username in the kyidentity integration`
+			if err == nil || err.Error() != want {
 				t.Errorf("%s %s=%s: %v", cmd[0], c[0], c[1], err)
 			}
 		}
 		set(false, c[0], c[1])
-		if err := f.run("review"); err != nil && strings.Contains(err.Error(), "KyCalendar") {
-			t.Errorf("without kycalendar, %s=%s refused: %v", c[0], c[1], err)
+		if err := f.run("review"); err != nil && strings.Contains(err.Error(), a.name) {
+			t.Errorf("without %s, %s=%s refused: %v", a.app, c[0], c[1], err)
 		}
 	}
 }
 
 // AC16: KyCalendar on a Docker host is refused before any connection, naming Kubernetes.
-func TestKyCalendarOnDockerRefused(t *testing.T) {
+func TestKyCalendarOnDockerRefused(t *testing.T) { dockerRefused(t, "kycalendar") }
+
+func dockerRefused(t *testing.T, app string) {
+	t.Helper()
 	f := newFixture(t, "../catalog/testdata/apps")
 	f.o.Catalog = catalog.Embedded()
 	catalogIdentityPlan(t, f, "kyidentity", "")
 	p := filepath.Join(f.state, "stack.yaml")
 	b, _ := os.ReadFile(p)
-	os.WriteFile(p, []byte(strings.Replace(string(b), "    target: k1\nedges:", "    target: k1\n  - name: kycalendar\n    target: nas\nedges:", 1)), 0o600)
+	os.WriteFile(p, []byte(strings.Replace(string(b), "    target: k1\nedges:", "    target: k1\n  - name: "+app+"\n    target: nas\nedges:", 1)), 0o600)
 	dialTarget = func(context.Context, stack.Target, remote.SSHConfig, bool) (driver, error) {
 		t.Fatal("connected")
 		return nil, nil
 	}
 	for _, cmd := range [][]string{{"review"}, {"plan", "--noninteractive"}, {"apply"}} {
-		if err := f.run(cmd...); err == nil || !strings.Contains(err.Error(), "kycalendar") || !strings.Contains(err.Error(), "place it on a Kubernetes target") {
+		if err := f.run(cmd...); err == nil || !strings.Contains(err.Error(), app) || !strings.Contains(err.Error(), "place it on a Kubernetes target") {
 			t.Errorf("%s: %v", cmd[0], err)
 		}
 	}

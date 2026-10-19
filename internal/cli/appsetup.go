@@ -123,6 +123,8 @@ func (s *session) composeClients(st *stack.Stack) error {
 			s.handover += fmt.Sprintf(dnsHandover, host, n.Admin.Username, net.JoinHostPort(r.ForwardHost, "53"), s.placed["kydns"].Name, r.ForwardHost, r.ForwardPort, e.EgressAddress)
 		case "kycalendar":
 			s.handover += fmt.Sprintf(calendarHandover, host, n.Admin.Username, n.Everyday.Username, kubectl(s.state, s.placed["kycalendar"]))
+		case "kymessage":
+			s.handover += fmt.Sprintf(messageHandover, host, n.Admin.Username, n.Everyday.Username, kubectl(s.state, s.placed["kymessage"]))
 		case "kypulse":
 			var unwatched []string
 			s.pulseTargets, unwatched = pulseTargets(st, s.cat)
@@ -307,6 +309,22 @@ func appRoute(st *stack.Stack, app string) (stack.Edge, stack.Route) {
 	return stack.Edge{}, stack.Route{}
 }
 
+// messageHandover is printed after every apply that installs KyMessages; %[4]s is kubectl
+// pointed at its target.
+const messageHandover = `
+KyMessages at https://%[1]s/: sign in through KyIdentity as %[2]s (its console only) or %[3]s.
+  Its setup created exactly these two; it admits no one else.
+  Chat (Matrix) is not installed by this release: members see "chat is not available".
+  Outstanding human steps:
+  1. Its local "admin" break-glass account. Its one-time password is in its first container's
+     log until the pod is replaced:
+       %[4]s -n kyq-kymessage logs deployment/app --previous
+     Replace it now, typing a new password of at least 12 characters on stdin:
+       %[4]s -n kyq-kymessage exec -it deployment/app -- /app/kymessages init-admin
+  2. On its Backup & recovery screen, as %[2]s, pair it with KyRecovery using a one-time code
+     from KyRecovery's administrator. It makes no backups until then.
+`
+
 // kubectl is the kubectl command line for target t, whose kubeconfig is relative to state.
 func kubectl(state string, t stack.Target) string {
 	kc := t.Kubeconfig
@@ -365,10 +383,10 @@ func pulseHandover(host, admin string, targets []pulseTarget, unwatched []string
 }
 
 // clientSetupStep is apply's apply-setup for an installed Ky app that signs in through
-// KyIdentity: KyRecovery, kyPulse, KyCalendar or KyDrive. None of their 0.4.2 releases imports
-// credentials, so the step places its bundle and KyIdentity's client and directory secrets as
-// private files through its container's shell, never replacing a secret. KyIdentity may run on
-// another target: the export crosses to the app's only in memory.
+// KyIdentity: KyRecovery, kyPulse, KyCalendar, KyMessages or KyDrive. None of their 0.4.2
+// releases imports credentials, so the step places its bundle and KyIdentity's client and
+// directory secrets as private files through its container's shell, never replacing a secret.
+// KyIdentity may run on another target: the export crosses to the app's only in memory.
 type clientSetupStep struct {
 	i         stack.Integration
 	name      string            // the app's name in KyIdentity, for messages
@@ -376,7 +394,7 @@ type clientSetupStep struct {
 	issuer    string
 	scimToken string        // the app's own SCIM token file, which its bundle names; "" for none
 	targets   []pulseTarget // kyPulse's monitoring extension; nil for any other app
-	everyday  *everydayUser // KyCalendar's everyday account; nil for any other app
+	everyday  *everydayUser // KyCalendar's or KyMessages' everyday account; nil for any other app
 	export    identityExec  // KyIdentity's apply-setup
 	exec      identityExec  // the app's apply-setup
 	setup     func(context.Context, identityExec, string, bool) ([]byte, error)
@@ -756,8 +774,8 @@ func (s *session) setupSteps(d driver, i stack.Integration) (steps []engine.Step
 	switch i.Product {
 	case "kypulse":
 		step.targets = s.pulseTargets
-	case "kycalendar":
-		// It admits only the identities its setup names, and creates none at sign-in.
+	case "kycalendar", "kymessage":
+		// Each admits only the identities its setup names, and creates none at sign-in.
 		step.everyday = &everydayUser{Bundle: first.Bundle, Username: first.Identity.Everyday.Username}
 	}
 	if o.SCIMTokenFile == "" {

@@ -463,7 +463,7 @@ func validateSelection(st *stack.Stack, cat catalog.Catalog) error {
 	if err := routedNeedsSetup(st); err != nil {
 		return err
 	}
-	if err := calendarAccounts(st); err != nil {
+	if err := ownerAccounts(st); err != nil {
 		return err
 	}
 	var names []string
@@ -504,22 +504,25 @@ func routedNeedsSetup(st *stack.Stack) error {
 	return nil
 }
 
-// calendarUsername is the rule KyCalendar's setup applies to every account it creates.
-var calendarUsername = regexp.MustCompile(`^[A-Za-z0-9_.-]{3,64}$`)
+// productUsername is the rule KyCalendar's and KyMessages' setups apply to every account they
+// create; each refuses "admin", its own break-glass account.
+var productUsername = regexp.MustCompile(`^[A-Za-z0-9_.-]{3,64}$`)
 
-// calendarAccounts refuses a plan installing KyCalendar with an owner account its setup would
-// refuse mid-apply: one outside its username rule, or its own break-glass "admin".
-func calendarAccounts(st *stack.Stack) error {
-	if !slices.ContainsFunc(st.Apps, func(a stack.App) bool { return a.Name == "kycalendar" }) {
-		return nil
-	}
-	for _, i := range st.Integrations {
-		if i.Product != "kyidentity" || i.Identity == nil || !i.Installed(st) {
+// ownerAccounts refuses a plan installing KyCalendar or KyMessages with an owner account its
+// setup would refuse mid-apply.
+func ownerAccounts(st *stack.Stack) error {
+	for _, p := range [][2]string{{"kycalendar", "KyCalendar"}, {"kymessage", "KyMessages"}} {
+		if !slices.ContainsFunc(st.Apps, func(a stack.App) bool { return a.Name == p[0] }) {
 			continue
 		}
-		for _, a := range [][2]string{{"admin", i.Identity.Admin.Username}, {"everyday", i.Identity.Everyday.Username}} {
-			if u := a[1]; strings.EqualFold(u, "admin") || !calendarUsername.MatchString(u) {
-				return fmt.Errorf(`KyCalendar cannot take the KyIdentity %s username %q: its usernames are 3 to 64 letters, digits, ".", "_" or "-", and "admin" is its own break-glass account. Change identity.%s.username in the kyidentity integration`, a[0], u, a[0])
+		for _, i := range st.Integrations {
+			if i.Product != "kyidentity" || i.Identity == nil || !i.Installed(st) {
+				continue
+			}
+			for _, a := range [][2]string{{"admin", i.Identity.Admin.Username}, {"everyday", i.Identity.Everyday.Username}} {
+				if u := a[1]; strings.EqualFold(u, "admin") || !productUsername.MatchString(u) {
+					return fmt.Errorf(`%s cannot take the KyIdentity %s username %q: its usernames are 3 to 64 letters, digits, ".", "_" or "-", and "admin" is its own break-glass account. Change identity.%s.username in the kyidentity integration`, p[1], a[0], u, a[0])
+				}
 			}
 		}
 	}

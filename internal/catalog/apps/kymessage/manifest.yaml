@@ -1,0 +1,67 @@
+name: kymessage
+description: KyMessages' operator console (no chat; the Matrix stack is not installed); signs in through KyIdentity
+category: ky
+version: 0.4.2
+# Release image of v0.4.2 (commit 1349586d10ae4d3aff0156bb660dc844201d91ec), attested by
+# Busnes-app/KyMessage-Server release-image.yml@refs/tags/v0.4.2 (gh attestation verify).
+images:
+  kymessage: ghcr.io/busnes-app/kymessage-server:0.4.2@sha256:42e228cfe79e4f04f71891b8bef457765401c87a9fd08bab280905136b524da5
+# Its setup needs KyIdentity's issuer, client and signed directory.
+depends_on: [kyidentity]
+health:
+  timeout_seconds: 300
+# No SCIM (its setup refuses it) and no automatic provisioning: only the identities its setup
+# creates (the owner's admin and everyday accounts) sign in, and the signed directory webhook
+# updates only those. Sign-out is local: KyIdentity registers no back-channel logout.
+oidc:
+  name: KyMessages
+  redirect_paths: [/api/sso/kyidentity/callback]
+  admin_role: kymessage.admin
+  user_role: kymessage.user
+  directory_path: /api/sso/kyidentity/sync
+# The SQLite database with its keys and credential files, and the sealed local capsules.
+backup:
+  volumes: [data, backups]
+upgrade:
+  # First catalog release; its schema migrates forward at startup.
+  min_from: 0.4.2
+  migrates_data: true
+kubernetes:
+  image: kymessage
+  # No KY_MATRIX_*: any one turns Matrix mode on, which refuses to start without the stack.
+  # No KY_ENV=production (it needs KY_SESSION_SECRET in env): sessions end at each restart.
+  env:
+    KY_HOST: 0.0.0.0
+    KY_PORT: "8080"
+    KY_APP_NAME: KyMessages
+    # Its setup requires the callback to be this plus /api/sso/kyidentity/callback.
+    KY_APP_URL: https://{{host}}
+    KY_DB_DRIVER: sqlite
+    KY_DATA_DIR: /app/data
+    KY_SSO_ENABLED: "true"
+    KY_SSO_AUTO_PROVISION: "false"
+    # Otherwise SCIM answers on a random token until setup turns it off.
+    KY_SCIM_ENABLED: "false"
+    KY_BACKUP_DIR: /app/backups
+    KY_BACKUP_KEEP: "7"
+    KY_BACKUP_DEPOSIT_INTERVAL: 24h
+    GOMEMLIMIT: 384MiB
+  ports: [8080]
+  # No unauthenticated health endpoint; this no-store GET answers once it serves.
+  readiness_path: /api/installer/network
+  # The image's user.
+  run_as: 10001
+  resources:
+    cpu: "1"
+    # Idle between requests.
+    cpu_request: 50m
+    memory: 512Mi
+  # Stop drains HTTP (5 s) and waits for a running backup (20 min); upstream's grace is 21m.
+  termination_grace_seconds: 1260
+  volumes:
+    - name: data
+      mount: /app/data
+      size: 10Gi
+    - name: backups
+      mount: /app/backups
+      size: 5Gi
