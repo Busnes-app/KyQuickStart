@@ -260,7 +260,10 @@ handover of admin and everyday logins.
   HTTP status table and image: `docs/superpowers/specs/2026-10-16-suite-runner-design.md`;
   operator steps in `docs/guided-setup.md` ("Hand-off to KyYard"); compose example
   `docs/kyyard-runner.compose.yaml`, pod manifest `docs/kyyard-runner.k8s.yaml`; image `Dockerfile`, published by
-  `.github/workflows/release-image.yml`.
+  `.github/workflows/release-image.yml`. That workflow runs `publish` (image, attested and
+  verified), `binaries` (`scripts/release-binaries.sh`, the only home of the release `-ldflags`,
+  stamps `main.runnerImage` with the verified digest; the four binaries are attested, uploaded
+  and re-verified after download) and `promote` (`:stable`), each with only the permissions it uses.
 
 ## Local Contracts
 
@@ -384,7 +387,8 @@ handover of admin and everyday logins.
   (`owned_by_cli` otherwise) and never changes its own pod (`kubernetes.suite_runner`, the
   catalog KyYard): its workload becomes a note step and requests naming it are refused
   (`runner_host`). The workstation deploys that app only with a digest-pinned runner image
-  (`cli.Options.RunnerImage`, stamped into release builds; empty source builds refuse it). The runner's SSH key, kubeconfigs and
+  (`cli.Options.RunnerImage`, stamped into release binaries by `scripts/release-binaries.sh`; empty
+  source builds refuse it; `version --runner-image` prints it). The runner's SSH key, kubeconfigs and
   identity stay in its state volume beside its secret-free `plan/`; the workstation never
   receives them. Runner access on targets is exactly the installer's: one `restrict`ed
   authorized_keys line, or a ServiceAccount bound to the preflight permission list.
@@ -446,6 +450,10 @@ calls and kind nodes must carry their own explicit bounds.
 - `make build`: builds workstation `kyquickstart` and resident `kyoffboard` binaries.
 - `make ci`: tidy check, gofmt, vet (including the `e2e` tag), race tests. Runner tests decode
   every answer with KyYard's client types (`internal/runner/kyyard_test.go`).
+  `cmd/kyquickstart/release_test.go` runs `scripts/release-binaries.sh` (the stamp in all four
+  binaries, its refusals) and checks `release-image.yml`'s job graph, permissions and pins.
+- `make workflow-lint`: needs Docker (CI runs it in `vulncheck`); actionlint v1.7.12 on every
+  workflow and offline, digest-pinned zizmor (medium and up) on `release-image.yml`.
 - `make e2e`: needs Docker; runs `apply` against an sshd container on the local Docker socket and
   against a kind cluster (`go run sigs.k8s.io/kind@v0.33.0`), including drift and stale-lock cases.
   Also runs disposable NPM, frpc/frps and cloudflared container tests in `internal/edge`, and

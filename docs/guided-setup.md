@@ -800,15 +800,16 @@ integrations:
     identity_client: kyyard
 ```
 
-**Not installable yet.** The runner image must be an attested `kyquickstart-runner` release
-pinned by digest, and none is published. This build carries none (`runnerImage` in
-`cmd/kyquickstart` is empty; a release build stamps it with `-ldflags "-X
-main.runnerImage=ghcr.io/busnes-app/kyquickstart-runner:X.Y.Z@sha256:…"`, as it stamps the
-version), so `plan`, `review`, `apply`, `install` and `upgrade` refuse, before connecting, any
-plan that deploys KyYard: "KyYard's suite runner has no attested release image in this build,
-… and no kyquickstart release that pins one is published yet".
+**Release binaries only.** The runner image must be the attested `kyquickstart-runner` image
+released with the binary, pinned by digest. A release binary carries it: the release workflow
+stamps `main.runnerImage=ghcr.io/busnes-app/kyquickstart-runner:X.Y.Z@sha256:…` with the digest it
+just published and verified (`scripts/release-binaries.sh`), and `kyquickstart version
+--runner-image` prints it ([Install a release](../README.md#install-a-release)). A source build
+pins none (`runnerImage` in `cmd/kyquickstart` is empty; `version --runner-image` fails), so
+`plan`, `review`, `apply`, `install` and `upgrade` refuse, before connecting, any plan that
+deploys KyYard: "cannot install KyYard: source builds pin no runner image; use a release binary".
 A pin that is not a digest is refused too. The kind test proves the entry with a runner built
-from source, not a released image.
+from source and pinned by its kind-local digest, not a released image.
 
 Sign-in: an admin-only client (fleet administration has no everyday workflow):
 `https://<host>/api/sso/kyidentity/callback`, administrator role `kyyard.admin`, no everyday

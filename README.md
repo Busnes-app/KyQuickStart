@@ -12,9 +12,9 @@ kyPulse, KyNotes and KyCalendar signing in through it ([docs/guided-setup.md](do
 [KyCalendar](docs/guided-setup.md#catalog-kycalendar-on-kubernetes)), with KyDrive, KyPost and KyDNS on a
 Docker host routed through that edge ([KyDrive](docs/guided-setup.md#catalog-kydrive-on-docker),
 [KyPost](docs/guided-setup.md#catalog-kypost-on-docker), [KyDNS](docs/guided-setup.md#catalog-kydns-on-docker));
-otherwise only a disposable demo app installs. KyYard, with the suite runner in its pod, is in
-the catalog but refused until a `kyquickstart-runner` release is pinned; none is published yet
-([KyYard](docs/guided-setup.md#catalog-kyyard-on-kubernetes)).
+otherwise only a disposable demo app installs. KyYard, with the suite runner in its pod, installs
+from a [release binary](#install-a-release), which carries the digest of the runner image it was
+released with; source builds refuse it ([KyYard](docs/guided-setup.md#catalog-kyyard-on-kubernetes)).
 `integrate-product` connects already-running Ky products to KyIdentity. See
 [the deployment plan](docs/superpowers/plans/2026-10-10-deployment-plan.md) for what remains.
 
@@ -27,14 +27,30 @@ the catalog but refused until a `kyquickstart-runner` release is pinned; none is
 Nothing is installed on your workstation beyond the binary. Secrets are generated on the
 target and never written to local state, logs or command output.
 
+## Install a release
+
+Each release `vX.Y.Z` publishes `kyquickstart-X.Y.Z-linux-amd64`, `kyquickstart-X.Y.Z-linux-arm64`,
+`kyquickstart-X.Y.Z-darwin-amd64` and `kyquickstart-X.Y.Z-darwin-arm64`, each attested and
+pinned to the attested `kyquickstart-runner:X.Y.Z` image. Verify both before use:
+
+```
+gh attestation verify kyquickstart-X.Y.Z-<os>-<arch> --repo Busnes-app/KyQuickStart \
+  --cert-identity https://github.com/Busnes-app/KyQuickStart/.github/workflows/release-image.yml@refs/tags/vX.Y.Z
+./kyquickstart-X.Y.Z-<os>-<arch> version                  # X.Y.Z
+./kyquickstart-X.Y.Z-<os>-<arch> version --runner-image   # ghcr.io/busnes-app/kyquickstart-runner:X.Y.Z@sha256:…
+gh attestation verify oci://ghcr.io/busnes-app/kyquickstart-runner@sha256:… --repo Busnes-app/KyQuickStart \
+  --cert-identity https://github.com/Busnes-app/KyQuickStart/.github/workflows/release-image.yml@refs/tags/vX.Y.Z
+```
+
 ## Build
 
-Requires Go 1.26.6 or later.
+Requires Go 1.26.6 or later. A source build pins no runner image, so it cannot install KyYard.
 
 ```sh
 make build
-make ci    # tidy check, vet, race tests
-make e2e   # needs Docker; real SSH, kind and edge containers
+make ci             # tidy check, vet, race tests
+make e2e            # needs Docker; real SSH, kind and edge containers
+make workflow-lint  # needs Docker; actionlint and zizmor on the release workflow
 ```
 
 ## Try it
@@ -57,7 +73,7 @@ Choosing `finish` saves the plan without touching any server.
 | `verify-edge` | Check public routing and forwarded headers |
 | `integrate-identity`, `integrate-product`, `integrate-stack` | Configure existing Ky products against KyIdentity |
 | `review` | Show the saved plan |
-| `version` | Print the release set |
+| `version` | Print the release set; `--runner-image` prints the runner image a release binary pins |
 
 ## Documentation
 
