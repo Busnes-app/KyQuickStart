@@ -132,20 +132,16 @@ func refused(t *testing.T, err error, want string) {
 }
 
 // refuseUntouched runs restore kydrive --snapshot id --yes and wants restore_refused naming
-// want, KyDrive's directory unchanged and no restic container, except, when list is set, the
-// one read-only `restic snapshots` restore runs before it checks the app.
-func refuseUntouched(t *testing.T, ctx context.Context, state, catalogDir string, trust []string, d driveTarget, id, want string, list bool) []string {
+// want, KyDrive's directory unchanged and no restic container.
+func refuseUntouched(t *testing.T, ctx context.Context, state, catalogDir string, trust []string, d driveTarget, id, want string) []string {
 	t.Helper()
 	listing := dirDigest(t, d.name, d.root+"/kydrive")
 	w := watchRestic()
 	out, err := kyq(t, ctx, state, catalogDir, trust, "", "restore", "kydrive", "--snapshot", id, "--yes")
 	inspect, created := w.end(t)
 	refused(t, err, want)
-	switch {
-	case !list && created != 0:
-		t.Fatalf("the refused restore ran %d restic containers", created)
-	case list && (created != 1 || len(inspect) != 1 || !strings.Contains(inspect[0], `"snapshots","--json"`)):
-		t.Fatalf("the refused restore ran %d restic containers, want only restic snapshots: %v", created, inspect)
+	if created != 0 {
+		t.Fatalf("the refused restore ran %d restic containers: %v", created, inspect)
 	}
 	if after := dirDigest(t, d.name, d.root+"/kydrive"); after != listing {
 		t.Fatalf("the refused restore changed KyDrive's directory:\n%s\nwas:\n%s", after, listing)
@@ -176,6 +172,6 @@ func testDriveBackupGate(t *testing.T, ctx context.Context, work, state, catalog
 	if !strings.Contains(backupOut, "This run created kydrive's repository password") {
 		t.Fatal("the first backup did not print the password command")
 	}
-	refusal := refuseUntouched(t, ctx, state, catalogDir, trust, d, id[:8], "kydrive is running on nas", true)
+	refusal := refuseUntouched(t, ctx, state, catalogDir, trust, d, id[:8], "kydrive is running on nas")
 	return append([]string{out, backupOut}, refusal...), []string{secrets["restic_password"], secrets["the rest-server password"]}
 }
