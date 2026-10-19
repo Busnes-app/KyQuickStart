@@ -268,6 +268,74 @@ func TestKyDriveEntry(t *testing.T) {
 	}
 }
 
+// KyPost runs on Docker only, without root or capabilities, publishing only its HTTP port on
+// the forward address, with no mail stack and no secret, proxy trust or break-glass in env.
+func TestKyPostEntry(t *testing.T) {
+	cat, err := Load(Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := cat["kypost"]
+	o := a.OIDC
+	if a.Category != "ky" || a.Version != "0.4.2" || a.Kubernetes != nil || len(a.Secrets) != 0 || len(a.Binds) != 0 || !slices.Equal(a.Services, []string{"app"}) || !slices.Equal(a.DependsOn, []string{"kyidentity"}) || a.Health.TimeoutSeconds != 300 {
+		t.Fatalf("manifest = %+v", a.Manifest)
+	}
+	if a.Images["kypost"] != "ghcr.io/busnes-app/kypost-server:0.4.2@sha256:23b596719edbbf81859047264893509cef7a90b6eb7ac48038bc353e9f3d2353" {
+		t.Fatalf("image = %s", a.Images["kypost"])
+	}
+	if o.Name != "KyPost" || !slices.Equal(o.RedirectPaths, []string{"/api/auth/oidc/callback"}) || o.AdminRole != "kypost.admin" || o.UserRole != "kypost.user" ||
+		o.DirectoryPath != "" || o.SCIMTokenFile != "" || o.BackchannelLogoutPath != "" || o.Public || len(o.LogoutPaths) != 0 {
+		t.Fatalf("oidc = %+v", o)
+	}
+	if a.Backup == nil || !slices.Equal(a.Backup.Volumes, []string{"config", "private", "state"}) || a.Upgrade.MinFrom != "0.4.2" || !a.Upgrade.MigratesData {
+		t.Fatalf("upgrade %+v, backup %+v", a.Upgrade, a.Backup)
+	}
+	type service struct {
+		Image           string
+		Platform        string
+		User            string
+		StopGracePeriod string   `yaml:"stop_grace_period"`
+		ReadOnly        bool     `yaml:"read_only"`
+		CapDrop         []string `yaml:"cap_drop"`
+		CapAdd          []string `yaml:"cap_add"`
+		SecurityOpt     []string `yaml:"security_opt"`
+		PidsLimit       int      `yaml:"pids_limit"`
+		MemLimit        string   `yaml:"mem_limit"`
+		Ports           []string
+		Entrypoint      []string
+		Environment     map[string]string
+		Secrets         []string
+	}
+	var c struct{ Services map[string]service }
+	if err := yaml.Unmarshal(a.WithRoute(Route{Host: "post.example.com", Forward: "192.168.1.91:18866"}).Compose, &c); err != nil {
+		t.Fatal(err)
+	}
+	s, ok := c.Services["app"]
+	if len(c.Services) != 1 || !ok {
+		t.Fatalf("services = %v", c.Services)
+	}
+	if s.Image != a.Images["kypost"] || s.Platform != "linux/amd64" || s.User != "kypost" || !s.ReadOnly || !slices.Equal(s.CapDrop, []string{"ALL"}) || s.CapAdd != nil ||
+		!slices.Equal(s.SecurityOpt, []string{"no-new-privileges:true"}) || s.StopGracePeriod != "36m" || s.PidsLimit != 512 || s.MemLimit != "8g" || s.Secrets != nil {
+		t.Fatalf("service = %+v", s)
+	}
+	if !slices.Equal(s.Ports, []string{"192.168.1.91:18866:5866"}) ||
+		!slices.Equal(s.Entrypoint, []string{"/bin/sh", "-c", "kypost-server --mode bootstrap-admin && kypost-server migrate-native && exec supervisord -c /etc/supervisord.conf"}) {
+		t.Fatalf("ports %v, entrypoint %v", s.Ports, s.Entrypoint)
+	}
+	e := s.Environment
+	if e["SERVER_BASE_URL"] != "https://post.example.com" || e["KYPOST_NATIVE_MAIL"] != "false" || e["KYPOST_NATIVE_RECEIVING"] != "false" || e["KYPOST_NATIVE_RECEIVER"] != "false" || e["WEB_PORT"] != "5866" {
+		t.Fatalf("env = %v", e)
+	}
+	for k := range e {
+		for _, forbidden := range []string{"TRUSTED_PROXY_CIDRS", "PAIRING_SECRET", "POW_SECRET", "BOOTSTRAP_ADMIN_", "ALLOW_INSECURE_HTTP", "TLS_", "SANDBOX_PRIVATE_HOSTS", "SMTP_", "CAPTCHA_",
+			"KYPOST_BACKUP_ALLOW_PRIVATE_RECOVERY", "KYPOST_BULK_BACKUP_REPOSITORY", "KYPOST_RECEIVING_"} {
+			if strings.HasPrefix(k, forbidden) {
+				t.Errorf("env sets %s", k)
+			}
+		}
+	}
+}
+
 const manifest = "name: a\ncategory: ky\nversion: 2.4.0\nimages:\n  web: " + digest + "\nhealth:\n  timeout_seconds: 30\n"
 
 const oidc = "oidc:\n  name: App\n  redirect_paths: [/auth/callback]\n  logout_paths: [/]\n  admin_role: admin\n  user_role: user\n"
