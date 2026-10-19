@@ -17,6 +17,13 @@ Standalone resident offboarding bridge command.
 - This executable does not admit products, compose KyIdentity connectors or prove deployment.
 - Accepted risk (Yoshi, 2026-10-10): any `bookstack`/`forgejo`/`immich` app in operator
   config is served without a code-level qualification check; the catalog gate is procedural.
+- Image: `Dockerfile` here (build context is the repo root), static on distroless `nonroot`,
+  uid 65532, no shell, OCI source/revision/version labels from build args. ci.yml's
+  "kyoffboard image build & run" proves `--check` and TLS serving read-only with no capabilities.
+- Publication: a pushed `kyoffboard-vX.Y.Z` tag runs `kyoffboard-image.yml`, which publishes only
+  `ghcr.io/busnes-app/kyoffboard:X.Y.Z` after every ci.yml job passed for the tagged commit, then
+  attests and verifies it. Pushing the tag is Yoshi's step. Pin only the attested digest; no
+  source in this repo pins a kyoffboard digest yet.
 
 ## Work Guidance
 
@@ -24,6 +31,8 @@ Standalone resident offboarding bridge command.
 
 - `go test ./cmd/kyoffboard`: exit-code/diagnostic boundary and private input redaction.
 - `internal/offboard` tests verify protected loading and serving behavior.
+- `workflow_test.go`: `kyoffboard-image.yml` trigger, permissions, SHA-pinned actions, CI guard
+  naming every ci.yml job, attestation identity and gitCommit check; no kyoffboard digest pin.
 
 ## Child DOX Index
 
