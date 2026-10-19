@@ -163,6 +163,12 @@ func (s Store) Backup(ctx context.Context) (id string, created bool, err error) 
 	var paths []string
 	add := func(src, dst string) { binds, paths = append(binds, bind{src: src, dst: dst}), append(paths, dst) }
 	if len(b.Command) > 0 {
+		// The dump is plaintext: it never outlives this run, whatever fails.
+		defer func() {
+			if _, rerr := s.App.Runner.Run(context.WithoutCancel(ctx), "rm -rf "+scratch, nil); rerr != nil {
+				err = errors.Join(err, fmt.Errorf("remove the scratch dump: %w", rerr))
+			}
+		}()
 		if err := trustedDir(ctx, s.App.Runner, s.scratch()); err != nil {
 			return "", created, err
 		}
@@ -199,9 +205,6 @@ func (s Store) Backup(ctx context.Context) (id string, created bool, err error) 
 	}
 	if id, err = summaryID(out); err != nil {
 		return "", created, err
-	}
-	if _, err := s.App.Runner.Run(ctx, "rm -rf "+scratch, nil); err != nil {
-		return id, created, fmt.Errorf("remove the scratch dump: %w", err)
 	}
 	if _, err := s.restic(ctx, s.PasswordFile(), nil, "check"); err != nil {
 		return id, created, err
@@ -375,14 +378,16 @@ func (s Store) RestoreFiles(ctx context.Context, password, id string) error {
 	}
 	b := s.App.Catalog.Backup
 	from := path.Join(s.staging(), strings.TrimPrefix(ctrData, "/"))
-	cmd := "umask 077; cd " + remote.Quote(s.App.dir()) + " || exit 1\nfor v in " + quoteAll(b.Volumes) + `; do
-  [ -d ` + remote.Quote(from) + `/volumes/"$v" ] || { echo "the snapshot has no volume $v" >&2; exit 1; }
+	// A snapshot may come from a compromised target: a symlinked volume or secret would point
+	// the app's bind mount, or chmod, at another host path. find -prune does not follow links.
+	cmd := "umask 077; cd " + remote.Quote(s.App.dir()) + " || exit 1\nf=" + remote.Quote(from) + "\nfor v in " + quoteAll(b.Volumes) + `; do
+  [ ! -L "$f/volumes/$v" ] && [ -n "$(find "$f/volumes/$v" -prune -type d)" ] || { echo "the snapshot has no volume directory $v" >&2; exit 1; }
   if [ -d "$v" ]; then rmdir "$v" || exit 1; fi
-  mv ` + remote.Quote(from) + `/volumes/"$v" "$v" || exit 1
+  mv "$f/volumes/$v" "$v" || exit 1
 done
 for n in ` + quoteAll(b.CapsuleSecrets) + `; do
-  [ -f ` + remote.Quote(from) + `/secrets/"$n" ] || { echo "the snapshot has no secret $n" >&2; exit 1; }
-  chmod 600 ` + remote.Quote(from) + `/secrets/"$n" && ln ` + remote.Quote(from) + `/secrets/"$n" secrets/"$n" || exit 1
+  [ ! -L "$f/secrets/$n" ] && [ -n "$(find "$f/secrets/$n" -prune -type f)" ] || { echo "the snapshot has no secret file $n" >&2; exit 1; }
+  chmod 600 "$f/secrets/$n" && ln "$f/secrets/$n" secrets/"$n" || exit 1
 done`
 	if _, err := s.App.Runner.Run(ctx, cmd, nil); err != nil {
 		return fmt.Errorf("move the restored files into place: %w", err)
@@ -394,7 +399,9 @@ done`
 func (s Store) RestoreDump(ctx context.Context) error {
 	b := s.App.Catalog.Backup
 	dump := path.Join(s.staging(), strings.TrimPrefix(ctrData, "/"), "dump")
-	cmd := s.App.compose("exec -T "+remote.Quote(b.Service)+" "+quoteAll(b.RestoreCommand)) + " < " + remote.Quote(dump)
+	d := remote.Quote(dump)
+	cmd := "{ [ ! -L " + d + " ] && [ -n \"$(find " + d + " -prune -type f)\" ]; } || { echo 'the snapshot has no dump file' >&2; exit 1; }\n" +
+		s.App.compose("exec -T "+remote.Quote(b.Service)+" "+quoteAll(b.RestoreCommand)) + " < " + d
 	if _, err := s.App.Runner.Run(ctx, cmd, nil); err != nil {
 		return fmt.Errorf("restore_command: %w", err)
 	}
@@ -433,6 +440,14 @@ func (s Store) Finish(ctx context.Context) error {
 func (s Store) Forget(ctx context.Context) error {
 	_, err := s.App.Runner.Run(ctx, "rm -f "+remote.Quote(s.received()), nil)
 	return err
+}
+
+// Stop stops the app's project, keeping its containers.
+func (s Store) Stop(ctx context.Context) error {
+	if _, err := s.App.Runner.Run(ctx, s.App.compose("stop"), nil); err != nil {
+		return fmt.Errorf("docker compose stop: %w", err)
+	}
+	return nil
 }
 
 // Start starts one service of the deployed project and waits until it is healthy.
