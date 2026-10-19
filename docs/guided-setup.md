@@ -219,8 +219,10 @@ refused without `--snapshot`:
    it only once the files are restored.
 2. It shows the snapshot's time, host and paths and wants the app name typed back, or `--yes`.
 3. It restores into a private staging directory in the app's directory and moves the volumes
-   and secrets into place (secrets 0600), refusing any that the snapshot holds as a symlink
-   (a snapshot written from a compromised target cannot point the app at another host path).
+   and secrets into place (secrets 0600), refusing, before moving anything, any entry, dump or
+   directory above them (`kyq`, `volumes`, `secrets`) that the snapshot holds as a symlink or
+   not as a plain directory or file: a snapshot written from a compromised target cannot point
+   the app at another host path or another app's data.
    It deploys through apply's own steps, starting `restore_order` in order (with a dump
    command: only `service` first, then the dump into `restore_command`, then the rest), and
    waits for the app's health.
@@ -240,7 +242,9 @@ A rerun of `restore` after any step died resumes from `<root>/<app>/.restore-pen
 refuses naming what to do (`--replace` when files were already moved into place, removing a
 stale lock by hand). Residuals: a removed person's restored sessions stay valid from the app's
 start until the replayed deactivation arrives (3.8 s in the end-to-end test, from 32.9 s before the replay moved ahead of the setup checks and KyDrive's healthcheck gained a 2 s start interval; a failed replay
-stops the app); the gate trusts the installer's deployment record, not the running binary;
+stops the app, and `apply` refuses to start an app whose restore is unfinished, naming
+`kyquickstart restore <app>`; but if restore itself is killed or loses SSH after the app
+starts, the app keeps running until you rerun `kyquickstart restore <app>`); the gate trusts the installer's deployment record, not the running binary;
 whoever controls a live target can read that app's backups; and the restore was not tested
 behind another proxy, above the end-to-end test's size, or on hosts without Docker's userland
 proxy.
