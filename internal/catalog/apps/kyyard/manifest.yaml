@@ -1,12 +1,12 @@
 name: kyyard
 description: KyYard, the suite's fleet administration; runs the suite runner beside it
 category: ky
-version: 0.4.2
-# Release image of v0.4.2 (commit 27466f600472a14b32ca48a2e5f17f9b814d0535), attested by
-# Busnes-app/KyYard-server release-image.yml@refs/tags/v0.4.2 (gh attestation verify; the
+version: 0.4.3
+# Release image of v0.4.3 (commit 0bf5e1cb43dcc50ec8ecf2a80edc7b0373050050), attested by
+# Busnes-app/KyYard-server release-image.yml@refs/tags/v0.4.3 (gh attestation verify; the
 # certificate names KyYard-server, so that spelling is the one that verifies).
 images:
-  kyyard: ghcr.io/busnes-app/kyyard:0.4.2@sha256:ca2276e51fcbe527896cfb174ab54cccef0a64a138c39e3e1de20e331849d1a8
+  kyyard: ghcr.io/busnes-app/kyyard:0.4.3@sha256:94c1b9cff3cff2f42e636680979f3535ac07220c99e6f4479b857683d2820756
 # Its setup needs KyIdentity's issuer, client and signed directory.
 depends_on: [kyidentity]
 health:
@@ -24,8 +24,8 @@ oidc:
 backup:
   volumes: [data]
 upgrade:
-  # First catalog release; its schema migrates forward at startup.
-  min_from: 0.4.2
+  # First catalog release (0.4.2 reads no KyIdentity roles); its schema migrates at startup.
+  min_from: 0.4.3
   migrates_data: true
 kubernetes:
   image: kyyard
@@ -50,7 +50,7 @@ kubernetes:
     KY_BACKUP_DIR: /data/backups
     KY_BACKUP_KEEP: "7"
     KY_BACKUP_DEPOSIT_INTERVAL: 24h
-    # The runner's socket; KyYard 0.4.2 does not read it yet.
+    # The runner's socket, for KyYard's Suite page.
     KY_SUITE_RUNNER_SOCKET: /run/kyquickstart/sock/runner.sock
     GOMEMLIMIT: 384MiB
   ports: [9273]
