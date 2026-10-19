@@ -29,6 +29,8 @@ type Edge struct {
 	// Certificates are requested by NPM from Let's Encrypt through a DNS-01 challenge.
 	Certificates []Certificate `yaml:"certificates,omitempty"`
 	LANDNS       *LANDNS       `yaml:"lan_dns,omitempty"`
+	// The one address upstreams off the cluster see this edge's requests from.
+	EgressAddress string `yaml:"egress_address,omitempty"`
 }
 
 // LANDNS publishes each route's hostname on the LAN as an A record for Address.
@@ -162,6 +164,12 @@ func (s *Stack) validateEdges() error {
 		}
 		if err := validateLANDNS(*e, target); err != nil {
 			return err
+		}
+		if e.EgressAddress != "" {
+			ip, err := netip.ParseAddr(e.EgressAddress)
+			if err != nil || ip.Zone() != "" || ip.IsUnspecified() || ip.IsLoopback() {
+				return fmt.Errorf("edge %s: egress_address must be one IP address, not a prefix, hostname, loopback or unspecified address", e.Target)
+			}
 		}
 		for j := range e.Routes {
 			r := &e.Routes[j]

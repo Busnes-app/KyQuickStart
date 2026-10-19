@@ -480,6 +480,9 @@ func validateSelection(st *stack.Stack, cat catalog.Catalog) error {
 		case !t.Kubernetes() && a.Compose == nil:
 			return fmt.Errorf("%s cannot run on %s: it has no Compose deployment; place it on a Kubernetes target", app.Name, app.Target)
 		}
+		if _, err := withRoute(st, app.Name, t, a); err != nil {
+			return err
+		}
 	}
 	_, err := plan.Order(names, cat)
 	return err

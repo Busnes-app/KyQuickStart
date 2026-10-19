@@ -146,9 +146,30 @@ const HostRef = "{{host}}"
 // the one address it publishes its port on, for an edge on another host.
 const ForwardRef = "{{forward}}"
 
-// routeFuncs render a Compose template's {{host}} and {{forward}} as themselves; a session
-// replaces them with the app's route (WithRoute).
-var routeFuncs = template.FuncMap{"host": func() string { return HostRef }, "forward": func() string { return ForwardRef }}
+// ForwardAddrRef stands for the route's forward_host alone, bracketed if IPv6, for ports the
+// app publishes on that address beside its forward_port.
+const ForwardAddrRef = "{{forward_addr}}"
+
+// EdgeAddressRef stands for the route's edge's egress_address: the one address the app sees
+// the edge's requests from.
+const EdgeAddressRef = "{{edge_address}}"
+
+// routeRefs are every route reference a Compose template may write.
+var routeRefs = []string{HostRef, ForwardRef, ForwardAddrRef, EdgeAddressRef}
+
+// routeFuncs render a Compose template's route references as themselves; a session replaces
+// them with the app's route (WithRoute).
+var routeFuncs = template.FuncMap{
+	"host":         func() string { return HostRef },
+	"forward":      func() string { return ForwardRef },
+	"forward_addr": func() string { return ForwardAddrRef },
+	"edge_address": func() string { return EdgeAddressRef },
+}
+
+// Route is what a Compose template's route references stand for.
+type Route struct {
+	Host, Forward, ForwardAddr, EdgeAddress string
+}
 
 // AdminPort is NPM's admin API port. It is never published outside the cluster.
 const AdminPort = 81
@@ -227,15 +248,17 @@ func loadApp(fsys fs.FS, dir string) (App, error) {
 	return App{Manifest: m, Compose: buf.Bytes(), Services: c.services, Binds: c.binds}, nil
 }
 
-// UsesRoute reports whether the app's Compose file takes its route's host or address.
+// UsesRoute reports whether the app's Compose file takes anything from its route.
 func (a App) UsesRoute() bool {
-	return bytes.Contains(a.Compose, []byte(HostRef)) || bytes.Contains(a.Compose, []byte(ForwardRef))
+	return slices.ContainsFunc(routeRefs, func(ref string) bool { return bytes.Contains(a.Compose, []byte(ref)) })
 }
 
-// WithRoute returns a copy whose Compose file has HostRef and ForwardRef replaced.
-func (a App) WithRoute(host, forward string) App {
-	c := bytes.ReplaceAll(a.Compose, []byte(HostRef), []byte(host))
-	a.Compose = bytes.ReplaceAll(c, []byte(ForwardRef), []byte(forward))
+// UsesEdgeAddress reports whether the app's Compose file takes its edge's egress_address.
+func (a App) UsesEdgeAddress() bool { return bytes.Contains(a.Compose, []byte(EdgeAddressRef)) }
+
+// WithRoute returns a copy whose Compose file has its route references replaced by r.
+func (a App) WithRoute(r Route) App {
+	a.Compose = []byte(strings.NewReplacer(HostRef, r.Host, ForwardRef, r.Forward, ForwardAddrRef, r.ForwardAddr, EdgeAddressRef, r.EdgeAddress).Replace(string(a.Compose)))
 	return a
 }
 

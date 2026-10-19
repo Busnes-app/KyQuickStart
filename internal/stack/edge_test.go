@@ -369,3 +369,23 @@ func TestURLHost(t *testing.T) {
 		}
 	}
 }
+
+// AC3: egress_address is one IP literal, never a range, name, loopback or unspecified address.
+func TestEgressAddress(t *testing.T) {
+	if s, err := Parse([]byte(edgeStack)); err != nil || s.Edges[0].EgressAddress != "" {
+		t.Fatalf("edge without egress_address: %v", err)
+	}
+	with := func(v string) string {
+		return strings.Replace(edgeStack, "    connector_cidr:", "    egress_address: '"+v+"'\n    connector_cidr:", 1)
+	}
+	for _, ok := range []string{"192.168.1.20", "10.0.0.7", "fd00::20", "2001:db8::1"} {
+		if s, err := Parse([]byte(with(ok))); err != nil || s.Edges[0].EgressAddress != ok {
+			t.Errorf("%s refused: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"192.168.1.0/24", "192.168.1.20/32", "fd00::/64", "npm.example.com", "0.0.0.0", "::", "127.0.0.1", "::1", "fe80::1%eth0", "192.168.1.20 ", " "} {
+		if _, err := Parse([]byte(with(bad))); err == nil || !strings.Contains(err.Error(), "egress_address") {
+			t.Errorf("%q accepted: %v", bad, err)
+		}
+	}
+}

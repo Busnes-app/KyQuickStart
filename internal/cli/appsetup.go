@@ -8,12 +8,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
+	"net/url"
 	"path"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/engine"
@@ -114,6 +118,9 @@ func (s *session) composeClients(st *stack.Stack) error {
 			s.handover += fmt.Sprintf(driveHandover, host, n.Admin.Username, path.Join(t.Root, "kydrive"), t.Name, n.Everyday.Username)
 		case "kynotes":
 			s.handover += fmt.Sprintf(notesHandover, host, n.Admin.Username, n.Everyday.Username)
+		case "kydns":
+			e, r := appRoute(st, "kydns")
+			s.handover += fmt.Sprintf(dnsHandover, host, n.Admin.Username, net.JoinHostPort(r.ForwardHost, "53"), s.placed["kydns"].Name, r.ForwardHost, r.ForwardPort, e.EgressAddress)
 		case "kycalendar":
 			s.handover += fmt.Sprintf(calendarHandover, host, n.Admin.Username, n.Everyday.Username, kubectl(s.state, s.placed["kycalendar"]))
 		case "kypulse":
@@ -265,6 +272,40 @@ KyCalendar at https://%[1]s/: sign in through KyIdentity as %[2]s (its console o
      from KyRecovery's administrator, or pin the suite public key by hand. It makes no backups
      until then.
 `
+
+// dnsHandover is printed after every apply that installs KyDNS; %[3]s is its DNS address,
+// %[5]s:%[6]d where its admin UI is published, %[7]s its edge's egress_address.
+const dnsHandover = `
+KyDNS at https://%[1]s/: sign in through KyIdentity as %[2]s, the one account it admits
+  (KyIdentity refuses everyone else). It answers DNS at %[3]s (UDP and TCP).
+  Outstanding human steps:
+  1. Point clients at %[5]s for DNS: your router's DHCP DNS server, or each client by hand.
+  2. Its local recovery administrator has no password. From an interactive shell on %[4]s
+     (ssh -t, so the password does not echo), set one:
+       docker exec -it kyq-kydns-app-1 /usr/local/bin/kydns admin reset-password
+     It asks for the password twice. Use it only to recover, at https://%[1]s/login.
+  3. Pair it with KyRecovery on its Backups screen, signed in as that local administrator:
+     %[2]s cannot enroll its first recovery key. It makes no backups until then.
+  Notes:
+  - Firewall: ports 53 and %[6]d are open on %[5]s. Its admin UI on %[6]d trusts forwarded
+    requests only from egress_address %[7]s; apply checked that the edge is trusted and this
+    workstation is refused. DNS answers the private ranges KyDNS sees. Both rest on the Docker
+    host showing KyDNS real client addresses: restrict both ports to your LAN and the edge at
+    the host or network firewall.
+  - Never set egress_address to a Docker network gateway: every peer can look like it.
+`
+
+// appRoute is app's one edge route and its edge, which routeHost has found.
+func appRoute(st *stack.Stack, app string) (stack.Edge, stack.Route) {
+	for _, e := range st.Edges {
+		for _, r := range e.Routes {
+			if r.App == app {
+				return e, r
+			}
+		}
+	}
+	return stack.Edge{}, stack.Route{}
+}
 
 // kubectl is the kubectl command line for target t, whose kubeconfig is relative to state.
 func kubectl(state string, t stack.Target) string {
@@ -682,13 +723,36 @@ func (s *session) setupSteps(d driver, i stack.Integration) (steps []engine.Step
 			return err
 		}, err
 	}
-	appPlace, err := place(d, i, adapter.runtimeUser)
-	if err != nil {
-		return nil, nil, err
-	}
 	o := s.cat[i.Product].OIDC
 	step := clientSetupStep{i: i, name: o.Name, source: source, issuer: issuer, scimToken: o.SCIMTokenFile,
-		export: export, exec: exec, setup: adapter.setup, place: appPlace}
+		export: export, exec: exec, setup: adapter.setup}
+	if i.Product == "kydns" {
+		// Its image has no shell: place on the host, in the bind directory it reads as /data.
+		host, ok := d.(sshDriver)
+		if !ok {
+			return nil, nil, errors.New("KyDNS runs on a Docker target only")
+		}
+		if step.place, err = hostPlace(host.c, path.Join(host.t.Root, "kydns"), i.Bundle); err != nil {
+			return nil, nil, err
+		}
+		step.setup = waitForSocket(host.c, path.Join(host.t.Root, "kydns/data/installer/setup.sock"), host.t.Name, adapter.setup)
+		e, r := appRoute(s.plan, "kydns")
+		network := "http://" + net.JoinHostPort(r.ForwardHost, strconv.Itoa(r.ForwardPort)) + "/api/v1/installer/network"
+		npm, ok := s.drivers[e.Target].(kubeDriver)
+		if !ok || s.placed["npm"].Name != e.Target {
+			return nil, nil, fmt.Errorf("KyDNS's route must be on the catalog NPM on a cluster, which apply checks KyDNS trusts; edge %s is not", e.Target)
+		}
+		curl, _, err := nativeProductExec(npm, stack.Integration{Product: "npm"}, productAdapter{binary: "curl"})
+		if err != nil {
+			return nil, nil, err
+		}
+		// kydns.edge runs after the edges, as connectors do: it asks from NPM's pod.
+		return []engine.Step{step, gateStep{url: network, edge: e.Target, egress: e.EgressAddress, target: host.t.Name}},
+			edgeTrustStep{url: network, edge: e.Target, egress: e.EgressAddress, curl: curl}, nil
+	}
+	if step.place, err = place(d, i, adapter.runtimeUser); err != nil {
+		return nil, nil, err
+	}
 	switch i.Product {
 	case "kypulse":
 		step.targets = s.pulseTargets
@@ -715,4 +779,117 @@ func (s *session) setupSteps(d driver, i stack.Integration) (steps []engine.Step
 			return d.appSecret(ctx, i.Product, path.Base(o.SCIMTokenFile))
 		}}
 	return []engine.Step{step}, connector, nil
+}
+
+// hostDataDir is where an app on a Docker target keeps the installer's files: its ./data bind
+// directory, which the container reads as /data.
+const hostDataDir = "/data/installer/"
+
+// hostPlace is placeScript run on the Docker host over SSH as the target user, who owns the
+// app's bind directory, for an image without a shell. It maps the container's /data/installer/
+// to <dir>/data/installer/, refuses anything else, and refuses a symlinked directory on the way.
+func hostPlace(r remote.Runner, dir, bundle string) (func(context.Context, []string, []byte) error, error) {
+	setup := path.Dir(bundle)
+	if path.Clean(bundle) != bundle || path.Dir(setup)+"/" != hostDataDir || (stack.Integration{Bundle: bundle}).SetupID() == "" {
+		return nil, fmt.Errorf("bundle %s must be <uuid>/setup.json in %s, the bind directory the installer writes from the host", bundle, hostDataDir)
+	}
+	data := path.Join(dir, "data")
+	guard := "d=" + remote.Quote(data) + "; [ ! -L \"$d\" ] || exit 1; for c in installer " + remote.Quote(path.Base(setup)) + "; do d=$d/$c; [ ! -L \"$d\" ] || exit 1; done; "
+	return func(ctx context.Context, args []string, input []byte) error {
+		if path.Dir(args[1]) != setup {
+			return errors.New("setup file outside its setup directory")
+		}
+		_, err := r.Run(ctx, guard+"sh -c "+remote.Quote(placeScript)+" sh "+remote.Quote(args[0])+" "+remote.Quote(path.Join(data, strings.TrimPrefix(args[1], "/data/"))), input)
+		return err
+	}, nil
+}
+
+// waitForSocket runs setup once KyDNS has opened its setup socket on the host. Compose has no
+// healthcheck for a shell-less image, so the first apply-setup can come before it listens. A
+// check does not wait: it reports the product's own refusal.
+func waitForSocket(r remote.Runner, socket, target string, setup func(context.Context, identityExec, string, bool) ([]byte, error)) func(context.Context, identityExec, string, bool) ([]byte, error) {
+	return func(ctx context.Context, exec identityExec, bundle string, check bool) ([]byte, error) {
+		if check {
+			return setup(ctx, exec, bundle, check)
+		}
+		wait, cancel := context.WithTimeout(ctx, time.Minute)
+		defer cancel()
+		for {
+			if _, err := r.Run(wait, "test -S "+remote.Quote(socket), nil); err == nil {
+				return setup(ctx, exec, bundle, check)
+			}
+			select {
+			case <-wait.Done():
+				return nil, fmt.Errorf("KyDNS's setup socket did not open within a minute; on %s run docker logs kyq-kydns-app-1 (is something else bound to its forward_host's port 53?)", target)
+			case <-time.After(time.Second):
+			}
+		}
+	}
+}
+
+// gateStep (kydns.gate) proves KyDNS's transport gate is closed to everyone but its edge:
+// the workstation, which is not the edge, asks its admin port directly with the edge's
+// X-Forwarded-Proto, and only 403 passes. It fails when egress_address is an address other
+// peers share, such as a Docker network gateway that hides every client behind it.
+type gateStep struct {
+	url, edge, egress, target string
+	client                    *http.Client // nil: a direct client with a 10 s timeout
+}
+
+func (g gateStep) ID() string                                { return "kydns.gate" }
+func (g gateStep) InputHash() string                         { return g.url + " " + g.egress }
+func (g gateStep) Inspect(ctx context.Context) (bool, error) { return g.Verify(ctx) == nil, nil }
+func (g gateStep) Apply(ctx context.Context) error           { return g.Verify(ctx) }
+
+// port is the admin port the probe asks.
+func (g gateStep) port() string {
+	u, _ := url.Parse(g.url)
+	return u.Port()
+}
+
+func (g gateStep) Verify(ctx context.Context) error {
+	c := g.client
+	if c == nil {
+		c = &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{Proxy: nil},
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", g.url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-Forwarded-Proto", "https")
+	res, err := c.Do(req)
+	if err != nil {
+		return fmt.Errorf("could not reach KyDNS's admin port %s from this workstation. This read-only probe proves KyDNS refuses every peer but the edge. KyDNS is installed and set up; rerunning apply from a LAN host that reaches port %s is safe and finishes", g.url, g.port())
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusForbidden {
+		return fmt.Errorf("KyDNS trusted this workstation's forwarded request (HTTP %d at %s): egress_address %s on edge %s is not the edge's alone. A Docker host that hides client addresses (Docker's userland proxy can) shows KyDNS every peer from one gateway; KyDNS is not supported there. Set egress_address to the edge's own address and rerun apply. KyDNS runs with this setting until then; to stop it, on %s run docker compose -p kyq-kydns stop", res.StatusCode, g.url, g.egress, g.edge, g.target)
+	}
+	return nil
+}
+
+// edgeTrustStep (kydns.edge) proves KyDNS trusts its edge: from NPM's pod, the source its
+// proxied requests leave from, it asks KyDNS's admin port with the edge's X-Forwarded-Proto and
+// passes only on 200 with proxyHeadersTrusted and scheme https. It reads, never changes.
+type edgeTrustStep struct {
+	url, edge, egress string
+	curl              identityExec // curl in NPM's pod
+}
+
+func (e edgeTrustStep) ID() string                                { return "kydns.edge" }
+func (e edgeTrustStep) InputHash() string                         { return e.url + " " + e.egress }
+func (e edgeTrustStep) Inspect(ctx context.Context) (bool, error) { return e.Verify(ctx) == nil, nil }
+func (e edgeTrustStep) Apply(ctx context.Context) error           { return e.Verify(ctx) }
+
+func (e edgeTrustStep) Verify(ctx context.Context) error {
+	out, err := e.curl(ctx, []string{"-sS", "-m", "10", "-H", "X-Forwarded-Proto: https", e.url})
+	var n struct {
+		ProxyHeadersTrusted bool   `json:"proxyHeadersTrusted"`
+		Scheme              string `json:"scheme"`
+	}
+	if err == nil && len(out) <= 4<<10 && json.Unmarshal(out, &n) == nil && n.ProxyHeadersTrusted && n.Scheme == "https" {
+		return nil
+	}
+	return fmt.Errorf("KyDNS does not trust edge %s at egress_address %s, so its admin UI answers 403 through the route: NPM moved node, the address is wrong, or this Docker host hides client addresses and KyDNS is not supported on it. Fix egress_address and rerun apply", e.edge, e.egress)
 }

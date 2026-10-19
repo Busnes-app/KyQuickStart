@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"go.yaml.in/yaml/v3"
 )
 
 const digest = "traefik/whoami:v1.11.0@sha256:200689790a0a0ea48ca45992e0450bc26ccab5307375b41c84dfc4f2475937ab"
@@ -168,6 +170,68 @@ func TestKyCalendarEntry(t *testing.T) {
 	}
 }
 
+// AC2: KyDNS on Docker only, admin-only sign-in, and a hardened Compose file that publishes on
+// the route's address alone and trusts exactly its edge's egress address.
+func TestKyDNSEntry(t *testing.T) {
+	cat, err := Load(Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := cat["kydns"]
+	if a.Category != "ky" || a.Version != "0.4.2" || a.Kubernetes != nil || len(a.Secrets) != 0 || !slices.Equal(a.DependsOn, []string{"kyidentity"}) ||
+		a.Images["kydns"] != "ghcr.io/busnes-app/kydns-server:0.4.2@sha256:ceb83f29134bb611343d1adf94f85088f5f6c7101863a2c9b170e76591a5405b" {
+		t.Fatalf("manifest = %+v", a.Manifest)
+	}
+	if o := a.OIDC; o.Name != "KyDNS" || o.AdminRole != "kydns.admin" || o.UserRole != "" || o.SCIMTokenFile != "" || o.Public || o.BackchannelLogoutPath != "" ||
+		!slices.Equal(o.RedirectPaths, []string{"/auth/sso/callback"}) || o.DirectoryPath != "/api/v1/installer/directory" {
+		t.Fatalf("oidc = %+v", o)
+	}
+	if a.Backup == nil || !slices.Equal(a.Backup.Volumes, []string{"data"}) || a.Upgrade.MinFrom != "0.4.2" || !a.Upgrade.MigratesData {
+		t.Fatalf("upgrade %+v, backup %+v", a.Upgrade, a.Backup)
+	}
+	if !a.UsesRoute() || !a.UsesEdgeAddress() || !slices.Equal(a.Binds, []string{"data"}) {
+		t.Fatal("compose takes no route or edge address")
+	}
+	for _, c := range []struct{ forward, addr, edge string }{
+		{"192.168.1.53:18053", "192.168.1.53", "192.168.1.20"},
+		{"[fd00::53]:18053", "[fd00::53]", "fd00::20"},
+	} {
+		raw := a.WithRoute(Route{Host: "dns.example.com", Forward: c.forward, ForwardAddr: c.addr, EdgeAddress: c.edge}).Compose
+		var f struct {
+			Services map[string]struct {
+				User        string            `yaml:"user"`
+				CapDrop     []string          `yaml:"cap_drop"`
+				SecurityOpt []string          `yaml:"security_opt"`
+				ReadOnly    bool              `yaml:"read_only"`
+				Sysctls     map[string]string `yaml:"sysctls"`
+				Tmpfs       []string          `yaml:"tmpfs"`
+				Volumes     []string          `yaml:"volumes"`
+				Ports       []string          `yaml:"ports"`
+				Environment map[string]string `yaml:"environment"`
+				Healthcheck any               `yaml:"healthcheck"`
+			} `yaml:"services"`
+		}
+		if err := yaml.Unmarshal(raw, &f); err != nil || len(f.Services) != 1 {
+			t.Fatalf("compose: %v\n%s", err, raw)
+		}
+		s := f.Services["app"]
+		if s.User != "${KYQ_UID:?}:${KYQ_GID:?}" || !slices.Equal(s.CapDrop, []string{"ALL"}) || !slices.Equal(s.SecurityOpt, []string{"no-new-privileges:true"}) || !s.ReadOnly ||
+			len(s.Sysctls) != 1 || s.Sysctls["net.ipv4.ip_unprivileged_port_start"] != "0" || !slices.Contains(s.Tmpfs, "/var/lib/kydns:size=1m") ||
+			!slices.Equal(s.Volumes, []string{"./data:/data"}) || s.Healthcheck != nil {
+			t.Fatalf("service = %+v", s)
+		}
+		if want := []string{c.forward + ":8053", c.addr + ":53:53/udp", c.addr + ":53:53/tcp"}; !slices.Equal(s.Ports, want) {
+			t.Fatalf("ports = %v, want %v", s.Ports, want)
+		}
+		if s.Environment["KYDNS_TRUSTED_PROXIES"] != c.edge || s.Environment["KYDNS_DATA_DIR"] != "/data" || s.Environment["KYDNS_BACKUP_ALLOW_PRIVATE_RECOVERY"] != "false" {
+			t.Fatalf("env = %v", s.Environment)
+		}
+		if _, ok := s.Environment["KYDNS_ADMIN_PASSWORD"]; ok || strings.Contains(string(raw), "0.0.0.0") || strings.Contains(string(raw), "{{") {
+			t.Fatalf("compose:\n%s", raw)
+		}
+	}
+}
+
 func TestKyDriveEntry(t *testing.T) {
 	cat, err := Load(Embedded())
 	if err != nil {
@@ -188,7 +252,7 @@ func TestKyDriveEntry(t *testing.T) {
 	if !slices.Equal(a.Secrets, []string{"session_secret", "scim_token"}) || !slices.Equal(a.Binds, []string{"backups", "data"}) || !slices.Equal(a.Backup.Volumes, []string{"data", "backups"}) || !a.Upgrade.MigratesData {
 		t.Fatalf("secrets %v, binds %v, backup %+v", a.Secrets, a.Binds, a.Backup)
 	}
-	c := string(a.WithRoute("drive.example.com", "192.168.1.91:18443").Compose)
+	c := string(a.WithRoute(Route{Host: "drive.example.com", Forward: "192.168.1.91:18443"}).Compose)
 	for _, want := range []string{`user: "${KYQ_UID:?}:${KYQ_GID:?}"`, "read_only: true", "cap_drop: [ALL]", "no-new-privileges:true", "stop_grace_period: 20m",
 		`ports: ["192.168.1.91:18443:8080"]`, `KY_APP_URL: "https://drive.example.com"`, "KY_ENV: production", "KY_SSO_AUTO_PROVISION: \"false\"", "KY_SCIM_TOKEN_FILE: /run/secrets/scim_token",
 		"KY_DATA_DIR: /data", "/healthz"} {
@@ -400,7 +464,7 @@ func TestComposeRoute(t *testing.T) {
 	if !a.UsesRoute() || !slices.Equal(a.Binds, []string{"backups", "data"}) || a.OIDC.SCIMTokenFile != "/run/secrets/scim" {
 		t.Fatalf("app = %+v", a)
 	}
-	got := a.WithRoute("drive.example.com:30443", "192.168.1.91:18443")
+	got := a.WithRoute(Route{Host: "drive.example.com:30443", Forward: "192.168.1.91:18443"})
 	if got.UsesRoute() || !strings.Contains(string(got.Compose), "URL: 'https://drive.example.com:30443/a'") || !strings.Contains(string(got.Compose), "ports: ['192.168.1.91:18443:8080']") {
 		t.Fatalf("compose:\n%s", got.Compose)
 	}

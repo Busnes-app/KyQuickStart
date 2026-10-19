@@ -72,7 +72,7 @@ Plain terminal planning and command orchestration for the operator-run installer
   separate from Matrix chat/call access, whose assignment composition remains a gate.
 - KyRecovery setup runs explicitly as `kyrecovery`, activates live, commits exact administrator grants with its keyed SQL audit, and never performs the custodian ceremony.
   `appsetup.go` owns apply's catalog apps that sign in through KyIdentity (KyRecovery,
-  kyPulse, KyNotes and KyCalendar on Kubernetes, KyDrive on Docker): `composeClients` adds each one's catalog-derived client to the installed
+  kyPulse, KyNotes and KyCalendar on Kubernetes, KyDrive and KyDNS on Docker): `composeClients` adds each one's catalog-derived client to the installed
   KyIdentity's intent in the session only (the saved plan is unchanged; a hand-written client
   must match), `clientSetupStep` (`<app>.setup`) exports that client, places bundle and secrets
   with `placeScript` (secrets no-clobber, kyPulse's bundle replaced, compare-only on check)
@@ -87,7 +87,20 @@ Plain terminal planning and command orchestration for the operator-run installer
   KyIdentity's read-only `--check` of its first setup (the one reused `user` with the plan's
   everyday username; any other report is a fixed refusal). `calendarAccounts` (plan, review
   and apply) refuses owner usernames KyCalendar's setup would refuse. `recoveryCeremony`,
-  `pulseHandover`, `calendarHandover` and `driveHandover` are what apply prints.
+  `pulseHandover`, `calendarHandover`, `driveHandover` and `dnsHandover` are what apply prints.
+  KyDNS's distroless image has no shell, so `hostPlace` runs `placeScript` on its Docker host
+  over SSH as the target user, mapping the bundle's `/data/installer/<uuid>/` to
+  `<root>/kydns/data/installer/<uuid>/` (anything else refused, symlinked directories refused),
+  and `waitForSocket` holds its setup until `<data>/installer/setup.sock` exists (no Compose
+  healthcheck). `gateStep` (`kydns.gate`, after its setup, before the edges) sends the
+  workstation's direct request with `X-Forwarded-Proto: https` to its admin port and passes only
+  on 403, so an `egress_address` other peers share (a Docker gateway hiding clients) fails apply.
+  `edgeTrustStep` (`kydns.edge`, setupSteps' second return, so it runs after the edges) curls
+  the same URL from the catalog NPM's pod and passes only when KyDNS reports the edge's headers
+  trusted over https; KyDNS's route on any other edge is refused.
+  `withRoute` fills a Compose template's route references for both `newSession`
+  and `validateSelection`, so `{{edge_address}}` without the edge's `egress_address` is refused
+  by `plan` and `review` too.
   KyNotes' distroless image has no shell: `notesSetupStep` (`kynotes.setup`) reuses
   `transferNotesCredentials` and `notesSetup` with the preparation `notesPreparation` derives
   (catalog client, KyIdentity's issuer, secrets beside the fixed bundle, backup from its env);
@@ -100,7 +113,7 @@ Plain terminal planning and command orchestration for the operator-run installer
   and `movedClient` read. Without the capability `identitySetupStep` names
   KyIdentity-server#110 and 0.4.3. `retireBootstrapStep` (`kyidentity.retire-bootstrap`) runs
   `disable-user` when advertised, else leaves `bootstrapNote` for apply to print.
-- KyDNS uses the common contract, exact administrator subjects and live setup; its interface refuses ordinary identities and unsupported installer backup enrollment.
+- KyDNS uses the common contract, exact administrator subjects and live setup (`dnsSetup`); its interface refuses ordinary identities and unsupported installer backup enrollment. The catalog KyDNS runs on Docker only.
 - `notes.go` maps the native KyNotes version-1 capability/report contract, requires `dedicated-admin`, `protected-setup-files` and present-only read-only inspection; older mixed-use or unprotected-file builds are refused before setup. It does not replace KyNotes security or backup logic.
 - Morning test instructions and supported scope: `../../docs/guided-setup.md`.
 - Stack schema, app admission and target implementations remain owned by the root contract.
