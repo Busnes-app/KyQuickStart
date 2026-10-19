@@ -244,10 +244,10 @@ func TestKyYardEntry(t *testing.T) {
 	}
 	a := cat["kyyard"]
 	k, o := a.Kubernetes, a.OIDC
-	if a.Category != "ky" || a.Version != "0.4.2" || a.PodSecurity != "restricted" || a.Compose != nil || len(a.Secrets) != 0 || !slices.Equal(a.DependsOn, []string{"kyidentity"}) {
+	if a.Category != "ky" || a.Version != "0.4.3" || a.PodSecurity != "restricted" || a.Compose != nil || len(a.Secrets) != 0 || !slices.Equal(a.DependsOn, []string{"kyidentity"}) {
 		t.Fatalf("manifest = %+v", a.Manifest)
 	}
-	if a.Images[k.Image] != "ghcr.io/busnes-app/kyyard:0.4.2@sha256:ca2276e51fcbe527896cfb174ab54cccef0a64a138c39e3e1de20e331849d1a8" ||
+	if a.Images[k.Image] != "ghcr.io/busnes-app/kyyard:0.4.3@sha256:94c1b9cff3cff2f42e636680979f3535ac07220c99e6f4479b857683d2820756" ||
 		k.RunAs != 10001 || k.ReadinessPath != "/health/ready" || !slices.Equal(k.Ports, []int{9273}) || k.TerminationGraceSeconds != 1200 ||
 		!k.SuiteRunner || k.Resources.CPURequest != "50m" || k.Resources.Memory != "512Mi" ||
 		len(k.Volumes) != 1 || k.Volumes[0] != (Volume{Name: "data", Mount: "/data", Size: "10Gi"}) {
@@ -268,7 +268,7 @@ func TestKyYardEntry(t *testing.T) {
 		o.DirectoryPath != "/api/installer/directory" || o.SCIMTokenFile != "" || o.BackchannelLogoutPath != "" || o.Public {
 		t.Fatalf("oidc = %+v", o)
 	}
-	if a.Backup == nil || !slices.Equal(a.Backup.Volumes, []string{"data"}) || a.Upgrade.MinFrom != "0.4.2" || !a.Upgrade.MigratesData {
+	if a.Backup == nil || !slices.Equal(a.Backup.Volumes, []string{"data"}) || a.Upgrade.MinFrom != "0.4.3" || !a.Upgrade.MigratesData {
 		t.Fatalf("upgrade %+v, backup %+v", a.Upgrade, a.Backup)
 	}
 	if !Pinned(a.Images["kyyard"]) || Pinned("ghcr.io/busnes-app/kyquickstart-runner:stable") {

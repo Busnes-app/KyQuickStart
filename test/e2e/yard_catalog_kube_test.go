@@ -143,6 +143,7 @@ func TestKubernetesKyYard(t *testing.T) {
 	// throwaway certificate. The Deployment's input hash is unchanged, so reruns skip it.
 	trustTestCA(t, ctx, cs, connected, "kyyard", certPEM)
 	yardSignOn(t, ctx, connected, client, false)
+	admin := yardSignOn(t, ctx, connected, client, true)
 
 	// AC15: a rerun with no plan change skips every KyYard step.
 	out = apply("yard rerun")
@@ -223,6 +224,19 @@ func TestKubernetesKyYard(t *testing.T) {
 	if r, _ := got["runner"].(map[string]any); code != 200 || r["plan_owner"] != "runner" || r["plan_revision"] != float64(revision) || r["runner_id"] != runnerIDs[0] {
 		t.Fatalf("status: %d %v", code, got)
 	}
+	// KyYard's own view of the runner, read with the admin's session.
+	r, b := send(t, ctx, admin, "GET", "https://"+catalogYardURLHost+"/api/suite/status", nil, "")
+	var suiteStatus struct {
+		Configured bool `json:"configured"`
+		Runner     struct {
+			PlanOwner string `json:"plan_owner"`
+			RunnerID  string `json:"runner_id"`
+		} `json:"runner"`
+	}
+	if r.StatusCode != 200 || json.Unmarshal(b, &suiteStatus) != nil || !suiteStatus.Configured || suiteStatus.Runner.PlanOwner != "runner" || suiteStatus.Runner.RunnerID != runnerIDs[0] {
+		t.Fatalf("KyYard's suite status: %d %s", r.StatusCode, b)
+	}
+	t.Logf("KyYard reads the runner through the socket: %s", b)
 	operate := func(apps ...string) map[string]any {
 		t.Helper()
 		id := uuid.NewString()
@@ -278,13 +292,6 @@ func TestKubernetesKyYard(t *testing.T) {
 		if status(out, id) != "skipped" {
 			t.Errorf("after revoke: %s = %q", id, status(out, id))
 		}
-	}
-
-	// The admin's sign-in last: KyYard 0.4.2 revokes an identity whose roles it cannot read,
-	// which would break every later setup check.
-	if !yardSignOn(t, ctx, connected, client, true) {
-		raw, err := connected.Exec(ctx, ns, pod, "app", []string{"/app/kyyard-server", "apply-setup", "--file", yardSetupDir + "/setup.json", "--check"})
-		t.Logf("UNPROVEN: KyYard admin sign-in through KyIdentity; KyYard's setup check after the refusal: %v %s", err, raw)
 	}
 
 	// AC16: no credential reached any output or the workstation state.
@@ -398,7 +405,7 @@ func checkCatalogYard(t *testing.T, ctx context.Context, cs kubernetes.Interface
 		"kyquickstart handoff --state '" + state + "' --kyyard-target k8s --runner-pod " + yardRunnerPod + "\n",
 		"workstation apply is refused until kyquickstart handoff --revoke",
 		"handoff --revoke, apply, then handoff again",
-		"KyYard 0.4.2 has no Suite page yet",
+		"KyYard's Suite page shows the runner",
 		"pair it with KyRecovery",
 	} {
 		if !strings.Contains(out, want) {
@@ -613,10 +620,9 @@ func runnerCredentials(t *testing.T, ctx context.Context, cs kubernetes.Interfac
 
 // yardSignOn signs one of the owner's accounts in to KyYard through KyIdentity behind the edge,
 // as a browser would (AC12). The everyday account, not assigned to KyYard's client, is refused
-// at KyIdentity's gate: no code, and no KyYard session or account. The admin should become
-// KyYard's administrator; it returns false when KyYard refuses it because KyYard 0.4.2 reads
-// its app roles from an app_roles claim that KyIdentity 0.4.3 names roles.
-func yardSignOn(t *testing.T, ctx context.Context, c *kube.Client, client func() *http.Client, admin bool) bool {
+// at KyIdentity's gate: no code, and no KyYard session or account. The admin becomes KyYard's
+// administrator; its signed-in client is returned.
+func yardSignOn(t *testing.T, ctx context.Context, c *kube.Client, client func() *http.Client, admin bool) *http.Client {
 	t.Helper()
 	identity, yard := "https://"+catalogIdentityURLHost, "https://"+catalogYardURLHost
 	username, passwordFile := "prepared-user", "everyday.password"
@@ -682,16 +688,12 @@ func yardSignOn(t *testing.T, ctx context.Context, c *kube.Client, client func()
 			t.Fatalf("KyYard callback for the refused account: %d %s", r.StatusCode, b)
 		}
 		t.Logf("%s refused by KyIdentity for KyYard: callback error=access_denied, KyYard %d %s, no session", username, r.StatusCode, b)
-		return false
+		return nil
 	}
 	if callback.Query().Get("code") == "" {
 		t.Fatalf("no code for %s: %v", username, callback)
 	}
 	r, b = send(t, ctx, hc, "GET", callback.String(), nil, "")
-	if r.StatusCode == 403 && strings.Contains(string(b), "Application role no longer matches") && !session() {
-		t.Logf("BLOCKED: KyYard 0.4.2 refused %s (403 %s): it reads app roles from the ID token's app_roles claim, KyIdentity 0.4.3 issues them as roles. KyYard revoked the identity (inactive), so its setup check now reports drift.", username, b)
-		return false
-	}
 	if r.StatusCode != 302 || r.Header.Get("Location") != "/" || !session() {
 		t.Fatalf("KyYard callback for %s: %d %s", username, r.StatusCode, b)
 	}
@@ -710,7 +712,7 @@ func yardSignOn(t *testing.T, ctx context.Context, c *kube.Client, client func()
 		t.Fatalf("KyYard users after sign-on: %d %s", r.StatusCode, b)
 	}
 	t.Logf("%s signed in to KyYard through KyIdentity as its administrator", username)
-	return true
+	return hc
 }
 
 func mustStack(t *testing.T, plan string) *stack.Stack {

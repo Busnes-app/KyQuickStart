@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"net/netip"
+	"path"
 	"slices"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
@@ -32,6 +33,9 @@ const (
 	runnerState  = "runner-state"
 	runnerSocket = "runner-socket"
 )
+
+// socketDir is the socket's directory in the runner-socket volume.
+var socketDir = path.Base(path.Dir(catalog.SuiteRunnerSocket))
 
 var runnerRequests = corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("50m"), corev1.ResourceMemory: resource.MustParse("64Mi")}
 
@@ -121,7 +125,7 @@ func render(a App) objects {
 	// A claim's root may be group- or world-writable (fsGroup, hostPath provisioners), so a
 	// non-root app mounts a private subdirectory its own uid creates first. Root apps own theirs.
 	var inits []corev1.Container
-	if !root && len(k.Volumes) > 0 {
+	if !root && (len(k.Volumes) > 0 || k.SuiteRunner) {
 		inits = append(inits, corev1.Container{
 			Name:            "private-volumes",
 			Image:           CredentialGeneratorImage,
@@ -185,6 +189,10 @@ func render(a App) objects {
 	containers := []corev1.Container{container}
 	if k.SuiteRunner {
 		containers, volumes = withRunner(containers, volumes, a.RunnerImage)
+		// The app's socket directory: created private first, so the kubelet's world-writable
+		// volume root never becomes an ancestor KyYard's socket check refuses.
+		inits[0].Command = append(inits[0].Command, "/volumes/"+runnerSocket+"/"+socketDir)
+		inits[0].VolumeMounts = append(inits[0].VolumeMounts, corev1.VolumeMount{Name: runnerSocket, MountPath: "/volumes/" + runnerSocket})
 		o.Claims = append(o.Claims, &corev1.PersistentVolumeClaim{
 			ObjectMeta: meta(runnerState),
 			Spec: corev1.PersistentVolumeClaimSpec{
@@ -223,11 +231,14 @@ func render(a App) objects {
 }
 
 // withRunner adds the suite runner beside the app (containers[0]): restricted like it, it
-// mounts only its state claim and the socket directory, which the app mounts too.
+// mounts only its state claim and the socket volume, whose socket directory alone the app
+// mounts.
 func withRunner(containers []corev1.Container, volumes []corev1.Volume, image string) ([]corev1.Container, []corev1.Volume) {
 	uid := int64(catalog.SuiteRunnerUID)
 	socket := corev1.VolumeMount{Name: runnerSocket, MountPath: catalog.SuiteRunnerMount}
-	containers[0].VolumeMounts = append(containers[0].VolumeMounts, socket)
+	containers[0].VolumeMounts = append(containers[0].VolumeMounts, corev1.VolumeMount{
+		Name: runnerSocket, MountPath: path.Dir(catalog.SuiteRunnerSocket), SubPath: socketDir,
+	})
 	containers = append(containers, corev1.Container{
 		Name:  runnerContainer,
 		Image: image,

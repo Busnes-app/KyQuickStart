@@ -92,8 +92,8 @@ KyYard at https://%[1]s/: sign in through KyIdentity as %[2]s (administration on
   2. Hand the plan to the suite runner in KyYard's pod:
        kyquickstart handoff --state %[4]s --kyyard-target %[5]s --runner-pod %[6]s
      After that, workstation apply is refused until kyquickstart handoff --revoke. To upgrade
-     KyYard: handoff --revoke, apply, then handoff again. KyYard 0.4.2 has no Suite page yet,
-     so manage apps from the workstation until a KyYard release that uses the runner.
+     KyYard: handoff --revoke, apply, then handoff again. KyYard's Suite page shows the runner;
+     starting an operation there needs an account with a local password.
   3. On its backup screen, as %[2]s, pair it with KyRecovery using a one-time code from
      KyRecovery's administrator, or pin the suite public key by hand. It makes no backups
      until then.

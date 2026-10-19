@@ -82,7 +82,7 @@ func TestKyYardClientFromCatalog(t *testing.T) {
 		"kyquickstart handoff --state '" + state + "' --kyyard-target k1 --runner-pod kyq-kyyard/app.kubernetes.io/name=kyyard\n",
 		"workstation apply is refused until kyquickstart handoff --revoke",
 		"handoff --revoke, apply, then handoff again",
-		"KyYard 0.4.2 has no Suite page yet",
+		"KyYard's Suite page shows the runner",
 		"pair it with KyRecovery",
 	} {
 		if !strings.Contains(s.handover, want) {

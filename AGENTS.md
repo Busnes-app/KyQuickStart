@@ -483,7 +483,7 @@ calls and kind nodes must carry their own explicit bounds.
   KyYard by amendment with a runner built from this checkout and pinned by the digest kind's
   containerd records (test plumbing): both containers ready, private setup files and live
   `--check`, the socket shared 0600/0700 as uid 10001, admin sign-in and the everyday account
-  refused at KyIdentity's gate, the printed break-glass and handoff lines run as printed, an
+  refused at KyIdentity's gate, KyYard's `/api/suite/status` read through the socket, the printed break-glass and handoff lines run as printed, an
   upgrade of every app through the socket that leaves KyYard's pod alone, `runner_host` for
   KyYard, the workstation apply refused until revoke, and no credential in output or state.
   The catalog KyDNS joins the Docker target by amendment: hardened container as the target

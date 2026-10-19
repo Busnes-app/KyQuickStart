@@ -392,7 +392,7 @@ func TestRenderKyYard(t *testing.T) {
 	if r := runner.Resources; r.Requests.Cpu().String() != "50m" || r.Requests.Memory().String() != "64Mi" || r.Limits.Memory().String() != "512Mi" || !r.Limits.Cpu().IsZero() {
 		t.Fatalf("runner resources = %+v", r)
 	}
-	if got := mounts(app); len(got) != 3 || got["/data"] != "vol-data:private" || got["/tmp"] != "tmp:" || got["/run/kyquickstart"] != "runner-socket:" {
+	if got := mounts(app); len(got) != 3 || got["/data"] != "vol-data:private" || got["/tmp"] != "tmp:" || got["/run/kyquickstart/sock"] != "runner-socket:sock" {
 		t.Fatalf("app mounts = %v", got)
 	}
 	env := map[string]string{}
@@ -422,7 +422,8 @@ func TestRenderKyYard(t *testing.T) {
 	if len(claims) != 2 || claims["vol-data"] != "10Gi" || claims["runner-state"] != "1Gi" {
 		t.Fatalf("claims = %v", claims)
 	}
-	if init := pod.InitContainers; len(init) != 1 || !slices.Equal(init[0].Command, []string{"mkdir", "-p", "-m", "700", "/volumes/data/private"}) {
+	if init := pod.InitContainers; len(init) != 1 || !slices.Equal(init[0].Command, []string{"mkdir", "-p", "-m", "700", "/volumes/data/private", "/volumes/runner-socket/sock"}) ||
+		len(init[0].VolumeMounts) != 2 || init[0].VolumeMounts[1].Name != "runner-socket" {
 		t.Fatalf("init = %+v", init)
 	}
 	if a.namespaceLabels()[podSecurity] != "restricted" {

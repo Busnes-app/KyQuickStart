@@ -773,9 +773,10 @@ Limits:
 
 ## Catalog KyYard on Kubernetes
 
-The catalog's `kyyard` app installs KyYard 0.4.2 from its attested release image
-(`ghcr.io/busnes-app/kyyard:0.4.2@sha256:ca22…d1a8`, built by `Busnes-app/KyYard-server`
-`release-image.yml@refs/tags/v0.4.2` from commit `27466f60`), with the suite runner
+The catalog's `kyyard` app installs KyYard 0.4.3 from its attested release image
+(`ghcr.io/busnes-app/kyyard:0.4.3@sha256:94c1…0756`, built by `Busnes-app/KyYard-server`
+`release-image.yml@refs/tags/v0.4.3` from commit `0bf5e1cb`; 0.4.2 cannot read KyIdentity's
+`roles` claim, so its admin sign-in fails), with the suite runner
 (`kyquickstart serve`) beside it in the same pod. It depends on the catalog `kyidentity` and
 needs one edge route. Kubernetes only: the runner shares its pod, and upstream's Compose file
 binds the Docker socket, which is host root. `plan`, `review` and `apply` refuse a plan placing
@@ -828,13 +829,15 @@ What apply does:
   readiness `GET /health/ready`, a 20-minute termination grace (5 s drain plus a backup deposit
   on the wire), SQLite with keys it generates into `/data`, no local Docker connection
   (`KY_DOCKER_SOCKET` empty), SSO and SCIM off (setup refuses either), no `KY_ADMIN_PASSWORD`
-  or `KY_AGENT_IMAGE`, and `KY_TRUSTED_PROXIES` only the pod's loopback: KyYard 0.4.2 refuses
+  or `KY_AGENT_IMAGE`, and `KY_TRUSTED_PROXIES` only the pod's loopback: KyYard refuses
   to start over HTTPS without a trusted proxy, and no proxy connects over loopback, so the
   edge's forwarded headers are ignored and no client can spoof its address. `runner` runs `kyquickstart
   serve --state /state/runner --socket /run/kyquickstart/sock/runner.sock --pod-volumes`
   (requests 50m/64Mi, limit 512Mi) with only its own 1Gi `runner-state` claim at `/state` and
-  the `runner-socket` emptyDir at `/run/kyquickstart`. KyYard mounts that emptyDir too
-  (`KY_SUITE_RUNNER_SOCKET`) and nothing of the runner's state. The socket is 0600 in a 0700
+  the `runner-socket` emptyDir at `/run/kyquickstart`. KyYard mounts only that volume's `sock`
+  directory, at `/run/kyquickstart/sock` (`KY_SUITE_RUNNER_SOCKET`), which the init container
+  creates private first: KyYard checks every ancestor of its socket and refuses the kubelet's
+  world-writable volume root. It mounts nothing of the runner's state. The socket is 0600 in a 0700
   directory: any process in the pod as uid 10001 can drive the runner, so a compromised KyYard
   holds the runner's authority, as the suite-runner design accepts. `runner-state` is not
   backed up; a fresh `handoff` recreates its key and token.
@@ -864,17 +867,10 @@ again. Edge routes still reconcile.
 
 Limits:
 
-- **The admin's sign-in fails with KyIdentity 0.4.3.** KyYard 0.4.2 reads app roles from an
-  `app_roles` claim; KyIdentity issues them as `roles`. KyYard answers 403 ("Application role
-  no longer matches the assigned identity") and marks the identity inactive, after which its
-  setup check reports drift and `kyyard.setup` fails until resolved by hand. This needs a KyYard
-  release that reads `roles`; the refusal of real installs (no runner release) keeps anyone from
-  reaching it today.
-- KyYard 0.4.2 does not read `KY_SUITE_RUNNER_SOCKET`: its Suite page and `/api/suite/*` exist
-  only on KyYard-Server master, unreleased. Until a KyYard release ships them, manage apps from
-  the workstation. Even on master, starting a suite operation requires a local password
-  (`local_password_required`), so the KyIdentity administrator setup creates could read suite
-  status but not start operations; that needs a KyYard change (step-up through KyIdentity).
+- KyYard's Suite page reads the runner through the socket (the kind test reads
+  `/api/suite/status` as the admin), but starting an operation there requires an account with a
+  local password (`local_password_required`). The KyIdentity administrator setup creates has
+  none, so start operations from the workstation until KyYard steps up through KyIdentity.
 - The pod's egress is unrestricted: KyYard needs KyIdentity and registries, the runner the API
   server and the targets' SSH; no policy narrows it yet.
 - With the edge untrusted every client shares the edge's rate-limit bucket.
