@@ -76,6 +76,17 @@ func TestUsageAndVersion(t *testing.T) {
 	if err := Run(context.Background(), []string{"version"}, o); err != nil || out.String() != "rs-7\n" {
 		t.Errorf("version: %q %v", out.String(), err)
 	}
+	out.Reset()
+	if err := Run(context.Background(), []string{"version", "--runner-image"}, o); err == nil || err.Error() != "this build pins no suite runner image (source build); use a release binary" || out.Len() != 0 {
+		t.Errorf("version --runner-image, source build: %q %v", out.String(), err)
+	}
+	if err := Run(context.Background(), []string{"version", "extra"}, o); err != ErrUsage {
+		t.Errorf("version extra: %v", err)
+	}
+	o.RunnerImage = "ghcr.io/busnes-app/kyquickstart-runner:7.0.0@sha256:" + strings.Repeat("a", 64)
+	if err := Run(context.Background(), []string{"version", "--runner-image"}, o); err != nil || out.String() != o.RunnerImage+"\n" {
+		t.Errorf("version --runner-image: %q %v", out.String(), err)
+	}
 }
 
 func TestPlacementAndKubeconfigChecks(t *testing.T) {
