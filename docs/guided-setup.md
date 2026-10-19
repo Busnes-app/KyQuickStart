@@ -500,7 +500,7 @@ tunnels/VPS provisioning and Kubernetes connector deployment remain unavailable.
 
 ## Catalog KyIdentity on Kubernetes
 
-The catalog's `kyidentity` app installs KyIdentity 0.4.2 on a Kubernetes target from its
+The catalog's `kyidentity` app installs KyIdentity 0.4.4 on a Kubernetes target from its
 attested release image (`internal/catalog/apps/kyidentity/manifest.yaml` records the digest).
 It needs an edge route: its issuer is `https://<route hostname>`, plus `:<client_port>` behind a
 `lan` edge whose `client_port` is not 443, and a plan without exactly one route for it is refused. Select its setup with an `integrations` entry that names no
@@ -554,9 +554,9 @@ changed intent fails with the product's refusal. `integrate-stack` skips install
   that stops first reuses it. `kyidentity.amend.<app>` then stages, applies and checks the
   amendment at `/data/installer/<amendment UUID>/setup.json` after `kyidentity.setup`: the
   client alone, bound to the first setup's owner accounts. The app's credential export reads
-  the amendment. KyIdentity 0.4.2, the catalog image today, has no amendments: there
-  `kyidentity.setup` fails, names #110, the missing client and 0.4.3, and every app that signs
-  in must be in the plan before the first `apply`.
+  the amendment. An existing KyIdentity 0.4.2 has no amendments: there `kyidentity.setup`
+  fails, names #110, the missing client and 0.4.3, and every app that signs in must be in the
+  plan before the first `apply`.
 - The issuer cannot change once setup has run: every client and token names it. Before any
   step, `apply` compares the issuer KyIdentity's Deployment runs with to the plan's; when they
   differ and the pod's read-only `apply-setup --check` passes (or the pod cannot be asked), it
@@ -574,12 +574,15 @@ changed intent fails with the product's refusal. `integrate-stack` skips install
   --require-active-admin <owner admin>`, which revokes the account's sessions and deletes
   `first-run-password.txt`; KyIdentity refuses unless the owner's administrator is another
   active administrator with no end date. A rerun answers unchanged and skips.
-- Not yet on KyIdentity 0.4.2: it has no `disable-user`, so the step changes nothing and
+- On a KyIdentity 0.4.2, which has no `disable-user`, the step changes nothing and
   `apply` prints that `kyq-bootstrap` stays an active administrator. Disable it in the admin
   UI after the owner's first sign-in.
 - Not yet: `TRUSTED_PROXY_CIDRS` is unset, so KyIdentity sees the edge pod as every client;
   Docker placement (no Compose file); SCIM `active:false` proof (gate G2); backups (the
-  `data` volume is declared, nothing schedules it).
+  `data` volume is declared; `kyquickstart backup` covers Docker apps only).
+- 0.4.4's resync replays removals and it ships `resync-system`, which `kyquickstart restore`
+  runs after restoring an app whose people come from KyIdentity. An upgrade from 0.4.3 adds no
+  schema change and needs only `--acknowledge-no-backup`.
 
 ## Catalog KyRecovery on Kubernetes
 
