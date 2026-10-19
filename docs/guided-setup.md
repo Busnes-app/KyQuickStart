@@ -775,8 +775,7 @@ Limits:
 
 The catalog's `kyyard` app installs KyYard 0.4.3 from its attested release image
 (`ghcr.io/busnes-app/kyyard:0.4.3@sha256:94c1…0756`, built by `Busnes-app/KyYard-server`
-`release-image.yml@refs/tags/v0.4.3` from commit `0bf5e1cb`; 0.4.2 cannot read KyIdentity's
-`roles` claim, so its admin sign-in fails), with the suite runner
+`release-image.yml@refs/tags/v0.4.3` from commit `0bf5e1cb`), with the suite runner
 (`kyquickstart serve`) beside it in the same pod. It depends on the catalog `kyidentity` and
 needs one edge route. Kubernetes only: the runner shares its pod, and upstream's Compose file
 binds the Docker socket, which is host root. `plan`, `review` and `apply` refuse a plan placing
@@ -806,7 +805,8 @@ pinned by digest, and none is published. This build carries none (`runnerImage` 
 `cmd/kyquickstart` is empty; a release build stamps it with `-ldflags "-X
 main.runnerImage=ghcr.io/busnes-app/kyquickstart-runner:X.Y.Z@sha256:…"`, as it stamps the
 version), so `plan`, `review`, `apply`, `install` and `upgrade` refuse, before connecting, any
-plan that deploys KyYard: "KyYard's suite runner has no attested release image in this build".
+plan that deploys KyYard: "KyYard's suite runner has no attested release image in this build,
+… and no kyquickstart release that pins one is published yet".
 A pin that is not a digest is refused too. The kind test proves the entry with a runner built
 from source, not a released image.
 
@@ -870,7 +870,9 @@ Limits:
 - KyYard's Suite page reads the runner through the socket (the kind test reads
   `/api/suite/status` as the admin), but starting an operation there requires an account with a
   local password (`local_password_required`). The KyIdentity administrator setup creates has
-  none, so start operations from the workstation until KyYard steps up through KyIdentity.
+  none: start operations as the local `admin` account, after changing its one-time password.
+  The workstation CLI refuses them while the runner owns the plan; to use it instead, run
+  `handoff --revoke`, the command, then `handoff` again.
 - The pod's egress is unrestricted: KyYard needs KyIdentity and registries, the runner the API
   server and the targets' SSH; no policy narrows it yet.
 - With the edge untrusted every client shares the edge's rate-limit bucket.
