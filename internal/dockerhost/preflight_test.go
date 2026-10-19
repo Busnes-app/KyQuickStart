@@ -96,3 +96,31 @@ func TestPreflightTargetSecretTools(t *testing.T) {
 		t.Fatal("missing target tools were not reported", got)
 	}
 }
+
+// A 0644 or symlinked credential, or a symlinked CA, is refused; real sh and find.
+func TestBackupFilesCheck(t *testing.T) {
+	dir := t.TempDir()
+	cred, ca, link := filepath.Join(dir, "cred"), filepath.Join(dir, "ca.pem"), filepath.Join(dir, "link")
+	os.WriteFile(cred, []byte("pw"), 0o600)
+	os.WriteFile(ca, []byte("ca"), 0o644)
+	os.Symlink(cred, link)
+	ctx := context.Background()
+	check := func(b stack.BackupDestination) bool { return BackupFilesCheck(ctx, remote.Local{}, b).OK }
+	if !check(stack.BackupDestination{CredentialFile: cred, CAFile: ca}) {
+		t.Fatal("valid files refused")
+	}
+	for name, b := range map[string]stack.BackupDestination{
+		"symlinked credential": {CredentialFile: link},
+		"symlinked CA":         {CredentialFile: cred, CAFile: link},
+		"missing CA":           {CredentialFile: cred, CAFile: filepath.Join(dir, "none")},
+		"directory":            {CredentialFile: dir},
+	} {
+		if check(b) {
+			t.Errorf("%s accepted", name)
+		}
+	}
+	os.Chmod(cred, 0o644)
+	if check(stack.BackupDestination{CredentialFile: cred}) {
+		t.Error("0644 credential accepted")
+	}
+}
