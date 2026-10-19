@@ -173,6 +173,10 @@ func render(a App) objects {
 			}
 		}
 	}
+	var grace *int64 // nil keeps the default and other apps' hashes
+	if k.TerminationGraceSeconds > 0 {
+		grace = &k.TerminationGraceSeconds
+	}
 	o.Deployment = &appsv1.Deployment{
 		ObjectMeta: meta(appName),
 		Spec: appsv1.DeploymentSpec{
@@ -183,12 +187,13 @@ func render(a App) objects {
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: podLabels(app, a.ReleaseSet)},
 				Spec: corev1.PodSpec{
-					AutomountServiceAccountToken: ptr.To(false),
-					EnableServiceLinks:           ptr.To(false),
-					SecurityContext:              podSecurityContext(k),
-					InitContainers:               inits,
-					Containers:                   []corev1.Container{container},
-					Volumes:                      volumes,
+					AutomountServiceAccountToken:  ptr.To(false),
+					EnableServiceLinks:            ptr.To(false),
+					TerminationGracePeriodSeconds: grace,
+					SecurityContext:               podSecurityContext(k),
+					InitContainers:                inits,
+					Containers:                    []corev1.Container{container},
+					Volumes:                       volumes,
 				},
 			},
 		},

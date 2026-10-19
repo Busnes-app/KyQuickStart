@@ -602,6 +602,83 @@ other installation's.
   KyIdentity 0.4.2 signs them with `syncauth` v1, so directory offboarding events to kyPulse are
   expected to be refused until kyPulse adopts `syncauth` (read from both sources, not run).
 
+## Catalog KyNotes on Kubernetes
+
+The catalog's `kynotes` app installs KyNotes 0.4.2 from its attested release image
+(`ghcr.io/busnes-app/kynotes-server:0.4.2@sha256:85f4…6ad9`, built by
+`Busnes-app/KyNotes-server` `release-image.yml@refs/tags/v0.4.2` from commit `f597e997`). It
+depends on the catalog `kyidentity` and needs one edge route. Kubernetes only: a plan placing it
+on a Docker host is refused by `plan`, `review` and `apply` before any connection. Its
+integration names its client and KyNotes' one fixed bundle path, and nothing else: apply derives
+the settings.
+
+```yaml
+apps:
+  - name: kynotes
+    target: k80
+edges:
+  - target: k80
+    routes:
+      - app: kynotes
+        hostname: notes.k80.example.com
+        forward_host: app.kyq-kynotes.svc.cluster.local
+        forward_port: 8080
+        certificate: k80
+integrations:
+  - product: kynotes
+    target: k80
+    bundle: /data/installer/setup.json
+    identity_client: kynotes
+```
+
+Its client is derived from the catalog: `https://<host>/api/v1/auth/oidc/callback`,
+administrator role `kynotes.admin` for the owner's admin account, everyday role `kynotes.user`,
+and KyIdentity's signed directory webhook at `https://<host>/api/v1/sync/events` (KyNotes has no
+SCIM endpoint). Installed with KyIdentity, the client is in KyIdentity's first setup; installed
+later, it joins through a setup amendment (`kyidentity.amend.kynotes`, KyIdentity 0.4.3 or
+later).
+
+What apply does:
+
+- `kynotes.deploy` and `kynotes.health`: a restricted pod as distroless `nonroot` (uid 65532),
+  read-only root, `/data` and `/backups` on private claim subdirectories, and a 17-minute
+  termination grace so a stop drains a running `apply-setup`. KyNotes generates its own pairing
+  and salt keys under `/data/secrets` on first start; no break-glass password is set
+  (`BOOTSTRAP_ADMIN_PASS` stays unset).
+- `kynotes.setup`: the image has no shell, so the client crosses natively. KyIdentity's
+  `--export-client` frame is read into memory, the secret-free bundle (issuer, client, callback,
+  the owner's admin subject from that export, backup dir and keep as the pod's environment fixes
+  them) is staged with `apply-setup --stage` at `/data/installer/setup.json`, the frame is passed
+  to `--import-client` on stdin (KyNotes writes `client.secret` and `directory.secret` beside the
+  bundle, 0600, never replacing one), KyIdentity is re-exported to confirm nothing changed, then
+  `apply-setup --file` runs. Every step is confirmed by its `--check`; a rerun skips.
+- Route ordering: KyNotes' setup probes the issuer through KyIdentity's route, and its first-run
+  web setup stays open until setup creates the administrator. So `kynotes.setup` runs after the
+  edge steps that route KyIdentity, and KyNotes' own route is added only after it passes. A
+  failed setup leaves no route to KyNotes.
+
+Before you apply: KyNotes' setup probes KyIdentity's issuer, and its sign-ins exchange tokens,
+at KyIdentity's public URL from the KyNotes pod. So cluster DNS must resolve the route
+hostnames, the edge must admit the pod network (on K80, `10.0.0.0/8` in `allow_cidrs`), and the
+pod must trust the edge's certificate (a public CA does; the kind test adds its throwaway CA).
+Otherwise `kynotes.setup` fails, apply adds no KyNotes route and names the issuer it could not
+reach; fix it and rerun apply.
+
+Handover: apply prints KyNotes' URL, the admin account (which administers only; it cannot open
+notes) and the everyday account (created by KyNotes at its first sign-in). KyIdentity's
+`kynotes.user` assignment is the gate: assign it to anyone else who should sign in. Pairing with KyRecovery stays a human step: on KyNotes' Backups screen, a one-time
+code from KyRecovery's administrator or the suite public key pinned by hand. KyNotes makes no
+backups until then.
+
+Limits:
+
+- `TRUSTED_PROXY_CIDRS` is left at KyNotes' default (loopback only): forwarded headers from the
+  edge are ignored, so no client can spoof its address into the rate limiter. KyNotes then
+  rate-limits by the edge pod's address.
+- Not yet, or unproven: Docker placement; sign-out is local (KyIdentity's setup registers no
+  back-channel logout); a directory event (offboarding) reaching KyNotes is not proven live;
+  KyRecovery pairing, `KYNOTES_BLOB_TARGET` and restic/K8up blob backups are not configured.
+
 ## Catalog KyDrive on Docker
 
 The catalog's `kydrive` app installs KyDrive 0.4.2 from its attested release image on a Docker

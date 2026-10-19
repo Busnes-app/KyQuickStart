@@ -11,6 +11,7 @@ import (
 	"path"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
@@ -109,6 +110,8 @@ func (s *session) composeClients(st *stack.Stack) error {
 		case "kydrive":
 			t := s.placed["kydrive"]
 			s.handover += fmt.Sprintf(driveHandover, host, n.Admin.Username, path.Join(t.Root, "kydrive"), t.Name, n.Everyday.Username)
+		case "kynotes":
+			s.handover += fmt.Sprintf(notesHandover, host, n.Admin.Username, n.Everyday.Username)
 		case "kypulse":
 			var unwatched []string
 			s.pulseTargets, unwatched = pulseTargets(st, s.cat)
@@ -232,6 +235,16 @@ KyDrive at https://%[1]s/: sign in through KyIdentity as %[2]s (its administrato
   endpoint https://%[1]s/scim/v2; allow it a minute after apply. Its local "admin" break-glass
   password is in %[3]s/data/initial-admin-password on %[4]s: sign in once, change it and
   delete the file.
+`
+
+// notesHandover is printed after every apply that installs KyNotes.
+const notesHandover = `
+KyNotes at https://%[1]s/: sign in through KyIdentity as %[2]s (administers only; it cannot
+  open notes) or %[3]s, whose account KyNotes creates at first sign-in. Assign KyIdentity role
+  kynotes.user to anyone else who should sign in. KyNotes has no local password.
+  Outstanding human step: on its Backups screen, as %[2]s, pair it with KyRecovery using a
+  one-time code from KyRecovery's administrator, or pin the suite public key by hand. KyNotes
+  makes no backups until then.
 `
 
 // pulseTarget is a kyPulse monitoring target: an app's readiness path through its route.
@@ -405,6 +418,62 @@ func (s clientSetupStep) run(ctx context.Context, check bool) error {
 	return nil
 }
 
+// notesSetupStep (kynotes.setup) is apply's setup for the catalog KyNotes. Its distroless
+// image has no shell, so it takes the client natively: stage the derived bundle, import
+// KyIdentity's export on stdin, re-export to confirm the source, then apply-setup.
+type notesSetupStep struct {
+	i      stack.Integration // Notes derived from the catalog client and KyIdentity's issuer
+	source stack.Integration // KyIdentity's with the client, or its amendment's
+	export identityExec      // KyIdentity's apply-setup
+	exec   identityExec      // KyNotes' apply-setup
+	input  func(context.Context, []string, []byte) ([]byte, error)
+}
+
+func (s notesSetupStep) ID() string { return "kynotes.setup" }
+
+func (s notesSetupStep) InputHash() string {
+	b, err := json.Marshal([]any{s.i, s.source})
+	if err != nil {
+		panic(err) // plain typed metadata always marshals
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+func (s notesSetupStep) Inspect(ctx context.Context) (bool, error) { return s.Verify(ctx) == nil, nil }
+
+// Apply names the likeliest cause of a failure; the product's own output stays hidden.
+func (s notesSetupStep) Apply(ctx context.Context) error {
+	if err := s.run(ctx, false); err != nil {
+		return fmt.Errorf("%w; no KyNotes route was added. Its pod must resolve %s and trust its certificate (docs/guided-setup.md, Catalog KyNotes on Kubernetes); rerun apply after fixing", err, s.i.Notes.SSO.IssuerURL)
+	}
+	return nil
+}
+func (s notesSetupStep) Verify(ctx context.Context) error { return s.run(ctx, true) }
+
+func (s notesSetupStep) run(ctx context.Context, check bool) error {
+	if err := transferNotesCredentials(ctx, s.export, s.exec, s.input, s.source, s.i, check); err != nil {
+		return err
+	}
+	_, err := notesSetup(ctx, s.exec, s.i.Bundle, check)
+	return err
+}
+
+// notesPreparation is the catalog KyNotes' secret-free bundle: client c at issuer, secrets
+// beside the bundle where its import writes them, backup settings as its env fixes them.
+func notesPreparation(bundle, issuer string, c stack.IdentityClient, env map[string]string) (*stack.NotesPreparation, error) {
+	dir := path.Dir(bundle)
+	sso := &stack.NotesSSO{IssuerURL: issuer, ClientID: c.ID, ClientSecretFile: path.Join(dir, "client.secret"), RedirectURI: c.RedirectURIs[0]}
+	if c.SuiteWebhook != nil {
+		sso.DirectoryHMACSecretFile = path.Join(dir, "directory.secret")
+	}
+	keep, err := strconv.Atoi(env["KYNOTES_BACKUP_KEEP"])
+	if err != nil || keep < 1 {
+		return nil, fmt.Errorf("catalog kynotes: KYNOTES_BACKUP_KEEP %q must be a positive integer", env["KYNOTES_BACKUP_KEEP"])
+	}
+	return &stack.NotesPreparation{Version: 1, SSO: sso, Backup: &stack.NotesBackup{Dir: env["KYNOTES_BACKUP_DIR"], Keep: keep}}, nil
+}
+
 // scimStep (kyidentity.scim.<app>) adds KyIdentity's SCIM connector to the client of an app
 // that declares oidc.scim_token_file. KyIdentity takes a connector on a later pass of the
 // setup that registered the client, from a bundle outside its preparation directories, once
@@ -514,6 +583,17 @@ func (s *session) setupSteps(d driver, i stack.Integration) (steps []engine.Step
 	if err != nil {
 		return nil, nil, err
 	}
+	issuer := s.cat["kyidentity"].Kubernetes.Env[issuerEnv]
+	if i.Product == "kynotes" {
+		c := slices.IndexFunc(source.Identity.Clients, func(c stack.IdentityClient) bool { return c.ID == i.IdentityClient })
+		if c < 0 {
+			return nil, nil, fmt.Errorf("KyIdentity's setup has no client %s for KyNotes", i.IdentityClient)
+		}
+		if i.Notes, err = notesPreparation(i.Bundle, issuer, source.Identity.Clients[c], s.cat["kynotes"].Kubernetes.Env); err != nil {
+			return nil, nil, err
+		}
+		return []engine.Step{notesSetupStep{i: i, source: source, export: export, exec: exec, input: input}}, nil, nil
+	}
 	place := func(d driver, i stack.Integration, user string) (func(context.Context, []string, []byte) error, error) {
 		// The pod's or container's shell, as its runtime user: sh -c placeScript sh <mode> <path>.
 		_, shell, err := nativeProductExec(d, i, productAdapter{binary: "sh", runtimeUser: user})
@@ -527,7 +607,7 @@ func (s *session) setupSteps(d driver, i stack.Integration) (steps []engine.Step
 		return nil, nil, err
 	}
 	o := s.cat[i.Product].OIDC
-	step := clientSetupStep{i: i, name: o.Name, source: source, issuer: s.cat["kyidentity"].Kubernetes.Env[issuerEnv], scimToken: o.SCIMTokenFile,
+	step := clientSetupStep{i: i, name: o.Name, source: source, issuer: issuer, scimToken: o.SCIMTokenFile,
 		export: export, exec: exec, setup: adapter.setup, place: appPlace}
 	if i.Product == "kypulse" {
 		step.targets = s.pulseTargets

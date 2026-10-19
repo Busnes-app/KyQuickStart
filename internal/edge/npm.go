@@ -382,6 +382,14 @@ type hostStep struct {
 	r stack.Route
 }
 
+// RouteApp names the app whose route step st is, "" for any other step.
+func RouteApp(st engine.Step) string {
+	if h, ok := st.(hostStep); ok {
+		return h.r.App
+	}
+	return ""
+}
+
 func (s hostStep) ID() string {
 	sum := sha256.Sum256([]byte(s.r.Hostname))
 	return s.e.Target + ".edge." + hex.EncodeToString(sum[:8])

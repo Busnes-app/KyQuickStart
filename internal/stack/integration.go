@@ -10,6 +10,9 @@ import (
 	"github.com/google/uuid"
 )
 
+// notesBundle is where the catalog KyNotes, data in /data, stages its bundle.
+const notesBundle = "/data/installer/setup.json"
+
 var containerRE = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,252}$`)
 var kubeObjectRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
 var kubeLabelRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
@@ -62,8 +65,13 @@ func (s *Stack) validateIntegrations() error {
 			}
 		}
 		// apply sets up an installed Ky app other than KyIdentity through its KyIdentity client.
+		// KyNotes stages and imports only at its fixed path; apply derives its settings.
 		if installed && i.Product != "kyidentity" {
-			if i.Notes != nil || i.Identity != nil || !identitySetupName.MatchString(i.IdentityClient) || i.SetupID() == "" {
+			ok := i.Notes == nil && i.Identity == nil && identitySetupName.MatchString(i.IdentityClient)
+			switch {
+			case i.Product == "kynotes" && (!ok || i.Bundle != notesBundle):
+				return errors.New("an installed kynotes takes only identity_client and bundle: " + notesBundle + "; apply derives its settings")
+			case i.Product != "kynotes" && (!ok || i.SetupID() == ""):
 				return errors.New("an installed app's setup needs its identity_client and a bundle at <data>/installer/<setup UUID>/setup.json")
 			}
 		}
