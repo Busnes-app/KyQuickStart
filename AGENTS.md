@@ -286,8 +286,9 @@ handover of admin and everyday logins.
   KyNotes on Kubernetes, KyDrive on Docker (its one running managed container, through `docker
   exec` over SSH). An installed KyNotes' entry is exactly `bundle: /data/installer/setup.json`
   and its `identity_client` (no `notes` block): apply derives its native preparation, and its
-  setup runs after the edge routes KyIdentity and before KyNotes' own route. Apply adds each such app's client, derived from its `oidc` block and route, to
-  KyIdentity's first setup intent. When the running KyIdentity's setup ran without it and the
+  setup runs after the edge routes KyIdentity and before KyNotes' own route; a routed KyNotes
+  without that entry is refused. Apply adds each such app's client, derived from its `oidc`
+  block and route, to KyIdentity's first setup intent. When the running KyIdentity's setup ran without it and the
   KyIdentity advertises `setup-amendments` (0.4.3+, KyIdentity-server#110), apply records the
   app's `identity_amendment` (UUID derived from parent setup and client) in the plan and
   `kyidentity.amend.<app>` applies that amendment; otherwise it names #110 and the client.

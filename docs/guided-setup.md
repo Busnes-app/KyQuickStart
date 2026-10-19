@@ -657,15 +657,21 @@ What apply does:
   edge steps that route KyIdentity, and KyNotes' own route is added only after it passes. A
   failed setup leaves no route to KyNotes.
 
-Handover: apply prints KyNotes' URL, the admin account (which administers but opens no notes)
-and the everyday account (created by KyNotes at its first sign-in; KyIdentity's assignment is
-the gate). Pairing with KyRecovery stays a human step: on KyNotes' Backups screen, a one-time
+Before you apply: KyNotes' setup probes KyIdentity's issuer, and its sign-ins exchange tokens,
+at KyIdentity's public URL from the KyNotes pod. So cluster DNS must resolve the route
+hostnames, the edge must admit the pod network (on K80, `10.0.0.0/8` in `allow_cidrs`), and the
+pod must trust the edge's certificate (a public CA does; the kind test adds its throwaway CA).
+Otherwise `kynotes.setup` fails, apply adds no KyNotes route and names the issuer it could not
+reach; fix it and rerun apply.
+
+Handover: apply prints KyNotes' URL, the admin account (which administers only; it cannot open
+notes) and the everyday account (created by KyNotes at its first sign-in). KyIdentity's
+`kynotes.user` assignment is the gate: assign it to anyone else who should sign in. Pairing with KyRecovery stays a human step: on KyNotes' Backups screen, a one-time
 code from KyRecovery's administrator or the suite public key pinned by hand. KyNotes makes no
 backups until then.
 
-- The pod's issuer probe and token exchange reach KyIdentity at its public URL, so cluster DNS
-  must resolve the route hostnames, the edge must admit the pod network, and the pod must trust
-  the edge's certificate (a public CA does; the kind test adds its throwaway CA).
+Limits:
+
 - `TRUSTED_PROXY_CIDRS` is left at KyNotes' default (loopback only): forwarded headers from the
   edge are ignored, so no client can spoof its address into the rate limiter. KyNotes then
   rate-limits by the edge pod's address.

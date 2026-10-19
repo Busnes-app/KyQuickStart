@@ -67,12 +67,12 @@ func (s *Stack) validateIntegrations() error {
 		// apply sets up an installed Ky app other than KyIdentity through its KyIdentity client.
 		// KyNotes stages and imports only at its fixed path; apply derives its settings.
 		if installed && i.Product != "kyidentity" {
-			bundle := i.SetupID() != ""
-			if i.Product == "kynotes" {
-				bundle = i.Bundle == notesBundle
-			}
-			if i.Notes != nil || i.Identity != nil || !identitySetupName.MatchString(i.IdentityClient) || !bundle {
-				return errors.New("an installed app's setup needs its identity_client, no notes or identity settings, and a bundle at <data>/installer/<setup UUID>/setup.json (KyNotes: " + notesBundle + ")")
+			ok := i.Notes == nil && i.Identity == nil && identitySetupName.MatchString(i.IdentityClient)
+			switch {
+			case i.Product == "kynotes" && (!ok || i.Bundle != notesBundle):
+				return errors.New("an installed kynotes takes only identity_client and bundle: " + notesBundle + "; apply derives its settings")
+			case i.Product != "kynotes" && (!ok || i.SetupID() == ""):
+				return errors.New("an installed app's setup needs its identity_client and a bundle at <data>/installer/<setup UUID>/setup.json")
 			}
 		}
 		if i.IdentityAmendment != "" {
