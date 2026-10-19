@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -326,11 +328,22 @@ func TestKyDNSSetupOnHost(t *testing.T) {
 	if !slices.Equal(placed, []string{"client.secret", "directory.secret", "setup.json"}) {
 		t.Fatalf("placed %v:\n%s", placed, strings.Join(rec.cmds, "\n"))
 	}
-	stat, err := remote.Local{}.Run(ctx, "stat -c '%n %a %u %F' "+remote.Quote(host)+" "+remote.Quote(host)+"/*", nil)
-	uid := strings.TrimSpace(string(must(remote.Local{}.Run(ctx, "id -u", nil))))
-	want := host + " 700 " + uid + " directory\n" + host + "/client.secret 600 " + uid + " regular file\n" + host + "/directory.secret 600 " + uid + " regular file\n" + host + "/setup.json 600 " + uid + " regular file\n"
-	if err != nil || string(stat) != want {
-		t.Fatalf("host files:\n%s\nwant\n%s %v", stat, want, err)
+	// Go, not stat(1): its flags differ between GNU and BSD.
+	var stat strings.Builder
+	for _, p := range []string{host, host + "/client.secret", host + "/directory.secret", host + "/setup.json"} {
+		fi, err := os.Lstat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fmt.Fprintf(&stat, "%s %s %d\n", p, fi.Mode(), fi.Sys().(*syscall.Stat_t).Uid)
+	}
+	if entries, _ := os.ReadDir(host); len(entries) != 3 {
+		t.Errorf("host has %d entries, want 3", len(entries))
+	}
+	uid := os.Getuid()
+	want := fmt.Sprintf("%[1]s drwx------ %[2]d\n%[1]s/client.secret -rw------- %[2]d\n%[1]s/directory.secret -rw------- %[2]d\n%[1]s/setup.json -rw------- %[2]d\n", host, uid)
+	if stat.String() != want {
+		t.Fatalf("host files:\n%s\nwant\n%s", stat.String(), want)
 	}
 	if b, _ := os.ReadFile(host + "/client.secret"); string(b) != clientSecret {
 		t.Fatal("client secret differs")
@@ -583,13 +596,6 @@ func hostFiles(t *testing.T, dir string) string {
 		return nil
 	})
 	return out.String()
-}
-
-func must(b []byte, err error) []byte {
-	if err != nil {
-		panic(err)
-	}
-	return b
 }
 
 // kydns.gate passes only when KyDNS refuses a direct request carrying the edge's header, and
