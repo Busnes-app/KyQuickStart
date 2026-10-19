@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -163,10 +165,11 @@ func TestKyDNSClientFromCatalog(t *testing.T) {
 	for _, want := range []string{
 		"KyDNS at https://dns.example.com/: sign in through KyIdentity as owner-admin, the one account it admits",
 		"It answers DNS at 192.0.2.1:53 (UDP and TCP)",
-		"ports 53 and 18053 are open on 192.0.2.1. 18053, its admin UI, serves only the edge",
-		"DNS answers private address ranges only",
+		"ports 53 and 18053 are open on 192.0.2.1. Its admin UI on 18053 trusts forwarded\n  requests only from egress_address 192.168.1.20, and apply checked that it refuses this workstation.",
+		"restrict both ports to your LAN and the edge at the host or network firewall",
+		"KyDNS is not\n  supported on such a host. Never set egress_address to a Docker network gateway",
 		"Point clients at 192.0.2.1 for DNS: your router's DHCP DNS server",
-		"Set one on nas:\n       docker exec -it kyq-kydns-app-1 /usr/local/bin/kydns admin reset-password",
+		"From an interactive shell on nas\n     (ssh -t, so the password does not echo), set one:\n       docker exec -it kyq-kydns-app-1 /usr/local/bin/kydns admin reset-password",
 		"Pair it with KyRecovery",
 	} {
 		if !strings.Contains(s.handover, want) {
@@ -267,10 +270,13 @@ func TestKyDNSSetupOnHost(t *testing.T) {
 		t.Fatal(err)
 	}
 	order := ids(list)
-	if i := slices.Index(order, "kydns.setup"); i < 1 || order[i-1] != "kydns.health" || slices.Index(order, "kyidentity.setup") > i {
+	if i := slices.Index(order, "kydns.setup"); i < 1 || order[i-1] != "kydns.health" || order[i+1] != "kydns.gate" || slices.Index(order, "kyidentity.setup") > i {
 		t.Fatalf("steps = %v", order)
 	}
 	setup := list[slices.Index(order, "kydns.setup")]
+	if g, ok := list[slices.Index(order, "kydns.gate")].(gateStep); !ok || g.url != "http://192.0.2.1:18053/api/v1/installer/network" || g.egress != "192.168.1.20" || g.edge != "k1" || g.target != "nas" {
+		t.Fatalf("gate = %+v", list[slices.Index(order, "kydns.gate")])
+	}
 	if err := list[slices.Index(order, "kyidentity.setup")].Apply(ctx); err != nil || !strings.Contains(identity.intent, wantDNSClient) {
 		t.Fatalf("KyIdentity's setup: %v\n%s", err, identity.intent)
 	}
@@ -456,7 +462,7 @@ func TestKyDNSSetupWaitsForItsSocket(t *testing.T) {
 	os.MkdirAll(filepath.Dir(socket), 0o700)
 	t.Chdir(filepath.Dir(socket)) // a relative bind keeps the path under the kernel's limit
 	ran := false
-	setup := waitForSocket(remote.Local{}, socket, func(context.Context, identityExec, string, bool) ([]byte, error) {
+	setup := waitForSocket(remote.Local{}, socket, "nas", func(context.Context, identityExec, string, bool) ([]byte, error) {
 		ran = true
 		return nil, nil
 	})
@@ -546,7 +552,7 @@ func TestKyDNSSetupBeforeEdges(t *testing.T) {
 	setup := slices.Index(order, "kydns.setup")
 	firstEdge := slices.IndexFunc(order, func(id string) bool { return strings.HasPrefix(id, "k1.edge.") })
 	route := slices.IndexFunc(list, func(st engine.Step) bool { return edge.RouteApp(st) == "kydns" })
-	if setup < 1 || order[setup-1] != "kydns.health" || firstEdge < 0 || setup > firstEdge || route < firstEdge {
+	if gate := slices.Index(order, "kydns.gate"); setup < 1 || order[setup-1] != "kydns.health" || gate != setup+1 || firstEdge < 0 || gate > firstEdge || route < firstEdge {
 		t.Fatalf("steps = %v", order)
 	}
 }
@@ -572,4 +578,44 @@ func must(b []byte, err error) []byte {
 		panic(err)
 	}
 	return b
+}
+
+// kydns.gate passes only when KyDNS refuses a direct request carrying the edge's header, and
+// names egress_address when it is trusted; an unreachable admin port is not proof either.
+func TestKyDNSGate(t *testing.T) {
+	ctx := context.Background()
+	var answer int
+	var proto string
+	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proto = r.Header.Get("X-Forwarded-Proto")
+		w.WriteHeader(answer)
+	}))
+	defer peer.Close()
+	g := gateStep{url: peer.URL + "/api/v1/installer/network", edge: "k1", egress: "192.168.16.1", target: "nas"}
+	for _, c := range []struct {
+		status int
+		want   string
+	}{
+		{403, ""},
+		{200, "egress_address 192.168.16.1 on edge k1 is not the edge's alone"},
+		{200, "on nas run docker compose -p kyq-kydns stop"},
+		{303, "HTTP 303"},
+		{500, "HTTP 500"},
+	} {
+		answer = c.status
+		err := g.Verify(ctx)
+		if c.want == "" && err != nil || c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)) {
+			t.Errorf("HTTP %d: %v, want %q", c.status, err, c.want)
+		}
+		if done, _ := g.Inspect(ctx); done != (c.want == "") {
+			t.Errorf("HTTP %d: inspected done = %v", c.status, done)
+		}
+		if proto != "https" {
+			t.Errorf("probe sent X-Forwarded-Proto %q", proto)
+		}
+	}
+	peer.Close()
+	if err := g.Apply(ctx); err == nil || !strings.Contains(err.Error(), "could not reach KyDNS's admin port") {
+		t.Fatalf("unreachable: %v", err)
+	}
 }

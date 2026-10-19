@@ -19,7 +19,9 @@ services:
     memswap_limit: 256m
     cpus: 1
     pids_limit: 128
-    # 8053 serves only the edge (its transport gate); DNS answers private ranges only.
+    # 8053 trusts forwarded headers only from the edge's egress_address (apply's kydns.gate
+    # checks a direct peer gets 403); both it and DNS's private-range rule need the Docker
+    # host to show KyDNS real client addresses.
     ports: ["{{forward}}:8053", "{{forward_addr}}:53:53/udp", "{{forward_addr}}:53:53/tcp"]
     environment:
       KYDNS_DATA_DIR: /data

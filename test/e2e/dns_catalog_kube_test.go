@@ -158,7 +158,7 @@ func checkCatalogDNS(t *testing.T, out string, d driveTarget, port int) []string
 	if !strings.Contains(out, "ran without kydns's client: adding it with setup amendment ") {
 		t.Fatal("KyDNS amendment not announced")
 	}
-	for _, id := range []string{"kyidentity.amend.kydns", "kydns.deploy", "kydns.health", "kydns.setup", dnsRouteStep} {
+	for _, id := range []string{"kyidentity.amend.kydns", "kydns.deploy", "kydns.health", "kydns.setup", "kydns.gate", dnsRouteStep} {
 		if status(out, id) != "ok" {
 			t.Fatalf("%s = %q", id, status(out, id))
 		}
@@ -167,9 +167,10 @@ func checkCatalogDNS(t *testing.T, out string, d driveTarget, port int) []string
 		"KyDNS at https://" + catalogDNSURLHost + "/: sign in through KyIdentity as prepared-admin, the one account it admits",
 		"It answers DNS at " + d.forward + ":53 (UDP and TCP)",
 		"Firewall: ports 53 and " + strconv.Itoa(port) + " are open on " + d.forward,
-		"DNS answers private address ranges only",
+		"trusts forwarded\n  requests only from egress_address ",
+		"restrict both ports to your LAN and the edge at the host or network firewall",
 		"Point clients at " + d.forward + " for DNS",
-		"Set one on nas:\n       docker exec -it kyq-kydns-app-1 /usr/local/bin/kydns admin reset-password",
+		"From an interactive shell on nas\n     (ssh -t, so the password does not echo), set one:\n       docker exec -it kyq-kydns-app-1 /usr/local/bin/kydns admin reset-password",
 		"Pair it with KyRecovery",
 	} {
 		if !strings.Contains(out, want) {
@@ -261,16 +262,42 @@ func dnsQuery(t *testing.T, network, addr string) (bool, int) {
 	return resp[2]&0x04 != 0, int(resp[3] & 0x0f)
 }
 
-// checkDNSEdge proves AC10 and AC11 once KyDNS trusts the edge: DNS over UDP and TCP on the
-// forward address, and through the edge health, trusted HTTPS headers and the closed /setup;
-// directly, the transport gate's refusal.
-func checkDNSEdge(t *testing.T, ctx context.Context, d driveTarget, port int, newClient func() *http.Client) {
+// checkDNSGate proves AC10 and the gate half of AC11 from this host, which is not the edge:
+// DNS over UDP and TCP on the forward address, and KyDNS's transport gate refusing a direct
+// request, plain or carrying the edge's X-Forwarded-Proto.
+func checkDNSGate(t *testing.T, ctx context.Context, d driveTarget, port int) {
 	t.Helper()
 	for _, network := range []string{"udp", "tcp"} {
 		if aa, rcode := dnsQuery(t, network, net.JoinHostPort(d.forward, "53")); !aa || rcode != 3 {
 			t.Fatalf("%s: AA %v, RCODE %d; want an authoritative NXDOMAIN", network, aa, rcode)
 		}
 	}
+	direct := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	base := "http://" + net.JoinHostPort(d.forward, strconv.Itoa(port))
+	for _, p := range []string{"/login", "/api/v1/installer/network", "/setup"} {
+		for _, forged := range []bool{false, true} {
+			req, _ := http.NewRequestWithContext(ctx, "GET", base+p, nil)
+			if forged {
+				req.Header.Set("X-Forwarded-Proto", "https")
+				req.Header.Set("X-Forwarded-For", "192.168.1.20")
+			}
+			r, err := direct.Do(req)
+			if err != nil {
+				t.Fatalf("direct %s: %v", p, err)
+			}
+			b, _ := io.ReadAll(io.LimitReader(r.Body, 4<<10))
+			r.Body.Close()
+			if r.StatusCode != 403 || strings.TrimSpace(string(b)) != gateMessage {
+				t.Fatalf("direct %s (forged headers %v): %d %s", p, forged, r.StatusCode, b)
+			}
+		}
+	}
+}
+
+// checkDNSEdge proves the edge half of AC11 where KyDNS sees the edge at egress_address:
+// health, trusted HTTPS headers and the closed /setup through the edge.
+func checkDNSEdge(t *testing.T, ctx context.Context, newClient func() *http.Client) {
+	t.Helper()
 	c := newClient()
 	if r, b := get(t, ctx, c, "https://"+catalogDNSURLHost+"/healthz"); r.StatusCode != 200 {
 		t.Fatalf("health through the edge: %d %s", r.StatusCode, b)
@@ -281,19 +308,20 @@ func checkDNSEdge(t *testing.T, ctx context.Context, d driveTarget, port int, ne
 	if r, _ := get(t, ctx, c, "https://"+catalogDNSURLHost+"/setup"); r.StatusCode != 303 || r.Header.Get("Location") != "/login" {
 		t.Fatalf("/setup through the edge: %d %s", r.StatusCode, r.Header.Get("Location"))
 	}
-	direct := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	base := "http://" + net.JoinHostPort(d.forward, strconv.Itoa(port))
-	if r, b := get(t, ctx, direct, base+"/login"); r.StatusCode != 403 || strings.TrimSpace(string(b)) != gateMessage {
-		t.Fatalf("direct /login: %d %s", r.StatusCode, b)
+}
+
+// checkDNSFailClosed proves the edge sees only health and the gate's refusal where KyDNS does
+// not see the edge at egress_address.
+func checkDNSFailClosed(t *testing.T, ctx context.Context, newClient func() *http.Client) {
+	t.Helper()
+	c := newClient()
+	if r, b := get(t, ctx, c, "https://"+catalogDNSURLHost+"/healthz"); r.StatusCode != 200 {
+		t.Fatalf("health through the edge: %d %s", r.StatusCode, b)
 	}
-	// Recorded, not required: whether a direct peer that forges the edge's header is trusted
-	// shows whether this Docker host preserves client addresses (docs/guided-setup.md).
-	req, _ := http.NewRequestWithContext(ctx, "GET", base+"/api/v1/installer/network", nil)
-	req.Header.Set("X-Forwarded-Proto", "https")
-	if r, err := direct.Do(req); err == nil {
-		b, _ := io.ReadAll(io.LimitReader(r.Body, 4<<10))
-		r.Body.Close()
-		t.Logf("direct request forging X-Forwarded-Proto: HTTP %d %s", r.StatusCode, bytes.TrimSpace(b))
+	for _, p := range []string{"/", "/setup", "/auth/sso/login", "/api/v1/installer/network"} {
+		if r, b := get(t, ctx, c, "https://"+catalogDNSURLHost+p); r.StatusCode != 403 || strings.TrimSpace(string(b)) != gateMessage {
+			t.Fatalf("%s through an untrusted edge: %d %s", p, r.StatusCode, b)
+		}
 	}
 }
 

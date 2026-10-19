@@ -473,9 +473,11 @@ calls and kind nodes must carry their own explicit bounds.
   (`/api/admin/users` 200/403, `/api/calendars` 403/200), and a skipped rerun.
   The catalog KyDNS joins the Docker target by amendment: hardened container as the target
   user, setup files placed from the host, live `--check`, authoritative NXDOMAIN over UDP and
-  TCP on the forward address, its transport gate trusting only the edge's `egress_address`
-  (403 directly), the closed `/setup`, admin sign-in with a Secure session, the everyday
-  account refused by KyIdentity, and a skipped rerun.
+  TCP on the forward address, its transport gate refusing direct requests with forged headers
+  (`kydns.gate`), and a skipped rerun. Where the Docker host keeps client addresses it also
+  proves trusted headers through the edge, the closed `/setup` and admin-only sign-in; where it
+  hides them (this workstation) it proves KyDNS refuses the edge and that `kydns.gate` refuses
+  a gateway `egress_address`.
   Set `KYQ_TEST_IDENTITY_BINARY` to a local static KyIdentity build to additionally test real
   container-local identity setup over SSH and kind, including target-held preparation,
   inspection/resume and changed-intent refusal; SSH additionally refuses lost credentials.

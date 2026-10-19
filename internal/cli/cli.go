@@ -420,10 +420,10 @@ func withRoute(st *stack.Stack, name string, t stack.Target, app catalog.App) (c
 		return app, fmt.Errorf("app %q publishes its port on its route's forward_host, which must be an IP address of %s", name, t.Name)
 	}
 	if app.UsesEdgeAddress() && edges[0].EgressAddress == "" {
-		return app, fmt.Errorf("app %q trusts exactly the address its edge connects from: set egress_address on edge %s to the one address %s sees that edge's requests from", name, edges[0].Target, t.Name)
+		return app, fmt.Errorf("app %q trusts exactly the address its edge connects from: set egress_address on edge %s to the edge's own address as %s sees it (for NPM on a cluster, the IP of the node running NPM)", name, edges[0].Target, t.Name)
 	}
 	addr := ip.String()
-	if strings.Contains(addr, ":") {
+	if strings.Contains(addr, ":") { // not reached while stack refuses an IPv6 forward_host
 		addr = "[" + addr + "]" // Docker's port syntax
 	}
 	return app.WithRoute(catalog.Route{Host: hosts[0], Forward: addr + ":" + strconv.Itoa(routes[0].ForwardPort), ForwardAddr: addr, EdgeAddress: edges[0].EgressAddress}), nil

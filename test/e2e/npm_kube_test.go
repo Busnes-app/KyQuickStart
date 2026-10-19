@@ -416,9 +416,9 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	}
 
 	// KyDNS joins on the Docker target by setup amendment too, its admin UI behind the edge and
-	// DNS on the target's forward address. Its edge's egress_address starts as the kind node's
-	// address, where pods leave kind; a Docker host that masks client addresses shows KyDNS
-	// another peer, which it must refuse until egress_address names that peer.
+	// DNS on the target's forward address. Its edge's egress_address is the kind node's address,
+	// where pods leave kind. kydns.gate proves this host, not the edge, gets 403 with a forged
+	// X-Forwarded-Proto.
 	dnsPort := freePort(t, drive.forward)
 	copyCatalogDNS(t, catalogDir, filepath.Join(work, "drive-ca.pem"), drive)
 	st, _ = stack.Load(plan)
@@ -426,27 +426,43 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	st.Edges[0].EgressAddress = nodeIP
 	b, _ = yaml.Marshal(st)
 	os.WriteFile(plan, b, 0o600)
+	dnsPlan, _ := os.ReadFile(plan)
 	out = apply("dns")
 	dnsSecrets := checkCatalogDNS(t, out, drive, dnsPort)
+	checkDNSGate(t, ctx, drive, dnsPort)
 	_, newClient := edgeClient(t, certPEM, nodeIP)
-	if code, n := dnsEdgePeer(t, ctx, newClient()); code != 200 || !n.ProxyHeadersTrusted {
-		// Failed closed. Test-only: Docker's userland proxy hands KyDNS every published-port
-		// connection from its network's gateway, so that is the address to trust here.
-		peer := strings.Fields(docker(t, "network", "inspect", "kyq-kydns_default", "--format", "{{range .IPAM.Config}}{{.Gateway}} {{end}}"))[0]
-		t.Logf("this Docker host masks the edge's address: KyDNS refused %s (HTTP %d); it sees its network gateway %s", nodeIP, code, peer)
+	if code, n := dnsEdgePeer(t, ctx, newClient()); code == 200 && n.ProxyHeadersTrusted {
+		checkDNSEdge(t, ctx, newClient)
+		dnsSignOn(t, ctx, connected, newClient)
+	} else {
+		// This Docker host hides client addresses (the userland proxy hands KyDNS every
+		// connection from its network's gateway), so KyDNS refuses the edge: fail closed. The
+		// edge-trusted path is unproven here. Trusting that gateway would open the gate to every
+		// peer, and kydns.gate refuses it.
 		if code != 403 {
 			t.Fatalf("KyDNS answered an untrusted edge with %d", code)
 		}
+		checkDNSFailClosed(t, ctx, newClient)
+		gw := strings.Fields(docker(t, "network", "inspect", "kyq-kydns_default", "--format", "{{range .IPAM.Config}}{{.Gateway}} {{end}}"))[0]
+		t.Logf("UNPROVEN on this host: KyDNS sees the edge as %s, not %s; edge-trusted checks and sign-in skipped", gw, nodeIP)
 		st, _ = stack.Load(plan)
-		st.Edges[0].EgressAddress = peer
+		st.Edges[0].EgressAddress = gw
 		b, _ = yaml.Marshal(st)
 		os.WriteFile(plan, b, 0o600)
-		apply("dns egress_address")
+		var refused bytes.Buffer
+		err = cli.Run(ctx, append([]string{"apply", "--state", state}, trust...), cli.Options{Catalog: os.DirFS(catalogDir), ReleaseSet: "e2e", Out: &refused})
+		outputs = append(outputs, refused.String())
+		if err == nil || status(refused.String(), "kydns.gate") != "failed" || !strings.Contains(err.Error(), "egress_address "+gw+" on edge k8s is not the edge's alone") || status(refused.String(), dnsRouteStep) != "" {
+			t.Fatalf("gateway egress_address: %v\n%s", err, refused.String())
+		}
+		os.WriteFile(plan, dnsPlan, 0o600)
+		if out := apply("dns egress_address restored"); status(out, "kydns.deploy") != "ok" || status(out, "kydns.gate") != "ok" {
+			t.Fatal("restored egress_address did not redeploy and pass the gate")
+		}
+		checkDNSGate(t, ctx, drive, dnsPort)
 	}
-	checkDNSEdge(t, ctx, drive, dnsPort, newClient)
-	dnsSignOn(t, ctx, connected, newClient)
 	out = apply("dns rerun")
-	for _, id := range []string{"kyidentity.amend.kydns", "kydns.secrets", "kydns.deploy", "kydns.health", "kydns.setup", dnsRouteStep} {
+	for _, id := range []string{"kyidentity.amend.kydns", "kydns.secrets", "kydns.deploy", "kydns.health", "kydns.setup", "kydns.gate", dnsRouteStep} {
 		if status(out, id) != "skipped" {
 			t.Errorf("rerun: %s = %q", id, status(out, id))
 		}
