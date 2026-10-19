@@ -31,16 +31,24 @@ target and never written to local state, logs or command output.
 
 Each release `vX.Y.Z` publishes `kyquickstart-X.Y.Z-linux-amd64`, `kyquickstart-X.Y.Z-linux-arm64`,
 `kyquickstart-X.Y.Z-darwin-amd64` and `kyquickstart-X.Y.Z-darwin-arm64`, each attested and
-pinned to the attested `kyquickstart-runner:X.Y.Z` image. Verify both before use:
+pinned to the attested `kyquickstart-runner:X.Y.Z` image. Download one, verify it before running
+it, then verify the runner image it pins (POSIX shell):
 
-```
+```sh
+gh release download vX.Y.Z --repo Busnes-app/KyQuickStart --pattern 'kyquickstart-X.Y.Z-<os>-<arch>'
 gh attestation verify kyquickstart-X.Y.Z-<os>-<arch> --repo Busnes-app/KyQuickStart \
   --cert-identity https://github.com/Busnes-app/KyQuickStart/.github/workflows/release-image.yml@refs/tags/vX.Y.Z
+chmod +x kyquickstart-X.Y.Z-<os>-<arch>
 ./kyquickstart-X.Y.Z-<os>-<arch> version                  # X.Y.Z
 ./kyquickstart-X.Y.Z-<os>-<arch> version --runner-image   # ghcr.io/busnes-app/kyquickstart-runner:X.Y.Z@sha256:…
-gh attestation verify oci://ghcr.io/busnes-app/kyquickstart-runner@sha256:… --repo Busnes-app/KyQuickStart \
+pin="$(./kyquickstart-X.Y.Z-<os>-<arch> version --runner-image)"
+gh attestation verify "oci://ghcr.io/busnes-app/kyquickstart-runner@${pin#*@}" --repo Busnes-app/KyQuickStart \
   --cert-identity https://github.com/Busnes-app/KyQuickStart/.github/workflows/release-image.yml@refs/tags/vX.Y.Z
 ```
+
+The macOS binaries are not signed or notarized. `gh release download` leaves no quarantine flag;
+a browser download gets one and Gatekeeper blocks the binary. After the attestation verifies, clear
+it with `xattr -d com.apple.quarantine kyquickstart-X.Y.Z-darwin-<arch>`.
 
 ## Build
 

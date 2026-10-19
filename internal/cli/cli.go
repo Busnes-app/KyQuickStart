@@ -834,7 +834,7 @@ func versionCommand(args []string, o Options) error {
 		return err
 	}
 	if o.RunnerImage == "" {
-		return errors.New("this build pins no suite runner image (source build)")
+		return errors.New("this build pins no suite runner image (source build); use a release binary")
 	}
 	_, err := fmt.Fprintln(o.Out, o.RunnerImage)
 	return err

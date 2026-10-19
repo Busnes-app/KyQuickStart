@@ -11,7 +11,7 @@ Plain terminal planning and command orchestration for the operator-run installer
   apply-only. A `kube://` edge gets its token and tunnel from the
   Kubernetes driver; an app's `node_ports` override the catalog's in the session only.
   `version` prints the release set; `version --runner-image` prints `Options.RunnerImage` or
-  fails "this build pins no suite runner image (source build)".
+  fails "this build pins no suite runner image (source build); use a release binary".
 - `suite.go` owns `install`, `uninstall`, `unmanage`, `upgrade` and `status`, the upgrade gate
   and plan publication. The exported `Install`, `Uninstall`, `Unmanage`, `Upgrade` and `Status`
   take a context, state directory and `Options` (with `Progress`) so the suite runner calls

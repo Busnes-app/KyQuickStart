@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"debug/buildinfo"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -119,8 +120,14 @@ func TestReleaseSourceBuildPinsNothing(t *testing.T) {
 		t.Errorf("version: %q %v", out, err)
 	}
 	out, err := exec.Command(bin, "version", "--runner-image").CombinedOutput()
-	if err == nil || !strings.Contains(string(out), "this build pins no suite runner image (source build)") {
+	if err == nil || !strings.Contains(string(out), "this build pins no suite runner image (source build); use a release binary") {
 		t.Errorf("version --runner-image: %q %v", out, err)
+	}
+	// A stray argument prints the usage, which names the one flag.
+	out, err = exec.Command(bin, "version", "extra").CombinedOutput()
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 2 || !strings.Contains(string(out), "version [--runner-image]") {
+		t.Errorf("version extra: %v, %q", err, out)
 	}
 }
 
@@ -128,6 +135,7 @@ type workflow struct {
 	Permissions map[string]string
 	Jobs        map[string]struct {
 		Needs       []string
+		Env         map[string]string
 		Permissions map[string]string
 		Steps       []struct {
 			Name, Uses, Run string
@@ -160,6 +168,10 @@ func TestReleaseWorkflow(t *testing.T) {
 		t.Errorf("promote needs %v, want publish and binaries", w.Jobs["promote"].Needs)
 	}
 
+	if _, ok := w.Jobs["binaries"].Env["GH_TOKEN"]; ok {
+		t.Error("binaries sets GH_TOKEN for every step; set it only on the gh steps")
+	}
+
 	pinned := regexp.MustCompile(`@[0-9a-f]{40}$`)
 	runs := map[string]string{}
 	steps := map[string][]string{}
@@ -189,7 +201,7 @@ func TestReleaseWorkflow(t *testing.T) {
 	for job, wants := range map[string][]string{
 		"publish": {`grep -qx 'var version = "dev"'`, `grep -qx 'var runnerImage = ""'`, `git rev-parse "$GITHUB_SHA^{commit}"`, "check-runs?filter=latest"},
 		"binaries": {"scripts/release-binaries.sh", `git rev-parse "$GITHUB_SHA^{commit}"`, "gh attestation verify",
-			"release-image.yml@refs/tags/$TAG", "gh release upload", "gh release download", "version --runner-image"},
+			"release-image.yml@refs/tags/$TAG", "gh release upload", "gh release download", "gh release delete-asset", "version --runner-image"},
 	} {
 		for _, want := range wants {
 			if !strings.Contains(runs[job], want) {
