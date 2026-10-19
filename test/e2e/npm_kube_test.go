@@ -56,7 +56,7 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	}
 	cs := kubernetes.NewForConfigOrDie(cfg)
 	catalogDir := filepath.Join(work, "catalog")
-	for _, src := range []string{"../../internal/catalog/testdata/apps/hello", "../../internal/catalog/apps/npm", "../../internal/catalog/apps/kyidentity", "../../internal/catalog/apps/kyrecovery", "../../internal/catalog/apps/kypulse"} {
+	for _, src := range []string{"../../internal/catalog/testdata/apps/hello", "../../internal/catalog/apps/npm", "../../internal/catalog/apps/kyidentity", "../../internal/catalog/apps/kyrecovery", "../../internal/catalog/apps/kypulse", "../../internal/catalog/apps/kynotes"} {
 		if err := os.CopyFS(filepath.Join(catalogDir, filepath.Base(src)), os.DirFS(src)); err != nil {
 			t.Fatal(err)
 		}
@@ -347,8 +347,55 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	catalogSignOn(t, ctx, cs, kc, certPEM, nodeIP)
 	driveSignOn(t, ctx, kc, certPEM, nodeIP, driveSecrets[1])
 
+	// KyNotes joins after KyIdentity's first setup: its client comes in a setup amendment, and
+	// its setup runs after KyIdentity's route and before its own.
+	loadCatalogApp(t, name, cs, "kynotes")
+	st, _ = stack.Load(plan)
+	addCatalogNotes(st, certID)
+	b, _ = yaml.Marshal(st)
+	os.WriteFile(plan, b, 0o600)
+	var first bytes.Buffer
+	err = cli.Run(ctx, []string{"apply", "--state", state}, cli.Options{Catalog: os.DirFS(catalogDir), ReleaseSet: "e2e", Out: &first})
+	t.Logf("apply (notes):\n%s", first.String())
+	outputs = append(outputs, first.String())
+	out = first.String()
+	if !strings.Contains(out, "ran without kynotes's client: adding it with setup amendment ") {
+		t.Fatal("amendment not announced")
+	}
+	for _, id := range []string{"kyidentity.amend.kynotes", "kynotes.deploy", "kynotes.health"} {
+		if status(out, id) != "ok" {
+			t.Fatalf("%s = %q", id, status(out, id))
+		}
+	}
+	// code is the HTTP status the LAN client gets through the edge; curl fails (000) when
+	// NPM serves no host for the name.
+	code := func(host, path string) string {
+		b, _ := exec.Command("docker", "exec", client, "curl", "-sk", "-o", "/dev/null", "-w", "%{http_code}", "-m", "10", "--resolve", host+":30443:"+nodeIP, "https://"+host+":30443"+path).Output()
+		return strings.TrimSpace(string(b))
+	}
+	if err != nil {
+		// Test-only: KyNotes' issuer probe refuses the edge's throwaway certificate. Apply
+		// stopped before KyNotes' route, so its open first-run setup was never served.
+		if status(out, "kynotes.setup") != "failed" || status(out, notesRouteStep) != "" || code(catalogNotesHost, "/healthz") == "200" {
+			t.Fatalf("failed KyNotes setup: %v", err)
+		}
+		trustTestCA(t, ctx, cs, connected, "kynotes", certPEM)
+		out = apply("notes after test CA")
+	}
+	notesSecrets := checkCatalogNotes(t, ctx, cs, connected, out, code)
+	if _, err := cs.CoreV1().ConfigMaps("kyq-kynotes").Get(ctx, "test-ca", metav1.GetOptions{}); err != nil {
+		trustTestCA(t, ctx, cs, connected, "kynotes", certPEM) // its token exchange goes through the edge too
+	}
+	notesSignOn(t, ctx, connected, certPEM, nodeIP)
+	out = apply("notes rerun")
+	for _, id := range []string{"kyidentity.amend.kynotes", "kynotes.deploy", "kynotes.health", "kynotes.setup", notesRouteStep} {
+		if status(out, id) != "skipped" {
+			t.Errorf("rerun: %s = %q", id, status(out, id))
+		}
+	}
+
 	// No credential reached apply output or workstation state.
-	secretsSeen := append(append(append([]string{password, token, stored()}, recoverySecrets...), pulseSecrets...), driveSecrets...)
+	secretsSeen := append(append(append(append([]string{password, token, stored()}, recoverySecrets...), pulseSecrets...), driveSecrets...), notesSecrets...)
 	for _, o := range outputs {
 		for _, s := range secretsSeen {
 			if strings.Contains(o, s) {

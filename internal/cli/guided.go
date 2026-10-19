@@ -460,6 +460,9 @@ func validateSelection(st *stack.Stack, cat catalog.Catalog) error {
 			return err
 		}
 	}
+	if err := routedNeedsSetup(st); err != nil {
+		return err
+	}
 	var names []string
 	for _, app := range st.Apps {
 		names = append(names, app.Name)
@@ -468,12 +471,31 @@ func validateSelection(st *stack.Stack, cat catalog.Catalog) error {
 		if !ok {
 			return fmt.Errorf("%s is unavailable", app.Name)
 		}
-		if t.Kubernetes() && a.Kubernetes == nil || !t.Kubernetes() && a.Compose == nil {
-			return fmt.Errorf("%s cannot run on %s", app.Name, app.Target)
+		switch {
+		case t.Kubernetes() && a.Kubernetes == nil:
+			return fmt.Errorf("%s cannot run on %s: it has no Kubernetes deployment; place it on a Docker host", app.Name, app.Target)
+		case !t.Kubernetes() && a.Compose == nil:
+			return fmt.Errorf("%s cannot run on %s: it has no Compose deployment; place it on a Kubernetes target", app.Name, app.Target)
 		}
 	}
 	_, err := plan.Order(names, cat)
 	return err
+}
+
+// routedNeedsSetup refuses a routed routedFirst app without its installed integration: its
+// route would serve the open first-run web setup that only its setup closes.
+func routedNeedsSetup(st *stack.Stack) error {
+	for _, a := range st.Apps {
+		if !slices.Contains(routedFirst, a.Name) || !slices.ContainsFunc(st.Edges, func(e stack.Edge) bool {
+			return slices.ContainsFunc(e.Routes, func(r stack.Route) bool { return r.App == a.Name })
+		}) {
+			continue
+		}
+		if !slices.ContainsFunc(st.Integrations, func(i stack.Integration) bool { return i.Product == a.Name && i.Installed(st) }) {
+			return fmt.Errorf("%s is routed but has no integration on %s: its route would expose its first-run web setup. Add {product: %s, target: %s, bundle: /data/installer/setup.json, identity_client: %s} to integrations, or remove its route", a.Name, a.Target, a.Name, a.Target, a.Name)
+		}
+	}
+	return nil
 }
 
 func checkKubePaths(state string, st *stack.Stack) error {
@@ -554,6 +576,9 @@ func showPlan(out io.Writer, st *stack.Stack, cat catalog.Catalog) {
 		}
 		if i.Installed(st) && i.IdentityClient != "" {
 			fmt.Fprintf(out, "  Add the catalog's %s client %s to KyIdentity's first setup and transfer its credentials in memory.\n", i.Product, i.IdentityClient)
+		}
+		if i.Product == "kynotes" && i.Installed(st) {
+			fmt.Fprintln(out, "  KyNotes' setup runs after KyIdentity's route is live; KyNotes' route is added only after that setup creates its administrator, so its first-run web setup is never exposed.")
 		}
 		if i.Product == "kyrecovery" && i.IdentityClient != "" {
 			fmt.Fprintln(out, "  The KyRecovery custodian ceremony stays a human step.")

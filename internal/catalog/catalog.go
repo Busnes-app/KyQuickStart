@@ -92,6 +92,8 @@ type Kubernetes struct {
 	LowPorts bool `yaml:"low_ports"`
 	// NodePorts publishes container ports on every node, with their default NodePort; edge only.
 	NodePorts map[int]int `yaml:"node_ports"`
+	// TerminationGraceSeconds lets a stopping pod drain this long; 0 keeps Kubernetes' default.
+	TerminationGraceSeconds int64 `yaml:"termination_grace_seconds"`
 }
 
 // Resources are both the requests and the limits, except that CPURequest, when set, is a
@@ -335,6 +337,8 @@ func (k Kubernetes) validate(images map[string]string, baseline, edge bool) erro
 		return fmt.Errorf("capabilities and writable_root need pod_security baseline")
 	case len(k.NodePorts) > 0 && !edge:
 		return fmt.Errorf("node_ports: only edge components publish ports; apps are reached through the edge")
+	case k.TerminationGraceSeconds < 0 || k.TerminationGraceSeconds > 3600:
+		return fmt.Errorf("termination_grace_seconds %d must be 0-3600", k.TerminationGraceSeconds)
 	}
 	if err := check(k.Capabilities, func(c string) bool { return slices.Contains(baselineCaps, c) }); err != nil {
 		return fmt.Errorf("capabilities: %w must be unique and one of %v", err, baselineCaps)
