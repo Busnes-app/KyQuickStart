@@ -125,8 +125,9 @@ the plan is saved only after every step passed.
   Service, and keeps the app directory, data volumes, claims and secrets on the target.
 - `unmanage` removes `ky.managed-by` and `ky.release-set` and records the hand-over in
   `<state>/handover.md`. Docker cannot relabel a container, so existing containers are
-  recreated once; on Kubernetes the pod-template change replaces the pods once. The installer
-  then refuses to install over the app.
+  recreated once, unstarted, and only the services that were running are started again; on
+  Kubernetes the pod-template change replaces the pods once. The installer then refuses to
+  install over the app.
 - `upgrade`, and `apply`/`install` over a kept deployment, compare the deployed version
   with the catalog: older than `min_from`, skipping a `no_skip` version, a downgrade or an
   unknown version is refused (`upgrade_refused`); a version that migrates data is refused
@@ -240,14 +241,20 @@ refused without `--snapshot`:
 
 A rerun of `restore` after any step died resumes from `<root>/<app>/.restore-pending`, or
 refuses naming what to do (`--replace` when files were already moved into place, removing a
-stale lock by hand). Residuals: a removed person's restored sessions stay valid from the app's
-start until the replayed deactivation arrives (3.8 s in the end-to-end test, from 32.9 s before the replay moved ahead of the setup checks and KyDrive's healthcheck gained a 2 s start interval; a failed replay
-stops the app, and `apply` refuses to start an app whose restore is unfinished, naming
-`kyquickstart restore <app>`; but if restore itself is killed or loses SSH after the app
-starts, the app keeps running until you rerun `kyquickstart restore <app>`); the gate trusts the installer's deployment record, not the running binary;
-whoever controls a live target can read that app's backups; and the restore was not tested
-behind another proxy, above the end-to-end test's size, or on hosts without Docker's userland
-proxy.
+stale lock by hand). While that file exists, every other command that touches the app
+(`apply`, `install`, `upgrade`, `backup`, `unmanage`) refuses: "a restore of <app> is
+unfinished and its removal replay not delivered; finish it with kyquickstart restore <app>".
+
+Residuals:
+
+- A removed person's restored sessions stay valid from the app's start until the replayed
+  deactivation arrives, a few seconds in the end-to-end test. A failed replay stops the app.
+- If restore itself is killed or loses SSH after the app starts, the app keeps running until
+  you rerun `kyquickstart restore <app>`.
+- The gate trusts the installer's deployment record, not the running binary.
+- Whoever controls a live target can read that app's backups.
+- Not tested: a rest-server behind another proxy, repositories above the end-to-end test's
+  size, hosts without Docker's userland proxy.
 
 **After losing the target.** Keep the state directory (`stack.yaml`, `known_hosts`) and the
 recorded password. Prepare the new host as before (SSH user, the credential and CA files),
