@@ -9,8 +9,9 @@ Kubernetes target ([docs/edge.md](docs/edge.md)), KyIdentity behind it
 ([docs/guided-setup.md](docs/guided-setup.md#catalog-kyidentity-on-kubernetes)), and KyRecovery,
 kyPulse, KyNotes and KyCalendar signing in through it ([docs/guided-setup.md](docs/guided-setup.md#catalog-kyrecovery-on-kubernetes),
 [kyPulse](docs/guided-setup.md#catalog-kypulse-on-kubernetes), [KyNotes](docs/guided-setup.md#catalog-kynotes-on-kubernetes),
-[KyCalendar](docs/guided-setup.md#catalog-kycalendar-on-kubernetes)), with KyDrive on a Docker host
-routed through that edge ([KyDrive](docs/guided-setup.md#catalog-kydrive-on-docker));
+[KyCalendar](docs/guided-setup.md#catalog-kycalendar-on-kubernetes)), with KyDrive and KyDNS on a
+Docker host routed through that edge ([KyDrive](docs/guided-setup.md#catalog-kydrive-on-docker),
+[KyDNS](docs/guided-setup.md#catalog-kydns-on-docker));
 otherwise only a disposable demo app installs.
 `integrate-product` connects already-running Ky products to KyIdentity. See
 [the deployment plan](docs/superpowers/plans/2026-10-10-deployment-plan.md) for what remains.

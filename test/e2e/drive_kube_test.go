@@ -46,6 +46,7 @@ const driveSetupDir = "/data/installer/7d2e4f60-1a3b-4c5d-8e9f-0a1b2c3d4e5f"
 // driveTarget is the disposable Docker target KyDrive runs on: an sshd container on the host's
 // Docker socket, whose root the host shares, and the address the edge forwards KyDrive to.
 type driveTarget struct {
+	name           string // the sshd container
 	port, root, fp string
 	forward        string // the kind network's IPv4 gateway: this host, as the kind node reaches it
 	forwardPort    int
@@ -141,7 +142,7 @@ func startDriveTarget(t *testing.T, work, catalogDir, nodeIP string, certPEM []b
 		patched = strings.Replace(patched, r[0], r[1], 1)
 	}
 	os.WriteFile(tmpl, []byte(patched), 0o600)
-	return driveTarget{port: port, root: base + "/root", fp: fp, forward: kindGateway, forwardPort: forwardPort, relay: relay}
+	return driveTarget{name: name, port: port, root: base + "/root", fp: fp, forward: kindGateway, forwardPort: forwardPort, relay: relay}
 }
 
 // addCatalogDrive places KyDrive on the Docker target, routes it through the cluster's lan
