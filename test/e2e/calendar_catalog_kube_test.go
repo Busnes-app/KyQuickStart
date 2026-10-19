@@ -53,7 +53,7 @@ func addCatalogCalendar(st *stack.Stack, certID int) {
 // step ok, restricted pod that drains for 20 minutes, private setup files, the product's own
 // check naming both owner accounts, readiness through the edge, the handover and the 0600
 // break-glass password file. It returns the transferred secrets and that password.
-func checkCatalogCalendar(t *testing.T, ctx context.Context, cs kubernetes.Interface, c *kube.Client, out string, code func(host, path string) string) []string {
+func checkCatalogCalendar(t *testing.T, ctx context.Context, cs kubernetes.Interface, c *kube.Client, kubeconfig, out string, code func(host, path string) string) []string {
 	t.Helper()
 	if !strings.Contains(out, "ran without kycalendar's client: adding it with setup amendment ") {
 		t.Fatal("KyCalendar amendment not announced")
@@ -66,7 +66,8 @@ func checkCatalogCalendar(t *testing.T, ctx context.Context, cs kubernetes.Inter
 	for _, want := range []string{
 		"KyCalendar at https://" + catalogCalendarURLHost + "/: sign in through KyIdentity as prepared-admin (its console only",
 		"or prepared-user (calendars)",
-		"kubectl -n kyq-kycalendar exec deployment/app -- cat /app/data/initial-admin-password",
+		"kubectl --kubeconfig '" + kubeconfig + "' -n kyq-kycalendar exec deployment/app -- cat /app/data/initial-admin-password",
+		"Only after that, delete the file:",
 		"pair it with KyRecovery",
 	} {
 		if !strings.Contains(out, want) {

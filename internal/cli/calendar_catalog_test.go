@@ -75,11 +75,16 @@ func TestKyCalendarClientFromCatalog(t *testing.T) {
 	if b, _ := json.Marshal(s.integrations[0].Identity.Clients); string(b) != "["+wantCalendarClient+"]" || len(s.amendments) != 0 || !slices.Equal(s.derived, []string{"kycalendar"}) {
 		t.Fatalf("derived clients = %s, amendments %d", b, len(s.amendments))
 	}
+	kubectl := "kubectl --kubeconfig '" + s.placed["kycalendar"].Kubeconfig + "' -n kyq-kycalendar exec deployment/app -- "
 	for _, want := range []string{"KyCalendar at https://calendar.example.com/", "as owner-admin (its console only", "or owner (calendars)",
-		"kubectl -n kyq-kycalendar exec deployment/app -- cat /app/data/initial-admin-password", `local "admin" break-glass`, "pair it with KyRecovery"} {
+		kubectl + "cat /app/data/initial-admin-password", `local "admin" break-glass`, "pair it with KyRecovery"} {
 		if !strings.Contains(s.handover, want) {
 			t.Errorf("handover lacks %q: %s", want, s.handover)
 		}
+	}
+	// The file goes only once the password is changed.
+	if change, rm := strings.Index(s.handover, "change it. Only after that"), strings.Index(s.handover, kubectl+"rm /app/data/initial-admin-password"); change < 0 || rm < change {
+		t.Errorf("break-glass steps out of order: %s", s.handover)
 	}
 	written := "      clients:\n        - id: kycalendar\n          name: KyCalendar\n          redirect_uris: [https://calendar.example.com/api/sso/kysignon/callback]\n          administrator_role: kycalendar.admin\n          everyday_role: kycalendar.user\n          suite_webhook: {url: https://calendar.example.com/api/sso/kysignon/sync}\n"
 	calendarPlan(t, f, written)
@@ -251,7 +256,7 @@ func TestKyCalendarSetup(t *testing.T) {
 	// The everyday subject must be reported exactly once, by a clean inspection; otherwise
 	// nothing is placed.
 	var errs []string
-	fixed := "KyIdentity's read-only inspection of its first setup does not report everyday account owner exactly once"
+	fixed := "KyIdentity's read-only inspection of its first setup " + first + " does not report everyday account owner exactly once; check that the plan's KyIdentity everyday username is the one that setup created"
 	for name, report := range map[string]string{
 		"missing":  firstSetupCheck(""),
 		"twice":    firstSetupCheck(ownerReused + ownerReused),
@@ -460,7 +465,7 @@ func TestKyCalendarUsernamesRefused(t *testing.T) {
 		set(true, c[0], c[1])
 		for _, cmd := range [][]string{{"review"}, {"plan", "--noninteractive"}, {"apply"}} {
 			err := f.run(cmd...)
-			if err == nil || !strings.Contains(err.Error(), `KyCalendar cannot take owner account "`+c[1]+`"`) || !strings.Contains(err.Error(), "3 to 64 letters, digits") {
+			if err == nil || !strings.Contains(err.Error(), `KyCalendar cannot take the KyIdentity `+c[0]+` username "`+c[1]+`"`) || !strings.Contains(err.Error(), "3 to 64 letters, digits") || !strings.Contains(err.Error(), "identity."+c[0]+".username") {
 				t.Errorf("%s %s=%s: %v", cmd[0], c[0], c[1], err)
 			}
 		}

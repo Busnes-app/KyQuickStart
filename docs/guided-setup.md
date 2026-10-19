@@ -714,10 +714,11 @@ administrator role `kycalendar.admin` for the owner's admin account, everyday ro
 client is in KyIdentity's first setup; installed later, it joins through a setup amendment
 (`kyidentity.amend.kycalendar`, KyIdentity 0.4.3 or later).
 
-Owner usernames: KyCalendar's setup accepts only `^[A-Za-z0-9_.-]{3,64}$` and never adopts an
-existing account, and its first start creates a local `admin`. `plan`, `review` and `apply`
-therefore refuse a plan installing KyCalendar whose KyIdentity admin or everyday username is
-`admin` (any case) or shorter than 3 characters.
+Owner usernames: KyCalendar's setup accepts only `^[A-Za-z0-9_.-]{3,64}$` (3 to 64 letters,
+digits, `.`, `_` or `-`; no spaces or `@`) and never adopts an existing account, and its first
+start creates a local `admin`. `plan`, `review` and `apply` therefore refuse, before connecting,
+a plan installing KyCalendar whose KyIdentity admin or everyday username breaks that rule or is
+`admin` in any case. The message names which of the two to change.
 
 What apply does:
 
@@ -752,9 +753,11 @@ calendars, app passwords or CalDAV) and the everyday account (calendars; it cann
 administration). Outstanding human steps it names:
 
 - The local break-glass `admin`: its one-time password is in `/app/data/initial-admin-password`
-  (0600), read with `kubectl -n kyq-kycalendar exec deployment/app -- cat
-  /app/data/initial-admin-password`. Sign in with it once, change it, then delete the file.
-  Apply never reads it and never sets `KY_ADMIN_PASSWORD`.
+  (0600). The handover prints the commands with the target's kubeconfig (and context, if set):
+  `kubectl --kubeconfig <target kubeconfig> -n kyq-kycalendar exec deployment/app -- cat
+  /app/data/initial-admin-password`. Sign in with it once and change it; only then delete the
+  file (the same command with `rm`), since it is the only copy. Apply never reads it and never
+  sets `KY_ADMIN_PASSWORD`.
 - Pairing with KyRecovery: on the Backup & recovery screen, a one-time code from KyRecovery's
   administrator, or the suite public key pinned by hand. KyCalendar makes no backups until then.
 

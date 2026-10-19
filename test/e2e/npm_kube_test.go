@@ -403,7 +403,7 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	b, _ = yaml.Marshal(st)
 	os.WriteFile(plan, b, 0o600)
 	out = apply("calendar")
-	calendarSecrets := checkCatalogCalendar(t, ctx, cs, connected, out, code)
+	calendarSecrets := checkCatalogCalendar(t, ctx, cs, connected, kc, out, code)
 	// Test-only: KyCalendar's discovery and token exchange at sign-in go through the edge
 	// and its throwaway certificate.
 	trustTestCA(t, ctx, cs, connected, "kycalendar", certPEM)
