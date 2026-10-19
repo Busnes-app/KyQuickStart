@@ -12,7 +12,9 @@ kyPulse, KyNotes and KyCalendar signing in through it ([docs/guided-setup.md](do
 [KyCalendar](docs/guided-setup.md#catalog-kycalendar-on-kubernetes)), with KyDrive, KyPost and KyDNS on a
 Docker host routed through that edge ([KyDrive](docs/guided-setup.md#catalog-kydrive-on-docker),
 [KyPost](docs/guided-setup.md#catalog-kypost-on-docker), [KyDNS](docs/guided-setup.md#catalog-kydns-on-docker));
-otherwise only a disposable demo app installs.
+otherwise only a disposable demo app installs. KyYard, with the suite runner in its pod, is in
+the catalog but refused until a `kyquickstart-runner` release is pinned
+([KyYard](docs/guided-setup.md#catalog-kyyard-on-kubernetes)).
 `integrate-product` connects already-running Ky products to KyIdentity. See
 [the deployment plan](docs/superpowers/plans/2026-10-10-deployment-plan.md) for what remains.
 

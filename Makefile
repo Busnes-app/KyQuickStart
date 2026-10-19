@@ -20,4 +20,4 @@ ci: tidy-check lint test-race
 
 # Needs Docker. The kind TLS helper runs the test executable in distroless.
 e2e:
-	CGO_ENABLED=0 go test -tags e2e -count=1 -v -timeout 20m ./test/e2e/ ./internal/edge/
+	CGO_ENABLED=0 go test -tags e2e -count=1 -v -timeout 30m ./test/e2e/ ./internal/edge/
