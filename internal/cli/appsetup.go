@@ -8,12 +8,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"path"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/engine"
@@ -114,6 +116,9 @@ func (s *session) composeClients(st *stack.Stack) error {
 			s.handover += fmt.Sprintf(driveHandover, host, n.Admin.Username, path.Join(t.Root, "kydrive"), t.Name, n.Everyday.Username)
 		case "kynotes":
 			s.handover += fmt.Sprintf(notesHandover, host, n.Admin.Username, n.Everyday.Username)
+		case "kydns":
+			r := appRoute(st, "kydns")
+			s.handover += fmt.Sprintf(dnsHandover, host, n.Admin.Username, net.JoinHostPort(r.ForwardHost, "53"), s.placed["kydns"].Name, r.ForwardHost, r.ForwardPort)
 		case "kycalendar":
 			s.handover += fmt.Sprintf(calendarHandover, host, n.Admin.Username, n.Everyday.Username, kubectl(s.state, s.placed["kycalendar"]))
 		case "kypulse":
@@ -265,6 +270,34 @@ KyCalendar at https://%[1]s/: sign in through KyIdentity as %[2]s (its console o
      from KyRecovery's administrator, or pin the suite public key by hand. It makes no backups
      until then.
 `
+
+// dnsHandover is printed after every apply that installs KyDNS; %[3]s is its DNS address,
+// %[5]s:%[6]d where its admin UI is published.
+const dnsHandover = `
+KyDNS at https://%[1]s/: sign in through KyIdentity as %[2]s, the one account it admits
+  (KyIdentity refuses everyone else). It answers DNS at %[3]s (UDP and TCP).
+  Firewall: ports 53 and %[6]d are open on %[5]s. %[6]d, its admin UI, serves only the edge
+  (KyDNS refuses every other peer); DNS answers private address ranges only.
+  Outstanding human steps:
+  1. Point clients at %[5]s for DNS: your router's DHCP DNS server, or each client by hand.
+  2. Its local recovery administrator has no password. Set one on %[4]s:
+       docker exec -it kyq-kydns-app-1 /usr/local/bin/kydns admin reset-password
+     It asks for the password twice. Use it only to recover, at https://%[1]s/login.
+  3. Pair it with KyRecovery on its Backups screen, signed in as that local administrator:
+     %[2]s cannot enroll its first recovery key. It makes no backups until then.
+`
+
+// appRoute is app's one edge route, which routeHost has found.
+func appRoute(st *stack.Stack, app string) stack.Route {
+	for _, e := range st.Edges {
+		for _, r := range e.Routes {
+			if r.App == app {
+				return r
+			}
+		}
+	}
+	return stack.Route{}
+}
 
 // kubectl is the kubectl command line for target t, whose kubeconfig is relative to state.
 func kubectl(state string, t stack.Target) string {
@@ -682,13 +715,24 @@ func (s *session) setupSteps(d driver, i stack.Integration) (steps []engine.Step
 			return err
 		}, err
 	}
-	appPlace, err := place(d, i, adapter.runtimeUser)
-	if err != nil {
-		return nil, nil, err
-	}
 	o := s.cat[i.Product].OIDC
 	step := clientSetupStep{i: i, name: o.Name, source: source, issuer: issuer, scimToken: o.SCIMTokenFile,
-		export: export, exec: exec, setup: adapter.setup, place: appPlace}
+		export: export, exec: exec, setup: adapter.setup}
+	if i.Product == "kydns" {
+		// Its image has no shell: place on the host, in the bind directory it reads as /data.
+		host, ok := d.(sshDriver)
+		if !ok {
+			return nil, nil, errors.New("KyDNS runs on a Docker target only")
+		}
+		if step.place, err = hostPlace(host.c, path.Join(host.t.Root, "kydns"), i.Bundle); err != nil {
+			return nil, nil, err
+		}
+		step.setup = waitForSocket(host.c, path.Join(host.t.Root, "kydns/data/installer/setup.sock"), adapter.setup)
+		return []engine.Step{step}, nil, nil
+	}
+	if step.place, err = place(d, i, adapter.runtimeUser); err != nil {
+		return nil, nil, err
+	}
 	switch i.Product {
 	case "kypulse":
 		step.targets = s.pulseTargets
@@ -715,4 +759,46 @@ func (s *session) setupSteps(d driver, i stack.Integration) (steps []engine.Step
 			return d.appSecret(ctx, i.Product, path.Base(o.SCIMTokenFile))
 		}}
 	return []engine.Step{step}, connector, nil
+}
+
+// hostDataDir is where an app on a Docker target keeps the installer's files: its ./data bind
+// directory, which the container reads as /data.
+const hostDataDir = "/data/installer/"
+
+// hostPlace is placeScript run on the Docker host over SSH as the target user, who owns the
+// app's bind directory, for an image without a shell. It maps the container's /data/installer/
+// to <dir>/data/installer/, refuses anything else, and refuses a symlinked directory on the way.
+func hostPlace(r remote.Runner, dir, bundle string) (func(context.Context, []string, []byte) error, error) {
+	setup := path.Dir(bundle)
+	if path.Clean(bundle) != bundle || path.Dir(setup)+"/" != hostDataDir || (stack.Integration{Bundle: bundle}).SetupID() == "" {
+		return nil, fmt.Errorf("bundle %s must be <uuid>/setup.json in %s, the bind directory the installer writes from the host", bundle, hostDataDir)
+	}
+	data := path.Join(dir, "data")
+	guard := "d=" + remote.Quote(data) + "; [ ! -L \"$d\" ] || exit 1; for c in installer " + remote.Quote(path.Base(setup)) + "; do d=$d/$c; [ ! -L \"$d\" ] || exit 1; done; "
+	return func(ctx context.Context, args []string, input []byte) error {
+		if path.Dir(args[1]) != setup {
+			return errors.New("setup file outside its setup directory")
+		}
+		_, err := r.Run(ctx, guard+"sh -c "+remote.Quote(placeScript)+" sh "+remote.Quote(args[0])+" "+remote.Quote(path.Join(data, strings.TrimPrefix(args[1], "/data/"))), input)
+		return err
+	}, nil
+}
+
+// waitForSocket runs setup once the app has opened its setup socket on the host. Compose has
+// no healthcheck for a shell-less image, so the first apply-setup can come before it listens.
+func waitForSocket(r remote.Runner, socket string, setup func(context.Context, identityExec, string, bool) ([]byte, error)) func(context.Context, identityExec, string, bool) ([]byte, error) {
+	return func(ctx context.Context, exec identityExec, bundle string, check bool) ([]byte, error) {
+		wait, cancel := context.WithTimeout(ctx, time.Minute)
+		defer cancel()
+		for {
+			if _, err := r.Run(wait, "test -S "+remote.Quote(socket), nil); err == nil {
+				return setup(ctx, exec, bundle, check)
+			}
+			select {
+			case <-wait.Done():
+				return nil, errors.New("its setup socket did not open within a minute; check its container log")
+			case <-time.After(time.Second):
+			}
+		}
+	}
 }
