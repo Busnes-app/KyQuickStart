@@ -56,7 +56,7 @@ func checkRunnerImage(deploys bool, o Options) error {
 	case !deploys || o.RunnerID != "":
 		return nil
 	case o.RunnerImage == "":
-		return fmt.Errorf("KyYard's suite runner has no attested release image in this build, so it cannot install KyYard, and no kyquickstart release that pins one is published yet; remove kyyard from the plan (docs/guided-setup.md, Catalog KyYard on Kubernetes)")
+		return fmt.Errorf("cannot install KyYard: source builds pin no runner image; use a release binary (docs/guided-setup.md, Catalog KyYard on Kubernetes)")
 	case !catalog.Pinned(o.RunnerImage):
 		return fmt.Errorf("suite runner image %q is not pinned by digest", o.RunnerImage)
 	}

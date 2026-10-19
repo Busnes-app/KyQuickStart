@@ -34,6 +34,7 @@ jobs:
           go-version: 'stable'
           check-latest: true
       - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      - run: make workflow-lint
 
   e2e:
     # sshd in a container on the runner's Docker socket; deploys the hello fixture.
