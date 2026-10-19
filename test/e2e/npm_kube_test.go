@@ -415,8 +415,45 @@ func TestKubernetesNPMEdge(t *testing.T) {
 		}
 	}
 
+	// KyDNS joins on the Docker target by setup amendment too, its admin UI behind the edge and
+	// DNS on the target's forward address. Its edge's egress_address starts as the kind node's
+	// address, where pods leave kind; a Docker host that masks client addresses shows KyDNS
+	// another peer, which it must refuse until egress_address names that peer.
+	dnsPort := freePort(t, drive.forward)
+	copyCatalogDNS(t, catalogDir, filepath.Join(work, "drive-ca.pem"), drive)
+	st, _ = stack.Load(plan)
+	addCatalogDNS(st, certID, drive, dnsPort)
+	st.Edges[0].EgressAddress = nodeIP
+	b, _ = yaml.Marshal(st)
+	os.WriteFile(plan, b, 0o600)
+	out = apply("dns")
+	dnsSecrets := checkCatalogDNS(t, out, drive, dnsPort)
+	_, newClient := edgeClient(t, certPEM, nodeIP)
+	if code, n := dnsEdgePeer(t, ctx, newClient()); code != 200 || !n.ProxyHeadersTrusted {
+		// Failed closed. Test-only: Docker's userland proxy hands KyDNS every published-port
+		// connection from its network's gateway, so that is the address to trust here.
+		peer := strings.Fields(docker(t, "network", "inspect", "kyq-kydns_default", "--format", "{{range .IPAM.Config}}{{.Gateway}} {{end}}"))[0]
+		t.Logf("this Docker host masks the edge's address: KyDNS refused %s (HTTP %d); it sees its network gateway %s", nodeIP, code, peer)
+		if code != 403 {
+			t.Fatalf("KyDNS answered an untrusted edge with %d", code)
+		}
+		st, _ = stack.Load(plan)
+		st.Edges[0].EgressAddress = peer
+		b, _ = yaml.Marshal(st)
+		os.WriteFile(plan, b, 0o600)
+		apply("dns egress_address")
+	}
+	checkDNSEdge(t, ctx, drive, dnsPort, newClient)
+	dnsSignOn(t, ctx, connected, newClient)
+	out = apply("dns rerun")
+	for _, id := range []string{"kyidentity.amend.kydns", "kydns.secrets", "kydns.deploy", "kydns.health", "kydns.setup", dnsRouteStep} {
+		if status(out, id) != "skipped" {
+			t.Errorf("rerun: %s = %q", id, status(out, id))
+		}
+	}
+
 	// No credential reached apply output or workstation state.
-	secretsSeen := append(append(append(append(append([]string{password, token, stored()}, recoverySecrets...), pulseSecrets...), driveSecrets...), notesSecrets...), calendarSecrets...)
+	secretsSeen := append(append(append(append(append(append([]string{password, token, stored()}, recoverySecrets...), pulseSecrets...), driveSecrets...), notesSecrets...), calendarSecrets...), dnsSecrets...)
 	for _, o := range outputs {
 		for _, s := range secretsSeen {
 			if strings.Contains(o, s) {
