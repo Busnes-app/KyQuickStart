@@ -39,6 +39,10 @@ Set up native OIDC sources/accounts, verify owner administration and revoke user
 - A POST failure other than a known 4xx rejection (408 excluded), malformed successful reply
   or failed post-write verification returns `ErrCreateUncertain`; callers persist a hold and
   never issue another create or adopt an account discovered afterward without owned proof.
+- No reactivation method exists. Forgejo 16.0.5 session auth loads only the session's user
+  ID and nothing revokes a session (codeberg forgejo#796), so `Deprovision` denies old sessions
+  only through `prohibit_login`. Re-enabling sign-in revives them; the bridge refuses
+  reactivation until a Forgejo release with session revocation.
 - `GrantAdmin` verifies an active exact-subject native administrator grant; it never promotes.
   Initial setup verifies native OIDC, while explicit directory mode may project app-scoped roles.
   Account repeat setup preserves existing authority/passwords and disabled status.
@@ -105,6 +109,12 @@ acceptance requirements; provider sign-in alone does not satisfy them.
   through authenticated TLS SCIM after actual backoff. Require 429 before due and native
   verification before 204/inactive; existing denial/token/content checks remain. This client
   fixture does not qualify KyIdentity SCIM engine delivery or active profile provisioning.
+- Add `KYQ_TEST_FORGEJO_REACTIVATE=1` with the queue and SCIM flags (no identity binary) to
+  reopen the revoked bridge store and send KyIdentity 0.4.3's re-assignment PUT, then its
+  PATCH, over the TLS receiver. The PUT is refused and audited `reactivation_unsupported`
+  twice; the same native account stays disabled, the pre-revocation session, all tokens and a
+  fresh sign-in stay denied and the repository is retained; the PATCH revokes again in epoch 3
+  with the same checks. `make e2e` runs this mode with the pinned 16.0.5-rootless image.
 - Add `KYQ_TEST_FORGEJO_WORKER=1` with the queue flag to complete retained native work after
   actual backoff via the resident worker, without another SCIM mutation. TLS reads observe
   status and the original fixture retains session/token/repository checks. Runnable-service

@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -29,8 +30,12 @@ func TestNativeAccountInspectionAndOffboarding(t *testing.T) {
 	if os.Getenv("KYQ_TEST_FORGEJO_GROUPS") == "1" && (os.Getenv("KYQ_TEST_FORGEJO_PRODUCER") != "1" || os.Getenv("KYQ_TEST_FORGEJO_TEAMS") != "1") {
 		t.Fatal("group worker fixture requires producer and owned-team fixture")
 	}
+	reactivate := os.Getenv("KYQ_TEST_FORGEJO_REACTIVATE") == "1"
+	if reactivate && (os.Getenv("KYQ_TEST_FORGEJO_QUEUE") != "1" || os.Getenv("KYQ_TEST_FORGEJO_SCIM") != "1" || os.Getenv("KYQ_TEST_FORGEJO_IDENTITY_BINARY") != "") {
+		t.Fatal("reactivation fixture requires the queue and SCIM flags and the test IdP")
+	}
 	duration := 90 * time.Second
-	if os.Getenv("KYQ_TEST_FORGEJO_PRODUCER") == "1" {
+	if os.Getenv("KYQ_TEST_FORGEJO_PRODUCER") == "1" || reactivate {
 		duration = 180 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), duration)
@@ -356,14 +361,22 @@ func TestNativeAccountInspectionAndOffboarding(t *testing.T) {
 		t.Fatal("conflicting binding accepted")
 	}
 	checkToken(producer == nil)
+	dailyBinding := map[string]any{"setup_id": "271333e2-c221-4601-b249-563b3d828530", "app": "forgejo", "kind": "forgejo", "origin": api.URL,
+		"issuer": source.Issuer, "subject": daily.Subject, "native_id": daily.ID, "source_id": daily.SourceID, "username": daily.Username}
+	// The reactivation phases reopen the bridge store the queue phase revoked.
+	state := ""
+	if reactivate {
+		if state, err = filepath.EvalSymlinks(t.TempDir()); err != nil || os.Chmod(state, 0700) != nil {
+			t.Fatal("bridge state directory unavailable")
+		}
+	}
 	if os.Getenv("KYQ_TEST_FORGEJO_QUEUE") == "1" {
 		// A separate test process avoids importing the bridge back into its adapter.
 		// Fixture credentials and public trust stay in RAM, never argv or state files.
 		input, err := json.Marshal(map[string]any{
-			"container": name, "image": image, "token": token,
-			"ca": pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: api.Certificate().Raw}),
-			"binding": map[string]any{"setup_id": "271333e2-c221-4601-b249-563b3d828530", "app": "forgejo", "kind": "forgejo", "origin": api.URL,
-				"issuer": source.Issuer, "subject": daily.Subject, "native_id": daily.ID, "source_id": daily.SourceID, "username": daily.Username},
+			"container": name, "image": image, "token": token, "state": state,
+			"ca":      pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: api.Certificate().Raw}),
+			"binding": dailyBinding,
 		})
 		if err != nil {
 			t.Fatal("queue fixture encoding failed")
@@ -423,6 +436,49 @@ func TestNativeAccountInspectionAndOffboarding(t *testing.T) {
 	t.Log("native directory profiles and repeat verified for owner, everyday and retained disabled accounts")
 	if err = c.GrantAdmin(ctx, owner); err != nil {
 		t.Fatal("offboarding changed unrelated owner authority")
+	}
+	if reactivate {
+		profile := Profile{Name: "Everyday reactivated", Email: daily.Username + "@example.test"}
+		bridge := func(phase string) {
+			t.Helper()
+			input, err := json.Marshal(map[string]any{
+				"container": name, "image": image, "token": token, "state": state, "phase": phase, "name": profile.Name, "email": profile.Email,
+				"ca":      pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: api.Certificate().Raw}),
+				"binding": dailyBinding,
+			})
+			if err != nil {
+				t.Fatal("reactivation fixture encoding failed")
+			}
+			command := exec.CommandContext(ctx, "go", "test", "-race", "-count=1", "-v", "./internal/offboard", "-run", "^TestNativeForgejoReactivation$")
+			command.Dir = "../../.."
+			command.Env = append(os.Environ(), "KYQ_TEST_FORGEJO_REACTIVATE_JSON="+string(input))
+			output, err := command.Output()
+			t.Log(strings.TrimSpace(string(output)))
+			if err != nil {
+				t.Fatal("native Forgejo reactivation phase failed: " + phase)
+			}
+		}
+		// Forgejo 16.0.5 has no session revocation: re-enabling sign-in would revive
+		// the pre-revocation session, so the bridge refuses reactivation.
+		stillRevoked := func() {
+			t.Helper()
+			account, err := c.Inspect(ctx, daily)
+			if err != nil || account.Active || !account.LoginProhibited || account.Admin {
+				t.Fatal("refused reactivation changed the retained account")
+			}
+			checkToken(false)
+			probeSuspended(dailySession)
+			probeSuspended(idp.login(t, api, "daily"))
+			if err = c.call(ctx, http.MethodGet, "/repos/"+daily.Username+"/retained-content", nil, &retained); err != nil || retained.ID != repository.ID {
+				t.Fatal("retained repository lost")
+			}
+		}
+		bridge("reactivate")
+		stillRevoked()
+		t.Log("re-assignment refused: same native account still revoked, old session/tokens and fresh sign-in denied, repository retained")
+		bridge("revoke")
+		stillRevoked()
+		t.Log("second PATCH revoked again: account, session and token denial and repository retention unchanged")
 	}
 	if idp.native != nil {
 		idp.native.changeAccess(t, ownerSession, idp.server.URL, "owner", true)
