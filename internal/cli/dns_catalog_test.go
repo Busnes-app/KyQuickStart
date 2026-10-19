@@ -288,6 +288,10 @@ func TestKyDNSSetupOnHost(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Setup waited for KyDNS's socket on the host.
+	if !slices.Contains(rec.cmds, "test -S "+remote.Quote(filepath.Join(f.h.root, "kydns/data/installer/setup.sock"))) {
+		t.Fatalf("no wait for the setup socket:\n%s", strings.Join(rec.cmds, "\n"))
+	}
 	// Placement: placeScript on the host, in write mode, files in order, payload on stdin only.
 	var placed []string
 	for i, cmd := range rec.cmds {
@@ -405,8 +409,12 @@ func TestKyDNSPlacementRefusesSymlinks(t *testing.T) {
 	if entries, _ := os.ReadDir(elsewhere); len(entries) != 0 {
 		t.Fatalf("wrote %v through the symlink", entries)
 	}
-	if err := place(ctx, []string{"write", "/data/installer/other/client.secret"}, nil); err == nil {
+	os.Remove(filepath.Join(root, "kydns/data/installer"))
+	if err := place(ctx, []string{"write", "/data/installer/other/client.secret"}, []byte(clientSecret)); err == nil {
 		t.Fatal("placed outside its setup directory")
+	}
+	if err := place(ctx, []string{"write", "/data/installer/" + dnsSetupID + "/client.secret"}, []byte(clientSecret)); err != nil {
+		t.Fatalf("placement without a symlink: %v", err)
 	}
 }
 
