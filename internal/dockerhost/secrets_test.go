@@ -275,3 +275,16 @@ func TestTargetSecretCreationFailureNeverExposesOutput(t *testing.T) {
 		t.Fatal("target creation output escaped the credential boundary")
 	}
 }
+
+// An app that declares no secrets gets no secrets step.
+func TestStepsSecretsOnlyWhenDeclared(t *testing.T) {
+	for secrets, want := range map[int]string{0: "hello.deploy hello.health", 1: "hello.secrets hello.deploy hello.health"} {
+		var ids []string
+		for _, s := range Steps(localApp(t, []string{"token"}[:secrets]...)) {
+			ids = append(ids, s.ID())
+		}
+		if got := strings.Join(ids, " "); got != want {
+			t.Errorf("%d secrets: steps %s", secrets, got)
+		}
+	}
+}

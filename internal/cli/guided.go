@@ -455,17 +455,6 @@ func guided(ctx context.Context, args []string, o Options) error {
 }
 
 func validateSelection(st *stack.Stack, cat catalog.Catalog) error {
-	if len(st.Integrations) > 0 {
-		if _, err := integrationOrder(st); err != nil {
-			return err
-		}
-	}
-	if err := routedNeedsSetup(st); err != nil {
-		return err
-	}
-	if err := calendarAccounts(st); err != nil {
-		return err
-	}
 	var names []string
 	for _, app := range st.Apps {
 		names = append(names, app.Name)
@@ -483,6 +472,18 @@ func validateSelection(st *stack.Stack, cat catalog.Catalog) error {
 		if _, err := withRoute(st, app.Name, t, a); err != nil {
 			return err
 		}
+	}
+	// After placement: an app's setup on the wrong kind of target is a placement error.
+	if len(st.Integrations) > 0 {
+		if _, err := integrationOrder(st); err != nil {
+			return err
+		}
+	}
+	if err := routedNeedsSetup(st); err != nil {
+		return err
+	}
+	if err := calendarAccounts(st); err != nil {
+		return err
 	}
 	_, err := plan.Order(names, cat)
 	return err

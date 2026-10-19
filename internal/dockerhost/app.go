@@ -47,11 +47,15 @@ func hashOf(parts ...string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// Steps returns the app's install steps: secrets, deploy, health.
+// Steps returns the app's install steps: secrets (when it declares any), deploy, health.
 func Steps(a App) []engine.Step {
 	ov := override(a.Catalog.Services, labels(a.ReleaseSet, a.Catalog.Version))
 	hash := hashOf(string(a.Catalog.Compose), string(ov))
-	return []engine.Step{secretsStep{a}, deployStep{a: a, override: ov, hash: hash}, healthStep{a: a, hash: hash}}
+	steps := []engine.Step{deployStep{a: a, override: ov, hash: hash}, healthStep{a: a, hash: hash}}
+	if len(a.Catalog.Secrets) > 0 {
+		steps = append([]engine.Step{secretsStep{a}}, steps...)
+	}
+	return steps
 }
 
 // compose runs docker compose for this app's project from its directory. A Compose file

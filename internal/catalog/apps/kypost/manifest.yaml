@@ -1,0 +1,32 @@
+name: kypost
+description: KyPost, the suite's webmail client for mail accounts you already have; signs in through KyIdentity
+category: ky
+version: 0.4.2
+# Release image of v0.4.2 (commit 621b4d18e8adf7719b93e02b48c61a7343fe8e2f), attested by
+# Busnes-app/KyPost-Server release-image.yml@refs/tags/v0.4.2 (gh attestation verify).
+images:
+  kypost: ghcr.io/busnes-app/kypost-server:0.4.2@sha256:23b596719edbbf81859047264893509cef7a90b6eb7ac48038bc353e9f3d2353
+# No secrets: KyPost generates its own keys in /kypost/private at first start.
+# Its setup needs KyIdentity's issuer and client.
+depends_on: [kyidentity]
+health:
+  # The image's healthcheck allows a 180 s start.
+  timeout_seconds: 300
+# KyPost creates an account at first sign-in for anyone KyIdentity assigns to it, binding
+# (issuer, subject), never a username; kypost.admin in the token's roles makes an
+# administrator. No directory: KyPost verifies the signed webhook only against its own pairing
+# key or client secret, and KyIdentity signs with a secret it generates. No SCIM. Sign-out is
+# local, and a restart ends every session.
+oidc:
+  name: KyPost
+  redirect_paths: [/api/auth/oidc/callback]
+  admin_role: kypost.admin
+  user_role: kypost.user
+# Settings and accounts, its generated keys, and the mail state. Logs and the re-downloadable
+# Ollama model are left out.
+backup:
+  volumes: [config, private, state]
+upgrade:
+  # First catalog release; its state migrates forward at startup.
+  min_from: 0.4.2
+  migrates_data: true

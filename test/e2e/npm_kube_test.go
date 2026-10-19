@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -42,7 +43,8 @@ import (
 // demo app through it as a cloudflare and then a lan edge, and reruns apply until nothing
 // changes. KyIdentity, KyRecovery and kyPulse join behind the lan edge, so their URLs carry
 // its client_port, which may not change once KyIdentity's setup ran. KyDrive joins from a
-// Docker target, routed through the same edge, with its client in the same first setup.
+// Docker target, routed through the same edge, with its client in the same first setup;
+// KyNotes, KyCalendar and KyPost (on that Docker target) join later by setup amendment.
 func TestKubernetesNPMEdge(t *testing.T) {
 	ctx := context.Background()
 	work := t.TempDir()
@@ -415,6 +417,24 @@ func TestKubernetesNPMEdge(t *testing.T) {
 		}
 	}
 
+	// KyPost joins the Docker target beside KyDrive after KyIdentity's first setup, by setup
+	// amendment; its setup runs before the edges. The handover's commands run verbatim there.
+	postPort := preparePost(t, work, catalogDir, drive)
+	st, _ = stack.Load(plan)
+	addCatalogPost(st, certID, drive, postPort)
+	b, _ = yaml.Marshal(st)
+	os.WriteFile(plan, b, 0o600)
+	out = apply("post")
+	postSecrets := checkCatalogPost(t, out, drive, postPort, viaEdge, code)
+	postAdmin := postSignOn(t, ctx, connected, certPEM, nodeIP)
+	postSecrets = append(postSecrets, checkPostHandover(t, ctx, out, drive, postAdmin, code))
+	out = apply("post rerun")
+	for _, id := range []string{"kyidentity.amend.kypost", "kypost.deploy", "kypost.health", "kypost.setup", postRouteStep} {
+		if status(out, id) != "skipped" {
+			t.Errorf("rerun: %s = %q", id, status(out, id))
+		}
+	}
+
 	// KyDNS joins on the Docker target by setup amendment too, its admin UI behind the edge and
 	// DNS on the target's forward address. Its edge's egress_address is the kind node's address,
 	// where pods leave kind. kydns.gate proves this host, not the edge, gets 403 with a forged
@@ -484,7 +504,7 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	}
 
 	// No credential reached apply output or workstation state.
-	secretsSeen := append(append(append(append(append(append([]string{password, token, stored()}, recoverySecrets...), pulseSecrets...), driveSecrets...), notesSecrets...), calendarSecrets...), dnsSecrets...)
+	secretsSeen := slices.Concat([]string{password, token, stored()}, recoverySecrets, pulseSecrets, driveSecrets, notesSecrets, calendarSecrets, postSecrets, dnsSecrets)
 	for _, o := range outputs {
 		for _, s := range secretsSeen {
 			if strings.Contains(o, s) {
