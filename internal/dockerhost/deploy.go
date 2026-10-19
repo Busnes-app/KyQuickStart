@@ -57,7 +57,11 @@ func (d deployStep) check(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return notRunning(cs, d.a.Catalog.Services), nil
+	services := d.a.Catalog.Services
+	if d.a.Only != "" {
+		services = []string{d.a.Only}
+	}
+	return notRunning(cs, services), nil
 }
 
 func (d deployStep) Inspect(ctx context.Context) (bool, error) {
@@ -92,6 +96,9 @@ func (d deployStep) Apply(ctx context.Context) error {
 		return fmt.Errorf("docker compose pull: %w: %w", engine.ErrTransient, err)
 	}
 	up := "up -d --remove-orphans"
+	if d.a.Only != "" {
+		up += " " + remote.Quote(d.a.Only)
+	}
 	if d.a.ForceRecreate {
 		up += " --force-recreate"
 	}

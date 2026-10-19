@@ -30,7 +30,7 @@ func main() {
 func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	o := cli.Options{Catalog: catalog.Embedded(), ReleaseSet: version, Out: os.Stdout, RunnerImage: runnerImage}
+	o := cli.Options{Catalog: catalog.Embedded(), ReleaseSet: version, Out: os.Stdout, RunnerImage: runnerImage, Stdin: os.Stdin}
 	if fi, err := os.Stdin.Stat(); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
 		o.In = os.Stdin
 	}
