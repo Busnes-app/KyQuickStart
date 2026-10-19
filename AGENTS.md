@@ -283,7 +283,7 @@ handover of admin and everyday logins.
   `apply` runs it after the app's health step against the app's one ready pod, and
   `integrate-stack` skips it. Today only KyIdentity (from its `identity` settings) and the
   installed Ky apps with a catalog `oidc` block and a product adapter: KyRecovery, kyPulse,
-  KyNotes and KyCalendar on Kubernetes, KyDrive and KyDNS on Docker (its one running managed container, through `docker
+  KyNotes and KyCalendar on Kubernetes, KyDrive, KyPost and KyDNS on Docker (its one running managed container, through `docker
   exec` over SSH; KyDNS's shell-less image gets its setup files placed from the host). An installed KyNotes' entry is exactly `bundle: /data/installer/setup.json`
   and its `identity_client` (no `notes` block): apply derives its native preparation, and its
   setup runs after the edge routes KyIdentity and before KyNotes' own route; a routed KyNotes
@@ -307,6 +307,9 @@ handover of admin and everyday logins.
   KyCalendar's bundle also names the owner's everyday account, its subject from KyIdentity's
   read-only check of its first setup; a plan whose owner usernames KyCalendar would refuse is
   refused before connecting.
+  KyPost's bundle is its own native version-1 JSON (KyIdentity sign-in with `autoProvision`, the
+  client secret in a file beside it), placed and applied as `kypost`; it has no directory, SCIM or
+  generated secrets, and its container runs as `kypost` with no capabilities.
   KyRecovery's custodian ceremony stays human and apply prints it as outstanding. kyPulse's
   bundle registers every other routed app's readiness path as a monitoring target; that bundle
   is replaced as targets change, since kyPulse keeps omitted targets and refuses edited ones.
@@ -478,6 +481,11 @@ calls and kind nodes must carry their own explicit bounds.
   proves `kydns.edge`, trusted headers through the edge, the closed `/setup` and admin-only
   sign-in; where it hides them (this workstation) it proves KyDNS refuses the edge, that
   `kydns.edge` fails apply and that `kydns.gate` refuses a gateway `egress_address`.
+  The catalog KyPost joins the Docker target beside KyDrive by amendment: container as `kypost`,
+  read-only, no capabilities, published on the forward address only and listening on no mail
+  port, private setup files, live `--check`, health and an untrusted-proxy network status
+  through the edge, admin and everyday sign-in (`/api/users` 200/403), the handover's
+  break-glass read and session-ending restart run verbatim on the target, and a skipped rerun.
   Set `KYQ_TEST_IDENTITY_BINARY` to a local static KyIdentity build to additionally test real
   container-local identity setup over SSH and kind, including target-held preparation,
   inspection/resume and changed-intent refusal; SSH additionally refuses lost credentials.
