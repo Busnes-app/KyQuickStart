@@ -125,6 +125,7 @@ type fakeIdentity struct {
 	setups          map[string]*fakeIdentity // amendments, by bundle path
 	parent          *fakeIdentity            // an amendment's
 	disabled        bool                     // disable-user ran
+	checkReport     string                   // --check's setup report, when set
 }
 
 func (n *fakeIdentity) stream(ctx context.Context, namespace, pod, container string, args []string, o remotecommand.StreamOptions) error {
@@ -181,6 +182,9 @@ func (n *fakeIdentity) stream(ctx context.Context, namespace, pod, container str
 			n.applied, created = true, `[{"kind":"user","name":"owner-admin","id":"u1"}]`
 		}
 		out = `{"schema":"kyidentity.setup/1","created":` + created + `,"reused":[]}`
+		if check && n.checkReport != "" {
+			out = n.checkReport
+		}
 	}
 	_, err := io.WriteString(o.Stdout, out)
 	return err

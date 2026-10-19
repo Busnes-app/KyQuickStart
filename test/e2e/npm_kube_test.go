@@ -56,7 +56,7 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	}
 	cs := kubernetes.NewForConfigOrDie(cfg)
 	catalogDir := filepath.Join(work, "catalog")
-	for _, src := range []string{"../../internal/catalog/testdata/apps/hello", "../../internal/catalog/apps/npm", "../../internal/catalog/apps/kyidentity", "../../internal/catalog/apps/kyrecovery", "../../internal/catalog/apps/kypulse", "../../internal/catalog/apps/kynotes"} {
+	for _, src := range []string{"../../internal/catalog/testdata/apps/hello", "../../internal/catalog/apps/npm", "../../internal/catalog/apps/kyidentity", "../../internal/catalog/apps/kyrecovery", "../../internal/catalog/apps/kypulse", "../../internal/catalog/apps/kynotes", "../../internal/catalog/apps/kycalendar"} {
 		if err := os.CopyFS(filepath.Join(catalogDir, filepath.Base(src)), os.DirFS(src)); err != nil {
 			t.Fatal(err)
 		}
@@ -394,8 +394,29 @@ func TestKubernetesNPMEdge(t *testing.T) {
 		}
 	}
 
+	// KyCalendar joins after KyIdentity's first setup too, by setup amendment. Its setup needs
+	// no issuer probe, so it runs before the edges as kyPulse's does; its everyday account's
+	// subject comes from KyIdentity's read-only check of its first setup.
+	loadCatalogApp(t, name, cs, "kycalendar")
+	st, _ = stack.Load(plan)
+	addCatalogCalendar(st, certID)
+	b, _ = yaml.Marshal(st)
+	os.WriteFile(plan, b, 0o600)
+	out = apply("calendar")
+	calendarSecrets := checkCatalogCalendar(t, ctx, cs, connected, kc, out, code)
+	// Test-only: KyCalendar's discovery and token exchange at sign-in go through the edge
+	// and its throwaway certificate.
+	trustTestCA(t, ctx, cs, connected, "kycalendar", certPEM)
+	calendarSignOn(t, ctx, connected, certPEM, nodeIP)
+	out = apply("calendar rerun")
+	for _, id := range []string{"kyidentity.amend.kycalendar", "kycalendar.deploy", "kycalendar.health", "kycalendar.setup", calendarRouteStep} {
+		if status(out, id) != "skipped" {
+			t.Errorf("rerun: %s = %q", id, status(out, id))
+		}
+	}
+
 	// No credential reached apply output or workstation state.
-	secretsSeen := append(append(append(append([]string{password, token, stored()}, recoverySecrets...), pulseSecrets...), driveSecrets...), notesSecrets...)
+	secretsSeen := append(append(append(append(append([]string{password, token, stored()}, recoverySecrets...), pulseSecrets...), driveSecrets...), notesSecrets...), calendarSecrets...)
 	for _, o := range outputs {
 		for _, s := range secretsSeen {
 			if strings.Contains(o, s) {

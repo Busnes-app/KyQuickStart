@@ -1,0 +1,64 @@
+name: kycalendar
+description: KyCalendar, the suite's calendars and CalDAV; signs in through KyIdentity
+category: ky
+version: 0.4.2
+# Release image of v0.4.2 (commit 5b7b3c60995db7fc67cda8e845a8fbd4ae98a2b2), attested by
+# Busnes-app/KyCalendar release-image.yml@refs/tags/v0.4.2 (gh attestation verify).
+images:
+  kycalendar: ghcr.io/busnes-app/kycalendar:0.4.2@sha256:7ed435458a08c9dd02674657cc55aa6aaef96a254256c14880e27fc93c1cf75b
+# Its setup needs KyIdentity's issuer, client and signed directory.
+depends_on: [kyidentity]
+health:
+  timeout_seconds: 300
+# No SCIM and no automatic provisioning: only the identities its setup creates (the owner's
+# admin and everyday accounts) sign in, and the signed directory webhook updates only those.
+# Sign-out is local: KyIdentity registers no back-channel logout.
+oidc:
+  name: KyCalendar
+  redirect_paths: [/api/sso/kysignon/callback]
+  admin_role: kycalendar.admin
+  user_role: kycalendar.user
+  directory_path: /api/sso/kysignon/sync
+# The SQLite database with its keys and credential files, and the sealed local capsules.
+backup:
+  volumes: [data, backups]
+upgrade:
+  # First catalog release; its schema migrates forward at startup.
+  min_from: 0.4.2
+  migrates_data: true
+kubernetes:
+  image: kycalendar
+  env:
+    KY_HOST: 0.0.0.0
+    KY_PORT: "8080"
+    KY_APP_NAME: KyCalendar
+    # Its setup requires the callback to be this plus /api/sso/kysignon/callback.
+    KY_APP_URL: https://{{host}}
+    KY_DB_DRIVER: sqlite
+    KY_DATA_DIR: /app/data
+    # Setup refuses an explicit false.
+    KY_SSO_ENABLED: "true"
+    KY_SSO_AUTO_PROVISION: "false"
+    KYCALENDAR_BACKUP_DIR: /app/backups
+    KYCALENDAR_BACKUP_KEEP: "7"
+    KYCALENDAR_BACKUP_DEPOSIT_INTERVAL: 24h
+    GOMEMLIMIT: 384MiB
+  ports: [8080]
+  # No health endpoint; this unauthenticated no-store GET answers once it serves.
+  readiness_path: /api/installer/network
+  # The image's user.
+  run_as: 10001
+  resources:
+    cpu: "1"
+    # Idle between requests.
+    cpu_request: 50m
+    memory: 512Mi
+  # Stop drains HTTP (5 s) and a backup deposit already on the wire (17 min).
+  termination_grace_seconds: 1200
+  volumes:
+    - name: data
+      mount: /app/data
+      size: 10Gi
+    - name: backups
+      mount: /app/backups
+      size: 5Gi

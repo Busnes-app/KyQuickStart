@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strconv"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/engine"
+	"github.com/Busnes-app/kyquickstart/internal/remote"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
 	"github.com/google/uuid"
 )
@@ -112,6 +114,8 @@ func (s *session) composeClients(st *stack.Stack) error {
 			s.handover += fmt.Sprintf(driveHandover, host, n.Admin.Username, path.Join(t.Root, "kydrive"), t.Name, n.Everyday.Username)
 		case "kynotes":
 			s.handover += fmt.Sprintf(notesHandover, host, n.Admin.Username, n.Everyday.Username)
+		case "kycalendar":
+			s.handover += fmt.Sprintf(calendarHandover, host, n.Admin.Username, n.Everyday.Username, kubectl(s.state, s.placed["kycalendar"]))
 		case "kypulse":
 			var unwatched []string
 			s.pulseTargets, unwatched = pulseTargets(st, s.cat)
@@ -247,6 +251,37 @@ KyNotes at https://%[1]s/: sign in through KyIdentity as %[2]s (administers only
   makes no backups until then.
 `
 
+// calendarHandover is printed after every apply that installs KyCalendar; %[4]s is kubectl
+// pointed at its target.
+const calendarHandover = `
+KyCalendar at https://%[1]s/: sign in through KyIdentity as %[2]s (its console only; it has no
+  calendars) or %[3]s (calendars). Its setup created exactly these two; it admits no one else.
+  Outstanding human steps:
+  1. Its local "admin" break-glass account. Read its one-time password:
+       %[4]s -n kyq-kycalendar exec deployment/app -- cat /app/data/initial-admin-password
+     Sign in with it once at https://%[1]s/ and change it. Only after that, delete the file:
+       %[4]s -n kyq-kycalendar exec deployment/app -- rm /app/data/initial-admin-password
+  2. On its Backup & recovery screen, as %[2]s, pair it with KyRecovery using a one-time code
+     from KyRecovery's administrator, or pin the suite public key by hand. It makes no backups
+     until then.
+`
+
+// kubectl is the kubectl command line for target t, whose kubeconfig is relative to state.
+func kubectl(state string, t stack.Target) string {
+	kc := t.Kubeconfig
+	if !filepath.IsAbs(kc) {
+		kc = filepath.Join(state, kc)
+	}
+	if abs, err := filepath.Abs(kc); err == nil {
+		kc = abs
+	}
+	cmd := "kubectl --kubeconfig " + remote.Quote(kc)
+	if t.Context != "" {
+		cmd += " --context " + remote.Quote(t.Context)
+	}
+	return cmd
+}
+
 // pulseTarget is a kyPulse monitoring target: an app's readiness path through its route.
 type pulseTarget struct {
 	Key  string `json:"key"`
@@ -289,7 +324,7 @@ func pulseHandover(host, admin string, targets []pulseTarget, unwatched []string
 }
 
 // clientSetupStep is apply's apply-setup for an installed Ky app that signs in through
-// KyIdentity: KyRecovery, kyPulse or KyDrive. None of their 0.4.2 releases imports
+// KyIdentity: KyRecovery, kyPulse, KyCalendar or KyDrive. None of their 0.4.2 releases imports
 // credentials, so the step places its bundle and KyIdentity's client and directory secrets as
 // private files through its container's shell, never replacing a secret. KyIdentity may run on
 // another target: the export crosses to the app's only in memory.
@@ -300,10 +335,17 @@ type clientSetupStep struct {
 	issuer    string
 	scimToken string        // the app's own SCIM token file, which its bundle names; "" for none
 	targets   []pulseTarget // kyPulse's monitoring extension; nil for any other app
+	everyday  *everydayUser // KyCalendar's everyday account; nil for any other app
 	export    identityExec  // KyIdentity's apply-setup
 	exec      identityExec  // the app's apply-setup
 	setup     func(context.Context, identityExec, string, bool) ([]byte, error)
 	place     func(ctx context.Context, args []string, input []byte) error
+}
+
+// everydayUser is the owner's everyday account, whose subject KyIdentity's read-only
+// inspection of its first setup (bundle) reports: its export names only the administrator.
+type everydayUser struct {
+	Bundle, Username string
 }
 
 func (s clientSetupStep) ID() string { return s.i.Product + ".setup" }
@@ -312,6 +354,9 @@ func (s clientSetupStep) InputHash() string {
 	in := []any{s.i, s.source, s.issuer}
 	if s.targets != nil {
 		in = append(in, s.targets)
+	}
+	if s.everyday != nil {
+		in = append(in, s.everyday)
 	}
 	if s.scimToken != "" {
 		in = append(in, s.scimToken)
@@ -361,6 +406,14 @@ func (s clientSetupStep) run(ctx context.Context, check bool) error {
 	if err != nil {
 		return err
 	}
+	var everyday []map[string]string
+	if s.everyday != nil {
+		subject, err := everydaySubject(ctx, s.export, *s.everyday)
+		if err != nil {
+			return err
+		}
+		everyday = []map[string]string{{"issuer": frame.IssuerURL, "subject": subject, "username": s.everyday.Username}}
+	}
 	mode, bundleMode := "write", "write"
 	if s.targets != nil {
 		// kyPulse's targets follow the plan: it keeps a target the bundle omits and refuses an
@@ -395,6 +448,9 @@ func (s clientSetupStep) run(ctx context.Context, check bool) error {
 	if len(s.targets) > 0 {
 		b["monitoring"] = map[string]any{"targets": s.targets}
 	}
+	if everyday != nil {
+		b["everyday"] = everyday
+	}
 	bundle, err := json.Marshal(b)
 	if err != nil {
 		return err
@@ -416,6 +472,30 @@ func (s clientSetupStep) run(ctx context.Context, check bool) error {
 		}
 	}
 	return nil
+}
+
+// everydaySubject is u's KyIdentity subject: the native ID of the one user its read-only
+// inspection of u.Bundle reports reused under u's exact username.
+func everydaySubject(ctx context.Context, exec identityExec, u everydayUser) (string, error) {
+	fail := fmt.Errorf("KyIdentity's read-only inspection of its first setup %s does not report everyday account %s exactly once; check that the plan's KyIdentity everyday username is the one that setup created", u.Bundle, u.Username)
+	b, err := identitySetup(ctx, exec, u.Bundle, true)
+	if err != nil {
+		return "", fail
+	}
+	var r struct{ Created, Reused []productObject }
+	if json.Unmarshal(b, &r) != nil || len(r.Created) != 0 {
+		return "", fail
+	}
+	var ids []string
+	for _, o := range r.Reused {
+		if o.Kind == "user" && o.Name == u.Username {
+			ids = append(ids, o.ID)
+		}
+	}
+	if len(ids) != 1 {
+		return "", fail
+	}
+	return ids[0], nil
 }
 
 // notesSetupStep (kynotes.setup) is apply's setup for the catalog KyNotes. Its distroless
@@ -609,8 +689,12 @@ func (s *session) setupSteps(d driver, i stack.Integration) (steps []engine.Step
 	o := s.cat[i.Product].OIDC
 	step := clientSetupStep{i: i, name: o.Name, source: source, issuer: issuer, scimToken: o.SCIMTokenFile,
 		export: export, exec: exec, setup: adapter.setup, place: appPlace}
-	if i.Product == "kypulse" {
+	switch i.Product {
+	case "kypulse":
 		step.targets = s.pulseTargets
+	case "kycalendar":
+		// It admits only the identities its setup names, and creates none at sign-in.
+		step.everyday = &everydayUser{Bundle: first.Bundle, Username: first.Identity.Everyday.Username}
 	}
 	if o.SCIMTokenFile == "" {
 		return []engine.Step{step}, nil, nil

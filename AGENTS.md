@@ -282,8 +282,8 @@ handover of admin and everyday logins.
   recorded existing products. An entry for an installed catalog app names no workload:
   `apply` runs it after the app's health step against the app's one ready pod, and
   `integrate-stack` skips it. Today only KyIdentity (from its `identity` settings) and the
-  installed Ky apps with a catalog `oidc` block and a product adapter: KyRecovery, kyPulse and
-  KyNotes on Kubernetes, KyDrive on Docker (its one running managed container, through `docker
+  installed Ky apps with a catalog `oidc` block and a product adapter: KyRecovery, kyPulse,
+  KyNotes and KyCalendar on Kubernetes, KyDrive on Docker (its one running managed container, through `docker
   exec` over SSH). An installed KyNotes' entry is exactly `bundle: /data/installer/setup.json`
   and its `identity_client` (no `notes` block): apply derives its native preparation, and its
   setup runs after the edge routes KyIdentity and before KyNotes' own route; a routed KyNotes
@@ -304,6 +304,9 @@ handover of admin and everyday logins.
   `--check`/`--export-client` on the running pod; unreadable refuses). Each app's setup
   transfers its client's secrets in memory, across targets too, into private files in the app's
   pod or container, never replacing one.
+  KyCalendar's bundle also names the owner's everyday account, its subject from KyIdentity's
+  read-only check of its first setup; a plan whose owner usernames KyCalendar would refuse is
+  refused before connecting.
   KyRecovery's custodian ceremony stays human and apply prints it as outstanding. kyPulse's
   bundle registers every other routed app's readiness path as a monitoring target; that bundle
   is replaced as targets change, since kyPulse keeps omitted targets and refuses edited ones.
@@ -462,6 +465,10 @@ calls and kind nodes must carry their own explicit bounds.
   ephemeral BusyBox container, the image has no shell), live present-only `--check`, no route
   until its setup passed, health through the edge, admin and everyday sign-in with KyNotes' admin
   separation (backup status 200/403, notes 403 `admin_account` for the admin), and a skipped rerun.
+  The catalog KyCalendar joins the same way by amendment: restricted uid-10001 pod, private setup
+  files and its 0600 break-glass password file, live `--check` naming both owner identities,
+  readiness through the edge, the handover, admin and everyday sign-in with its admin separation
+  (`/api/admin/users` 200/403, `/api/calendars` 403/200), and a skipped rerun.
   Set `KYQ_TEST_IDENTITY_BINARY` to a local static KyIdentity build to additionally test real
   container-local identity setup over SSH and kind, including target-held preparation,
   inspection/resume and changed-intent refusal; SSH additionally refuses lost credentials.

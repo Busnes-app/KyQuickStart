@@ -463,6 +463,9 @@ func validateSelection(st *stack.Stack, cat catalog.Catalog) error {
 	if err := routedNeedsSetup(st); err != nil {
 		return err
 	}
+	if err := calendarAccounts(st); err != nil {
+		return err
+	}
 	var names []string
 	for _, app := range st.Apps {
 		names = append(names, app.Name)
@@ -493,6 +496,28 @@ func routedNeedsSetup(st *stack.Stack) error {
 		}
 		if !slices.ContainsFunc(st.Integrations, func(i stack.Integration) bool { return i.Product == a.Name && i.Installed(st) }) {
 			return fmt.Errorf("%s is routed but has no integration on %s: its route would expose its first-run web setup. Add {product: %s, target: %s, bundle: /data/installer/setup.json, identity_client: %s} to integrations, or remove its route", a.Name, a.Target, a.Name, a.Target, a.Name)
+		}
+	}
+	return nil
+}
+
+// calendarUsername is the rule KyCalendar's setup applies to every account it creates.
+var calendarUsername = regexp.MustCompile(`^[A-Za-z0-9_.-]{3,64}$`)
+
+// calendarAccounts refuses a plan installing KyCalendar with an owner account its setup would
+// refuse mid-apply: one outside its username rule, or its own break-glass "admin".
+func calendarAccounts(st *stack.Stack) error {
+	if !slices.ContainsFunc(st.Apps, func(a stack.App) bool { return a.Name == "kycalendar" }) {
+		return nil
+	}
+	for _, i := range st.Integrations {
+		if i.Product != "kyidentity" || i.Identity == nil || !i.Installed(st) {
+			continue
+		}
+		for _, a := range [][2]string{{"admin", i.Identity.Admin.Username}, {"everyday", i.Identity.Everyday.Username}} {
+			if u := a[1]; strings.EqualFold(u, "admin") || !calendarUsername.MatchString(u) {
+				return fmt.Errorf(`KyCalendar cannot take the KyIdentity %s username %q: its usernames are 3 to 64 letters, digits, ".", "_" or "-", and "admin" is its own break-glass account. Change identity.%s.username in the kyidentity integration`, a[0], u, a[0])
+			}
 		}
 	}
 	return nil
