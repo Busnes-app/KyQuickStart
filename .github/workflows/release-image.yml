@@ -188,7 +188,6 @@ jobs:
       PIN: ghcr.io/busnes-app/kyquickstart-runner:${{ needs.publish.outputs.version }}@${{ needs.publish.outputs.digest }}
       VERSION: ${{ needs.publish.outputs.version }}
       TAG: ${{ github.event.release.tag_name }}
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -227,27 +226,37 @@ jobs:
             done
             grep -qF "$PIN" "$f" || { echo "::error::$f does not carry $PIN" >&2; exit 1; }
           done
-          [ "$(dist/kyquickstart-"$VERSION"-linux-amd64 version)" = "$VERSION" ]
-          [ "$(dist/kyquickstart-"$VERSION"-linux-amd64 version --runner-image)" = "$PIN" ]
+          f="dist/kyquickstart-$VERSION-linux-amd64"
+          [ "$("$f" version)" = "$VERSION" ] || { echo "::error::$f version is not $VERSION" >&2; exit 1; }
+          [ "$("$f" version --runner-image)" = "$PIN" ] || { echo "::error::$f version --runner-image is not $PIN" >&2; exit 1; }
 
       - name: Publish GitHub binary attestations
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/kyquickstart-*
 
+      # GH_TOKEN (contents: write) only on the steps that run gh.
       - name: Verify the attestations before uploading
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           for f in dist/kyquickstart-*; do
             gh attestation verify "$f" --repo "$GITHUB_REPOSITORY" \
-              --cert-identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/release-image.yml@refs/tags/$TAG"
+              --cert-identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/release-image.yml@refs/tags/$TAG" ||
+              { echo "::error::the attestation for $f did not verify" >&2; exit 1; }
           done
 
       # --clobber: a re-run replaces this run's own assets.
       - name: Upload the binaries to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "$TAG" dist/kyquickstart-* --repo "$GITHUB_REPOSITORY" --clobber
 
       - name: Verify the uploaded binaries
+        id: recheck
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           mkdir downloaded
@@ -255,11 +264,27 @@ jobs:
           for p in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
             f="downloaded/kyquickstart-$VERSION-$p"
             gh attestation verify "$f" --repo "$GITHUB_REPOSITORY" \
-              --cert-identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/release-image.yml@refs/tags/$TAG"
-            go version -m "$f" | grep -qF "GOOS=${p%-*}"
-            go version -m "$f" | grep -qF "GOARCH=${p#*-}"
-            grep -qF "$PIN" "$f" || { echo "::error::$f does not carry $PIN" >&2; exit 1; }
+              --cert-identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/release-image.yml@refs/tags/$TAG" ||
+              { echo "::error::the attestation for uploaded $f did not verify" >&2; exit 1; }
+            info="$(go version -m "$f")"
+            for want in "GOOS=${p%-*}" "GOARCH=${p#*-}"; do
+              printf '%s\n' "$info" | grep -qF "$want" || { echo "::error::uploaded $f: no $want" >&2; exit 1; }
+            done
+            grep -qF "$PIN" "$f" || { echo "::error::uploaded $f does not carry $PIN" >&2; exit 1; }
           done
+
+      # Bytes that failed the check must not stay on the release.
+      - name: Remove the uploaded binaries after a failed check
+        if: failure() && steps.recheck.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          for p in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
+            gh release delete-asset "$TAG" "kyquickstart-$VERSION-$p" --repo "$GITHUB_REPOSITORY" --yes ||
+              echo "::error::could not delete kyquickstart-$VERSION-$p from $TAG; delete it by hand" >&2
+          done
+          exit 1
 
   # :stable moves only after the image and all four binaries verified.
   promote:
