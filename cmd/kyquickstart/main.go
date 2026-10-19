@@ -18,9 +18,10 @@ import (
 // version is the release set, set at build time with -ldflags "-X main.version=...".
 var version = "dev"
 
-// runnerImage is the attested kyquickstart-runner release KyYard's pod runs beside it, pinned
-// by digest. Empty until the first release: this build refuses to install KyYard.
-const runnerImage = ""
+// runnerImage is the attested kyquickstart-runner image KyYard's pod runs beside it, pinned by
+// digest, which a release build sets with -ldflags "-X main.runnerImage=...". Empty in source
+// builds, which refuse to install KyYard.
+var runnerImage = ""
 
 func main() {
 	os.Exit(run())
