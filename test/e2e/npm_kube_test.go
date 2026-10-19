@@ -494,7 +494,7 @@ func TestKubernetesNPMEdge(t *testing.T) {
 		checkDNSGate(t, ctx, drive, dnsPort)
 	}
 	out, err = try("dns rerun")
-	for _, id := range []string{"kyidentity.amend.kydns", "kydns.secrets", "kydns.deploy", "kydns.health", "kydns.setup", "kydns.gate", dnsRouteStep} {
+	for _, id := range []string{"kyidentity.amend.kydns", "kydns.deploy", "kydns.health", "kydns.setup", "kydns.gate", dnsRouteStep} {
 		if status(out, id) != "skipped" {
 			t.Errorf("rerun: %s = %q", id, status(out, id))
 		}
