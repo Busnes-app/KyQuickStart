@@ -412,7 +412,7 @@ func guided(ctx context.Context, args []string, o Options) error {
 	if err != nil {
 		return fmt.Errorf("plan not published; rerun to correct saved answers: %w", err)
 	}
-	if err := validateSelection(validated, cat); err != nil {
+	if err := validateSelection(validated, cat, o); err != nil {
 		return fmt.Errorf("plan not published; rerun to correct saved answers: %w", err)
 	}
 	// Check kubeconfig placement and deployment compatibility before publishing the plan.
@@ -454,7 +454,13 @@ func guided(ctx context.Context, args []string, o Options) error {
 	return Run(ctx, []string{command, "--state", *state}, o)
 }
 
-func validateSelection(st *stack.Stack, cat catalog.Catalog) error {
+func validateSelection(st *stack.Stack, cat catalog.Catalog, o Options) error {
+	if err := yardPlan(st); err != nil {
+		return err
+	}
+	if err := checkRunnerImage(slices.ContainsFunc(st.Apps, func(a stack.App) bool { return hostsRunner(cat[a.Name]) }), o); err != nil {
+		return err
+	}
 	var names []string
 	for _, app := range st.Apps {
 		names = append(names, app.Name)
@@ -656,7 +662,7 @@ func review(args []string, o Options) error {
 	if err != nil {
 		return err
 	}
-	if err := validateSelection(st, cat); err != nil {
+	if err := validateSelection(st, cat, o); err != nil {
 		return err
 	}
 	if err := checkKubePaths(*state, st); err != nil {
