@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strconv"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/engine"
+	"github.com/Busnes-app/kyquickstart/internal/remote"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
 	"github.com/google/uuid"
 )
@@ -113,7 +115,7 @@ func (s *session) composeClients(st *stack.Stack) error {
 		case "kynotes":
 			s.handover += fmt.Sprintf(notesHandover, host, n.Admin.Username, n.Everyday.Username)
 		case "kycalendar":
-			s.handover += fmt.Sprintf(calendarHandover, host, n.Admin.Username, n.Everyday.Username)
+			s.handover += fmt.Sprintf(calendarHandover, host, n.Admin.Username, n.Everyday.Username, kubectl(s.state, s.placed["kycalendar"]))
 		case "kypulse":
 			var unwatched []string
 			s.pulseTargets, unwatched = pulseTargets(st, s.cat)
@@ -249,18 +251,36 @@ KyNotes at https://%[1]s/: sign in through KyIdentity as %[2]s (administers only
   makes no backups until then.
 `
 
-// calendarHandover is printed after every apply that installs KyCalendar.
+// calendarHandover is printed after every apply that installs KyCalendar; %[4]s is kubectl
+// pointed at its target.
 const calendarHandover = `
 KyCalendar at https://%[1]s/: sign in through KyIdentity as %[2]s (its console only; it has no
   calendars) or %[3]s (calendars). Its setup created exactly these two; it admits no one else.
   Outstanding human steps:
-  - Its local "admin" break-glass account: read its one-time password with
-      kubectl -n kyq-kycalendar exec deployment/app -- cat /app/data/initial-admin-password
-    sign in with it once at https://%[1]s/, change it, then delete the file (rm instead of cat).
-  - On its Backup & recovery screen, as %[2]s, pair it with KyRecovery using a one-time code
-    from KyRecovery's administrator, or pin the suite public key by hand. It makes no backups
-    until then.
+  1. Its local "admin" break-glass account. Read its one-time password:
+       %[4]s -n kyq-kycalendar exec deployment/app -- cat /app/data/initial-admin-password
+     Sign in with it once at https://%[1]s/ and change it. Only after that, delete the file:
+       %[4]s -n kyq-kycalendar exec deployment/app -- rm /app/data/initial-admin-password
+  2. On its Backup & recovery screen, as %[2]s, pair it with KyRecovery using a one-time code
+     from KyRecovery's administrator, or pin the suite public key by hand. It makes no backups
+     until then.
 `
+
+// kubectl is the kubectl command line for target t, whose kubeconfig is relative to state.
+func kubectl(state string, t stack.Target) string {
+	kc := t.Kubeconfig
+	if !filepath.IsAbs(kc) {
+		kc = filepath.Join(state, kc)
+	}
+	if abs, err := filepath.Abs(kc); err == nil {
+		kc = abs
+	}
+	cmd := "kubectl --kubeconfig " + remote.Quote(kc)
+	if t.Context != "" {
+		cmd += " --context " + remote.Quote(t.Context)
+	}
+	return cmd
+}
 
 // pulseTarget is a kyPulse monitoring target: an app's readiness path through its route.
 type pulseTarget struct {
@@ -457,13 +477,13 @@ func (s clientSetupStep) run(ctx context.Context, check bool) error {
 // everydaySubject is u's KyIdentity subject: the native ID of the one user its read-only
 // inspection of u.Bundle reports reused under u's exact username.
 func everydaySubject(ctx context.Context, exec identityExec, u everydayUser) (string, error) {
-	fail := fmt.Errorf("KyIdentity's read-only inspection of its first setup does not report everyday account %s exactly once", u.Username)
+	fail := fmt.Errorf("KyIdentity's read-only inspection of its first setup %s does not report everyday account %s exactly once; check that the plan's KyIdentity everyday username is the one that setup created", u.Bundle, u.Username)
 	b, err := identitySetup(ctx, exec, u.Bundle, true)
 	if err != nil {
 		return "", fail
 	}
-	var r struct{ Reused []productObject }
-	if json.Unmarshal(b, &r) != nil {
+	var r struct{ Created, Reused []productObject }
+	if json.Unmarshal(b, &r) != nil || len(r.Created) != 0 {
 		return "", fail
 	}
 	var ids []string

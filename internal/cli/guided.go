@@ -514,9 +514,9 @@ func calendarAccounts(st *stack.Stack) error {
 		if i.Product != "kyidentity" || i.Identity == nil || !i.Installed(st) {
 			continue
 		}
-		for _, u := range []string{i.Identity.Admin.Username, i.Identity.Everyday.Username} {
-			if strings.EqualFold(u, "admin") || !calendarUsername.MatchString(u) {
-				return fmt.Errorf(`KyCalendar cannot take owner account %q: its usernames are 3 to 64 letters, digits, ".", "_" or "-", and "admin" is its own break-glass account. Choose other KyIdentity admin and everyday usernames`, u)
+		for _, a := range [][2]string{{"admin", i.Identity.Admin.Username}, {"everyday", i.Identity.Everyday.Username}} {
+			if u := a[1]; strings.EqualFold(u, "admin") || !calendarUsername.MatchString(u) {
+				return fmt.Errorf(`KyCalendar cannot take the KyIdentity %s username %q: its usernames are 3 to 64 letters, digits, ".", "_" or "-", and "admin" is its own break-glass account. Change identity.%s.username in the kyidentity integration`, a[0], u, a[0])
 			}
 		}
 	}
