@@ -85,7 +85,8 @@ func (s *Store) ServeWorker(ctx context.Context, targets []*Target) error {
 			if err != nil || !present {
 				return ErrState
 			}
-			if job.Status == "complete" || time.Now().Before(job.Next) {
+			// A refused reactivation waits for another PUT.
+			if job.Status == "complete" || job.Status == "refused" || time.Now().Before(job.Next) {
 				continue
 			}
 			select {
@@ -95,7 +96,8 @@ func (s *Store) ServeWorker(ctx context.Context, targets []*Target) error {
 					defer joined.Done()
 					defer func() { <-slots }()
 					err := s.Deliver(runCtx, target, id, time.Now())
-					if err != nil && !errors.Is(err, ErrPending) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+					if err != nil && !errors.Is(err, ErrPending) && !errors.Is(err, ErrReactivationUnsupported) && !errors.Is(err, ErrReactivationRefused) &&
+						!errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 						select {
 						case failures <- ErrState:
 						default:

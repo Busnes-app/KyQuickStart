@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"strconv"
 	"time"
 	"unicode/utf8"
 )
@@ -72,14 +73,17 @@ func (s *Receiver) parseDirectoryUser(w http.ResponseWriter, r *http.Request) (d
 		}
 	}
 	seen := map[string]bool{}
+	mapped := s.target.spec.AdministratorRole != ""
 	// SCIM primary is selection metadata; only the pinned role values confer authority.
+	// Revocation-only targets have no mapping, so their roles confer none.
 	for _, role := range *user.Roles {
-		if seen[role.Value] || role.Type != "" || role.Display != "" || (role.Value != s.target.spec.AdministratorRole && role.Value != s.target.spec.EverydayRole) {
+		known := role.Value == s.target.spec.AdministratorRole || role.Value == s.target.spec.EverydayRole
+		if seen[role.Value] || role.Type != "" || role.Display != "" || (mapped && !known) || (!mapped && !validClientID(role.Value)) {
 			scimError(w, http.StatusBadRequest)
 			return directoryUser{}, false
 		}
 		seen[role.Value] = true
-		if role.Value == s.target.spec.AdministratorRole {
+		if mapped && role.Value == s.target.spec.AdministratorRole {
 			profile.Administrator = true
 		}
 	}
@@ -109,13 +113,32 @@ func (s *Receiver) replace(w http.ResponseWriter, r *http.Request, id string, bi
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	err := s.store.ApplyDirectory(ctx, s.target, id, profile, time.Now())
-	cancel()
+	defer cancel()
+	var desired *DirectoryProfile
+	if s.target.directory != nil {
+		desired = &profile
+	}
+	err := s.store.Reactivate(ctx, s.target, id, desired, time.Now())
+	if errors.Is(err, errActive) {
+		if desired == nil {
+			w.Header().Set("Allow", "GET, PATCH")
+			scimError(w, http.StatusMethodNotAllowed)
+			return
+		}
+		// A revocation published since Reactivate's check routes the retry.
+		if err = s.store.ApplyDirectory(ctx, s.target, id, profile, time.Now()); errors.Is(err, ErrRevoked) {
+			err = ErrPending
+		}
+	}
 	switch {
 	case err == nil:
 		scimReply(w, http.StatusNoContent, nil)
 	case errors.Is(err, ErrPending):
-		w.Header().Set("Retry-After", "5")
+		retry := 5
+		if job, present, readErr := s.store.Inspect(id); readErr == nil && present {
+			retry = max(1, min(3600, int(time.Until(job.Next).Seconds())+1))
+		}
+		w.Header().Set("Retry-After", strconv.Itoa(retry))
 		scimError(w, http.StatusTooManyRequests)
 	case errors.Is(err, ErrDirectoryUncertain), errors.Is(err, ErrState):
 		scimError(w, http.StatusServiceUnavailable)

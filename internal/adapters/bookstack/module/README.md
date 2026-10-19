@@ -81,7 +81,9 @@ Revocation retains accounts, roles and content. Immutable native-ID and issuer/s
 fences deny subsequent web/API requests, login and self-registration; native API tokens
 are removed after fence publication. Retries finish partial publication without replacing
 bindings. Token recreation and a changed external subject do not clear the native-ID fence.
-No reactivation command is provided. Requests already executing at publication are not aborted.
+No reactivation command is provided yet: the bridge refuses a KyIdentity re-assignment as
+`reactivation_unsupported` until the BookStack app job adds one. Requests already executing at
+publication are not aborted.
 
 Account setup uses the same protected-file boundary:
 

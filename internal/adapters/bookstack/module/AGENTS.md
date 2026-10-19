@@ -26,7 +26,9 @@ Supply receipt-owned setup, ongoing native profile/role projection and retained-
 - The receipt reports the pinned module version, native ID, issuer/subject digest, disabled
   status, whether both fences are present and the remaining native token count. Partial
   publication must remain distinguishable when no tokens existed.
-- Preserve account identity, roles and content. No reactivation command is provided.
+- Preserve account identity, roles and content. No reactivation command is provided yet; the
+  bridge refuses KyIdentity re-assignment as `reactivation_unsupported` until the BookStack app
+  job adds one.
 - Web, API, new-login and self-registration boundaries enforce persistent revocation.
 - Persist fences outside the web root and include them in backups. Missing module protection
   or altered permissions must fail qualification before any installation is offered.

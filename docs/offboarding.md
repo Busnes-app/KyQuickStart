@@ -234,8 +234,9 @@ files before and after native I/O. Completion requires native verification and b
 Known refusals may retry. A lost/interrupted/uncertain native write holds newer directory
 updates across restart and returns 503 so KyIdentity retains its mutation fence. The bridge
 does not clear this hold from a read-back; native completion/reconciliation support remains
-an admission gate. Revocation still works during a directory hold, and any recorded revocation
-intent refuses active updates before native I/O. Disabled native accounts are not reactivated.
+an admission gate. Revocation still works during a directory hold, and pending revocation
+intent answers active updates with 429 before native I/O. A PUT after completed revocation is a
+reactivation request (see "Reactivation"); no product reactivates natively yet.
 Directory audit files are currently local proofs; the kyPulse relay handles revocation audits.
 
 The pinned real-image fixture with `KYQ_TEST_FORGEJO_DIRECTORY=1` and an actual identity
@@ -400,6 +401,39 @@ response retains KyIdentity's normal uncertainty fence; an observation cannot cl
 
 The resident worker independently resumes due jobs, with four background calls and streaming
 directory scans. State keeps immutable native bindings and attempt audits beside durable jobs.
-Successful revocation is permanent. Back up and restore the private configuration, server key,
-product/SCIM credentials and entire state together, preserving ownership and permissions.
+Bindings are permanent; revocation ends only through reactivation (see "Reactivation"). Back
+up and restore the private configuration, server key, product/SCIM credentials and entire state
+together, preserving ownership and permissions.
 Suite recovery/sealed-backup composition and restore drills remain acceptance gates.
+
+## Reactivation
+
+A KyIdentity re-assignment arrives as a full `PUT` with `active:true` (KyIdentity 0.4.3 never
+re-sends a POST). Each account's access history is a sequence of epochs: epoch 1 is the original
+revocation job (`<id>.job`, `<id>.audit-*`, read unchanged, so an older store loads as epoch 1),
+then even epochs reactivate and odd epochs revoke, each in its own `<id>.epoch-<n>` job with
+immutable `started`/`result` audit files. A completed epoch is never rewritten.
+
+- A PUT while revocation is pending or attempting returns 429 and leaves it untouched.
+- A PUT after completed revocation starts a reactivation epoch, records its intent and audits,
+  then calls the product's native reactivation through the durable job path (the worker resumes
+  it). In directory mode the PUT's profile and roles are the projection; native administration
+  must be set from them before sign-in is re-enabled. Without a role mapping, a native
+  administrator is refused (409, audited `administrator_refused`).
+- A product without native reactivation returns 409, audited `reactivation_unsupported`. The
+  account stays revoked; another PUT is another audited attempt.
+- A later `PATCH active=false` starts the next revocation epoch, also over an unfinished
+  reactivation. GET reports `active` from the latest completed epoch.
+- Bindings, group retirement by DELETE (still 404) and the creation refusal for a retained
+  subject stay permanent. Reactivated accounts stay out of group membership.
+
+**No product reactivates natively yet.** BookStack and Immich have no module route; their app
+jobs add one. Forgejo 16.0.5 cannot revoke web sessions: its session check
+(`services/auth/method/session.go`) only loads the session's user ID, the admin API has no
+session revocation, and upstream tracks it as a feature request
+([forgejo#796](https://codeberg.org/forgejo/forgejo/issues/796)). Revocation denies old
+sessions only through `prohibit_login`, so re-enabling sign-in revived the pre-revocation
+session in the real-image fixture. Forgejo therefore refuses with `reactivation_unsupported`
+until a Forgejo release with session revocation reopens it. The kyPulse relay transports epoch-1
+revocation audits only; later epochs' audits are local proofs.
+

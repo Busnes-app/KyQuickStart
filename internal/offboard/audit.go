@@ -157,7 +157,7 @@ func (s *Store) auditBody(name string, targets map[string]*Target) (string, erro
 	var a Audit
 	d := json.NewDecoder(bytes.NewReader(raw))
 	d.DisallowUnknownFields()
-	if d.Decode(&a) != nil || d.Decode(new(any)) != io.EOF || a.Schema != "ky.offboarding-audit/1" || a.Binding != parts[1] || a.Attempt == 0 || a.Time.IsZero() || name != auditName(a.Binding, a.Attempt, parts[3]) ||
+	if d.Decode(&a) != nil || d.Decode(new(any)) != io.EOF || a.Schema != "ky.offboarding-audit/1" || a.Epoch != 0 || a.Binding != parts[1] || a.Attempt == 0 || a.Time.IsZero() || name != auditName(a.Binding, a.Attempt, parts[3]) ||
 		(parts[3] == "started" && a.Outcome != "started") || (parts[3] == "result" && a.Outcome != "success" && a.Outcome != "failed") {
 		return "", ErrState
 	}

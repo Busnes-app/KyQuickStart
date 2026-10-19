@@ -24,7 +24,7 @@ const patchSchema = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
 const listSchema = "urn:ietf:params:scim:api:messages:2.0:ListResponse"
 const errorSchema = "urn:ietf:params:scim:api:messages:2.0:Error"
 
-// Receiver projects app-scoped revocation and explicitly configured directory writes.
+// Receiver projects app-scoped revocation, reactivation and explicitly configured directory writes.
 // Mount it without stripping its /scim/<app> prefix, on a direct TLS listener.
 type Receiver struct {
 	store  *Store
@@ -115,11 +115,6 @@ func (s *Receiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if s.target.directory == nil {
-			w.Header().Set("Allow", "GET, PATCH")
-			scimError(w, http.StatusMethodNotAllowed)
-			return
-		}
 		s.replace(w, r, id, b)
 	case http.MethodPatch:
 		if !deactivationPatch(w, r) {
@@ -175,18 +170,15 @@ func (s *Receiver) read(w http.ResponseWriter, r *http.Request, id string, b Bin
 			return
 		}
 	}
-	j, present, err := s.store.Inspect(id)
-	if err != nil {
+	_, _, active, err := s.store.latest(id)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		scimError(w, http.StatusServiceUnavailable)
 		return
 	}
-	resource := map[string]any{"schemas": []string{userSchema}, "id": id, "externalId": b.Subject, "userName": b.Subject, "active": true}
 	// This directory's names are opaque subjects, not native profile promises.
-	// Conservatively report possible retained access until revocation is proved.
-	// Always include active: clients with a bool field may decode omission as false.
-	if present && j.Status == "complete" {
-		resource["active"] = false
-	}
+	// Active follows the latest completed epoch: possible access is reported until
+	// revocation is proved. Always include active: omission may decode as false.
+	resource := map[string]any{"schemas": []string{userSchema}, "id": id, "externalId": b.Subject, "userName": b.Subject, "active": active}
 	if s.target.directoryRead != nil {
 		select {
 		case s.slots <- struct{}{}:
