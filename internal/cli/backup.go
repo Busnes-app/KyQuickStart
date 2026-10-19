@@ -260,6 +260,23 @@ func (s *session) restoreLocked(ctx context.Context, st dockerhost.Store, r rest
 		}
 		return s.finishRestore(ctx, st, pendingID, stage)
 	}
+	// Refusals that need no repository come first: the server is not contacted for them.
+	var occupied []string
+	if r.snapshot != "" {
+		running, err := st.Running(ctx)
+		if err != nil {
+			return err
+		}
+		if running {
+			return refuse("%s is running on %s; stop it first (docker compose -p kyq-%s stop) or uninstall it. Nothing was changed", r.app, st.Host, r.app)
+		}
+		if occupied, err = st.Occupied(ctx); err != nil {
+			return err
+		}
+		if len(occupied) > 0 && !r.replace {
+			return refuse("%s already has %s; rerun with --replace to move them aside (nothing is deleted). Nothing was changed", r.app, strings.Join(occupied, ", "))
+		}
+	}
 	has, err := st.HasPassword(ctx)
 	if err != nil {
 		return err
@@ -299,20 +316,6 @@ func (s *session) restoreLocked(ctx context.Context, st dockerhost.Store, r rest
 	snap := list[0]
 	if !st.Bound(snap) {
 		return refuse("snapshot %s is not tagged for %s of this installation (%s); nothing was changed", snap.Short, r.app, strings.Join(st.Tags(), ","))
-	}
-	running, err := st.Running(ctx)
-	if err != nil {
-		return err
-	}
-	if running {
-		return refuse("%s is running on %s; stop it first (docker compose -p kyq-%s stop) or uninstall it. Nothing was changed", r.app, st.Host, r.app)
-	}
-	occupied, err := st.Occupied(ctx)
-	if err != nil {
-		return err
-	}
-	if len(occupied) > 0 && !r.replace {
-		return refuse("%s already has %s; rerun with --replace to move them aside (nothing is deleted). Nothing was changed", r.app, strings.Join(occupied, ", "))
 	}
 	fmt.Fprintf(out, "Restore %s from snapshot %s\n  taken %s on %s\n  paths %s\n", r.app, snap.ID, snap.Time.UTC().Format(time.RFC3339), snap.Host, strings.Join(snap.Paths, " "))
 	if err := s.confirm(in, r); err != nil {

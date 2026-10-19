@@ -140,7 +140,7 @@ func TestKubernetesRestore(t *testing.T) {
 	outputs = append(outputs, backupOut)
 
 	// AC5a: on KyIdentity 0.4.3 restore is refused before any restic call, nothing changed.
-	outputs = append(outputs, refuseUntouched(t, ctx, state, catalogDir, trust, drive, id[:8], "restore needs KyIdentity v0.4.4 or later, which replays removals on resync; installed: 0.4.3. Upgrade KyIdentity first", false)...)
+	outputs = append(outputs, refuseUntouched(t, ctx, state, catalogDir, trust, drive, id[:8], "restore needs KyIdentity v0.4.4 or later, which replays removals on resync; installed: 0.4.3. Upgrade KyIdentity first")...)
 	// The catalog's KyIdentity 0.4.4 replays removals; it needs only an acknowledgement.
 	upgradeIdentity(t, ctx, cs, connected, name, state, catalogDir, trust, certPEM, &outputs)
 	snaps := snapshots(t, b.dest, "kydrive", b.pw)
