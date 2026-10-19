@@ -152,9 +152,10 @@ private Unix socket. The runner holds its own SSH key and kubeconfigs; KyYard ho
    [`kyyard-runner.compose.yaml`](kyyard-runner.compose.yaml): the two share only the socket
    directory, both as uid 10001; the runner has its own state volume, no ports, a read-only
    root, no capabilities and `no-new-privileges`. Set `KY_SUITE_RUNNER_SOCKET` in KyYard.
-   On a Kubernetes target use [`kyyard-runner.k8s.yaml`](kyyard-runner.k8s.yaml) after
-   editing its image digest, storage class and NetworkPolicy addresses. For now it runs the
-   runner alone in `kyq-runner`; KyYard joins that pod with its catalog entry.
+   On a Kubernetes target the catalog KyYard runs the runner in its own pod ("Catalog KyYard
+   on Kubernetes"); for a KyYard the installer does not deploy, use
+   [`kyyard-runner.k8s.yaml`](kyyard-runner.k8s.yaml) after editing its image digest, storage
+   class and NetworkPolicy addresses.
 2. KyYard's target must be in `stack.yaml`. On a Docker target its SSH user must be able to run
    `docker exec`; on a Kubernetes target the workstation's kubeconfig must allow list pods and
    create `pods/exec` in the runner's namespace, which `handoff` checks before changing
@@ -176,7 +177,8 @@ private Unix socket. The runner holds its own SSH key and kubeconfigs; KyYard ho
    the workstation's kubeconfig, so that address must work from where the runner runs.
 3. From now on the CLI refuses `plan`, `install`, `uninstall` and `unmanage`
    (`owned_by_runner`): use the Suite page. `apply`, `upgrade`, `status` and `integrate-*`
-   still run from the runner's plan; copy it first:
+   still run from the runner's plan, except that `apply` and `upgrade` refuse while they would
+   redeploy the catalog KyYard the runner runs in; copy the plan first:
 
    ```sh
    ./kyquickstart pull-plan --state ./morning-test   # the runner handoff used; keeps stack.yaml.bak
@@ -768,6 +770,115 @@ Limits:
   proven live; real CalDAV clients with app passwords are not tested (the kind test proves the
   web/API session only); KyRecovery pairing, PostgreSQL mode, MCP access and ICS subscriptions
   are not configured.
+
+## Catalog KyYard on Kubernetes
+
+The catalog's `kyyard` app installs KyYard 0.4.3 from its attested release image
+(`ghcr.io/busnes-app/kyyard:0.4.3@sha256:94c1…0756`, built by `Busnes-app/KyYard-server`
+`release-image.yml@refs/tags/v0.4.3` from commit `0bf5e1cb`), with the suite runner
+(`kyquickstart serve`) beside it in the same pod. It depends on the catalog `kyidentity` and
+needs one edge route. Kubernetes only: the runner shares its pod, and upstream's Compose file
+binds the Docker socket, which is host root. `plan`, `review` and `apply` refuse a plan placing
+it on a Docker host before any connection.
+
+```yaml
+apps:
+  - name: kyyard
+    target: k80
+edges:
+  - target: k80
+    routes:
+      - app: kyyard
+        hostname: yard.k80.example.com
+        forward_host: app.kyq-kyyard.svc.cluster.local
+        forward_port: 9273
+        certificate: k80
+integrations:
+  - product: kyyard
+    target: k80
+    bundle: /data/installer/<its own setup UUID>/setup.json
+    identity_client: kyyard
+```
+
+**Not installable yet.** The runner image must be an attested `kyquickstart-runner` release
+pinned by digest, and none is published. This build carries none (`runnerImage` in
+`cmd/kyquickstart` is empty; a release build stamps it with `-ldflags "-X
+main.runnerImage=ghcr.io/busnes-app/kyquickstart-runner:X.Y.Z@sha256:…"`, as it stamps the
+version), so `plan`, `review`, `apply`, `install` and `upgrade` refuse, before connecting, any
+plan that deploys KyYard: "KyYard's suite runner has no attested release image in this build,
+… and no kyquickstart release that pins one is published yet".
+A pin that is not a digest is refused too. The kind test proves the entry with a runner built
+from source, not a released image.
+
+Sign-in: an admin-only client (fleet administration has no everyday workflow):
+`https://<host>/api/sso/kyidentity/callback`, administrator role `kyyard.admin`, no everyday
+role, and KyIdentity's signed directory webhook at `https://<host>/api/installer/directory`.
+KyIdentity assigns only the owner's admin account and refuses everyone else at its per-app gate
+(`error=access_denied`), so KyYard creates no account for them. KyYard refuses SCIM, so there is
+no `kyidentity.scim.kyyard`. Installed with KyIdentity, the client is in KyIdentity's first
+setup; installed later, it joins through `kyidentity.amend.kyyard` (KyIdentity 0.4.3 or later).
+KyYard's setup accepts only usernames matching `^[a-z0-9._-]{3,64}$` and has its own local
+`admin`, so a plan whose KyIdentity admin username breaks that rule or is `admin` in any case is
+refused before connecting.
+
+What apply does:
+
+- `kyyard.deploy` and `kyyard.health`: one restricted pod in `kyq-kyyard` with two containers,
+  both uid 10001, read-only root, no capabilities, no privilege escalation, and no
+  ServiceAccount token. `app` is KyYard: `/data` on a private 10Gi claim subdirectory,
+  readiness `GET /health/ready`, a 20-minute termination grace (5 s drain plus a backup deposit
+  on the wire), SQLite with keys it generates into `/data`, no local Docker connection
+  (`KY_DOCKER_SOCKET` empty), SSO and SCIM off (setup refuses either), no `KY_ADMIN_PASSWORD`
+  or `KY_AGENT_IMAGE`, and `KY_TRUSTED_PROXIES` only the pod's loopback: KyYard refuses
+  to start over HTTPS without a trusted proxy, and no proxy connects over loopback, so the
+  edge's forwarded headers are ignored and no client can spoof its address. `runner` runs `kyquickstart
+  serve --state /state/runner --socket /run/kyquickstart/sock/runner.sock --pod-volumes`
+  (requests 50m/64Mi, limit 512Mi) with only its own 1Gi `runner-state` claim at `/state` and
+  the `runner-socket` emptyDir at `/run/kyquickstart`. KyYard mounts only that volume's `sock`
+  directory, at `/run/kyquickstart/sock` (`KY_SUITE_RUNNER_SOCKET`), which the init container
+  creates private first: KyYard checks every ancestor of its socket and refuses the kubelet's
+  world-writable volume root. It mounts nothing of the runner's state. The socket is 0600 in a 0700
+  directory: any process in the pod as uid 10001 can drive the runner, so a compromised KyYard
+  holds the runner's authority, as the suite-runner design accepts. `runner-state` is not
+  backed up; a fresh `handoff` recreates its key and token.
+- `kyyard.setup`, after its health and before the edges (it does not probe the issuer):
+  KyIdentity's client export is read into memory, the client and directory secrets and then
+  the bundle are placed as 0600 files under `/data/installer/<uuid>/` through KyYard's shell,
+  never replacing one, `apply-setup` activates without a restart, and KyIdentity is re-exported
+  to confirm nothing changed. The bundle lists the owner's admin account alone. A rerun skips.
+
+Handover: KyYard's URL, the admin account (administration only), that everyday accounts get no
+KyYard access, and the outstanding human steps:
+
+- The local break-glass `admin`: `kubectl --kubeconfig <target kubeconfig> -n kyq-kyyard exec
+  deployment/app -c app -- cat /data/initial-admin-password`. Sign in once and change it; only
+  then delete the file (the same command with `rm`).
+- The hand-off, printed ready to run: `kyquickstart handoff --state '<state>' --kyyard-target
+  <target> --runner-pod kyq-kyyard/app.kubernetes.io/name=kyyard`.
+- Pairing KyYard with KyRecovery from its backup screen.
+
+The runner never changes its own pod: it applies the plan with its own build's catalog, so
+redeploying KyYard could kill a running operation or downgrade it. Under the runner, KyYard's
+workload is one note step (`kyyard.runner`); `install`, `uninstall`, `unmanage` and `upgrade`
+naming KyYard are refused (`runner_host`), and an upgrade of every app skips it. From the
+workstation, `apply` and `upgrade` that would redeploy KyYard are refused while the runner owns
+the plan (`owned_by_runner`). To upgrade KyYard: `handoff --revoke`, `apply`, then `handoff`
+again. Edge routes still reconcile.
+
+Limits:
+
+- KyYard's Suite page reads the runner through the socket (the kind test reads
+  `/api/suite/status` as the admin), but starting an operation there requires an account with a
+  local password (`local_password_required`). The KyIdentity administrator setup creates has
+  none: start operations as the local `admin` account, after changing its one-time password.
+  The workstation CLI refuses them while the runner owns the plan; to use it instead, run
+  `handoff --revoke`, the command, then `handoff` again.
+- The pod's egress is unrestricted: KyYard needs KyIdentity and registries, the runner the API
+  server and the targets' SSH; no policy narrows it yet.
+- With the edge untrusted every client shares the edge's rate-limit bucket.
+- Unproven or not configured: a directory event (offboarding) reaching KyYard; back-channel
+  logout; everyday accounts and organizations; retiring the break-glass account; KyRecovery
+  pairing, private recovery and PostgreSQL; enrolling hosts or clusters with `kyyard-agent`.
 
 ## Catalog KyDrive on Docker
 

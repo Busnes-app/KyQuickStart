@@ -283,7 +283,7 @@ handover of admin and everyday logins.
   `apply` runs it after the app's health step against the app's one ready pod, and
   `integrate-stack` skips it. Today only KyIdentity (from its `identity` settings) and the
   installed Ky apps with a catalog `oidc` block and a product adapter: KyRecovery, kyPulse,
-  KyNotes and KyCalendar on Kubernetes, KyDrive, KyPost and KyDNS on Docker (its one running managed container, through `docker
+  KyNotes, KyCalendar and KyYard on Kubernetes, KyDrive, KyPost and KyDNS on Docker (its one running managed container, through `docker
   exec` over SSH; KyDNS's shell-less image gets its setup files placed from the host). An installed KyNotes' entry is exactly `bundle: /data/installer/setup.json`
   and its `identity_client` (no `notes` block): apply derives its native preparation, and its
   setup runs after the edge routes KyIdentity and before KyNotes' own route; a routed KyNotes
@@ -379,8 +379,12 @@ handover of admin and everyday logins.
   marker without an id, from an older build, is claimed by the first plan that locks it. Plans are
   published only after every step passed, so each command reruns after interruption.
 - Only `handoff` changes a marker's owner. Under `owner: runner` the CLI refuses `plan`,
-  `install`, `uninstall` and `unmanage` (`owned_by_runner`); the runner acts only on targets
-  marked with its own ID (`owned_by_cli` otherwise). The runner's SSH key, kubeconfigs and
+  `install`, `uninstall` and `unmanage`, and `apply` or `upgrade` that would redeploy the app the
+  runner runs in (`owned_by_runner`); the runner acts only on targets marked with its own ID
+  (`owned_by_cli` otherwise) and never changes its own pod (`kubernetes.suite_runner`, the
+  catalog KyYard): its workload becomes a note step and requests naming it are refused
+  (`runner_host`). The workstation deploys that app only with a digest-pinned runner image
+  (`cli.Options.RunnerImage`, stamped into release builds; empty source builds refuse it). The runner's SSH key, kubeconfigs and
   identity stay in its state volume beside its secret-free `plan/`; the workstation never
   receives them. Runner access on targets is exactly the installer's: one `restrict`ed
   authorized_keys line, or a ServiceAccount bound to the preflight permission list.
@@ -474,6 +478,14 @@ calls and kind nodes must carry their own explicit bounds.
   files and its 0600 break-glass password file, live `--check` naming both owner identities,
   readiness through the edge, the handover, admin and everyday sign-in with its admin separation
   (`/api/admin/users` 200/403, `/api/calendars` 403/200), and a skipped rerun.
+  `TestKubernetesKyYard`, in a kind cluster of its own (the runner knows only its build's
+  catalog and reaches only what its pod does), installs NPM, KyIdentity and then the catalog
+  KyYard by amendment with a runner built from this checkout and pinned by the digest kind's
+  containerd records (test plumbing): both containers ready, private setup files and live
+  `--check`, the socket shared 0600/0700 as uid 10001, admin sign-in and the everyday account
+  refused at KyIdentity's gate, KyYard's `/api/suite/status` read through the socket, the printed break-glass and handoff lines run as printed, an
+  upgrade of every app through the socket that leaves KyYard's pod alone, `runner_host` for
+  KyYard, the workstation apply refused until revoke, and no credential in output or state.
   The catalog KyDNS joins the Docker target by amendment: hardened container as the target
   user, setup files placed from the host, live `--check`, authoritative NXDOMAIN over UDP and
   TCP on the forward address, its transport gate refusing direct requests with forged headers

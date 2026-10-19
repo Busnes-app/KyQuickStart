@@ -42,7 +42,8 @@ and under each target's lock:
   `handoff --revoke`. `plan` makes no connection, so it refuses on `handoff.json`, which
   `handoff` and `pull-plan` write into the CLI state directory and `--revoke` removes.
 - The CLI runs plan-preserving commands (`apply`, `upgrade`, `integrate-*`, `status`) from the
-  runner's plan, after `pull-plan`. Each refuses with `plan_stale` when a target it reads holds a
+  runner's plan, after `pull-plan`, except that `apply` and `upgrade` refuse (`owned_by_runner`)
+  while they would redeploy the catalog KyYard, whose pod the runner runs in (below). Each refuses with `plan_stale` when a target it reads holds a
   newer marker. Markers are per target: one the runner's later operations did not touch keeps
   an older revision. The stale check is therefore "marker ≤ plan", not equality. Since the CLI
   cannot change a runner-owned plan, a plan that passes it is the runner's.
@@ -135,6 +136,15 @@ Without `--kyyard-target`, `pull-plan` and `--revoke` use the runner recorded in
 `stack.yaml.bak`) only when the runner's revision is at least the local one. Kubeconfig paths and
 contexts keep the workstation's values.
 
+### The runner's own pod
+
+The runner applies the plan with its own build's catalog, so it never changes the app whose pod
+it runs in: re-rendering KyYard could replace the pod mid-operation or downgrade the runner.
+Under its ownership that app's workload steps become one note step (`kyyard.runner`), which
+reads and writes nothing of it, and an `install`, `uninstall`, `unmanage` or `upgrade` naming
+it is refused (`runner_host`). An upgrade of every app skips it with that note. To change
+KyYard: `handoff --revoke`, `apply` from the workstation, then `handoff` again.
+
 ### Runner state
 
 `/state` is the runner's private directory (0700, uid 10001): `runner.json`, `ssh/`,
@@ -159,7 +169,16 @@ shared socket volume only, its own state volume, no ports, read-only root, all c
 dropped, `no-new-privileges`. `docs/kyyard-runner.k8s.yaml` runs it as a pod in namespace
 `kyq-runner` (Pod Security `restricted`, no ServiceAccount token, an emptyDir for the socket, a
 claim for `/state`, and a NetworkPolicy allowing egress only to DNS, the API server and the
-Docker targets' SSH); KyYard joins that pod with its catalog entry. `release-image.yml` publishes a release's `:X.Y.Z`, checks that
+Docker targets' SSH). The catalog KyYard (`kubernetes.suite_runner`) runs it as container
+`runner` in KyYard's own pod in `kyq-kyyard` instead: the same command, restricted security
+context and resources, a 1Gi `runner-state` claim at `/state` (not backed up: a fresh `handoff`
+recreates its key and token), and a `runner-socket` emptyDir at `/run/kyquickstart`, whose `sock` directory (created private by the
+init container) is all KyYard's container mounts, at `/run/kyquickstart/sock`
+(`KY_SUITE_RUNNER_SOCKET`): KyYard checks every ancestor of its socket, so it must not see the
+kubelet's world-writable volume root. KyYard mounts no runner state. Hand
+off to it with `--runner-pod kyq-kyyard/app.kubernetes.io/name=kyyard`. The workstation pins the
+image by digest (`cli.Options.RunnerImage`) and refuses to deploy KyYard without one.
+`release-image.yml` publishes a release's `:X.Y.Z`, checks that
 the image reports the tag's version, attests and verifies it, then moves `:stable`.
 
 ## Runner protocol v1
@@ -251,7 +270,8 @@ timeout). `GET /v1/status` reads every target and answers within 8 seconds.
 `invalid_request`, `id_conflict`, `busy`, `unknown_app`, `unknown_target`, `already_installed`,
 `not_installed`, `dependency` (uninstall while depended on), `plan_stale`, `target_locked`
 (message names holder and age), `upgrade_refused` (`min_from`, `no_skip`), `backup_required`,
-`ack_required`, `step_failed`, `owned_by_runner` (the CLI may not change a runner-owned plan;
+`ack_required`, `issuer_changed`, `runner_host` (the app runs this runner, which never changes
+its own pod), `step_failed`, `owned_by_runner` (the CLI may not change a runner-owned plan;
 the runner refuses another runner's target), `owned_by_cli` (the runner refuses a target not
 handed to it, or has no plan yet), `owned_by_other_plan` (the target's marker names another
 installation), `not_found` (no such operation or route), `internal` (any
@@ -266,7 +286,7 @@ operation's `error`. A code's HTTP status, when the runner answers with it direc
 | 400 | `invalid_request` (413 when the body exceeds 64 KiB; 405 for a wrong method) |
 | 404 | `not_found` only: KyYard reads any 404 as an operation the runner does not know |
 | 409 | `id_conflict`, `busy`, `plan_stale`, `target_locked`, `owned_by_runner`, `owned_by_cli`, `owned_by_other_plan` |
-| 422 | `unknown_app`, `unknown_target`, `already_installed`, `not_installed`, `dependency`, `upgrade_refused`, `backup_required`, `ack_required`, `issuer_changed` |
+| 422 | `unknown_app`, `unknown_target`, `already_installed`, `not_installed`, `dependency`, `upgrade_refused`, `backup_required`, `ack_required`, `issuer_changed`, `runner_host` |
 | 500 | `step_failed`, `internal` |
 
 ## KyYard

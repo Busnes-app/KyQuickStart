@@ -66,6 +66,16 @@ Plain terminal planning and command orchestration for the operator-run installer
 - KyYard uses the common contract with zero-restart activation, signed directory updates
   and exact `kyyard.admin` assignments. Platform administrators receive no implicit tenant
   access; organization/endpoint composition and shared upgrade orchestration remain gates.
+  `yard.go` owns the catalog KyYard (admin-only client, `yardSetup` through `clientSetupStep`
+  with no everyday account): `yardPlan` (plan, review, every command) refuses it off Kubernetes
+  and owner admin usernames its setup refuses; `runnerImage`/`checkRunnerImage` (plan, review,
+  preflight, apply, install, upgrade on the workstation) refuse deploying an app with
+  `kubernetes.suite_runner` without a digest-pinned `Options.RunnerImage`; `yardHandover`
+  prints the break-glass and `handoff` lines. Under the runner (`Options.RunnerID`),
+  `deploySteps` replaces that app's workload with the `<app>.runner` note step, reading and
+  writing nothing of it, and `refuseOwnPod` refuses `install`, `uninstall`, `unmanage` and
+  `upgrade` naming it (`runner_host`); `guard` refuses a workstation `apply`/`upgrade`
+  (`session.deploys`) that would redeploy it while the runner owns the plan.
 - `post.go` maps KyPost native capability/configuration reports, requires nonmutating inspection, preserves external readiness blockers and runs Docker setup explicitly as `kypost`.
   It also holds the catalog KyPost's native bundle (`postBundle`) and handover (`postHandover`).
 - KyCalendar uses the common contract and graceful activation; owned issuer bindings and application grants remain separate from personal calendars and CalDAV, and sign-in settings are read-only in its administration screen.
@@ -73,7 +83,7 @@ Plain terminal planning and command orchestration for the operator-run installer
   separate from Matrix chat/call access, whose assignment composition remains a gate.
 - KyRecovery setup runs explicitly as `kyrecovery`, activates live, commits exact administrator grants with its keyed SQL audit, and never performs the custodian ceremony.
   `appsetup.go` owns apply's catalog apps that sign in through KyIdentity (KyRecovery,
-  kyPulse, KyNotes and KyCalendar on Kubernetes, KyDrive, KyPost and KyDNS on Docker): `composeClients` adds each one's catalog-derived client to the installed
+  kyPulse, KyNotes, KyCalendar and KyYard on Kubernetes, KyDrive, KyPost and KyDNS on Docker): `composeClients` adds each one's catalog-derived client to the installed
   KyIdentity's intent in the session only (the saved plan is unchanged; a hand-written client
   must match), `clientSetupStep` (`<app>.setup`) exports that client, places bundle and secrets
   with `placeScript` (secrets no-clobber, kyPulse's bundle replaced, compare-only on check)
@@ -91,7 +101,7 @@ Plain terminal planning and command orchestration for the operator-run installer
   `native` to `postBundle`, its version-1 bundle (sign-in with `autoProvision`, `clientSecretFile`
   beside it), placed and applied as `kypost` through `postSetup`; KyPost has no directory (it
   cannot verify KyIdentity's generated webhook secret), so no directory secret. `recoveryCeremony`,
-  `pulseHandover`, `calendarHandover`, `driveHandover`, `postHandover` and `dnsHandover` are what apply prints.
+  `pulseHandover`, `calendarHandover`, `driveHandover`, `postHandover`, `dnsHandover` and `yardHandover` are what apply prints.
   KyDNS's distroless image has no shell, so `hostPlace` runs `placeScript` on its Docker host
   over SSH as the target user, mapping the bundle's `/data/installer/<uuid>/` to
   `<root>/kydns/data/installer/<uuid>/` (anything else refused, symlinked directories refused),

@@ -23,7 +23,10 @@ v1 in `../../docs/superpowers/specs/2026-10-16-suite-runner-design.md`.
   creates and checks strictly, and their parent, the kubelet's world-writable volume root, must
   be a mount point owned by root or the runner; ancestors above it are checked as usual.
   Residual risk: another container mounting that volume could rename the subdirectory; in the
-  runner pod only the runner mounts `/state`, and only KyYard (uid 10001) shares the socket.
+  runner pod, or the catalog KyYard's pod where the runner is container `runner`
+  (`internal/kube` renders it for `kubernetes.suite_runner`), only the runner mounts `/state`,
+  and only KyYard (uid 10001) shares the socket.
+- The runner never changes the app whose pod it runs in (`internal/cli`, `runner_host`, a 422).
 - `plan/` is the CLI state directory and holds no secret; the key, kubeconfigs and
   `runner.json` live beside it. Import accepts only the listed names, regular files, bounded
   sizes and token-only kubeconfigs, and never an older plan.
@@ -41,5 +44,6 @@ v1 in `../../docs/superpowers/specs/2026-10-16-suite-runner-design.md`.
 - `make e2e`: builds the image, hands a plan to a runner container over the sshd fixture and to
   the documented runner pod in kind (a test-only curl container shares its socket), installs
   and uninstalls through the socket, pulls the plan back, checks the CLI refusal and revokes.
+  `TestKubernetesKyYard` does the same with the runner inside the catalog KyYard's pod.
 
 ## Child DOX Index

@@ -18,6 +18,11 @@ import (
 // version is the release set, set at build time with -ldflags "-X main.version=...".
 var version = "dev"
 
+// runnerImage is the attested kyquickstart-runner image KyYard's pod runs beside it, pinned by
+// digest, which a release build sets with -ldflags "-X main.runnerImage=...". Empty in source
+// builds, which refuse to install KyYard.
+var runnerImage = ""
+
 func main() {
 	os.Exit(run())
 }
@@ -25,7 +30,7 @@ func main() {
 func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	o := cli.Options{Catalog: catalog.Embedded(), ReleaseSet: version, Out: os.Stdout}
+	o := cli.Options{Catalog: catalog.Embedded(), ReleaseSet: version, Out: os.Stdout, RunnerImage: runnerImage}
 	if fi, err := os.Stdin.Stat(); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
 		o.In = os.Stdin
 	}

@@ -23,6 +23,8 @@ type App struct {
 	// Upstreams are the addresses off the cluster the edge app's routes forward to, which its
 	// egress admits; edge app only.
 	Upstreams []netip.AddrPort
+	// RunnerImage is the suite runner sidecar's image, for an app with kubernetes.suite_runner.
+	RunnerImage string
 }
 
 func hashOf(parts ...string) string {

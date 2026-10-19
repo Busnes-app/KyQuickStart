@@ -1,8 +1,7 @@
-# The suite runner as a pod (docs/guided-setup.md, "Hand-off to KyYard"). This phase runs it
-# alone, to prove hand-off with `kyquickstart handoff --kyyard-target <this cluster's target>
-# --runner-pod kyq-runner/app=runner`. The KyYard sidecar wiring (KyYard's container in this
-# pod, sharing the socket volume, with KY_SUITE_RUNNER_SOCKET=/run/kyquickstart/sock/runner.sock)
-# comes with KyYard's catalog entry.
+# The suite runner as a pod of its own (docs/guided-setup.md, "Hand-off to KyYard"), for
+# `kyquickstart handoff --kyyard-target <this cluster's target> --runner-pod kyq-runner/app=runner`.
+# The catalog KyYard runs the runner in its own pod instead (docs/guided-setup.md, "Catalog
+# KyYard on Kubernetes"); this manifest is for a KyYard the installer does not deploy.
 #
 # Edit before applying: the image digest, the claim's storage class, and the NetworkPolicy's
 # API server and SSH target addresses. The placeholders are documentation addresses, so an

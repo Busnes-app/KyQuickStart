@@ -344,3 +344,94 @@ func TestRenderCPURequestBelowLimit(t *testing.T) {
 		t.Error("an app without cpu_request no longer requests its limit")
 	}
 }
+
+const testRunnerImage = "ghcr.io/busnes-app/kyquickstart-runner:9.9.9@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+
+// AC3: KyYard runs restricted beside the suite runner, which shares only the socket directory.
+func TestRenderKyYard(t *testing.T) {
+	cat, err := catalog.Load(catalog.Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := cat["kyyard"]
+	c.Kubernetes = c.Kubernetes.WithHost("yard.example.com")
+	a := App{Name: "kyyard", Catalog: c, RunnerImage: testRunnerImage, Edge: "npm"}
+	o := render(a)
+	pod := o.Deployment.Spec.Template.Spec
+	if len(pod.Containers) != 2 || pod.Containers[0].Name != "app" || pod.Containers[1].Name != "runner" {
+		t.Fatalf("containers = %+v", pod.Containers)
+	}
+	if *pod.AutomountServiceAccountToken {
+		t.Fatal("service-account token mounted")
+	}
+	if pod.TerminationGracePeriodSeconds == nil || *pod.TerminationGracePeriodSeconds != 1200 {
+		t.Fatalf("grace = %v", pod.TerminationGracePeriodSeconds)
+	}
+	for _, ctr := range pod.Containers {
+		sc := ctr.SecurityContext
+		if *sc.RunAsUser != 10001 || *sc.RunAsGroup != 10001 || !*sc.RunAsNonRoot || !*sc.ReadOnlyRootFilesystem || *sc.AllowPrivilegeEscalation ||
+			!slices.Equal(sc.Capabilities.Drop, []corev1.Capability{"ALL"}) || len(sc.Capabilities.Add) != 0 || sc.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
+			t.Fatalf("%s security context = %+v", ctr.Name, sc)
+		}
+	}
+	mounts := func(ctr corev1.Container) map[string]string {
+		m := map[string]string{}
+		for _, v := range ctr.VolumeMounts {
+			m[v.MountPath] = v.Name + ":" + v.SubPath
+		}
+		return m
+	}
+	app, runner := pod.Containers[0], pod.Containers[1]
+	if got := mounts(runner); len(got) != 2 || got["/state"] != "runner-state:" || got["/run/kyquickstart"] != "runner-socket:" {
+		t.Fatalf("runner mounts = %v", got)
+	}
+	if runner.Image != testRunnerImage || len(runner.Args) != 0 ||
+		!slices.Equal(runner.Command, []string{"kyquickstart", "serve", "--state", "/state/runner", "--socket", "/run/kyquickstart/sock/runner.sock", "--pod-volumes"}) {
+		t.Fatalf("runner = %s %v %v", runner.Image, runner.Command, runner.Args)
+	}
+	if r := runner.Resources; r.Requests.Cpu().String() != "50m" || r.Requests.Memory().String() != "64Mi" || r.Limits.Memory().String() != "512Mi" || !r.Limits.Cpu().IsZero() {
+		t.Fatalf("runner resources = %+v", r)
+	}
+	if got := mounts(app); len(got) != 3 || got["/data"] != "vol-data:private" || got["/tmp"] != "tmp:" || got["/run/kyquickstart/sock"] != "runner-socket:sock" {
+		t.Fatalf("app mounts = %v", got)
+	}
+	env := map[string]string{}
+	for _, e := range app.Env {
+		env[e.Name] = e.Value
+	}
+	if env["KY_SUITE_RUNNER_SOCKET"] != "/run/kyquickstart/sock/runner.sock" || env["KY_APP_URL"] != "https://yard.example.com" {
+		t.Fatalf("app env = %v", env)
+	}
+	if p := app.ReadinessProbe; p == nil || p.HTTPGet.Path != "/health/ready" || p.HTTPGet.Port.IntValue() != 9273 || runner.ReadinessProbe != nil {
+		t.Fatalf("readiness = %+v", p)
+	}
+	vols := map[string]corev1.Volume{}
+	for _, v := range pod.Volumes {
+		vols[v.Name] = v
+	}
+	if v := vols["runner-socket"]; v.EmptyDir == nil {
+		t.Fatalf("socket volume = %+v", v)
+	}
+	if v := vols["runner-state"]; v.PersistentVolumeClaim == nil || v.PersistentVolumeClaim.ClaimName != "runner-state" {
+		t.Fatalf("state volume = %+v", v)
+	}
+	claims := map[string]string{}
+	for _, c := range o.Claims {
+		claims[c.Name] = c.Spec.Resources.Requests.Storage().String()
+	}
+	if len(claims) != 2 || claims["vol-data"] != "10Gi" || claims["runner-state"] != "1Gi" {
+		t.Fatalf("claims = %v", claims)
+	}
+	if init := pod.InitContainers; len(init) != 1 || !slices.Equal(init[0].Command, []string{"mkdir", "-p", "-m", "700", "/volumes/data/private", "/volumes/runner-socket/sock"}) ||
+		len(init[0].VolumeMounts) != 2 || init[0].VolumeMounts[1].Name != "runner-socket" {
+		t.Fatalf("init = %+v", init)
+	}
+	if a.namespaceLabels()[podSecurity] != "restricted" {
+		t.Fatal("namespace not restricted")
+	}
+	b := a
+	b.RunnerImage = strings.Replace(testRunnerImage, "1111", "2222", 1)
+	if render(b).hash() == o.hash() {
+		t.Fatal("runner image change keeps the deployment hash")
+	}
+}

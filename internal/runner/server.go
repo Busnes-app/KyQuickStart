@@ -261,7 +261,7 @@ func httpStatus(c suite.Code) int {
 	case suite.IDConflict, suite.Busy, suite.PlanStale, suite.TargetLocked, suite.OwnedByRunner, suite.OwnedByCLI, suite.OwnedByOtherPlan:
 		return http.StatusConflict
 	case suite.UnknownApp, suite.UnknownTarget, suite.AlreadyInstalled, suite.NotInstalled, suite.Dependency,
-		suite.UpgradeRefused, suite.BackupRequired, suite.AckRequired, suite.IssuerChanged:
+		suite.UpgradeRefused, suite.BackupRequired, suite.AckRequired, suite.IssuerChanged, suite.RunnerHost:
 		return http.StatusUnprocessableEntity
 	}
 	return http.StatusInternalServerError // step_failed, internal
