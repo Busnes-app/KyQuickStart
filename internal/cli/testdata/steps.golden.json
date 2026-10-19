@@ -34,8 +34,8 @@
   },
   "kydrive": {
     "intent": "{\"schema\":\"kyidentity.setup/1\",\"setupId\":\"271333e2-c221-4601-b249-563b3d828530\",\"admin\":{\"username\":\"owner-admin\",\"email\":\"admin@example.test\"},\"everyday\":{\"username\":\"owner\",\"email\":\"owner@example.test\"},\"clients\":[{\"id\":\"kydrive\",\"name\":\"KyDrive\",\"redirectUris\":[\"https://drive.example.com/api/sso/kysignon/callback\"],\"postLogoutUris\":null,\"administratorRole\":\"kydrive.admin\",\"everydayRole\":\"kydrive.user\"}]}",
-    "kydrive.deploy": "fa5ef0054c811fcf2b16c085e0a339fe0cd2d69123ffc6a602ca92bfbe89b7f0",
-    "kydrive.health": "fa5ef0054c811fcf2b16c085e0a339fe0cd2d69123ffc6a602ca92bfbe89b7f0",
+    "kydrive.deploy": "5728f8f537a5fb4cb4da8c995497ad842e4a3810c44c7a5f8a74cdc7aa189f4a",
+    "kydrive.health": "5728f8f537a5fb4cb4da8c995497ad842e4a3810c44c7a5f8a74cdc7aa189f4a",
     "kydrive.secrets": "eb4da82611ecf5499258d52b4a07ec1e9c8d71a07b05629a6af0c0588ad4d178",
     "kydrive.setup": "7e630bfa3ad979351574324a51fb0fe8be44972150a24e595e3ed12e5a3689de",
     "kyidentity.deploy": "bdf3a2ecdc96248d016d7987e95476e5dd0f21b59050d6def4a6b90910b1d758",
