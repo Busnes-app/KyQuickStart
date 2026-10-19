@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -125,7 +126,7 @@ func checkCatalogPost(t *testing.T, out string, d driveTarget, port int, get, co
 	}
 	for _, want := range []string{
 		"KyPost at https://" + catalogPostURLHost + "/: webmail", "as prepared-admin, for administration only", "can also add mail", "or as prepared-user for mail",
-		"KyIdentity role kypost.user", "opens no mail port", "SANDBOX_PRIVATE_HOSTS", "Pair it with KyRecovery",
+		"KyIdentity role kypost.user", "opens no mail port", "this release offers no setting to allow one", "about 2.9 GB", "for when\n     KyIdentity is down", "Pair it with KyRecovery",
 		"on nas:\n       docker exec --user kypost " + postContainer + " cat /kypost/config/first-run-password.txt",
 		"docker exec --user kypost " + postContainer + " rm /kypost/config/first-run-password.txt",
 		"To end every live session, on nas:\n       docker restart " + postContainer,
@@ -149,7 +150,8 @@ func checkCatalogPost(t *testing.T, out string, d driveTarget, port int, get, co
 	// Test plumbing, named as such: present in the deployed container, and nothing else added.
 	var extra []string
 	json.Unmarshal([]byte(docker(t, "inspect", c, "--format", "{{json .HostConfig.ExtraHosts}}")), &extra)
-	if !slices.Equal(extra, []string{catalogIdentityHost + ":" + d.forward, "registry.ollama.ai:127.0.0.1"}) {
+	// Compose holds extra_hosts as a map, so Docker gets them in no fixed order.
+	if !slices.Equal(slices.Sorted(slices.Values(extra)), []string{catalogIdentityHost + ":" + d.forward, "registry.ollama.ai:127.0.0.1"}) {
 		t.Fatalf("extra hosts (test plumbing) = %v", extra)
 	}
 	var env []string
@@ -169,11 +171,12 @@ func checkCatalogPost(t *testing.T, out string, d driveTarget, port int, get, co
 	// No mail listener: only 5866 and Ollama's loopback 11434 listen.
 	tcp := docker(t, "exec", c, "cat", "/proc/net/tcp", "/proc/net/tcp6")
 	var listening []int
+	var bound []string // address:port, as the kernel lists them
 	for _, line := range strings.Split(tcp, "\n") {
 		f := strings.Fields(line)
 		if len(f) > 3 && f[3] == "0A" {
 			p, _ := strconv.ParseInt(f[1][strings.LastIndex(f[1], ":")+1:], 16, 32)
-			listening = append(listening, int(p))
+			listening, bound = append(listening, int(p)), append(bound, listenAddr(f[1]))
 		}
 	}
 	for _, mail := range []int{25, 143, 465, 587, 993, 2525} {
@@ -181,7 +184,7 @@ func checkCatalogPost(t *testing.T, out string, d driveTarget, port int, get, co
 			t.Fatalf("KyPost listens on mail port %d (listening %v)", mail, listening)
 		}
 	}
-	t.Logf("KyPost listens on %v", listening)
+	t.Logf("KyPost listens on %v", bound)
 	stat := docker(t, "exec", "--user", "kypost", c, "stat", "-c", "%n %a %u", "/kypost/config", "/kypost/private", "/kypost/state", postSetupDir, postSetupDir+"/client.secret", postSetupDir+"/setup.json")
 	wantStat := "/kypost/config 700 1000\n/kypost/private 700 1000\n/kypost/state 700 1000\n" + postSetupDir + " 700 1000\n" + postSetupDir + "/client.secret 600 1000\n" + postSetupDir + "/setup.json 600 1000"
 	if stat != wantStat {
@@ -393,4 +396,20 @@ func checkPostHandover(t *testing.T, ctx context.Context, out string, d driveTar
 		t.Fatalf("admin session after restart: /api/status %d, want 401", s)
 	}
 	return strings.TrimSpace(strings.TrimPrefix(got, "username: admin\npassword: "))
+}
+
+// listenAddr reads a /proc/net/tcp{,6} local address (hex, host byte order per 32-bit word)
+// as address:port.
+func listenAddr(hexAddr string) string {
+	h, port, _ := strings.Cut(hexAddr, ":")
+	p, _ := strconv.ParseUint(port, 16, 16)
+	b, err := hex.DecodeString(h)
+	if err != nil || len(b)%4 != 0 {
+		return hexAddr
+	}
+	for i := 0; i < len(b); i += 4 {
+		b[i], b[i+1], b[i+2], b[i+3] = b[i+3], b[i+2], b[i+1], b[i]
+	}
+	ip, _ := netip.AddrFromSlice(b)
+	return netip.AddrPortFrom(ip, uint16(p)).String()
 }

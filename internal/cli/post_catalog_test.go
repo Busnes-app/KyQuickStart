@@ -71,7 +71,7 @@ func TestKyPostClientFromCatalog(t *testing.T) {
 	for _, want := range []string{
 		"KyPost at https://post.example.com/", "as owner-admin, for administration only", "it can also add mail\n  accounts", "or as owner for mail",
 		"KyIdentity role kypost.user and gets a KyPost account at first sign-in", "opens no mail port", "Native\n  mail, receiving, a relay and domains are not set up",
-		"SANDBOX_PRIVATE_HOSTS", "on nas:\n       docker exec --user kypost kyq-kypost-app-1 cat /kypost/config/first-run-password.txt",
+		"this release offers no setting to allow one", "about 2.9 GB", "separate from KyIdentity's owner-admin, for when\n     KyIdentity is down", "on nas:\n       docker exec --user kypost kyq-kypost-app-1 cat /kypost/config/first-run-password.txt",
 		"docker exec --user kypost kyq-kypost-app-1 rm /kypost/config/first-run-password.txt", "stops new sign-ins",
 		"To end every live session, on nas:\n       docker restart kyq-kypost-app-1", "Pair it with KyRecovery",
 	} {
@@ -79,7 +79,7 @@ func TestKyPostClientFromCatalog(t *testing.T) {
 			t.Errorf("handover lacks %q:\n%s", want, s.handover)
 		}
 	}
-	if change, rm := strings.Index(s.handover, "change it. Only after that"), strings.Index(s.handover, "rm /kypost/config/first-run-password.txt"); change < 0 || rm < change {
+	if change, rm := strings.Index(s.handover, "and change it. Only after that"), strings.Index(s.handover, "rm /kypost/config/first-run-password.txt"); change < 0 || rm < change {
 		t.Errorf("break-glass steps out of order:\n%s", s.handover)
 	}
 	written := "      clients:\n        - id: kypost\n          name: KyPost\n          redirect_uris: [https://post.example.com/api/auth/oidc/callback]\n          administrator_role: kypost.admin\n          everyday_role: kypost.user\n"

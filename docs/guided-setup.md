@@ -1063,13 +1063,18 @@ forward address, and nothing for mail. Inbound port 25 exists only with KyPost's
 overlay (an operator-supplied Maddy binary, receiving TLS, MX/DNS, a domain challenge and a
 relay), which upstream calls a qualification profile and has not shipped for production; apply
 installs none of it, and no `domains`, relay or native mail. KyPost refuses a user's mail server
-on a private address unless `SANDBOX_PRIVATE_HOSTS` names it; the catalog leaves it empty.
+on a private (LAN) address unless its `SANDBOX_PRIVATE_HOSTS` names it. The catalog leaves that
+empty and this release has no plan setting for it (a hand edit of the deployed Compose file is
+unsupported and lost whenever apply redeploys it), so mail servers must be reachable at a public address.
 
 Handover: apply prints KyPost's URL, the admin account (for administration only; in this
 release it can also add mail accounts, so keep mail to the everyday account), the everyday
-account, the assignment rule above and the mail-port facts. Outstanding human steps it names:
+account, the assignment rule above, the mail-port facts and the first-start model download
+(below). Outstanding human steps it names:
 
-- The local break-glass `admin`, created with a must-change password in
+- The local break-glass `admin`: a KyPost account separate from KyIdentity's admin, for when
+  KyIdentity is down; owners signing in through KyIdentity never need it. It signs in with
+  KyPost's own password sign-in and is created with a must-change password in
   `/kypost/config/first-run-password.txt` (0600, owned by kypost). On the Docker target:
   `docker exec --user kypost kyq-kypost-app-1 cat /kypost/config/first-run-password.txt`. Sign in
   once and change it; only then delete the file (the same command with `rm`). Apply never reads

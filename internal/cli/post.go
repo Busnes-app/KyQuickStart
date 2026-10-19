@@ -91,12 +91,17 @@ KyPost at https://%[1]s/: webmail for mail accounts you already have. Sign in th
   accounts, so keep mail to the other account), or as %[3]s for mail. Anyone else needs
   KyIdentity role kypost.user and gets a KyPost account at first sign-in.
   KyPost reads and sends through existing IMAP/SMTP accounts and opens no mail port. Native
-  mail, receiving, a relay and domains are not set up. A mail server on a private address is
-  refused unless KyPost's SANDBOX_PRIVATE_HOSTS names it.
+  mail, receiving, a relay and domains are not set up. KyPost refuses mail servers on private
+  (LAN) addresses, and this release offers no setting to allow one: use providers reachable at
+  a public address.
+  On its first start KyPost downloads its Ollama model (about 2.9 GB) and retries until it has
+  it; until then a lighter built-in sorter labels mail, and KyPost reports healthy.
   Outstanding human steps:
-  1. Its local "admin" break-glass account. Read its one-time password, on %[5]s:
+  1. Its local "admin" break-glass account: separate from KyIdentity's %[2]s, for when
+     KyIdentity is down; you never need it otherwise. Read its one-time password, on %[5]s:
        docker exec --user kypost %[4]s cat /kypost/config/first-run-password.txt
-     Sign in with it once at https://%[1]s/ and change it. Only after that, delete the file:
+     Sign in with it once at https://%[1]s/ with KyPost's own password sign-in, not KyIdentity,
+     and change it. Only after that, delete the file:
        docker exec --user kypost %[4]s rm /kypost/config/first-run-password.txt
   2. Offboarding: removing someone in KyIdentity stops new sign-ins, but KyPost keeps a live
      session until it restarts. To end every live session, on %[5]s:
