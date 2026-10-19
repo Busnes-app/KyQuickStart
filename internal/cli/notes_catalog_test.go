@@ -61,7 +61,7 @@ func TestKyNotesClientFromCatalog(t *testing.T) {
 	if b, _ := json.Marshal(s.integrations[0].Identity.Clients); string(b) != "["+wantNotesClient+"]" || len(s.amendments) != 0 || !slices.Equal(s.derived, []string{"kynotes"}) {
 		t.Fatalf("derived clients = %s, amendments %d", b, len(s.amendments))
 	}
-	for _, want := range []string{"KyNotes at https://notes.example.com/", "as owner-admin (its administrator", "or owner, whose account", "pair it with KyRecovery", "no local\n  password"} {
+	for _, want := range []string{"KyNotes at https://notes.example.com/", "as owner-admin (administers only", "or owner, whose account", "role\n  kynotes.user", "pair it with KyRecovery", "no local password"} {
 		if !strings.Contains(s.handover, want) {
 			t.Errorf("handover lacks %q: %s", want, s.handover)
 		}
@@ -289,7 +289,7 @@ func TestKyNotesSetup(t *testing.T) {
 	}
 	identity.exports["kynotes"] = strings.Replace(notesExport(parentSetup), clientSecret, "Q2hhbmdlZENoYW5nZWRDaGFuZ2VkQ2hhbmdlZENoYW4", 1)
 	err := setup.Apply(ctx)
-	if err == nil || err.Error() != "private destination credential import was not verified" || notes.files["/data/installer/client.secret"] != clientSecret {
+	if err == nil || !strings.HasPrefix(err.Error(), "private destination credential import was not verified; no KyNotes route was added. Its pod must resolve https://identity.example.com") || notes.files["/data/installer/client.secret"] != clientSecret {
 		t.Fatalf("regenerated secret: %v", err)
 	}
 	errs = append(errs, err.Error())
@@ -422,5 +422,31 @@ func TestKyNotesOnDockerRefused(t *testing.T) {
 		if err := f.run(cmd...); err == nil || !strings.Contains(err.Error(), "kynotes") || !strings.Contains(err.Error(), "place it on a Kubernetes target") {
 			t.Errorf("%s: %v", cmd[0], err)
 		}
+	}
+}
+
+// A routed KyNotes without its integration would serve its open first-run web setup: refused
+// before any connection.
+func TestRoutedKyNotesWithoutSetupRefused(t *testing.T) {
+	f := newFixture(t, "../catalog/testdata/apps")
+	f.o.Catalog = catalog.Embedded()
+	notesPlan(t, f, "      clients: []\n")
+	p := filepath.Join(f.state, "stack.yaml")
+	b, _ := os.ReadFile(p)
+	os.WriteFile(p, []byte(strings.Replace(string(b), "  - product: kynotes\n    target: k1\n    bundle: "+catalogNotesBundle+"\n    identity_client: kynotes\n", "", 1)), 0o600)
+	dialTarget = func(context.Context, stack.Target, remote.SSHConfig, bool) (driver, error) {
+		t.Fatal("connected")
+		return nil, nil
+	}
+	for _, cmd := range [][]string{{"review"}, {"plan", "--noninteractive"}, {"apply"}} {
+		if err := f.run(cmd...); err == nil || !strings.Contains(err.Error(), "kynotes is routed but has no integration on k1") {
+			t.Errorf("%s: %v", cmd[0], err)
+		}
+	}
+	// Unrouted, it is unreachable through the edge and allowed.
+	b, _ = os.ReadFile(p)
+	os.WriteFile(p, []byte(strings.Replace(string(b), "      - app: kynotes\n", "      - app: npm\n", 1)), 0o600)
+	if err := f.run("review"); err != nil && strings.Contains(err.Error(), "is routed") {
+		t.Fatalf("unrouted KyNotes refused: %v", err)
 	}
 }

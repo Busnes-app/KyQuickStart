@@ -239,11 +239,12 @@ KyDrive at https://%[1]s/: sign in through KyIdentity as %[2]s (its administrato
 
 // notesHandover is printed after every apply that installs KyNotes.
 const notesHandover = `
-KyNotes at https://%[1]s/: sign in through KyIdentity as %[2]s (its administrator, who opens
-  no notes) or %[3]s, whose account KyNotes creates at first sign-in. KyNotes has no local
-  password. Outstanding human step: on its Backups screen, as %[2]s, pair it with KyRecovery
-  using a one-time code from KyRecovery's administrator, or pin the suite public key by hand.
-  KyNotes makes no backups until then.
+KyNotes at https://%[1]s/: sign in through KyIdentity as %[2]s (administers only; it cannot
+  open notes) or %[3]s, whose account KyNotes creates at first sign-in. Assign KyIdentity role
+  kynotes.user to anyone else who should sign in. KyNotes has no local password.
+  Outstanding human step: on its Backups screen, as %[2]s, pair it with KyRecovery using a
+  one-time code from KyRecovery's administrator, or pin the suite public key by hand. KyNotes
+  makes no backups until then.
 `
 
 // pulseTarget is a kyPulse monitoring target: an app's readiness path through its route.
@@ -440,8 +441,15 @@ func (s notesSetupStep) InputHash() string {
 }
 
 func (s notesSetupStep) Inspect(ctx context.Context) (bool, error) { return s.Verify(ctx) == nil, nil }
-func (s notesSetupStep) Apply(ctx context.Context) error           { return s.run(ctx, false) }
-func (s notesSetupStep) Verify(ctx context.Context) error          { return s.run(ctx, true) }
+
+// Apply names the likeliest cause of a failure; the product's own output stays hidden.
+func (s notesSetupStep) Apply(ctx context.Context) error {
+	if err := s.run(ctx, false); err != nil {
+		return fmt.Errorf("%w; no KyNotes route was added. Its pod must resolve %s and trust its certificate (docs/guided-setup.md, Catalog KyNotes on Kubernetes); rerun apply after fixing", err, s.i.Notes.SSO.IssuerURL)
+	}
+	return nil
+}
+func (s notesSetupStep) Verify(ctx context.Context) error { return s.run(ctx, true) }
 
 func (s notesSetupStep) run(ctx context.Context, check bool) error {
 	if err := transferNotesCredentials(ctx, s.export, s.exec, s.input, s.source, s.i, check); err != nil {
@@ -453,14 +461,17 @@ func (s notesSetupStep) run(ctx context.Context, check bool) error {
 
 // notesPreparation is the catalog KyNotes' secret-free bundle: client c at issuer, secrets
 // beside the bundle where its import writes them, backup settings as its env fixes them.
-func notesPreparation(bundle, issuer string, c stack.IdentityClient, env map[string]string) *stack.NotesPreparation {
+func notesPreparation(bundle, issuer string, c stack.IdentityClient, env map[string]string) (*stack.NotesPreparation, error) {
 	dir := path.Dir(bundle)
 	sso := &stack.NotesSSO{IssuerURL: issuer, ClientID: c.ID, ClientSecretFile: path.Join(dir, "client.secret"), RedirectURI: c.RedirectURIs[0]}
 	if c.SuiteWebhook != nil {
 		sso.DirectoryHMACSecretFile = path.Join(dir, "directory.secret")
 	}
-	keep, _ := strconv.Atoi(env["KYNOTES_BACKUP_KEEP"])
-	return &stack.NotesPreparation{Version: 1, SSO: sso, Backup: &stack.NotesBackup{Dir: env["KYNOTES_BACKUP_DIR"], Keep: keep}}
+	keep, err := strconv.Atoi(env["KYNOTES_BACKUP_KEEP"])
+	if err != nil || keep < 1 {
+		return nil, fmt.Errorf("catalog kynotes: KYNOTES_BACKUP_KEEP %q must be a positive integer", env["KYNOTES_BACKUP_KEEP"])
+	}
+	return &stack.NotesPreparation{Version: 1, SSO: sso, Backup: &stack.NotesBackup{Dir: env["KYNOTES_BACKUP_DIR"], Keep: keep}}, nil
 }
 
 // scimStep (kyidentity.scim.<app>) adds KyIdentity's SCIM connector to the client of an app
@@ -574,8 +585,13 @@ func (s *session) setupSteps(d driver, i stack.Integration) (steps []engine.Step
 	}
 	issuer := s.cat["kyidentity"].Kubernetes.Env[issuerEnv]
 	if i.Product == "kynotes" {
-		c := source.Identity.Clients[slices.IndexFunc(source.Identity.Clients, func(c stack.IdentityClient) bool { return c.ID == i.IdentityClient })]
-		i.Notes = notesPreparation(i.Bundle, issuer, c, s.cat["kynotes"].Kubernetes.Env)
+		c := slices.IndexFunc(source.Identity.Clients, func(c stack.IdentityClient) bool { return c.ID == i.IdentityClient })
+		if c < 0 {
+			return nil, nil, fmt.Errorf("KyIdentity's setup has no client %s for KyNotes", i.IdentityClient)
+		}
+		if i.Notes, err = notesPreparation(i.Bundle, issuer, source.Identity.Clients[c], s.cat["kynotes"].Kubernetes.Env); err != nil {
+			return nil, nil, err
+		}
 		return []engine.Step{notesSetupStep{i: i, source: source, export: export, exec: exec, input: input}}, nil, nil
 	}
 	place := func(d driver, i stack.Integration, user string) (func(context.Context, []string, []byte) error, error) {

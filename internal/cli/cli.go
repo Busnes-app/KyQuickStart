@@ -404,6 +404,9 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 			return nil, fmt.Errorf("integration %s: apply configures only an installed KyIdentity (from its identity settings) and the installed Ky apps that sign in through it", i.Product)
 		}
 	}
+	if err := routedNeedsSetup(st); err != nil {
+		return nil, err
+	}
 	if err := s.composeClients(st); err != nil {
 		return nil, err
 	}
