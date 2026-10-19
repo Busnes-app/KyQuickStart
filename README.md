@@ -7,9 +7,9 @@ handover of administrator and everyday logins.
 **Status:** pre-release. The production catalog holds Nginx Proxy Manager as the edge on a
 Kubernetes target ([docs/edge.md](docs/edge.md)), KyIdentity behind it
 ([docs/guided-setup.md](docs/guided-setup.md#catalog-kyidentity-on-kubernetes)), and KyRecovery,
-kyPulse, KyNotes and KyCalendar signing in through it ([docs/guided-setup.md](docs/guided-setup.md#catalog-kyrecovery-on-kubernetes),
+kyPulse, KyNotes, KyCalendar and KyMessages' console (no chat yet) signing in through it ([docs/guided-setup.md](docs/guided-setup.md#catalog-kyrecovery-on-kubernetes),
 [kyPulse](docs/guided-setup.md#catalog-kypulse-on-kubernetes), [KyNotes](docs/guided-setup.md#catalog-kynotes-on-kubernetes),
-[KyCalendar](docs/guided-setup.md#catalog-kycalendar-on-kubernetes)), with KyDrive and KyDNS on a
+[KyCalendar](docs/guided-setup.md#catalog-kycalendar-on-kubernetes), [KyMessages](docs/guided-setup.md#catalog-kymessages-on-kubernetes)), with KyDrive and KyDNS on a
 Docker host routed through that edge ([KyDrive](docs/guided-setup.md#catalog-kydrive-on-docker),
 [KyDNS](docs/guided-setup.md#catalog-kydns-on-docker));
 otherwise only a disposable demo app installs.

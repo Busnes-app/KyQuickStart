@@ -128,11 +128,26 @@ func checkCatalogCalendar(t *testing.T, ctx context.Context, cs kubernetes.Inter
 	return secrets
 }
 
-// calendarSignOn signs the owner's accounts in to KyCalendar through KyIdentity behind the
-// edge, as a browser would, and proves KyCalendar's admin separation: the admin reaches the
-// console but no calendars, the everyday account its calendars but not the console. Test-only
-// plumbing: testClusterDNS ran and KyCalendar's pod trusts the edge's throwaway certificate.
+// calendarSignOn signs the owner's accounts in to KyCalendar and proves its admin separation:
+// the admin reaches the console but no calendars, the everyday account its calendars but not
+// the console.
 func calendarSignOn(t *testing.T, ctx context.Context, c *kube.Client, certPEM []byte, nodeIP string) {
+	t.Helper()
+	ownerSignOn(t, ctx, c, certPEM, nodeIP, catalogCalendarURLHost, "kycalendar", "/api/sso/kysignon", func(username string, admin bool, get func(string) (*http.Response, []byte)) {
+		users, _ := get("/api/admin/users")
+		calendars, b := get("/api/calendars")
+		if admin && (users.StatusCode != 200 || calendars.StatusCode != 403) || !admin && (users.StatusCode != 403 || calendars.StatusCode != 200) {
+			t.Fatalf("%s: admin/users %d, calendars %d %s", username, users.StatusCode, calendars.StatusCode, b)
+		}
+		t.Logf("%s signed in to KyCalendar through KyIdentity: admin/users %d, calendars %d", username, users.StatusCode, calendars.StatusCode)
+	})
+}
+
+// ownerSignOn signs the owner's admin and everyday accounts in to the app at urlHost through
+// KyIdentity behind the edge, as a browser would: client_id, redirect_uri under sso, S256 PKCE,
+// nonce and state. prove then checks each session with get, a GET on the app. Test-only
+// plumbing: testClusterDNS ran and the app's pod trusts the edge's throwaway certificate.
+func ownerSignOn(t *testing.T, ctx context.Context, c *kube.Client, certPEM []byte, nodeIP, urlHost, clientID, sso string, prove func(username string, admin bool, get func(path string) (*http.Response, []byte))) {
 	t.Helper()
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(certPEM) {
@@ -140,13 +155,13 @@ func calendarSignOn(t *testing.T, ctx context.Context, c *kube.Client, certPEM [
 	}
 	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}
 	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-		if address != catalogIdentityURLHost && address != catalogCalendarURLHost {
+		if address != catalogIdentityURLHost && address != urlHost {
 			return nil, errors.New("unselected destination " + address)
 		}
 		return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, network, net.JoinHostPort(nodeIP, "30443"))
 	}
 	t.Cleanup(transport.CloseIdleConnections)
-	identity, calendar := "https://"+catalogIdentityURLHost, "https://"+catalogCalendarURLHost
+	identity, app := "https://"+catalogIdentityURLHost, "https://"+urlHost
 	setupDir := "/data/installer/" + identityFixturePreparation().SetupID
 	for _, account := range []struct {
 		username, passwordFile string
@@ -195,28 +210,23 @@ func calendarSignOn(t *testing.T, ctx context.Context, c *kube.Client, certPEM [
 			t.Fatalf("%s password sign-in: %d", account.username, r.StatusCode)
 		}
 
-		r, b = send("GET", calendar+"/api/sso/kysignon/login", nil, "")
+		r, b = send("GET", app+sso+"/login", nil, "")
 		authorize, err := r.Location()
 		if err != nil || r.StatusCode != 302 || authorize.Host != catalogIdentityURLHost {
-			t.Fatalf("KyCalendar sign-in start: %d %s", r.StatusCode, b)
+			t.Fatalf("%s sign-in start: %d %s", clientID, r.StatusCode, b)
 		}
 		q := authorize.Query()
-		if q.Get("client_id") != "kycalendar" || q.Get("redirect_uri") != calendar+"/api/sso/kysignon/callback" || q.Get("code_challenge_method") != "S256" || q.Get("code_challenge") == "" || q.Get("nonce") == "" || q.Get("state") == "" {
+		if q.Get("client_id") != clientID || q.Get("redirect_uri") != app+sso+"/callback" || q.Get("code_challenge_method") != "S256" || q.Get("code_challenge") == "" || q.Get("nonce") == "" || q.Get("state") == "" {
 			t.Fatalf("authorization request: %s", authorize)
 		}
 		r, _ = send("GET", authorize.String(), nil, "")
 		callback, _ := r.Location()
-		if r.StatusCode != 302 || callback == nil || "https://"+callback.Host != calendar || callback.Path != "/api/sso/kysignon/callback" || callback.Query().Get("code") == "" || callback.Query().Get("state") != q.Get("state") {
-			t.Fatalf("KyIdentity authorization of %s for KyCalendar: %d %v", account.username, r.StatusCode, callback)
+		if r.StatusCode != 302 || callback == nil || "https://"+callback.Host != app || callback.Path != sso+"/callback" || callback.Query().Get("code") == "" || callback.Query().Get("state") != q.Get("state") {
+			t.Fatalf("KyIdentity authorization of %s for %s: %d %v", account.username, clientID, r.StatusCode, callback)
 		}
 		if r, b = send("GET", callback.String(), nil, ""); r.StatusCode != 302 || r.Header.Get("Location") != "/" {
-			t.Fatalf("KyCalendar callback for %s: %d %s", account.username, r.StatusCode, b)
+			t.Fatalf("%s callback for %s: %d %s", clientID, account.username, r.StatusCode, b)
 		}
-		admin, _ := send("GET", calendar+"/api/admin/users", nil, "")
-		calendars, b := send("GET", calendar+"/api/calendars", nil, "")
-		if account.admin && (admin.StatusCode != 200 || calendars.StatusCode != 403) || !account.admin && (admin.StatusCode != 403 || calendars.StatusCode != 200) {
-			t.Fatalf("%s: admin/users %d, calendars %d %s", account.username, admin.StatusCode, calendars.StatusCode, b)
-		}
-		t.Logf("%s signed in to KyCalendar through KyIdentity: admin/users %d, calendars %d", account.username, admin.StatusCode, calendars.StatusCode)
+		prove(account.username, account.admin, func(path string) (*http.Response, []byte) { return send("GET", app+path, nil, "") })
 	}
 }

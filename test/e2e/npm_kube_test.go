@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -56,7 +57,7 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	}
 	cs := kubernetes.NewForConfigOrDie(cfg)
 	catalogDir := filepath.Join(work, "catalog")
-	for _, src := range []string{"../../internal/catalog/testdata/apps/hello", "../../internal/catalog/apps/npm", "../../internal/catalog/apps/kyidentity", "../../internal/catalog/apps/kyrecovery", "../../internal/catalog/apps/kypulse", "../../internal/catalog/apps/kynotes", "../../internal/catalog/apps/kycalendar"} {
+	for _, src := range []string{"../../internal/catalog/testdata/apps/hello", "../../internal/catalog/apps/npm", "../../internal/catalog/apps/kyidentity", "../../internal/catalog/apps/kyrecovery", "../../internal/catalog/apps/kypulse", "../../internal/catalog/apps/kynotes", "../../internal/catalog/apps/kycalendar", "../../internal/catalog/apps/kymessage"} {
 		if err := os.CopyFS(filepath.Join(catalogDir, filepath.Base(src)), os.DirFS(src)); err != nil {
 			t.Fatal(err)
 		}
@@ -415,6 +416,25 @@ func TestKubernetesNPMEdge(t *testing.T) {
 		}
 	}
 
+	// KyMessages' console joins the same way, after KyCalendar; chat (Matrix) is not installed.
+	loadCatalogApp(t, name, cs, "kymessage")
+	st, _ = stack.Load(plan)
+	addCatalogMessage(st, certID)
+	b, _ = yaml.Marshal(st)
+	os.WriteFile(plan, b, 0o600)
+	out = apply("message")
+	messageSecrets := checkCatalogMessage(t, ctx, cs, connected, node, kc, out, code)
+	// Test-only: KyMessages' discovery and token exchange at sign-in go through the edge and
+	// its throwaway certificate.
+	trustTestCA(t, ctx, cs, connected, "kymessage", certPEM)
+	messageSignOn(t, ctx, connected, certPEM, nodeIP)
+	out = apply("message rerun")
+	for _, id := range []string{"kyidentity.amend.kymessage", "kymessage.deploy", "kymessage.health", "kymessage.setup", messageRouteStep} {
+		if status(out, id) != "skipped" {
+			t.Errorf("rerun: %s = %q", id, status(out, id))
+		}
+	}
+
 	// KyDNS joins on the Docker target by setup amendment too, its admin UI behind the edge and
 	// DNS on the target's forward address. Its edge's egress_address is the kind node's address,
 	// where pods leave kind. kydns.gate proves this host, not the edge, gets 403 with a forged
@@ -484,7 +504,7 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	}
 
 	// No credential reached apply output or workstation state.
-	secretsSeen := append(append(append(append(append(append([]string{password, token, stored()}, recoverySecrets...), pulseSecrets...), driveSecrets...), notesSecrets...), calendarSecrets...), dnsSecrets...)
+	secretsSeen := slices.Concat([]string{password, token, stored()}, recoverySecrets, pulseSecrets, driveSecrets, notesSecrets, calendarSecrets, messageSecrets, dnsSecrets)
 	for _, o := range outputs {
 		for _, s := range secretsSeen {
 			if strings.Contains(o, s) {

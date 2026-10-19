@@ -769,6 +769,101 @@ Limits:
   web/API session only); KyRecovery pairing, PostgreSQL mode, MCP access and ICS subscriptions
   are not configured.
 
+## Catalog KyMessages on Kubernetes
+
+The catalog's `kymessage` app installs the KyMessages 0.4.2 operator console from its attested
+release image (`ghcr.io/busnes-app/kymessage-server:0.4.2@sha256:42e2…4da5`, built by
+`Busnes-app/KyMessage-Server` `release-image.yml@refs/tags/v0.4.2` from commit `1349586d`). It
+depends on the catalog `kyidentity` and needs one edge route. Kubernetes only: a plan placing it
+on a Docker host is refused by `plan`, `review` and `apply` before any connection.
+
+**Chat is not installed.** The Matrix stack (Postgres, Synapse, MAS, Element, LiveKit,
+`matrix-init`), calls, federation and TURN are not part of this app, and apply sets no
+`KY_MATRIX_*`, so the console cannot start in Matrix mode. Members see KyMessages' "chat is not
+available" page. Why: KyMessages 0.4.2's own installer contract lists Matrix stack deployment,
+MAS client composition, per-part domains and media as open release gates; the stack needs five
+or six public origins where the edge gives one route per app; the catalog runs one container per
+app; MAS needs KyIdentity users with verified email, which the kind test cannot produce; and
+`matrix-init` is a two-pass ceremony. No media (7881/TCP, 7882/UDP), TURN or federation (8448)
+port is opened: only 8080, through the edge route.
+
+```yaml
+apps:
+  - name: kymessage
+    target: k80
+edges:
+  - target: k80
+    routes:
+      - app: kymessage
+        hostname: messages.k80.example.com
+        forward_host: app.kyq-kymessage.svc.cluster.local
+        forward_port: 8080
+        certificate: k80
+integrations:
+  - product: kymessage
+    target: k80
+    bundle: /app/data/installer/<its own setup UUID>/setup.json
+    identity_client: kymessage
+```
+
+Its client is derived from the catalog: `https://<host>/api/sso/kyidentity/callback`,
+administrator role `kymessage.admin` for the owner's admin account (the only role its directory
+reads), everyday role `kymessage.user`, and KyIdentity's signed directory webhook at
+`https://<host>/api/sso/kyidentity/sync`. Its setup refuses SCIM, so there is no
+`kyidentity.scim.kymessage` step and `KY_SCIM_ENABLED` is `false` from the first start (otherwise
+SCIM would answer on a random token until setup ran). Installed with KyIdentity, the client is in
+KyIdentity's first setup; installed later, it joins through a setup amendment
+(`kyidentity.amend.kymessage`, KyIdentity 0.4.3 or later).
+
+Owner usernames: as for KyCalendar, its setup accepts only `^[A-Za-z0-9_.-]{3,64}$` and never
+adopts an existing account such as its own `admin`, so `plan`, `review` and `apply` refuse,
+before connecting, a plan installing KyMessages whose KyIdentity admin or everyday username
+breaks that rule or is `admin` in any case.
+
+What apply does:
+
+- `kymessage.deploy` and `kymessage.health`: a restricted pod as the image's user (uid 10001),
+  read-only root, `/app/data` and `/app/backups` on private claim subdirectories, and a 21-minute
+  termination grace (5 s HTTP drain plus up to 20 minutes for a running backup). Readiness is
+  `GET /api/installer/network` (it has no unauthenticated health endpoint). SSO is on, automatic
+  provisioning and SCIM off, `KY_APP_URL` comes from the route, and `KY_TRUSTED_PROXIES` is
+  unset, so forwarded headers from the edge are ignored.
+- `kymessage.setup`, after its health and before the edges, exactly as KyCalendar's: the client
+  export in memory; the everyday account's subject from KyIdentity's read-only `--check` of its
+  first setup; client secret, directory secret and bundle placed as 0600 files, never replaced;
+  `apply-setup`, a graceful restart, its live `--check`, and a re-export. A rerun skips.
+
+KyMessages admits only those two identities: with automatic provisioning off, its callback
+refuses any other KyIdentity account ("User account not provisioned").
+
+Before signing in, as for KyCalendar: cluster DNS must resolve the route hostnames, the edge
+must admit the pod network, and the pod must trust the edge's certificate.
+
+Handover: apply prints KyMessages' URL, the admin account (its console only), the everyday
+account, the line that chat (Matrix) is not installed, and the outstanding human steps:
+
+- The local break-glass `admin`: on an empty database KyMessages generates its password and
+  logs it once, to the first container's log (`kubectl … -n kyq-kymessage logs deployment/app
+  --previous`, gone once the pod is replaced); it must be changed at first sign-in. Replace it
+  at once with
+  `kubectl --kubeconfig <target kubeconfig> -n kyq-kymessage exec -it deployment/app -- /app/kymessages init-admin`,
+  which reads the new password (12 characters or more) from stdin, never argv. Apply never
+  reads it and never sets `KY_ADMIN_PASSWORD`. Until it is replaced, anyone with `pods/log` in
+  `kyq-kymessage` can read it.
+- Pairing with KyRecovery: on the Backup & recovery screen, a one-time code from KyRecovery's
+  administrator. KyMessages makes no backups until then.
+
+Limits:
+
+- Sessions end at every restart: `KY_SESSION_SECRET` is env-only, so the catalog leaves it unset
+  (and `KY_ENV` at its default, since production requires it) rather than put it in the
+  Deployment.
+- Not yet, or unproven: chat, calls, federation and TURN (above); Docker placement; everyday
+  accounts beyond the owner's; sign-out is local (no back-channel logout); a directory event
+  (offboarding) reaching KyMessages is not proven live; the dedicated admin's lack of chat access
+  matters only with Matrix and is unproven; KyRecovery pairing, PostgreSQL mode, agent accounts,
+  device pairing and branding are not configured.
+
 ## Catalog KyDrive on Docker
 
 The catalog's `kydrive` app installs KyDrive 0.4.2 from its attested release image on a Docker
