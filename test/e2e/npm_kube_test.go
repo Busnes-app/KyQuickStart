@@ -426,7 +426,6 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	st.Edges[0].EgressAddress = nodeIP
 	b, _ = yaml.Marshal(st)
 	os.WriteFile(plan, b, 0o600)
-	dnsPlan, _ := os.ReadFile(plan)
 	out = apply("dns")
 	dnsSecrets := checkCatalogDNS(t, out, drive, dnsPort)
 	checkDNSGate(t, ctx, drive, dnsPort)
@@ -455,7 +454,10 @@ func TestKubernetesNPMEdge(t *testing.T) {
 		if err == nil || status(refused.String(), "kydns.gate") != "failed" || !strings.Contains(err.Error(), "egress_address "+gw+" on edge k8s is not the edge's alone") || status(refused.String(), dnsRouteStep) != "" {
 			t.Fatalf("gateway egress_address: %v\n%s", err, refused.String())
 		}
-		os.WriteFile(plan, dnsPlan, 0o600)
+		st, _ = stack.Load(plan)
+		st.Edges[0].EgressAddress = nodeIP
+		b, _ = yaml.Marshal(st)
+		os.WriteFile(plan, b, 0o600)
 		if out := apply("dns egress_address restored"); status(out, "kydns.deploy") != "ok" || status(out, "kydns.gate") != "ok" {
 			t.Fatal("restored egress_address did not redeploy and pass the gate")
 		}
