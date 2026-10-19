@@ -48,6 +48,7 @@ func kindCluster(t *testing.T, work string) (string, string) {
 	name := "kyq-e2e-" + hex.EncodeToString(id)
 	// Kind does not expose container resource flags. This fixture-only provider
 	// wrapper caps every node it creates before any control-plane process starts.
+	// Every pod's threads count against the node's PIDs: 512 ran out with seven apps.
 	dockerBinary, err := exec.LookPath("docker")
 	if err != nil {
 		t.Fatal(err)
@@ -56,7 +57,7 @@ func kindCluster(t *testing.T, work string) (string, string) {
 	if err := os.Mkdir(commands, 0700); err != nil {
 		t.Fatal(err)
 	}
-	wrapper := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = run ]; then\n  shift\n  exec %s run --memory 2g --memory-swap 2g --cpus 2 --pids-limit 512 \"$@\"\nfi\nexec %s \"$@\"\n", remote.Quote(dockerBinary), remote.Quote(dockerBinary))
+	wrapper := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = run ]; then\n  shift\n  exec %s run --memory 2g --memory-swap 2g --cpus 2 --pids-limit 1024 \"$@\"\nfi\nexec %s \"$@\"\n", remote.Quote(dockerBinary), remote.Quote(dockerBinary))
 	if err := os.WriteFile(filepath.Join(commands, "docker"), []byte(wrapper), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +66,7 @@ func kindCluster(t *testing.T, work string) (string, string) {
 		exec.Command("go", "run", "sigs.k8s.io/kind@v0.33.0", "delete", "cluster", "--name", name).Run()
 	})
 	kind(t, "create", "cluster", "--name", name, "--image", kindNode, "--kubeconfig", kc, "--wait", "180s")
-	if limits := docker(t, "inspect", name+"-control-plane", "--format", "{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{.HostConfig.NanoCpus}} {{.HostConfig.PidsLimit}}"); limits != "2147483648 2147483648 2000000000 512" {
+	if limits := docker(t, "inspect", name+"-control-plane", "--format", "{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{.HostConfig.NanoCpus}} {{.HostConfig.PidsLimit}}"); limits != "2147483648 2147483648 2000000000 1024" {
 		t.Fatal("kind node resource limits not applied", limits)
 	}
 	return name, kc

@@ -367,8 +367,11 @@ func TestKubernetesNPMEdge(t *testing.T) {
 			t.Fatalf("%s = %q", id, status(out, id))
 		}
 	}
+	// code is the HTTP status the LAN client gets through the edge; curl fails (000) when
+	// NPM serves no host for the name.
 	code := func(host, path string) string {
-		return docker(t, "exec", client, "curl", "-sk", "-o", "/dev/null", "-w", "%{http_code}", "-m", "10", "--resolve", host+":30443:"+nodeIP, "https://"+host+":30443"+path)
+		b, _ := exec.Command("docker", "exec", client, "curl", "-sk", "-o", "/dev/null", "-w", "%{http_code}", "-m", "10", "--resolve", host+":30443:"+nodeIP, "https://"+host+":30443"+path).Output()
+		return strings.TrimSpace(string(b))
 	}
 	if err != nil {
 		// Test-only: KyNotes' issuer probe refuses the edge's throwaway certificate. Apply
