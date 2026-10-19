@@ -9,7 +9,7 @@ import (
 )
 
 // renderedHashes are the hashes of every Kubernetes catalog app's objects as origin/master
-// (eca04d6) rendered them: adding a field for one app must not redeploy the others.
+// before KyYard rendered them: adding a field for one app must not redeploy the others.
 var renderedHashes = map[string]string{
 	"kycalendar": "6afd512799d26b78d2431b482f8e850fa8394d875b14ab77529e32b47b460627",
 	"kyidentity": "c8fa44227b822b930df575ea177388ba681c8b04da2005717807cabcd559260f",

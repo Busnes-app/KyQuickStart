@@ -56,7 +56,7 @@ func checkRunnerImage(deploys bool, o Options) error {
 	case !deploys || o.RunnerID != "":
 		return nil
 	case o.RunnerImage == "":
-		return fmt.Errorf("KyYard's suite runner has no attested release image in this build, so it cannot install KyYard; remove kyyard from the plan or use a kyquickstart release that pins one (docs/guided-setup.md, Catalog KyYard on Kubernetes)")
+		return fmt.Errorf("KyYard's suite runner has no attested release image in this build, so it cannot install KyYard, and no kyquickstart release that pins one is published yet; remove kyyard from the plan (docs/guided-setup.md, Catalog KyYard on Kubernetes)")
 	case !catalog.Pinned(o.RunnerImage):
 		return fmt.Errorf("suite runner image %q is not pinned by digest", o.RunnerImage)
 	}
@@ -93,7 +93,8 @@ KyYard at https://%[1]s/: sign in through KyIdentity as %[2]s (administration on
        kyquickstart handoff --state %[4]s --kyyard-target %[5]s --runner-pod %[6]s
      After that, workstation apply is refused until kyquickstart handoff --revoke. To upgrade
      KyYard: handoff --revoke, apply, then handoff again. KyYard's Suite page shows the runner;
-     starting an operation there needs an account with a local password.
+     only the local "admin" account from step 1 can start operations there, and %[2]s can
+     only view it.
   3. On its backup screen, as %[2]s, pair it with KyRecovery using a one-time code from
      KyRecovery's administrator, or pin the suite public key by hand. It makes no backups
      until then.

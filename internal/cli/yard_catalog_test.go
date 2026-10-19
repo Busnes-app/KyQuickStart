@@ -83,6 +83,8 @@ func TestKyYardClientFromCatalog(t *testing.T) {
 		"workstation apply is refused until kyquickstart handoff --revoke",
 		"handoff --revoke, apply, then handoff again",
 		"KyYard's Suite page shows the runner",
+		`only the local "admin" account from step 1 can start operations there, and owner-admin can
+     only view it.`,
 		"pair it with KyRecovery",
 	} {
 		if !strings.Contains(s.handover, want) {
@@ -485,7 +487,7 @@ func TestKyYardPlanRefusals(t *testing.T) {
 }
 
 // AC7: KyCalendar's and KyDrive's bundles and step inputs are byte for byte those of
-// origin/master (eca04d6, and 72a0cd4); kyPulse's and KyRecovery's are TestBundlesWithoutEveryday's.
+// origin/master before KyYard; kyPulse's and KyRecovery's are TestBundlesWithoutEveryday's.
 func TestBundlesUnchangedByKyYard(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t, "../catalog/testdata/apps")
