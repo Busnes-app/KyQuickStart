@@ -131,10 +131,31 @@ func refused(t *testing.T, err error, want string) {
 	}
 }
 
+// refuseUntouched runs restore kydrive --snapshot id --yes and wants restore_refused naming
+// want, KyDrive's directory unchanged and no restic container, except, when list is set, the
+// one read-only `restic snapshots` restore runs before it checks the app.
+func refuseUntouched(t *testing.T, ctx context.Context, state, catalogDir string, trust []string, d driveTarget, id, want string, list bool) []string {
+	t.Helper()
+	listing := dirDigest(t, d.name, d.root+"/kydrive")
+	w := watchRestic()
+	out, err := kyq(t, ctx, state, catalogDir, trust, "", "restore", "kydrive", "--snapshot", id, "--yes")
+	inspect, created := w.end(t)
+	refused(t, err, want)
+	switch {
+	case !list && created != 0:
+		t.Fatalf("the refused restore ran %d restic containers", created)
+	case list && (created != 1 || len(inspect) != 1 || !strings.Contains(inspect[0], `"snapshots","--json"`)):
+		t.Fatalf("the refused restore ran %d restic containers, want only restic snapshots: %v", created, inspect)
+	}
+	if after := dirDigest(t, d.name, d.root+"/kydrive"); after != listing {
+		t.Fatalf("the refused restore changed KyDrive's directory:\n%s\nwas:\n%s", after, listing)
+	}
+	return []string{out, err.Error()}
+}
+
 // testDriveBackupGate gives the nas target a destination, asserts apply's backup lines for
-// KyDrive, backs it up cold, and proves its restore is refused while the installed KyIdentity
-// is 0.4.3, before any restic call and with KyDrive's directory untouched. It returns the
-// outputs and the secrets for the leak check.
+// KyDrive, backs it up cold, and proves a restore of the running KyDrive is refused with its
+// directory untouched. It returns the outputs and the secrets for the leak check.
 func testDriveBackupGate(t *testing.T, ctx context.Context, work, state, catalogDir, plan string, d driveTarget, trust []string, apply func(string) string) ([]string, []string) {
 	t.Helper()
 	st, err := stack.Load(plan)
@@ -155,17 +176,6 @@ func testDriveBackupGate(t *testing.T, ctx context.Context, work, state, catalog
 	if !strings.Contains(backupOut, "This run created kydrive's repository password") {
 		t.Fatal("the first backup did not print the password command")
 	}
-
-	listing := dirDigest(t, d.name, d.root+"/kydrive")
-	w := watchRestic()
-	restoreOut, err := kyq(t, ctx, state, catalogDir, trust, "", "restore", "kydrive", "--snapshot", id[:8], "--yes")
-	_, created := w.end(t)
-	refused(t, err, "restore needs KyIdentity v0.4.4 or later, which replays removals on resync; installed: 0.4.3. Upgrade KyIdentity first")
-	if created != 0 {
-		t.Fatalf("the refused restore ran %d restic containers", created)
-	}
-	if after := dirDigest(t, d.name, d.root+"/kydrive"); after != listing {
-		t.Fatalf("the refused restore changed KyDrive's directory:\n%s\nwas:\n%s", after, listing)
-	}
-	return []string{out, backupOut, restoreOut, err.Error()}, []string{secrets["restic_password"], secrets["the rest-server password"]}
+	refusal := refuseUntouched(t, ctx, state, catalogDir, trust, d, id[:8], "kydrive is running on nas", true)
+	return append([]string{out, backupOut}, refusal...), []string{secrets["restic_password"], secrets["the rest-server password"]}
 }

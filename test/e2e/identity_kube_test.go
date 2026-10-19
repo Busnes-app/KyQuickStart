@@ -118,7 +118,12 @@ func loadCatalogApp(t *testing.T, cluster string, cs kubernetes.Interface, app s
 	if err != nil {
 		t.Fatal(err)
 	}
-	ref := cat[app].Images[cat[app].Kubernetes.Image]
+	kindLoad(t, cluster, cat[app].Images[cat[app].Kubernetes.Image])
+}
+
+// kindLoad pulls an image by digest and loads it into kind.
+func kindLoad(t *testing.T, cluster, ref string) {
+	t.Helper()
 	docker(t, "pull", "-q", ref)
 	// kind load of a digest reference leaves a broken image record; load the tag. The pod
 	// still names the digest, which containerd checks.

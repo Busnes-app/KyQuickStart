@@ -24,23 +24,21 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kyquickstart/internal/kube"
+	"github.com/Busnes-app/kyquickstart/internal/managed"
 	"github.com/Busnes-app/kyquickstart/internal/remote"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-// TestKubernetesRestore is the KyDrive restore drill against a KyIdentity that replays
-// removals on resync (KyIdentity-server PR #119, v0.4.4 once released): NPM's lan edge and
-// that KyIdentity in kind, KyDrive on a Docker target with an append-only rest-server. It
-// backs KyDrive up, destroys its directory and restores it (AC5), proves the refusals and
+// TestKubernetesRestore is the KyDrive restore drill: NPM's lan edge and KyIdentity in kind,
+// KyDrive on a Docker target with an append-only rest-server. Restore is refused while
+// KyIdentity is 0.4.3 (AC5a); upgraded to 0.4.4, whose resync replays removals, it backs
+// KyDrive up, destroys its directory and restores it (AC5), proves the refusals and
 // --replace (AC6), and that a person removed after the snapshot is not readmitted (AC15).
 func TestKubernetesRestore(t *testing.T) {
-	binary := os.Getenv("KYQ_TEST_IDENTITY_BINARY")
-	if binary == "" {
-		t.Skip("KYQ_TEST_IDENTITY_BINARY is unset: the restore drill needs a KyIdentity build that replays removals on resync (KyIdentity-server PR #119) until v0.4.4 is released")
-	}
 	ctx := context.Background()
 	work := t.TempDir()
 	state := filepath.Join(work, "state")
@@ -56,7 +54,8 @@ func TestKubernetesRestore(t *testing.T) {
 	if err := os.CopyFS(filepath.Join(catalogDir, "npm"), os.DirFS("../../internal/catalog/apps/npm")); err != nil {
 		t.Fatal(err)
 	}
-	replayIdentity(t, name, node, binary, catalogDir)
+	// KyIdentity starts at the attested 0.4.3 release, whose resync does not replay removals.
+	identity043(t, name, catalogDir)
 	logAppOnFailure(t, cs, "kyidentity")
 	plan := filepath.Join(state, "stack.yaml")
 	os.WriteFile(plan, []byte("version: 1\ntargets:\n  - name: k8s\n    kubeconfig: "+kc+"\n    storage_class: standard\napps:\n  - name: npm\n    target: k8s\n"), 0o600)
@@ -139,6 +138,11 @@ func TestKubernetesRestore(t *testing.T) {
 	// data, backups and both capsule secrets.
 	id, backupOut := backupDrive(t, ctx, state, catalogDir, trust, b, secrets)
 	outputs = append(outputs, backupOut)
+
+	// AC5a: on KyIdentity 0.4.3 restore is refused before any restic call, nothing changed.
+	outputs = append(outputs, refuseUntouched(t, ctx, state, catalogDir, trust, drive, id[:8], "restore needs KyIdentity v0.4.4 or later, which replays removals on resync; installed: 0.4.3. Upgrade KyIdentity first", false)...)
+	// The catalog's KyIdentity 0.4.4 replays removals; it needs only an acknowledgement.
+	upgradeIdentity(t, ctx, cs, connected, name, state, catalogDir, trust, certPEM, &outputs)
 	snaps := snapshots(t, b.dest, "kydrive", b.pw)
 	if len(snaps) != 1 || snaps[0].ID != id || strings.Join(snaps[0].Paths, " ") != "/kyq/secrets/scim_token /kyq/secrets/session_secret /kyq/volumes/backups /kyq/volumes/data" {
 		t.Fatalf("restic snapshots: %+v", snaps)
@@ -323,6 +327,61 @@ func TestKubernetesRestore(t *testing.T) {
 
 	secrets["restic_password"] = password
 	noSecrets(t, state, outputs, secrets)
+}
+
+// identity043 copies the catalog's KyIdentity into catalogDir pinned to the attested 0.4.3
+// release (v0.4.3^{commit} 65dcae6), and loads that image into kind. Both edits fail on drift.
+func identity043(t *testing.T, cluster, catalogDir string) {
+	t.Helper()
+	dir := filepath.Join(catalogDir, "kyidentity")
+	if err := os.CopyFS(dir, os.DirFS("../../internal/catalog/apps/kyidentity")); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := os.ReadFile(filepath.Join(dir, "manifest.yaml"))
+	for _, r := range [][2]string{
+		{"\nversion: 0.4.4\n", "\nversion: 0.4.3\n"},
+		{"  kyidentity: ghcr.io/busnes-app/kyidentity-server:0.4.4@sha256:f866a7513988a7b5919363ee76182baa2727ee57407404104049f93c29253c5a\n", "  kyidentity: " + identity043Image + "\n"},
+	} {
+		if bytes.Count(m, []byte(r[0])) != 1 {
+			t.Fatalf("the catalog's KyIdentity manifest changed; update the 0.4.3 copy for %q", r[0])
+		}
+		m = bytes.Replace(m, []byte(r[0]), []byte(r[1]), 1)
+	}
+	os.WriteFile(filepath.Join(dir, "manifest.yaml"), m, 0o600)
+	kindLoad(t, cluster, identity043Image)
+}
+
+const identity043Image = "ghcr.io/busnes-app/kyidentity-server:0.4.3@sha256:dbf81b355d6307f23b3501c40ad368b06f9ea2fdfdd6e1d09f40d5de87bbc419"
+
+// upgradeIdentity puts the catalog's own KyIdentity manifest back and upgrades to it with
+// kyquickstart upgrade; the test CA trust survives or is restored.
+func upgradeIdentity(t *testing.T, ctx context.Context, cs kubernetes.Interface, c *kube.Client, cluster, state, catalogDir string, trust []string, certPEM []byte, outputs *[]string) {
+	t.Helper()
+	real, err := os.ReadFile("../../internal/catalog/apps/kyidentity/manifest.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(catalogDir, "kyidentity", "manifest.yaml"), real, 0o600)
+	loadCatalogApp(t, cluster, cs, "kyidentity")
+	start := time.Now()
+	out, err := kyq(t, ctx, state, catalogDir, trust, "", "upgrade", "kyidentity", "--acknowledge-no-backup")
+	*outputs = append(*outputs, out)
+	if err != nil {
+		t.Fatalf("upgrade kyidentity: %v", err)
+	}
+	ns, err := cs.CoreV1().Namespaces().Get(ctx, "kyq-kyidentity", metav1.GetOptions{})
+	if err != nil || ns.Labels[managed.VersionLabel] != "0.4.4" {
+		t.Fatalf("KyIdentity's deployment record after the upgrade: %v %v", ns.Labels, err)
+	}
+	t.Logf("kyquickstart upgrade kyidentity 0.4.3 -> 0.4.4 took %s", time.Since(start).Round(time.Second))
+	dep, err := cs.AppsV1().Deployments("kyq-kyidentity").Get(ctx, "app", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(dep.Spec.Template.Spec.Containers[0].Env, func(e corev1.EnvVar) bool { return e.Name == "SSL_CERT_FILE" }) {
+		t.Log("the upgrade dropped the test-only CA trust; restoring it")
+		trustTestCA(t, ctx, cs, c, "kyidentity", certPEM)
+	}
 }
 
 func randomPassword() string {
