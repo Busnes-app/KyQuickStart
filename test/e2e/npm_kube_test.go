@@ -435,7 +435,7 @@ func TestKubernetesNPMEdge(t *testing.T) {
 		return out.String(), err
 	}
 	out, err = try("dns")
-	dnsSecrets := checkCatalogDNS(t, out, drive, dnsPort)
+	dnsSecrets := checkCatalogDNS(t, out, drive, dnsPort, err == nil)
 	checkDNSGate(t, ctx, drive, dnsPort)
 	_, newClient := edgeClient(t, certPEM, nodeIP)
 	trusted := err == nil
