@@ -24,6 +24,22 @@ func (c *Client) Exec(ctx context.Context, namespace, pod, container string, arg
 	return c.exec(ctx, namespace, pod, container, args, nil)
 }
 
+// ExecReport is Exec for a command whose stdout reports its result even when it exits
+// non-zero; that output is returned with the failure, bounded.
+func (c *Client) ExecReport(ctx context.Context, namespace, pod, container string, args []string) ([]byte, error) {
+	if c.execCommand != nil {
+		return c.execCommand(ctx, namespace, pod, container, args)
+	}
+	out := &boundedExecOutput{limit: 128 << 10}
+	if err := c.stream(ctx, namespace, pod, container, args, remotecommand.StreamOptions{Stdout: out, Stderr: io.Discard}); err != nil {
+		if errors.Is(err, errNotConnected) {
+			return nil, err
+		}
+		return out.Bytes(), errors.New("Kubernetes product command failed; inspect product logs locally")
+	}
+	return out.Bytes(), nil
+}
+
 // ExecInput transfers bounded product setup input directly to container stdin.
 // It never writes an input file on the workstation or includes the body in argv.
 func (c *Client) ExecInput(ctx context.Context, namespace, pod, container string, args []string, input []byte) ([]byte, error) {

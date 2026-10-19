@@ -25,6 +25,8 @@ type App struct {
 	ReleaseSet    string
 	Redact        *engine.Redactor
 	ForceRecreate bool // connector credential replacement requires a fresh process
+	// Only, when set, is the one service deploy starts: restore starts its services in order.
+	Only string
 }
 
 func (a App) dir() string { return path.Join(a.Root, a.Name) }
@@ -56,6 +58,13 @@ func Steps(a App) []engine.Step {
 		steps = append([]engine.Step{secretsStep{a}}, steps...)
 	}
 	return steps
+}
+
+// RestoreSteps are the app's secrets and a deploy that starts only service first.
+func RestoreSteps(a App, first string) []engine.Step {
+	a.Only = first
+	steps := Steps(a)
+	return steps[:len(steps)-1]
 }
 
 // compose runs docker compose for this app's project from its directory. A Compose file

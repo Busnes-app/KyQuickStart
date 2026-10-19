@@ -568,6 +568,11 @@ func check(list []string, ok func(string) bool) error {
 	return nil
 }
 
+// VersionAtLeast reports whether v is a MAJOR.MINOR.PATCH version no older than min.
+func VersionAtLeast(v, min string) bool {
+	return versionRE.MatchString(v) && compareVersions(v, min) >= 0
+}
+
 // compareVersions orders two strings that match versionRE.
 func compareVersions(a, b string) int {
 	parts := func(v string) []int {
