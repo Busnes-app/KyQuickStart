@@ -1,0 +1,52 @@
+# From KyPost v0.4.2's docker-compose.yml, without its root entrypoint: the same bootstrap,
+# migration and supervisor run as kypost (uid 1000) with no capabilities. The named volumes
+# start from the image's kypost-owned 0700 directories, so nothing needs a chown.
+services:
+  app:
+    image: {{ .Images.kypost }}
+    platform: linux/amd64
+    user: kypost
+    restart: unless-stopped
+    # The API and the daemon each drain up to 1000 s, one after the other.
+    stop_grace_period: 36m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    # supervisord needs a temporary directory; Ollama writes its key under ~/.ollama.
+    tmpfs: [/tmp, "/home/kypost:uid=1000,gid=1000,mode=0700"]
+    mem_limit: 8g
+    memswap_limit: 8g
+    cpus: 4
+    pids_limit: 512
+    # Only on the address the edge forwards to; KyPost opens no mail port.
+    ports: ["{{forward}}:5866"]
+    entrypoint: ["/bin/sh", "-c", "kypost-server --mode bootstrap-admin && kypost-server migrate-native && exec supervisord -c /etc/supervisord.conf"]
+    environment:
+      WEB_PORT: "5866"
+      # Its OIDC callback, and Secure cookies.
+      SERVER_BASE_URL: "https://{{host}}"
+      TUNING_FILE: /kypost/config/TUNING.md
+      # A webmail client for existing IMAP/SMTP accounts: no native mail, receiving or receiver.
+      KYPOST_NATIVE_MAIL: "false"
+      KYPOST_NATIVE_RECEIVING: "false"
+      KYPOST_NATIVE_RECEIVER: "false"
+      KYPOST_BACKUP_DEPOSIT_INTERVAL: 24h
+      KYPOST_BACKUP_KEEP: "7"
+    volumes:
+      - config:/kypost/config
+      - private:/kypost/private
+      - state:/kypost/state
+      - logs:/kypost/logs
+      - ollama-models:/kypost/ollama-models
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:5866/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 180s
+volumes:
+  config: {}
+  private: {}
+  state: {}
+  logs: {}
+  ollama-models: {}

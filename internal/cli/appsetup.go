@@ -123,6 +123,8 @@ func (s *session) composeClients(st *stack.Stack) error {
 			s.handover += fmt.Sprintf(dnsHandover, host, n.Admin.Username, net.JoinHostPort(r.ForwardHost, "53"), s.placed["kydns"].Name, r.ForwardHost, r.ForwardPort, e.EgressAddress)
 		case "kycalendar":
 			s.handover += fmt.Sprintf(calendarHandover, host, n.Admin.Username, n.Everyday.Username, kubectl(s.state, s.placed["kycalendar"]))
+		case "kypost":
+			s.handover += fmt.Sprintf(postHandover, host, n.Admin.Username, n.Everyday.Username, postContainer, s.placed["kypost"].Name)
 		case "kypulse":
 			var unwatched []string
 			s.pulseTargets, unwatched = pulseTargets(st, s.cat)
@@ -365,7 +367,7 @@ func pulseHandover(host, admin string, targets []pulseTarget, unwatched []string
 }
 
 // clientSetupStep is apply's apply-setup for an installed Ky app that signs in through
-// KyIdentity: KyRecovery, kyPulse, KyCalendar or KyDrive. None of their 0.4.2 releases imports
+// KyIdentity: KyRecovery, kyPulse, KyCalendar, KyDrive or KyPost. None of their 0.4.2 releases imports
 // credentials, so the step places its bundle and KyIdentity's client and directory secrets as
 // private files through its container's shell, never replacing a secret. KyIdentity may run on
 // another target: the export crosses to the app's only in memory.
@@ -381,6 +383,7 @@ type clientSetupStep struct {
 	exec      identityExec  // the app's apply-setup
 	setup     func(context.Context, identityExec, string, bool) ([]byte, error)
 	place     func(ctx context.Context, args []string, input []byte) error
+	native    func(clientCredentials, string) any // KyPost's own bundle from the export and secret file; nil for ky.product-setup/1
 }
 
 // everydayUser is the owner's everyday account, whose subject KyIdentity's read-only
@@ -492,7 +495,11 @@ func (s clientSetupStep) run(ctx context.Context, check bool) error {
 	if everyday != nil {
 		b["everyday"] = everyday
 	}
-	bundle, err := json.Marshal(b)
+	var v any = b
+	if s.native != nil {
+		v = s.native(frame, path.Join(dir, "client.secret"))
+	}
+	bundle, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
@@ -759,6 +766,8 @@ func (s *session) setupSteps(d driver, i stack.Integration) (steps []engine.Step
 	case "kycalendar":
 		// It admits only the identities its setup names, and creates none at sign-in.
 		step.everyday = &everydayUser{Bundle: first.Bundle, Username: first.Identity.Everyday.Username}
+	case "kypost":
+		step.native = postBundle
 	}
 	if o.SCIMTokenFile == "" {
 		return []engine.Step{step}, nil, nil

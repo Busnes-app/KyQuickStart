@@ -41,7 +41,7 @@ func TestHealthApplyWaits(t *testing.T) {
 		}
 		return []byte(`{"Service":"web","State":"running","Health":"healthy"}`), nil
 	}}
-	h := Steps(fakeApp(f))[2]
+	h := Steps(fakeApp(f))[1]
 	if err := h.Apply(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestHealthApplyTimesOut(t *testing.T) {
 	f := &fakeRunner{reply: func(string) ([]byte, error) {
 		return []byte(`{"Service":"web","State":"running","Health":"unhealthy"}`), nil
 	}}
-	err := Steps(fakeApp(f))[2].Apply(context.Background())
+	err := Steps(fakeApp(f))[1].Apply(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "not healthy after 1s: service web is unhealthy") {
 		t.Fatalf("err = %v", err)
 	}
