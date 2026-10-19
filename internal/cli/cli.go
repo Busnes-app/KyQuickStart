@@ -47,9 +47,10 @@ commands:
   unmanage APP             hand APP to its owner: drop the managed labels, record it in handover.md
   upgrade [APP...]         redeploy installed apps (default all) under their upgrade rules
   status [--json]          per installed app: version, target, state, last results
-  backup APP               snapshot a Docker app to its target's rest-server (restic)
-  restore APP [--snapshot ID [--replace] [--yes]]
-                           list APP's snapshots, or restore one; the password comes on stdin if lost
+  backup APP [--state DIR]  snapshot a Docker app to its target's rest-server (restic)
+  restore APP [--state DIR] [--snapshot ID [--replace] [--yes]]
+                           list APP's snapshots, or restore one; a lost password comes on stdin
+                           (its own line, then the typed app name, or the password alone with --yes)
   handoff --kyyard-target T [--runner-container NAME] [--revoke]
                            hand the plan and target access to the suite runner on T, or take them back
   pull-plan --kyyard-target T [--runner-container NAME]
@@ -60,7 +61,7 @@ commands:
   verify-edge check NPM and product forwarded headers through public HTTPS (read-only)
   version [--runner-image]  print the release set, or the suite runner image this build pins
 
-flags for preflight, apply, verify-edge and the app commands:
+flags for preflight, apply, verify-edge, backup, restore and the app commands:
   --state DIR                          state directory holding stack.yaml (default .)
   --trust-host-key NAME=SHA256:<fp>    accept this unknown host key for target NAME
   --expected-client-ip ADDR           required for verify-edge: this workstation's address as the edge sees it
