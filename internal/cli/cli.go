@@ -55,7 +55,7 @@ commands:
   integrate-product  configure a selected product through its container-local setup adapter
   integrate-stack    run explicitly selected product integrations saved in stack.yaml
   verify-edge check NPM and product forwarded headers through public HTTPS (read-only)
-  version     print the release set
+  version [--runner-image]  print the release set, or the suite runner image this build pins
 
 flags for preflight, apply, verify-edge and the app commands:
   --state DIR                          state directory holding stack.yaml (default .)
@@ -103,8 +103,7 @@ func Run(ctx context.Context, args []string, o Options) error {
 	case "handoff", "pull-plan":
 		return handoffCommand(ctx, cmd, args[1:], o)
 	case "version":
-		_, err := fmt.Fprintln(o.Out, o.ReleaseSet)
-		return err
+		return versionCommand(args[1:], o)
 	case "preflight", "apply", "verify-edge":
 	default:
 		return ErrUsage
@@ -818,4 +817,25 @@ func finish(ctx context.Context, f func(context.Context) error) error {
 func holderName() string {
 	host, _ := os.Hostname()
 	return fmt.Sprintf("kyquickstart %s@%s pid %d", os.Getenv("USER"), host, os.Getpid())
+}
+
+func versionCommand(args []string, o Options) error {
+	fl := flag.NewFlagSet("version", flag.ContinueOnError)
+	fl.SetOutput(o.Out)
+	pin := fl.Bool("runner-image", false, "print the suite runner image this build installs KyYard with")
+	if err := fl.Parse(args); err != nil {
+		return err
+	}
+	if fl.NArg() > 0 {
+		return ErrUsage
+	}
+	if !*pin {
+		_, err := fmt.Fprintln(o.Out, o.ReleaseSet)
+		return err
+	}
+	if o.RunnerImage == "" {
+		return errors.New("this build pins no suite runner image (source build)")
+	}
+	_, err := fmt.Fprintln(o.Out, o.RunnerImage)
+	return err
 }

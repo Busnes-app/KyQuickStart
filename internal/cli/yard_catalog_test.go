@@ -468,7 +468,7 @@ func TestKyYardPlanRefusals(t *testing.T) {
 		}
 	}
 	same := func(y string) string { return y }
-	refuse("no runner image", "", same, "KyYard's suite runner has no attested release image in this build")
+	refuse("no runner image", "", same, "cannot install KyYard: source builds pin no runner image; use a release binary")
 	refuse("unpinned runner image", "ghcr.io/busnes-app/kyquickstart-runner:stable", same, `suite runner image "ghcr.io/busnes-app/kyquickstart-runner:stable" is not pinned by digest`)
 	refuse("on Docker", yardRunner, func(y string) string {
 		y = strings.Replace(y, "  - name: kyyard\n    target: k1\n", "  - name: kyyard\n    target: nas\n", 1)
