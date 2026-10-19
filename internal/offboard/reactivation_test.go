@@ -320,8 +320,13 @@ func TestReactivationUnsupportedForBookStackAndImmich(t *testing.T) {
 				t.Fatal("revocation failed")
 			}
 			for attempt := uint32(1); attempt <= 2; attempt++ {
-				if w := userRequest(r, "PUT", id, put); w.Code != 409 || reportedActive(t, r, id) {
-					t.Fatal("unsupported reactivation", w.Code)
+				w := userRequest(r, "PUT", id, put)
+				var e struct {
+					Schemas []string
+					Status  string
+				}
+				if w.Code != 409 || json.Unmarshal(w.Body.Bytes(), &e) != nil || len(e.Schemas) != 1 || e.Schemas[0] != errorSchema || e.Status != "409" || reportedActive(t, r, id) {
+					t.Fatal("unsupported reactivation", w.Code, w.Body.String())
 				}
 				if a, err := s.epochAudit(id, 2, attempt, "result"); err != nil || a.Outcome != "reactivation_unsupported" {
 					t.Fatal("refusal not audited", err)
