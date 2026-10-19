@@ -254,13 +254,13 @@ func TestKyYardEntry(t *testing.T) {
 		t.Fatalf("kubernetes = %+v", k)
 	}
 	want := map[string]string{
-		"KY_HOST": "0.0.0.0", "KY_PORT": "9273", "KY_ALLOW_PLAINTEXT_BIND": "true", "KY_APP_NAME": "KyYard",
+		"KY_HOST": "0.0.0.0", "KY_PORT": "9273", "KY_ALLOW_PLAINTEXT_BIND": "true", "KY_TRUSTED_PROXIES": "127.0.0.1", "KY_APP_NAME": "KyYard",
 		"KY_APP_URL": "https://{{host}}", "KY_DB_DRIVER": "sqlite", "KY_DATA_DIR": "/data", "KY_DOCKER_SOCKET": "",
 		"KY_SSO_ENABLED": "false", "KY_SCIM_ENABLED": "false", "KY_BACKUP_DIR": "/data/backups", "KY_BACKUP_KEEP": "7",
 		"KY_BACKUP_DEPOSIT_INTERVAL": "24h", "KY_SUITE_RUNNER_SOCKET": "/run/kyquickstart/sock/runner.sock", "GOMEMLIMIT": "384MiB",
 	}
-	// Unset: a fixed admin password, trusted proxies, agent image, an external database and
-	// the keys KyYard generates into /data.
+	// Unset: a fixed admin password, the agent image, an external database and the keys KyYard
+	// generates into /data. The only trusted proxy is the pod's loopback.
 	if !maps.Equal(k.Env, want) {
 		t.Fatalf("env = %v", k.Env)
 	}

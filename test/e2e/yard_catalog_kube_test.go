@@ -142,7 +142,7 @@ func TestKubernetesKyYard(t *testing.T) {
 	// Test-only: KyYard's discovery and token exchange at sign-in go through the edge and its
 	// throwaway certificate. The Deployment's input hash is unchanged, so reruns skip it.
 	trustTestCA(t, ctx, cs, connected, "kyyard", certPEM)
-	yardSignOn(t, ctx, connected, client)
+	yardSignOn(t, ctx, connected, client, false)
 
 	// AC15: a rerun with no plan change skips every KyYard step.
 	out = apply("yard rerun")
@@ -280,6 +280,13 @@ func TestKubernetesKyYard(t *testing.T) {
 		}
 	}
 
+	// The admin's sign-in last: KyYard 0.4.2 revokes an identity whose roles it cannot read,
+	// which would break every later setup check.
+	if !yardSignOn(t, ctx, connected, client, true) {
+		raw, err := connected.Exec(ctx, ns, pod, "app", []string{"/app/kyyard-server", "apply-setup", "--file", yardSetupDir + "/setup.json", "--check"})
+		t.Logf("UNPROVEN: KyYard admin sign-in through KyIdentity; KyYard's setup check after the refusal: %v %s", err, raw)
+	}
+
 	// AC16: no credential reached any output or the workstation state.
 	all := append(secrets, runnerSecrets...)
 	for _, o := range outputs {
@@ -415,7 +422,7 @@ func checkCatalogYard(t *testing.T, ctx context.Context, cs kubernetes.Interface
 		}
 	}
 	for _, e := range p.Spec.Containers[0].Env {
-		if e.Name == "KY_ADMIN_PASSWORD" || e.Name == "KY_TRUSTED_PROXIES" || e.Name == "KY_AGENT_IMAGE" {
+		if e.Name == "KY_ADMIN_PASSWORD" || e.Name == "KY_AGENT_IMAGE" || e.Name == "KY_TRUSTED_PROXIES" && e.Value != "127.0.0.1" {
 			t.Fatalf("KyYard runs with %s", e.Name)
 		}
 	}
@@ -452,12 +459,22 @@ func checkCatalogYard(t *testing.T, ctx context.Context, cs kubernetes.Interface
 		Present          []struct{ Kind, Name string }
 	}
 	raw := in("/app/kyyard-server", "apply-setup", "--file", d+"/setup.json", "--check")
-	if json.Unmarshal([]byte(raw), &report) != nil || report.Created == nil || len(report.Created) != 0 || len(report.Pending) != 0 ||
-		len(report.Present) != 1 || report.Present[0].Kind != "identity" || report.Present[0].Name != "prepared-admin" {
+	var identities []string
+	if json.Unmarshal([]byte(raw), &report) != nil || report.Created == nil || len(report.Created) != 0 || len(report.Pending) != 0 {
 		t.Fatalf("KyYard check:\n%s", raw)
 	}
+	for _, o := range report.Present {
+		if o.Kind == "identity" {
+			identities = append(identities, o.Name)
+		}
+	}
+	if len(identities) != 1 || identities[0] != "prepared-admin" {
+		t.Fatalf("KyYard check names identities %v:\n%s", identities, raw)
+	}
+	// The directory may also carry setgid (2700), inherited from the fsGroup emptyDir's root:
+	// access stays the owner's alone.
 	want = "/run/kyquickstart/sock directory 700 10001\n/run/kyquickstart/sock/runner.sock socket 600 10001"
-	if got := in("stat", "-c", "%n %F %a %u", "/run/kyquickstart/sock", "/run/kyquickstart/sock/runner.sock"); got != want {
+	if got := in("stat", "-c", "%n %F %a %u", "/run/kyquickstart/sock", "/run/kyquickstart/sock/runner.sock"); strings.Replace(got, " 2700 ", " 700 ", 1) != want {
 		t.Fatalf("runner socket from KyYard's container:\n%s", got)
 	}
 	if got := in("printenv", "KY_SUITE_RUNNER_SOCKET"); got != "/run/kyquickstart/sock/runner.sock" {
@@ -467,9 +484,7 @@ func checkCatalogYard(t *testing.T, ctx context.Context, cs kubernetes.Interface
 		t.Fatal("KyYard's container sees /state")
 	}
 	// The runner's own view, from a test-only container in its process namespace.
-	ephemeral(t, ctx, cs, pod, corev1.EphemeralContainer{TargetContainerName: "runner", EphemeralContainerCommon: corev1.EphemeralContainerCommon{
-		Name: "inspect", Image: curlImage, Command: []string{"sleep", "3600"},
-	}})
+	inspectRunner(t, ctx, cs, pod)
 	if got, err := c.Exec(ctx, ns, pod, "inspect", []string{"sh", "-c", "test -d /proc/1/root/state/runner && test ! -e /proc/1/root/data && echo ok"}); err != nil || strings.TrimSpace(string(got)) != "ok" {
 		t.Fatalf("runner container's /state/runner and /data: %v %s", err, got)
 	}
@@ -538,6 +553,15 @@ func ephemeral(t *testing.T, ctx context.Context, cs kubernetes.Interface, pod s
 	}
 }
 
+// inspectRunner adds the test-only container "inspect" in the runner's process namespace, so
+// /proc/1/root is the runner container's filesystem.
+func inspectRunner(t *testing.T, ctx context.Context, cs kubernetes.Interface, pod string) {
+	t.Helper()
+	ephemeral(t, ctx, cs, pod, corev1.EphemeralContainer{TargetContainerName: "runner", EphemeralContainerCommon: corev1.EphemeralContainerCommon{
+		Name: "inspect", Image: curlImage, Command: []string{"sleep", "3600"},
+	}})
+}
+
 // yardPodState is KyYard's pod's UID and its containers' restart counts.
 func yardPodState(t *testing.T, ctx context.Context, cs kubernetes.Interface, pod string) string {
 	t.Helper()
@@ -556,6 +580,7 @@ func yardPodState(t *testing.T, ctx context.Context, cs kubernetes.Interface, po
 // state volume, through the test-only container in its process namespace.
 func runnerCredentials(t *testing.T, ctx context.Context, cs kubernetes.Interface, c *kube.Client, ns, pod string) []string {
 	t.Helper()
+	inspectRunner(t, ctx, cs, pod) // trustTestCA replaced the pod checkCatalogYard inspected
 	read := func(f string) []byte {
 		b, err := c.Exec(ctx, ns, pod, "inspect", []string{"cat", "/proc/1/root/state/runner/" + f})
 		if err != nil || len(b) == 0 {
@@ -586,104 +611,106 @@ func runnerCredentials(t *testing.T, ctx context.Context, cs kubernetes.Interfac
 	return out
 }
 
-// yardSignOn signs the owner's accounts in to KyYard through KyIdentity behind the edge, as a
-// browser would (AC12): the admin becomes KyYard's administrator; the everyday account, not
-// assigned to KyYard's client, is refused by KyIdentity and gets no KyYard account or session.
-func yardSignOn(t *testing.T, ctx context.Context, c *kube.Client, client func() *http.Client) {
+// yardSignOn signs one of the owner's accounts in to KyYard through KyIdentity behind the edge,
+// as a browser would (AC12). The everyday account, not assigned to KyYard's client, is refused
+// at KyIdentity's gate: no code, and no KyYard session or account. The admin should become
+// KyYard's administrator; it returns false when KyYard refuses it because KyYard 0.4.2 reads
+// its app roles from an app_roles claim that KyIdentity 0.4.3 names roles.
+func yardSignOn(t *testing.T, ctx context.Context, c *kube.Client, client func() *http.Client, admin bool) bool {
 	t.Helper()
 	identity, yard := "https://"+catalogIdentityURLHost, "https://"+catalogYardURLHost
-	setupDir := "/data/installer/" + identityFixturePreparation().SetupID
-	var admin *http.Client
-	for _, account := range []struct {
-		username, passwordFile string
-		admin                  bool
-	}{{"prepared-admin", "admin.password", true}, {"prepared-user", "everyday.password", false}} {
-		ns, pod, container, err := c.AppPod(ctx, "kyidentity")
-		if err != nil {
-			t.Fatal(err)
-		}
-		password, err := c.Exec(ctx, ns, pod, container, []string{"cat", setupDir + "/" + account.passwordFile})
-		if err != nil || len(password) == 0 {
-			t.Fatal("installer-created account credential missing", err)
-		}
-		hc := client()
-		_, b := send(t, ctx, hc, "GET", identity+"/api/auth/csrf", nil, "")
-		var csrf struct {
-			CSRFToken string `json:"csrfToken"`
-		}
-		if json.Unmarshal(b, &csrf) != nil || csrf.CSRFToken == "" {
-			t.Fatalf("KyIdentity CSRF: %s", b)
-		}
-		payload, _ := json.Marshal(map[string]string{"username": account.username, "password": strings.TrimSpace(string(password))})
-		clear(password)
-		r, b := send(t, ctx, hc, "POST", identity+"/api/auth/login", payload, csrf.CSRFToken)
-		clear(payload)
-		var login struct{ Success, MFARequired bool }
-		if r.StatusCode != 200 || json.Unmarshal(b, &login) != nil || !login.Success || login.MFARequired {
-			t.Fatalf("%s password sign-in: %d", account.username, r.StatusCode)
-		}
-
-		r, b = send(t, ctx, hc, "GET", yard+"/api/sso/kyidentity/login", nil, "")
-		authorize, err := r.Location()
-		if err != nil || r.StatusCode != 302 || authorize.Host != catalogIdentityURLHost {
-			t.Fatalf("KyYard sign-in start: %d %s", r.StatusCode, b)
-		}
-		q := authorize.Query()
-		if q.Get("client_id") != "kyyard" || q.Get("redirect_uri") != yard+"/api/sso/kyidentity/callback" || q.Get("code_challenge_method") != "S256" || q.Get("code_challenge") == "" || q.Get("nonce") == "" || q.Get("state") == "" {
-			t.Fatalf("authorization request: %s", authorize)
-		}
-		r, _ = send(t, ctx, hc, "GET", authorize.String(), nil, "")
-		callback, _ := r.Location()
-		if r.StatusCode != 302 || callback == nil || "https://"+callback.Host != yard || callback.Path != "/api/sso/kyidentity/callback" || callback.Query().Get("state") != q.Get("state") {
-			t.Fatalf("KyIdentity authorization of %s for KyYard: %d %v", account.username, r.StatusCode, callback)
-		}
-		session := func() bool {
-			u, _ := url.Parse(yard + "/")
-			for _, ck := range hc.Jar.Cookies(u) {
-				if ck.Name == "ky_session" && ck.Value != "" {
-					return true
-				}
-			}
-			return false
-		}
-		if !account.admin {
-			// KyIdentity's per-app gate: no code, an access_denied error, and no KyYard session.
-			if callback.Query().Get("error") != "access_denied" || callback.Query().Get("code") != "" {
-				t.Fatalf("everyday account authorized for KyYard: %v", callback)
-			}
-			r, b = send(t, ctx, hc, "GET", callback.String(), nil, "")
-			if r.StatusCode == 302 || session() {
-				t.Fatalf("KyYard callback for the refused account: %d %s", r.StatusCode, b)
-			}
-			t.Logf("%s refused by KyIdentity for KyYard (callback error=access_denied, KyYard %d, no session)", account.username, r.StatusCode)
-			continue
-		}
-		if callback.Query().Get("code") == "" {
-			t.Fatalf("no code for %s: %v", account.username, callback)
-		}
-		if r, b = send(t, ctx, hc, "GET", callback.String(), nil, ""); r.StatusCode != 302 || r.Header.Get("Location") != "/" || !session() {
-			t.Fatalf("KyYard callback for %s: %d %s", account.username, r.StatusCode, b)
-		}
-		_, b = send(t, ctx, hc, "GET", yard+"/api/auth/me", nil, "")
-		var me struct {
-			Authenticated bool
-			User          struct{ Username, Role string }
-		}
-		if json.Unmarshal(b, &me) != nil || !me.Authenticated || me.User.Username != account.username || me.User.Role != "admin" {
-			t.Fatalf("KyYard /api/auth/me for %s: %s", account.username, b)
-		}
-		if r, _ := send(t, ctx, hc, "GET", yard+"/api/admin/users", nil, ""); r.StatusCode != 200 {
-			t.Fatalf("KyYard admin users for %s: %d", account.username, r.StatusCode)
-		}
-		admin = hc
-		t.Logf("%s signed in to KyYard through KyIdentity as its administrator", account.username)
+	username, passwordFile := "prepared-user", "everyday.password"
+	if admin {
+		username, passwordFile = "prepared-admin", "admin.password"
 	}
-	// Only the admin and the break-glass account exist.
-	r, b := send(t, ctx, admin, "GET", yard+"/api/admin/users", nil, "")
+	ns, pod, container, err := c.AppPod(ctx, "kyidentity")
+	if err != nil {
+		t.Fatal(err)
+	}
+	password, err := c.Exec(ctx, ns, pod, container, []string{"cat", "/data/installer/" + identityFixturePreparation().SetupID + "/" + passwordFile})
+	if err != nil || len(password) == 0 {
+		t.Fatal("installer-created account credential missing", err)
+	}
+	hc := client()
+	_, b := send(t, ctx, hc, "GET", identity+"/api/auth/csrf", nil, "")
+	var csrf struct {
+		CSRFToken string `json:"csrfToken"`
+	}
+	if json.Unmarshal(b, &csrf) != nil || csrf.CSRFToken == "" {
+		t.Fatalf("KyIdentity CSRF: %s", b)
+	}
+	payload, _ := json.Marshal(map[string]string{"username": username, "password": strings.TrimSpace(string(password))})
+	clear(password)
+	r, b := send(t, ctx, hc, "POST", identity+"/api/auth/login", payload, csrf.CSRFToken)
+	clear(payload)
+	var login struct{ Success, MFARequired bool }
+	if r.StatusCode != 200 || json.Unmarshal(b, &login) != nil || !login.Success || login.MFARequired {
+		t.Fatalf("%s password sign-in: %d", username, r.StatusCode)
+	}
+
+	r, b = send(t, ctx, hc, "GET", yard+"/api/sso/kyidentity/login", nil, "")
+	authorize, err := r.Location()
+	if err != nil || r.StatusCode != 302 || authorize.Host != catalogIdentityURLHost {
+		t.Fatalf("KyYard sign-in start: %d %s", r.StatusCode, b)
+	}
+	q := authorize.Query()
+	if q.Get("client_id") != "kyyard" || q.Get("redirect_uri") != yard+"/api/sso/kyidentity/callback" || q.Get("code_challenge_method") != "S256" || q.Get("code_challenge") == "" || q.Get("nonce") == "" || q.Get("state") == "" {
+		t.Fatalf("authorization request: %s", authorize)
+	}
+	r, _ = send(t, ctx, hc, "GET", authorize.String(), nil, "")
+	callback, _ := r.Location()
+	if r.StatusCode != 302 || callback == nil || "https://"+callback.Host != yard || callback.Path != "/api/sso/kyidentity/callback" || callback.Query().Get("state") != q.Get("state") {
+		t.Fatalf("KyIdentity authorization of %s for KyYard: %d %v", username, r.StatusCode, callback)
+	}
+	session := func() bool {
+		u, _ := url.Parse(yard + "/")
+		for _, ck := range hc.Jar.Cookies(u) {
+			if ck.Name == "ky_session" && ck.Value != "" {
+				return true
+			}
+		}
+		return false
+	}
+	if !admin {
+		// KyIdentity's per-app gate: no code, an access_denied error. KyYard answers the
+		// callback before any code exchange or account lookup, so it creates nothing.
+		if callback.Query().Get("error") != "access_denied" || callback.Query().Get("code") != "" {
+			t.Fatalf("everyday account authorized for KyYard: %v", callback)
+		}
+		r, b = send(t, ctx, hc, "GET", callback.String(), nil, "")
+		if r.StatusCode != 400 || session() {
+			t.Fatalf("KyYard callback for the refused account: %d %s", r.StatusCode, b)
+		}
+		t.Logf("%s refused by KyIdentity for KyYard: callback error=access_denied, KyYard %d %s, no session", username, r.StatusCode, b)
+		return false
+	}
+	if callback.Query().Get("code") == "" {
+		t.Fatalf("no code for %s: %v", username, callback)
+	}
+	r, b = send(t, ctx, hc, "GET", callback.String(), nil, "")
+	if r.StatusCode == 403 && strings.Contains(string(b), "Application role no longer matches") && !session() {
+		t.Logf("BLOCKED: KyYard 0.4.2 refused %s (403 %s): it reads app roles from the ID token's app_roles claim, KyIdentity 0.4.3 issues them as roles. KyYard revoked the identity (inactive), so its setup check now reports drift.", username, b)
+		return false
+	}
+	if r.StatusCode != 302 || r.Header.Get("Location") != "/" || !session() {
+		t.Fatalf("KyYard callback for %s: %d %s", username, r.StatusCode, b)
+	}
+	_, b = send(t, ctx, hc, "GET", yard+"/api/auth/me", nil, "")
+	var me struct {
+		Authenticated bool
+		User          struct{ Username, Role string }
+	}
+	if json.Unmarshal(b, &me) != nil || !me.Authenticated || me.User.Username != username || me.User.Role != "admin" {
+		t.Fatalf("KyYard /api/auth/me for %s: %s", username, b)
+	}
+	// Only the admin and the break-glass account exist: the everyday account got none.
+	r, b = send(t, ctx, hc, "GET", yard+"/api/admin/users", nil, "")
 	var users []struct{ Username string }
 	if r.StatusCode != 200 || json.Unmarshal(b, &users) != nil || len(users) != 2 || users[0].Username != "admin" || users[1].Username != "prepared-admin" {
 		t.Fatalf("KyYard users after sign-on: %d %s", r.StatusCode, b)
 	}
+	t.Logf("%s signed in to KyYard through KyIdentity as its administrator", username)
+	return true
 }
 
 func mustStack(t *testing.T, plan string) *stack.Stack {

@@ -34,6 +34,9 @@ kubernetes:
     KY_PORT: "9273"
     # Ingress is limited to the edge's pods by NetworkPolicy.
     KY_ALLOW_PLAINTEXT_BIND: "true"
+    # KyYard refuses HTTPS without a trusted proxy. Only this pod's own processes connect over
+    # loopback, so the edge's forwarded headers stay untrusted and no client can spoof its address.
+    KY_TRUSTED_PROXIES: 127.0.0.1
     KY_APP_NAME: KyYard
     # Its setup requires the callback to be this plus /api/sso/kyidentity/callback.
     KY_APP_URL: https://{{host}}
