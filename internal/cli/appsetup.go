@@ -253,12 +253,13 @@ KyNotes at https://%[1]s/: sign in through KyIdentity as %[2]s (administers only
 const calendarHandover = `
 KyCalendar at https://%[1]s/: sign in through KyIdentity as %[2]s (its console only; it has no
   calendars) or %[3]s (calendars). Its setup created exactly these two; it admits no one else.
-  Outstanding human steps: its local "admin" break-glass password is in a 0600 file,
-  kubectl -n kyq-kycalendar exec deployment/app -- cat /app/data/initial-admin-password
-  sign in with it once at https://%[1]s/, change it, then delete the file
-  (kubectl -n kyq-kycalendar exec deployment/app -- rm /app/data/initial-admin-password).
-  On its Backup & recovery screen, as %[2]s, pair it with KyRecovery using a one-time code from
-  KyRecovery's administrator, or pin the suite public key by hand. It makes no backups until then.
+  Outstanding human steps:
+  - Its local "admin" break-glass account: read its one-time password with
+      kubectl -n kyq-kycalendar exec deployment/app -- cat /app/data/initial-admin-password
+    sign in with it once at https://%[1]s/, change it, then delete the file (rm instead of cat).
+  - On its Backup & recovery screen, as %[2]s, pair it with KyRecovery using a one-time code
+    from KyRecovery's administrator, or pin the suite public key by hand. It makes no backups
+    until then.
 `
 
 // pulseTarget is a kyPulse monitoring target: an app's readiness path through its route.
