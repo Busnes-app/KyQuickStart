@@ -20,7 +20,8 @@ type Finding struct {
 // Preflight checks a Docker host and changes nothing.
 func Preflight(ctx context.Context, r remote.Runner, t stack.Target) []Finding {
 	f := []Finding{
-		versionCheck(ctx, r, "docker engine", "docker version --format '{{.Server.Version}}'", 24, 0),
+		// 25.0: healthcheck start_interval (API 1.44), which shortens a restored app's first health.
+		versionCheck(ctx, r, "docker engine", "docker version --format '{{.Server.Version}}'", 25, 0),
 		versionCheck(ctx, r, "docker compose", "docker compose version --short", 2, 21),
 		rootCheck(ctx, r, t.Root),
 		secretToolsCheck(ctx, r),

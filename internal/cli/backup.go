@@ -32,9 +32,9 @@ var resyncWait = 10 * time.Minute
 // backupHandover is apply's handover for a Docker app whose target has a backup destination.
 const backupHandover = `
 %[1]s backups: kyquickstart backup %[1]s takes an encrypted snapshot to %[2]s/%[1]s; nothing runs on a schedule.
-  Restore: kyquickstart restore %[1]s lists its snapshots; add --snapshot ID to restore one.
   After the first backup, read its repository password once into your printed record (a lost
   target cannot be restored without it): ssh -p %[3]d %[4]s@%[5]s cat %[6]s
+  Restore: kyquickstart restore %[1]s lists its snapshots; add --snapshot ID to restore one.
 `
 
 // backupLines is backupHandover for app on t, "" when kyquickstart backup does not cover it.
@@ -83,6 +83,9 @@ func backupCommand(ctx context.Context, cmd string, args []string, o Options) er
 	}
 	if cmd == "backup" {
 		return backup(ctx, *state, apps[0], trust, o)
+	}
+	if r.snapshot == "" && (r.replace || r.yes) {
+		return suite.Errorf(suite.InvalidRequest, "--replace and --yes restore a snapshot: add --snapshot ID (kyquickstart restore %s lists them)", apps[0])
 	}
 	r.app = apps[0]
 	return restore(ctx, *state, r, trust, o)
@@ -163,10 +166,22 @@ func backup(ctx context.Context, state, name string, trust trustFlag, o Options)
 		if err != nil {
 			return err
 		}
+		cold := len(s.cat[name].Backup.Command) == 0
+		if cold {
+			fmt.Fprintf(s.o.Out, "%s: stopping for a cold backup; it starts again when the snapshot ends.\n", name)
+		}
 		start := time.Now()
 		id, created, err := st.Backup(ctx)
 		if err != nil {
-			return fmt.Errorf("%s: backup: %s", name, s.redact.Redact(err.Error()))
+			err = fmt.Errorf("%s: backup: %s", name, s.redact.Redact(err.Error()))
+			if cold {
+				if up, rerr := st.Running(ctx); rerr == nil && up {
+					fmt.Fprintf(s.o.Out, "%s is running again.\n", name)
+				} else {
+					fmt.Fprintf(s.o.Out, "%s is NOT running: start it with kyquickstart apply, or on %s: docker compose -p kyq-%s start\n", name, t.Name, name)
+				}
+			}
+			return err
 		}
 		fmt.Fprintf(s.o.Out, "%s: snapshot %s in %s/%s (restic check passed, %s)\n", name, id, t.Backup.Repository, name, time.Since(start).Round(time.Second))
 		if created {
@@ -216,6 +231,9 @@ func restore(ctx context.Context, state string, r restoreRequest, trust trustFla
 		existing := slices.ContainsFunc(s.plan.Existing, func(e stack.Existing) bool { return e.Product == "kyidentity" })
 		if existing || !hasIdentity {
 			return removalGate(app, existing, managed.Deployed{})
+		}
+		if !identity.Kubernetes() {
+			return suite.Errorf(suite.RestoreRefused, "restore replays removals with resync-system in KyIdentity's pod, which needs KyIdentity on Kubernetes; it is on Docker target %s. Nothing was changed", identity.Name)
 		}
 		if identity.Name != t.Name {
 			s.targets = append(s.targets, identity)
@@ -268,7 +286,8 @@ func (s *session) restoreLocked(ctx context.Context, st dockerhost.Store, r rest
 			return err
 		}
 		if running {
-			return refuse("%s is running on %s; stop it first (docker compose -p kyq-%s stop) or uninstall it. Nothing was changed", r.app, st.Host, r.app)
+			t := s.placed[r.app]
+			return refuse("%s is running on %s; stop it first (ssh -p %d %s@%s docker compose -p kyq-%s stop) or uninstall it. Nothing was changed", r.app, st.Host, t.Port, t.User, t.Host, r.app)
 		}
 		if occupied, err = st.Occupied(ctx); err != nil {
 			return err
@@ -302,12 +321,15 @@ func (s *session) restoreLocked(ctx context.Context, st dockerhost.Store, r rest
 	}
 	if r.snapshot == "" {
 		fmt.Fprintf(out, "%s snapshots in %s/%s:\n", r.app, st.Dest.Repository, r.app)
+		if len(list) == 0 {
+			fmt.Fprintln(out, "  none")
+			return nil
+		}
+		fmt.Fprintf(out, "  %-8s  %-20s  %s\n", "ID", "TIME (UTC)", "HOST")
 		for _, sn := range list {
 			fmt.Fprintf(out, "  %s  %s  %s\n", sn.Short, sn.Time.UTC().Format(time.RFC3339), sn.Host)
 		}
-		if len(list) == 0 {
-			fmt.Fprintln(out, "  none")
-		}
+		fmt.Fprintf(out, "Restore one with: kyquickstart restore %s --snapshot <ID>\n", r.app)
 		return nil
 	}
 	if len(list) != 1 {
@@ -353,9 +375,9 @@ func (s *session) confirm(in *bufio.Reader, r restoreRequest) error {
 		return suite.Errorf(suite.RestoreRefused, "restore needs the app name typed back, or --yes when not interactive; nothing was changed")
 	}
 	fmt.Fprintf(s.o.Out, "Type %s to restore it: ", r.app)
-	line, err := in.ReadString('\n')
+	line, _ := in.ReadString('\n')
 	if strings.TrimSpace(line) != r.app {
-		return suite.Errorf(suite.RestoreRefused, "not confirmed (%v); nothing was changed", errors.Join(err, errors.New("the typed name differs")))
+		return suite.Errorf(suite.RestoreRefused, "not confirmed: type %q exactly, or pass --yes; nothing was changed", r.app)
 	}
 	return nil
 }
@@ -363,7 +385,7 @@ func (s *session) confirm(in *bufio.Reader, r restoreRequest) error {
 // readPassword reads the repository password from stdin: without echo on a terminal, one
 // bounded line otherwise.
 func readPassword(in *bufio.Reader, out io.Writer, stdin io.Reader, app string) ([]byte, error) {
-	refuse := suite.Errorf(suite.RestoreRefused, "%s's repository password is not on its target; give the one you recorded on stdin (one line). Nothing was changed", app)
+	refuse := suite.Errorf(suite.RestoreRefused, "%s's repository password is not on its target; give the one you recorded on stdin: on its own line, then the app name on the next (or the password alone with --yes). Nothing was changed", app)
 	if stdin == nil {
 		return nil, refuse
 	}
@@ -387,8 +409,16 @@ func readPassword(in *bufio.Reader, out io.Writer, stdin io.Reader, app string) 
 
 // finishRestore deploys the restored app through apply's own steps, restore_order first and
 // the dump between, checks its health and setup, and replays KyIdentity's removals.
-func (s *session) finishRestore(ctx context.Context, st dockerhost.Store, id, stage string) error {
+func (s *session) finishRestore(ctx context.Context, st dockerhost.Store, id, stage string) (err error) {
 	name, b := st.App.Name, st.App.Catalog.Backup
+	// Until KyIdentity's replay is delivered, the restored app may readmit someone removed
+	// after the snapshot: any failure before then leaves it stopped. A rerun resumes here.
+	gated, replayed := st.App.Catalog.OIDC != nil, false
+	defer func() {
+		if err != nil && gated && !replayed {
+			err = errors.Join(err, finish(ctx, st.Stop))
+		}
+	}()
 	e := &engine.Engine{Dir: s.state + "/results", Out: s.o.Out, Redact: s.redact, Progress: s.o.Progress}
 	order := b.RestoreOrder
 	if len(b.Command) > 0 && len(order) == 0 {
@@ -420,6 +450,13 @@ func (s *session) finishRestore(ctx context.Context, st dockerhost.Store, id, st
 	if err := e.Run(ctx, steps); err != nil {
 		return &suite.Error{Code: suite.StepFailed, Message: err.Error(), Err: err}
 	}
+	// As soon as the app answers: its health is all the replay needs.
+	if gated {
+		if err := s.replayRemovals(ctx, name); err != nil {
+			return err
+		}
+		replayed = true
+	}
 	for _, i := range s.integrations {
 		if i.Product != name || i.Target != st.Host {
 			continue
@@ -435,11 +472,6 @@ func (s *session) finishRestore(ctx context.Context, st dockerhost.Store, id, st
 			if err := step.Verify(ctx); err != nil {
 				return fmt.Errorf("%s: read-only check after restore: %s", step.ID(), s.redact.Redact(err.Error()))
 			}
-		}
-	}
-	if st.App.Catalog.OIDC != nil {
-		if err := s.replayRemovals(ctx, name); err != nil {
-			return err
 		}
 	}
 	if err := st.Finish(ctx); err != nil {
@@ -469,7 +501,7 @@ func (s *session) replayRemovals(ctx context.Context, name string) error {
 		client = s.integrations[i].IdentityClient
 	}
 	incomplete := func(detail string) error {
-		return suite.Errorf(suite.RestoreIncomplete, "%s is restored and running, but KyIdentity's %s connector did not deliver the replay of removals (%s). Someone removed after the snapshot may still sign in until it does: fix the connector, then rerun kyquickstart restore %s", name, client, detail, name)
+		return suite.Errorf(suite.RestoreIncomplete, "%s is restored but stopped: KyIdentity's %s connector did not deliver the replay of removals (%s), and until it does someone removed after the snapshot could sign in. Fix the connector, then rerun kyquickstart restore %s, which starts the app and replays again", name, client, detail, name)
 	}
 	k, ok := s.drivers[s.placed["kyidentity"].Name].(kubeDriver)
 	if !ok {
