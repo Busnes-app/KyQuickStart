@@ -162,6 +162,9 @@ func install(ctx context.Context, state string, r Request, trust trustFlag, o Op
 	if _, ok := s.cat[name]; !ok {
 		return suite.Errorf(suite.UnknownApp, "%s is not in the catalog", name)
 	}
+	if err := s.refuseOwnPod(r.Apps); err != nil {
+		return err
+	}
 	if _, ok := s.placed[name]; ok {
 		return suite.Errorf(suite.AlreadyInstalled, "%s is already installed on %s", name, s.placed[name].Name)
 	}
@@ -197,6 +200,9 @@ func install(ctx context.Context, state string, r Request, trust trustFlag, o Op
 	ns.revision, ns.saved, ns.ack, ns.edges, ns.changesPlan = s.revision, s.saved, r.AcknowledgeNoBackup, nil, true
 	ns.order = slices.DeleteFunc(ns.order, func(a string) bool { return !added[a] })
 	ns.targets = []stack.Target{ns.placed[name]}
+	if err := ns.runnerImage(); err != nil {
+		return err
+	}
 	if err := ns.connect(ctx, trust); err != nil {
 		return err
 	}
@@ -219,16 +225,22 @@ func upgrade(ctx context.Context, state string, r Request, trust trustFlag, o Op
 			return err
 		}
 	}
+	if err := s.refuseOwnPod(r.Apps); err != nil {
+		return err
+	}
 	if len(r.Apps) > 0 {
 		s.order = slices.DeleteFunc(s.order, func(a string) bool { return !slices.Contains(r.Apps, a) })
 	}
 	if len(s.order) == 0 {
 		return suite.Errorf(suite.InvalidRequest, "no apps are installed")
 	}
+	if err := s.runnerImage(); err != nil {
+		return err
+	}
 	s.targets = slices.DeleteFunc(s.targets, func(t stack.Target) bool {
 		return !slices.ContainsFunc(s.order, func(a string) bool { return s.placed[a].Name == t.Name })
 	})
-	s.ack, s.edges = r.AcknowledgeNoBackup, nil
+	s.ack, s.edges, s.deploys = r.AcknowledgeNoBackup, nil, true
 	if err := s.connect(ctx, trust); err != nil {
 		return err
 	}
@@ -253,6 +265,9 @@ func remove(ctx context.Context, state string, r Request, trust trustFlag, o Opt
 	defer s.close()
 	t, err := s.installed(name)
 	if err != nil {
+		return err
+	}
+	if err := s.refuseOwnPod(r.Apps); err != nil {
 		return err
 	}
 	for _, other := range s.order {

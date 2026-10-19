@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -232,6 +233,49 @@ func TestKyDNSEntry(t *testing.T) {
 	}
 }
 
+// runnerKube completes kube for suite_runner, except for run_as.
+const runnerKube = "  suite_runner: true\n  env: {KY_SUITE_RUNNER_SOCKET: /run/kyquickstart/sock/runner.sock}\n"
+
+// AC2: KyYard is admin-only, refuses SCIM, backs up its data claim and runs the suite runner.
+func TestKyYardEntry(t *testing.T) {
+	cat, err := Load(Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := cat["kyyard"]
+	k, o := a.Kubernetes, a.OIDC
+	if a.Category != "ky" || a.Version != "0.4.2" || a.PodSecurity != "restricted" || a.Compose != nil || len(a.Secrets) != 0 || !slices.Equal(a.DependsOn, []string{"kyidentity"}) {
+		t.Fatalf("manifest = %+v", a.Manifest)
+	}
+	if a.Images[k.Image] != "ghcr.io/busnes-app/kyyard:0.4.2@sha256:ca2276e51fcbe527896cfb174ab54cccef0a64a138c39e3e1de20e331849d1a8" ||
+		k.RunAs != 10001 || k.ReadinessPath != "/health/ready" || !slices.Equal(k.Ports, []int{9273}) || k.TerminationGraceSeconds != 1200 ||
+		!k.SuiteRunner || k.Resources.CPURequest != "50m" || k.Resources.Memory != "512Mi" ||
+		len(k.Volumes) != 1 || k.Volumes[0] != (Volume{Name: "data", Mount: "/data", Size: "10Gi"}) {
+		t.Fatalf("kubernetes = %+v", k)
+	}
+	want := map[string]string{
+		"KY_HOST": "0.0.0.0", "KY_PORT": "9273", "KY_ALLOW_PLAINTEXT_BIND": "true", "KY_APP_NAME": "KyYard",
+		"KY_APP_URL": "https://{{host}}", "KY_DB_DRIVER": "sqlite", "KY_DATA_DIR": "/data", "KY_DOCKER_SOCKET": "",
+		"KY_SSO_ENABLED": "false", "KY_SCIM_ENABLED": "false", "KY_BACKUP_DIR": "/data/backups", "KY_BACKUP_KEEP": "7",
+		"KY_BACKUP_DEPOSIT_INTERVAL": "24h", "KY_SUITE_RUNNER_SOCKET": "/run/kyquickstart/sock/runner.sock", "GOMEMLIMIT": "384MiB",
+	}
+	// Unset: a fixed admin password, trusted proxies, agent image, an external database and
+	// the keys KyYard generates into /data.
+	if !maps.Equal(k.Env, want) {
+		t.Fatalf("env = %v", k.Env)
+	}
+	if o.Name != "KyYard" || o.AdminRole != "kyyard.admin" || o.UserRole != "" || !slices.Equal(o.RedirectPaths, []string{"/api/sso/kyidentity/callback"}) ||
+		o.DirectoryPath != "/api/installer/directory" || o.SCIMTokenFile != "" || o.BackchannelLogoutPath != "" || o.Public {
+		t.Fatalf("oidc = %+v", o)
+	}
+	if a.Backup == nil || !slices.Equal(a.Backup.Volumes, []string{"data"}) || a.Upgrade.MinFrom != "0.4.2" || !a.Upgrade.MigratesData {
+		t.Fatalf("upgrade %+v, backup %+v", a.Upgrade, a.Backup)
+	}
+	if !Pinned(a.Images["kyyard"]) || Pinned("ghcr.io/busnes-app/kyquickstart-runner:stable") {
+		t.Fatal("Pinned disagrees with the catalog's rule")
+	}
+}
+
 func TestKyDriveEntry(t *testing.T) {
 	cat, err := Load(Embedded())
 	if err != nil {
@@ -424,6 +468,11 @@ func TestLoadRejects(t *testing.T) {
 		"other compose func":  {manifest, compose + "    environment: {A: '{{ print 1 }}{{ nope }}'}\n", "nope"},
 		"scim not secret":     {manifest + oidc + "  scim_token_file: /run/secrets/scim\n", compose, "scim_token_file"},
 		"scim outside secret": {manifest + "secrets: [scim]\n" + oidc + "  scim_token_file: /data/scim\n", compose, "scim_token_file"},
+
+		"runner other uid":     {manifest + kube + runnerKube, compose, "suite_runner needs run_as 10001"},
+		"runner no socket":     {manifest + strings.Replace(kube, "65532", "10001", 1) + "  suite_runner: true\n", compose, "KY_SUITE_RUNNER_SOCKET"},
+		"runner mount taken":   {manifest + strings.Replace(kube, "65532", "10001", 1) + runnerKube + "  volumes:\n    - {name: x, mount: /run/kyquickstart, size: 1Gi}\n", compose, "the runner's"},
+		"runner no kubernetes": {manifest + "suite_runner: true\n", compose, "field suite_runner not found"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

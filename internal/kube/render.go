@@ -26,6 +26,15 @@ const privateDir = "private"
 // initResources bound the private-volumes init container: one mkdir.
 var initResources = corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("50m"), corev1.ResourceMemory: resource.MustParse("16Mi")}
 
+// The suite runner sidecar (docs/kyyard-runner.k8s.yaml): its state claim and the socket
+// directory it shares with the app.
+const (
+	runnerState  = "runner-state"
+	runnerSocket = "runner-socket"
+)
+
+var runnerRequests = corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("50m"), corev1.ResourceMemory: resource.MustParse("64Mi")}
+
 // objects is everything the deploy step writes for one app, in one namespace.
 type objects struct {
 	Deployment *appsv1.Deployment
@@ -173,6 +182,18 @@ func render(a App) objects {
 			}
 		}
 	}
+	containers := []corev1.Container{container}
+	if k.SuiteRunner {
+		containers, volumes = withRunner(containers, volumes, a.RunnerImage)
+		o.Claims = append(o.Claims, &corev1.PersistentVolumeClaim{
+			ObjectMeta: meta(runnerState),
+			Spec: corev1.PersistentVolumeClaimSpec{
+				AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+				Resources:        corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("1Gi")}},
+				StorageClassName: class,
+			},
+		})
+	}
 	var grace *int64 // nil keeps the default and other apps' hashes
 	if k.TerminationGraceSeconds > 0 {
 		grace = &k.TerminationGraceSeconds
@@ -192,13 +213,42 @@ func render(a App) objects {
 					TerminationGracePeriodSeconds: grace,
 					SecurityContext:               podSecurityContext(k),
 					InitContainers:                inits,
-					Containers:                    []corev1.Container{container},
+					Containers:                    containers,
 					Volumes:                       volumes,
 				},
 			},
 		},
 	}
 	return o
+}
+
+// withRunner adds the suite runner beside the app (containers[0]): restricted like it, it
+// mounts only its state claim and the socket directory, which the app mounts too.
+func withRunner(containers []corev1.Container, volumes []corev1.Volume, image string) ([]corev1.Container, []corev1.Volume) {
+	uid := int64(catalog.SuiteRunnerUID)
+	socket := corev1.VolumeMount{Name: runnerSocket, MountPath: catalog.SuiteRunnerMount}
+	containers[0].VolumeMounts = append(containers[0].VolumeMounts, socket)
+	containers = append(containers, corev1.Container{
+		Name:  runnerContainer,
+		Image: image,
+		// Volume roots are the kubelet's: the runner works in subdirectories it creates.
+		Command:   []string{"kyquickstart", "serve", "--state", "/state/runner", "--socket", catalog.SuiteRunnerSocket, "--pod-volumes"},
+		Resources: corev1.ResourceRequirements{Requests: runnerRequests, Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("512Mi")}},
+		SecurityContext: &corev1.SecurityContext{
+			AllowPrivilegeEscalation: ptr.To(false),
+			ReadOnlyRootFilesystem:   ptr.To(true),
+			RunAsNonRoot:             ptr.To(true),
+			RunAsUser:                ptr.To(uid),
+			RunAsGroup:               ptr.To(uid),
+			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+			SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+		},
+		VolumeMounts: []corev1.VolumeMount{{Name: runnerState, MountPath: "/state"}, socket},
+	})
+	return containers, append(volumes,
+		corev1.Volume{Name: runnerState, VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: runnerState}}},
+		corev1.Volume{Name: runnerSocket, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+	)
 }
 
 func podSecurityContext(k *catalog.Kubernetes) *corev1.PodSecurityContext {

@@ -1,0 +1,68 @@
+name: kyyard
+description: KyYard, the suite's fleet administration; runs the suite runner beside it
+category: ky
+version: 0.4.2
+# Release image of v0.4.2 (commit 27466f600472a14b32ca48a2e5f17f9b814d0535), attested by
+# Busnes-app/KyYard-server release-image.yml@refs/tags/v0.4.2 (gh attestation verify; the
+# certificate names KyYard-server, so that spelling is the one that verifies).
+images:
+  kyyard: ghcr.io/busnes-app/kyyard:0.4.2@sha256:ca2276e51fcbe527896cfb174ab54cccef0a64a138c39e3e1de20e331849d1a8
+# Its setup needs KyIdentity's issuer, client and signed directory.
+depends_on: [kyidentity]
+health:
+  timeout_seconds: 300
+# Admin-only: fleet administration has no everyday workflow, so KyIdentity assigns only the
+# owner's admin account and refuses everyone else. No SCIM (KyYard answers 404) and no
+# automatic provisioning: only the identity its setup creates signs in. Sign-out is local.
+oidc:
+  name: KyYard
+  redirect_paths: [/api/sso/kyidentity/callback]
+  admin_role: kyyard.admin
+  directory_path: /api/installer/directory
+# The SQLite database with its generated session and encryption keys, and the sealed local
+# capsules under /data/backups. The runner's state is not here: handoff recreates it.
+backup:
+  volumes: [data]
+upgrade:
+  # First catalog release; its schema migrates forward at startup.
+  min_from: 0.4.2
+  migrates_data: true
+kubernetes:
+  image: kyyard
+  env:
+    KY_HOST: 0.0.0.0
+    KY_PORT: "9273"
+    # Ingress is limited to the edge's pods by NetworkPolicy.
+    KY_ALLOW_PLAINTEXT_BIND: "true"
+    KY_APP_NAME: KyYard
+    # Its setup requires the callback to be this plus /api/sso/kyidentity/callback.
+    KY_APP_URL: https://{{host}}
+    KY_DB_DRIVER: sqlite
+    KY_DATA_DIR: /data
+    # Empty disables the local Docker connection: a pod has no Docker socket.
+    KY_DOCKER_SOCKET: ""
+    # Setup refuses either enabled.
+    KY_SSO_ENABLED: "false"
+    KY_SCIM_ENABLED: "false"
+    KY_BACKUP_DIR: /data/backups
+    KY_BACKUP_KEEP: "7"
+    KY_BACKUP_DEPOSIT_INTERVAL: 24h
+    # The runner's socket; KyYard 0.4.2 does not read it yet.
+    KY_SUITE_RUNNER_SOCKET: /run/kyquickstart/sock/runner.sock
+    GOMEMLIMIT: 384MiB
+  ports: [9273]
+  readiness_path: /health/ready
+  # The image's kyyard user, which the runner sidecar shares.
+  run_as: 10001
+  resources:
+    cpu: "1"
+    # Idle between requests.
+    cpu_request: 50m
+    memory: 512Mi
+  # Stop drains HTTP (5 s) and a backup deposit already on the wire (17 min).
+  termination_grace_seconds: 1200
+  volumes:
+    - name: data
+      mount: /data
+      size: 10Gi
+  suite_runner: true
