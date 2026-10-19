@@ -827,8 +827,10 @@ What apply does:
   ServiceAccount token. `app` is KyYard: `/data` on a private 10Gi claim subdirectory,
   readiness `GET /health/ready`, a 20-minute termination grace (5 s drain plus a backup deposit
   on the wire), SQLite with keys it generates into `/data`, no local Docker connection
-  (`KY_DOCKER_SOCKET` empty), SSO and SCIM off (setup refuses either), and no
-  `KY_TRUSTED_PROXIES`, `KY_ADMIN_PASSWORD` or `KY_AGENT_IMAGE`. `runner` runs `kyquickstart
+  (`KY_DOCKER_SOCKET` empty), SSO and SCIM off (setup refuses either), no `KY_ADMIN_PASSWORD`
+  or `KY_AGENT_IMAGE`, and `KY_TRUSTED_PROXIES` only the pod's loopback: KyYard 0.4.2 refuses
+  to start over HTTPS without a trusted proxy, and no proxy connects over loopback, so the
+  edge's forwarded headers are ignored and no client can spoof its address. `runner` runs `kyquickstart
   serve --state /state/runner --socket /run/kyquickstart/sock/runner.sock --pod-volumes`
   (requests 50m/64Mi, limit 512Mi) with only its own 1Gi `runner-state` claim at `/state` and
   the `runner-socket` emptyDir at `/run/kyquickstart`. KyYard mounts that emptyDir too
@@ -869,7 +871,7 @@ Limits:
   status but not start operations; that needs a KyYard change (step-up through KyIdentity).
 - The pod's egress is unrestricted: KyYard needs KyIdentity and registries, the runner the API
   server and the targets' SSH; no policy narrows it yet.
-- Without `KY_TRUSTED_PROXIES` every client shares the edge's rate-limit bucket.
+- With the edge untrusted every client shares the edge's rate-limit bucket.
 - Unproven or not configured: a directory event (offboarding) reaching KyYard; back-channel
   logout; everyday accounts and organizations; retiring the break-glass account; KyRecovery
   pairing, private recovery and PostgreSQL; enrolling hosts or clusters with `kyyard-agent`.
