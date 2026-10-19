@@ -61,7 +61,8 @@ running NPM. It is not derived: if NPM moves node, set it again and rerun `apply
 
 An app whose Compose file writes `{{edge_address}}` (catalog KyDNS) trusts forwarded headers
 from exactly that address. `plan`, `review` and `apply` refuse it until its route's edge sets
-the field. A wrong address fails closed: the app refuses the edge (KyDNS answers 403). An
+the field. A wrong address fails closed: the app refuses the edge (KyDNS answers 403) and
+apply's `kydns.edge`, asking from NPM's pod, fails. An
 address other peers share fails open, so apply's `kydns.gate` refuses it. A Docker host that
 hides client addresses behind one gateway is such a case, and KyDNS is not supported there
 (`guided-setup.md`, "Catalog KyDNS on Docker"). Never set `egress_address` to a Docker network
