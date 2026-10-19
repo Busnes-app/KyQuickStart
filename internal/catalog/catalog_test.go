@@ -307,7 +307,7 @@ func TestKyPostEntry(t *testing.T) {
 		Secrets         []string
 	}
 	var c struct{ Services map[string]service }
-	if err := yaml.Unmarshal(a.WithRoute("post.example.com", "192.168.1.91:18866").Compose, &c); err != nil {
+	if err := yaml.Unmarshal(a.WithRoute(Route{Host: "post.example.com", Forward: "192.168.1.91:18866"}).Compose, &c); err != nil {
 		t.Fatal(err)
 	}
 	s, ok := c.Services["app"]
