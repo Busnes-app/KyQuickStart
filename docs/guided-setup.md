@@ -887,7 +887,7 @@ apps:
 edges:
   - target: k80
     provider: lan
-    egress_address: 192.168.1.81    # the one address KyDNS sees the edge's requests from
+    egress_address: 192.168.1.81    # the edge's own address: the k80 node running NPM
     routes:
       - app: kydns
         hostname: dns.k80.example.com
@@ -936,6 +936,12 @@ What apply does:
   minute for KyDNS's setup socket, then runs `apply-setup` through `docker exec` in its one
   running managed container (Compose project `kyq-kydns`). Setup is live: no restart. KyIdentity
   is re-exported to confirm nothing changed. A rerun skips.
+- `kydns.gate`, right after setup and before the edges: the workstation, which is not the edge,
+  sends `GET http://<forward_host>:<forward_port>/api/v1/installer/network` with
+  `X-Forwarded-Proto: https`, and the step passes only on 403. Anything else fails apply,
+  naming `egress_address`: KyDNS trusts a peer other than the edge. If the workstation cannot
+  reach that port, the step fails too (nothing was proven); run apply from a LAN host that
+  does. A KyYard runner pod on the node running NPM would be seen as the edge and fail it.
 
 With no local password, KyDNS's setup creates a disabled local admin slot, which closes its
 token-gated first-run `/setup` (it redirects to `/login`). The `setup-token` it wrote on first
@@ -953,21 +959,23 @@ address `<forward_host>:53`, and these outstanding human steps:
   (KyIdentity) administrator cannot enroll KyDNS's first recovery key.
 
 It also names the firewall facts: ports 53 and `forward_port` are open on `forward_host`; the
-admin UI serves only the edge (KyDNS answers 403 to every other peer, from its transport gate);
-DNS answers private address ranges only (KyDNS's default `allow_query`).
+admin UI trusts forwarded requests only from `egress_address` (apply checked it refuses the
+workstation); DNS answers the private ranges KyDNS sees (its default `allow_query`). Both rest
+on the Docker host showing KyDNS real client addresses, so it tells the operator to restrict
+both ports to the LAN and the edge at the host or network firewall.
 
 Limits and unproven:
 
-- **Client addresses through Docker's NAT.** KyDNS's transport gate and `allow_query` both see
-  the peer address Docker hands the container. Measured on this workstation (Docker 29,
-  iptables backend, userland proxy on): every connection to a published port arrives from the
-  `kyq-kydns_default` network's gateway, so `egress_address` must be that gateway, and then any
-  peer that reaches `forward_host:forward_port` and sends `X-Forwarded-Proto: https` passes the
-  gate (sign-in through KyIdentity still applies), and every DNS client looks private, so
-  `allow_query` limits nothing. Whether a host with the userland proxy off, firewalld or
-  nftables keeps client addresses is unproven. If the edge's address does not arrive, KyDNS
-  answers the edge 403: fail closed. No `DOCKER-USER` rule is prescribed (see KyDrive's
-  section); restrict 53 and `forward_port` to the LAN at the host or network firewall.
+- **Docker hosts that hide client addresses: not supported.** KyDNS's transport gate and
+  `allow_query` see the peer address Docker hands the container. On this workstation (Docker
+  29, iptables backend, userland proxy on) every connection to a published port arrives from
+  the `kyq-kydns_default` network's gateway, whatever its source. There KyDNS refuses the edge
+  (403 through the route): fail closed, and the admin UI is unusable. Do not set
+  `egress_address` to that gateway: every peer would pass the gate with a forged
+  `X-Forwarded-Proto`, and every DNS client would look private. `kydns.gate` refuses that
+  setting. Whether hosts with the userland proxy off, firewalld or nftables keep client
+  addresses is unproven, so the edge-trusted path (sign-in through the edge) is unproven too.
+  No `DOCKER-USER` rule is prescribed (see KyDrive's section).
 - A service already bound on `forward_host:53` makes `kydns.deploy` fail with Docker's error;
   there is no plan-time probe.
 - `egress_address` is not derived from where NPM runs: if NPM moves node, set it again.

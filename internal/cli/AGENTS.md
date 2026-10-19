@@ -92,7 +92,10 @@ Plain terminal planning and command orchestration for the operator-run installer
   over SSH as the target user, mapping the bundle's `/data/installer/<uuid>/` to
   `<root>/kydns/data/installer/<uuid>/` (anything else refused, symlinked directories refused),
   and `waitForSocket` holds its setup until `<data>/installer/setup.sock` exists (no Compose
-  healthcheck). `withRoute` fills a Compose template's route references for both `newSession`
+  healthcheck). `gateStep` (`kydns.gate`, after its setup, before the edges) sends the
+  workstation's direct request with `X-Forwarded-Proto: https` to its admin port and passes only
+  on 403, so an `egress_address` other peers share (a Docker gateway hiding clients) fails apply.
+  `withRoute` fills a Compose template's route references for both `newSession`
   and `validateSelection`, so `{{edge_address}}` without the edge's `egress_address` is refused
   by `plan` and `review` too.
   KyNotes' distroless image has no shell: `notesSetupStep` (`kynotes.setup`) reuses
