@@ -267,20 +267,35 @@ func upServices(t *testing.T, fake string) []string {
 }
 
 // A snapshot from a compromised target cannot point the app at another host path: a
-// symlinked volume, secret or dump is refused and nothing is moved into place.
+// symlinked volume, secret or dump, or a symlinked directory above them (relative, as restic
+// restores it), is refused, and nothing is moved into place or changed through the link.
 func TestRestoreRefusesSymlinks(t *testing.T) {
 	ctx := context.Background()
-	for _, which := range []string{"volumes/files", "secrets/db_password", "dump"} {
+	for _, c := range []struct{ entry, link string }{
+		{"kyq/volumes/files", "VICTIM/files"},
+		{"kyq/secrets/db_password", "VICTIM/secrets/db_password"},
+		{"kyq/dump", "VICTIM/dump"},
+		{"kyq/volumes", "../../../victim"},
+		{"kyq/secrets", "../../../victim/secrets"},
+		{"kyq", "../../victim"},
+	} {
 		st, fake := backupFixture(t, true)
 		id, _, err := st.Backup(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
-		snap := filepath.Join(fake, "repo", "rest_https___backup.lan_8000_nas_fixture", "snapshots", id, "kyq", which)
-		victim := filepath.Join(t.TempDir(), "victim")
-		os.WriteFile(victim, []byte("host file"), 0o644)
+		// Another app's data on the new target, which the link reaches.
+		victim := filepath.Join(st.App.Root, "victim")
+		for _, d := range []string{"files/docs", "secrets", "volumes/files", "kyq"} {
+			os.MkdirAll(filepath.Join(victim, d), 0o700)
+		}
+		for _, f := range []string{"files/docs/v.txt", "volumes/files/v.txt", "secrets/db_password", "dump", "volumes/x"} {
+			os.WriteFile(filepath.Join(victim, f), []byte("victim"), 0o644)
+		}
+		os.MkdirAll(filepath.Join(victim, "secrets", "db_password.d"), 0o700)
+		snap := filepath.Join(fake, "repo", "rest_https___backup.lan_8000_nas_fixture", "snapshots", id, c.entry)
 		os.RemoveAll(snap)
-		if err := os.Symlink(victim, snap); err != nil {
+		if err := os.Symlink(strings.Replace(c.link, "VICTIM", victim, 1), snap); err != nil {
 			t.Fatal(err)
 		}
 		os.RemoveAll(st.App.dir())
@@ -289,28 +304,67 @@ func TestRestoreRefusesSymlinks(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		err = st.RestoreFiles(ctx, received, id)
-		if which == "dump" {
-			if err != nil {
-				t.Fatalf("dump: files: %v", err)
+		if err := st.RestoreFiles(ctx, received, id); err == nil {
+			t.Fatalf("%s -> %s was restored", c.entry, c.link)
+		}
+		for _, f := range []string{"files/docs/v.txt", "secrets/db_password", "dump"} {
+			info, err := os.Stat(filepath.Join(victim, f))
+			if err != nil || info.Mode().Perm() != 0o644 {
+				t.Fatalf("%s: the victim's %s moved or changed", c.entry, f)
 			}
-			err = st.RestoreDump(ctx)
 		}
-		if err == nil {
-			t.Fatalf("%s: a symlink was restored", which)
+		if _, err := os.Lstat(filepath.Join(st.App.dir(), "files")); err == nil {
+			t.Fatalf("%s: a volume was moved into place", c.entry)
 		}
-		info, _ := os.Stat(victim)
-		if b, _ := os.ReadFile(victim); string(b) != "host file" || info.Mode().Perm() != 0o644 {
-			t.Fatalf("%s: the link target changed", which)
+		if _, err := os.Lstat(filepath.Join(st.App.dir(), "secrets", "db_password")); err == nil {
+			t.Fatalf("%s: a secret was linked into place", c.entry)
 		}
-		if l, err := os.Lstat(filepath.Join(st.App.dir(), "files")); which == "volumes/files" && err == nil && l.Mode()&os.ModeSymlink != 0 {
-			t.Fatal("a symlinked volume was moved into place")
+		if b, _ := os.ReadFile(filepath.Join(fake, "loaded")); len(b) > 0 {
+			t.Fatalf("%s: a dump was read", c.entry)
 		}
-		if _, err := os.Lstat(filepath.Join(st.App.dir(), "secrets", "db_password")); which == "secrets/db_password" && err == nil {
-			t.Fatal("a symlinked secret was linked into place")
-		}
-		if b, _ := os.ReadFile(filepath.Join(fake, "loaded")); which == "dump" && len(b) > 0 {
-			t.Fatal("a symlinked dump was read")
-		}
+	}
+}
+
+// Apply cannot start an app whose restore is unfinished: its removal replay was not delivered.
+func TestDeployRefusesAnUnfinishedRestore(t *testing.T) {
+	ctx := context.Background()
+	st, fake := backupFixture(t, false)
+	os.WriteFile(filepath.Join(fake, "compose.json"), []byte(`{"app":false}`), 0o600)
+	if err := st.SetPending(ctx, strings.Repeat("a", 64), "files"); err != nil {
+		t.Fatal(err)
+	}
+	deploy := Steps(st.App)[1]
+	if err := deploy.Apply(ctx); err == nil || !strings.Contains(err.Error(), "finish it with kyquickstart restore fixture") {
+		t.Fatalf("deploy over an unfinished restore: %v", err)
+	}
+	if fakedocker.Running(t, fake)["app"] {
+		t.Fatal("the app started")
+	}
+	st.App.Restoring = true
+	if err := Steps(st.App)[1].Apply(ctx); err != nil || !fakedocker.Running(t, fake)["app"] {
+		t.Fatalf("restore's own deploy: %v", err)
+	}
+}
+
+// RestoreDump checks its staged dump itself, whatever staged it.
+func TestRestoreDumpRefusesASymlinkedDump(t *testing.T) {
+	ctx := context.Background()
+	st, fake := backupFixture(t, true)
+	staged := filepath.Join(st.staging(), "kyq")
+	os.MkdirAll(staged, 0o700)
+	victim := filepath.Join(t.TempDir(), "dump")
+	os.WriteFile(victim, []byte("host file"), 0o644)
+	os.Symlink(victim, filepath.Join(staged, "dump"))
+	if err := st.RestoreDump(ctx); err == nil {
+		t.Fatal("a symlinked dump was read")
+	}
+	os.Remove(filepath.Join(staged, "dump"))
+	os.RemoveAll(staged)
+	os.Symlink(filepath.Dir(victim), staged)
+	if err := st.RestoreDump(ctx); err == nil {
+		t.Fatal("a dump under a symlinked kyq was read")
+	}
+	if b, _ := os.ReadFile(filepath.Join(fake, "loaded")); len(b) > 0 {
+		t.Fatal("restore_command got the host file")
 	}
 }
