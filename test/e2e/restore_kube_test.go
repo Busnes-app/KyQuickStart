@@ -171,14 +171,21 @@ func TestKubernetesRestore(t *testing.T) {
 			foreign = s.Short
 		}
 	}
-	listing := dirDigest(t, drive.name, drive.root+"/kydrive")
-	o, err := kyq(t, ctx, state, catalogDir, trust, "", "restore", "kydrive", "--snapshot", foreign, "--yes")
-	outputs = append(outputs, o)
-	refused(t, err, "snapshot "+foreign+" is not tagged for kydrive of this installation")
 	// AC6: the running KyDrive is refused.
-	o, err = kyq(t, ctx, state, catalogDir, trust, "", "restore", "kydrive", "--snapshot", id, "--yes")
+	listing := dirDigest(t, drive.name, drive.root+"/kydrive")
+	o, err := kyq(t, ctx, state, catalogDir, trust, "", "restore", "kydrive", "--snapshot", id, "--yes")
 	outputs = append(outputs, o)
 	refused(t, err, "kydrive is running on nas")
+	if after := dirDigest(t, drive.name, drive.root+"/kydrive"); after != listing {
+		t.Fatalf("a refused restore changed KyDrive's directory:\n%s\nwas:\n%s", after, listing)
+	}
+	// The foreign snapshot is refused on the stopped KyDrive even with --replace, before
+	// anything moves aside. Stopping may checkpoint SQLite, so list after the stop.
+	docker(t, "compose", "-p", "kyq-kydrive", "stop")
+	listing = dirDigest(t, drive.name, drive.root+"/kydrive")
+	o, err = kyq(t, ctx, state, catalogDir, trust, "", "restore", "kydrive", "--snapshot", foreign, "--yes", "--replace")
+	outputs = append(outputs, o)
+	refused(t, err, "snapshot "+foreign+" is not tagged for kydrive of this installation")
 	if after := dirDigest(t, drive.name, drive.root+"/kydrive"); after != listing {
 		t.Fatalf("a refused restore changed KyDrive's directory:\n%s\nwas:\n%s", after, listing)
 	}
