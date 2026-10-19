@@ -62,7 +62,7 @@ func (h *dockerHost) Run(ctx context.Context, cmd string, stdin []byte) ([]byte,
 		return []byte("27.0.0\n"), nil
 	case strings.Contains(cmd, "compose version"):
 		return []byte("2.29.0\n"), nil
-	case strings.Contains(cmd, " up -d"):
+	case strings.Contains(cmd, " up -d") || strings.Contains(cmd, " up --no-start"):
 		b, err := os.ReadFile(filepath.Join(dirRE.FindStringSubmatch(cmd)[1], "compose.kyq.yaml"))
 		h.up[project] = string(b)
 		return nil, err

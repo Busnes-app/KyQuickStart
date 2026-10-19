@@ -152,6 +152,9 @@ func (s Store) ensureRepository(ctx context.Context) (bool, error) {
 // volumes; then its capsule_secrets. created reports that this run generated the password.
 func (s Store) Backup(ctx context.Context) (id string, created bool, err error) {
 	b := s.App.Catalog.Backup
+	if err := refuseUnfinishedRestore(ctx, s.App); err != nil {
+		return "", false, err
+	}
 	if created, err = s.ensureRepository(ctx); err != nil {
 		return "", created, err
 	}
@@ -446,6 +449,17 @@ func (s Store) Pending(ctx context.Context) (id, stage string, err error) {
 		return "", "", fmt.Errorf("%s is not a restore record; inspect it by hand", s.pending())
 	}
 	return id, stage, nil
+}
+
+// refuseUnfinishedRestore refuses every operation on the app but restore itself while a
+// restore is unfinished: its removal replay has not been delivered, so starting the app,
+// backing it up or handing it over could readmit someone removed after the snapshot.
+func refuseUnfinishedRestore(ctx context.Context, a App) error {
+	id, _, err := Store{App: a}.Pending(ctx)
+	if err == nil && id != "" {
+		err = fmt.Errorf("a restore of %s is unfinished and its removal replay not delivered; finish it with kyquickstart restore %s", a.Name, a.Name)
+	}
+	return err
 }
 
 // SetPending records the restore's last finished stage.

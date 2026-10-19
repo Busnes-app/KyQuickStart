@@ -4,9 +4,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/Busnes-app/kyquickstart/internal/dockerhost/fakedocker"
 	"github.com/Busnes-app/kyquickstart/internal/managed"
 	"github.com/Busnes-app/kyquickstart/internal/remote"
 )
@@ -24,7 +26,7 @@ func (l *localDocker) Run(ctx context.Context, cmd string, stdin []byte) ([]byte
 	}
 	l.calls = append(l.calls, cmd)
 	switch {
-	case strings.Contains(cmd, " up -d"):
+	case strings.Contains(cmd, " up "):
 		l.labelled = ""
 	case strings.Contains(cmd, " down"):
 		l.containers, l.labelled = "", ""
@@ -111,11 +113,11 @@ func TestUnmanageRelabelsAndRecreates(t *testing.T) {
 	}
 	var ups []string
 	for _, c := range r.calls {
-		if strings.Contains(c, " up -d") {
+		if strings.Contains(c, " up ") {
 			ups = append(ups, c)
 		}
 	}
-	if len(ups) != 1 || strings.Contains(ups[0], "remove-orphans") {
+	if len(ups) != 1 || !strings.Contains(ups[0], "up --no-start") || strings.Contains(ups[0], "remove-orphans") {
 		t.Errorf("up calls = %q", ups)
 	}
 	// A rerun after the files were rewritten but before the recreate finishes the job.
@@ -140,5 +142,29 @@ func TestUnmanageStartsNothing(t *testing.T) {
 		if strings.Contains(c, " up ") {
 			t.Errorf("started a removed app: %q", c)
 		}
+	}
+}
+
+// Unmanage recreates every container unstarted and starts again only the services that ran.
+func TestUnmanageStartsOnlyWhatRan(t *testing.T) {
+	ctx := context.Background()
+	fake := fakedocker.Install(t, "app", "db")
+	os.WriteFile(filepath.Join(fake, "compose.json"), []byte(`{"app":true,"db":false}`), 0o600)
+	a := installed(t, remote.Local{})
+	a.Catalog.Services = []string{"app", "db"}
+	if err := UnmanageSteps(a)[0].Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if up := fakedocker.Running(t, fake); !up["app"] || up["db"] {
+		t.Fatalf("running after unmanage: %v", up)
+	}
+	var cmds []string
+	for _, c := range fakedocker.Calls(t, fake) {
+		if c.Args[0] == "compose" {
+			cmds = append(cmds, strings.Join(c.Args[7:], " "))
+		}
+	}
+	if !slices.Equal(cmds, []string{"ps --all --format json", "up --no-start", "start app"}) {
+		t.Fatalf("compose calls = %q", cmds)
 	}
 }

@@ -181,7 +181,7 @@ func TestUnmanageHandsOverOnce(t *testing.T) {
 	if err := f.run("unmanage", "db"); code(err) != suite.Dependency {
 		t.Fatalf("err = %v", err)
 	}
-	f.h.fail = "-p 'kyq-web' -f compose.yaml -f compose.kyq.yaml up -d"
+	f.h.fail = "-p 'kyq-web' -f compose.yaml -f compose.kyq.yaml up --no-start"
 	if err := f.run("unmanage", "web"); code(err) != suite.StepFailed {
 		t.Fatalf("err = %v", err)
 	}
