@@ -71,6 +71,15 @@ func (d deployStep) Inspect(ctx context.Context) (bool, error) {
 
 func (d deployStep) Apply(ctx context.Context) error {
 	dir := d.a.dir()
+	if !d.a.Restoring {
+		out, err := d.a.Runner.Run(ctx, "if test -e "+remote.Quote(path.Join(dir, ".restore-pending"))+"; then echo pending; fi", nil)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(string(out)) == "pending" {
+			return fmt.Errorf("a restore of %s is unfinished and its removal replay not delivered; finish it with kyquickstart restore %s", d.a.Name, d.a.Name)
+		}
+	}
 	hash := remote.Quote(dir + "/.input-hash")
 	// Bind directories too: Docker would create a missing one as root.
 	for _, p := range append([]string{dir}, d.a.binds()...) {
