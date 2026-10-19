@@ -305,6 +305,9 @@ func TestKubernetesRestore(t *testing.T) {
 	if driveSignedIn(t, ctx, lSession) {
 		t.Fatal("L's pre-backup session is accepted after the restore")
 	}
+	// The window: 32.9 s when the replay ran after the setup checks and KyDrive's first health
+	// check came after 30 s; 3.8-5.2 s with the replay right after health and a 2 s start
+	// interval (decision 12).
 	if first.IsZero() {
 		t.Log("AC15: L's restored session was never seen signed in: the replayed deactivation arrived before the watch's first answer from KyDrive")
 	} else {

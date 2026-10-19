@@ -52,9 +52,9 @@ Plain terminal planning and command orchestration for the operator-run installer
   running app and existing data without `--replace` before contacting the repository, then a
   foreign snapshot; `--replace`/`--yes` without `--snapshot` are refused; it wants the typed name
   or `--yes`, reads a lost password from `Options.Stdin` (no echo on a terminal) and records
-  its stage in `.restore-pending`, so a rerun resumes; every other Docker deploy (`apply`,
-  `install`, `upgrade`) refuses while that file exists (`dockerhost.App.Restoring` is set only
-  by restore). `finishRestore` deploys through
+  its stage in `.restore-pending`, so a rerun resumes; while that file exists every other
+  Docker operation on the app refuses: deploy (`apply`, `install`, `upgrade`; `App.Restoring`
+  is set only by restore), `backup` and `unmanage` (`dockerhost.refuseUnfinishedRestore`). `finishRestore` deploys through
   `dockerhost.RestoreSteps` and `Steps`, replays removals as soon as the app is healthy, then
   runs the setup steps' `Verify`; for a gated app any failure before the replay is delivered
   stops the app (decision 11). A cold `backup` says it stops the app and, on failure, whether

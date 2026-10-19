@@ -371,7 +371,8 @@ handover of admin and everyday logins.
   KyIdentity is v0.4.4 or later, replays removals with `resync-system` as soon as the app is
   healthy and keeps the app stopped until that is delivered (`restore_incomplete` otherwise), so
   a removed person is readmitted only for the measured seconds between the app's start and the
-  replay; until that replay is delivered (`.restore-pending`), `apply` refuses to start the app.
+  replay; until that replay is delivered (`.restore-pending`), every command but `restore` that
+  touches the app (`apply`, `install`, `upgrade`, `backup`, `unmanage`) refuses.
   A snapshot's symlinked volume, secret, dump or any directory above them is refused.
 - Secrets are generated once on their targets and read back on re-run; the workstation state
   directory never holds a secret.
