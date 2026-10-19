@@ -181,7 +181,7 @@ func compose(dir string, args []string, stdin io.Reader, stdout io.Writer) (int,
 	case "stop":
 		set(false)
 	case "start":
-		set(true)
+		set(true, args[1:]...)
 	case "pull":
 	case "up":
 		var only []string
@@ -189,6 +189,10 @@ func compose(dir string, args []string, stdin io.Reader, stdout io.Writer) (int,
 			if !strings.HasPrefix(a, "-") {
 				only = append(only, a)
 			}
+		}
+		if slices.Contains(args, "--no-start") { // recreated, stopped
+			set(false, only...)
+			break
 		}
 		set(true, only...)
 	case "exec":

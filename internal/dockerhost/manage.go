@@ -115,8 +115,12 @@ func (s unmanageStep) Inspect(ctx context.Context) (bool, error) {
 	return what == "", err
 }
 
-// Apply starts nothing that was not there: only a project with containers is recreated.
+// Apply starts nothing that was not running: only a project with containers is recreated,
+// unstarted, and only the services that ran are started again.
 func (s unmanageStep) Apply(ctx context.Context) error {
+	if err := refuseUnfinishedRestore(ctx, s.a); err != nil {
+		return err
+	}
 	svcs, err := s.a.readOverride(ctx)
 	if err != nil {
 		return err
@@ -139,8 +143,25 @@ func (s unmanageStep) Apply(ctx context.Context) error {
 	if err != nil || ids == "" {
 		return err
 	}
-	if _, err := s.a.Runner.Run(ctx, s.a.compose("up -d"), nil); err != nil {
+	// Recreate every container unstarted, then start only the services that were running.
+	cs, err := s.a.ps(ctx)
+	if err != nil {
+		return err
+	}
+	var running []string
+	for _, c := range cs {
+		if c.State == "running" && !slices.Contains(running, c.Service) {
+			running = append(running, c.Service)
+		}
+	}
+	if _, err := s.a.Runner.Run(ctx, s.a.compose("up --no-start"), nil); err != nil {
 		return fmt.Errorf("docker compose up: %w", err)
+	}
+	if len(running) == 0 {
+		return nil
+	}
+	if _, err := s.a.Runner.Run(ctx, s.a.compose("start "+quoteAll(running)), nil); err != nil {
+		return fmt.Errorf("docker compose start: %w", err)
 	}
 	return nil
 }

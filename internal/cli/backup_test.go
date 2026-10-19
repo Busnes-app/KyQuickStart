@@ -371,14 +371,21 @@ func TestReplayRemovals(t *testing.T) {
 
 // Decision 11: when KyIdentity does not deliver the replay, restore stops the restored app
 // (restore_incomplete); a rerun resumes, starts it and replays again.
-func TestFailedReplayStopsTheApp(t *testing.T) {
+// failedReplay restores dumpdemo, made to sign in through KyIdentity (cold: without its
+// dump command), and KyIdentity does not deliver the replay. delivered makes it deliver.
+func failedReplay(t *testing.T, cold bool) (f *fixture, fake string, k *killRunner, id string, delivered func()) {
+	t.Helper()
 	ctx := context.Background()
-	f, fake, k := backupFixture(t)
+	f, fake, k = backupFixture(t)
 	gated := fstest.MapFS{}
 	for name, file := range dumpCatalog {
 		gated[name] = file
 	}
-	gated["dumpdemo/manifest.yaml"] = &fstest.MapFile{Data: append(append([]byte{}, dumpCatalog["dumpdemo/manifest.yaml"].Data...), "oidc:\n  name: Dump\n  redirect_paths: [/cb]\n  admin_role: dump.admin\n"...)}
+	if cold {
+		m := strings.Replace(string(dumpCatalog["dumpdemo/manifest.yaml"].Data), "  service: db\n  command: [dump]\n  restore_command: [load]\n", "", 1)
+		gated["dumpdemo/manifest.yaml"] = &fstest.MapFile{Data: []byte(strings.Replace(m, "  restore_order: [db, web]\n", "", 1))}
+	}
+	gated["dumpdemo/manifest.yaml"] = &fstest.MapFile{Data: append(append([]byte{}, gated["dumpdemo/manifest.yaml"].Data...), "oidc:\n  name: Dump\n  redirect_paths: [/cb]\n  admin_role: dump.admin\n"...)}
 	for _, app := range []string{"kyidentity", "npm"} {
 		b, err := fs.ReadFile(catalog.Embedded(), app+"/manifest.yaml")
 		if err != nil {
@@ -419,7 +426,7 @@ func TestFailedReplayStopsTheApp(t *testing.T) {
 		t.Fatal(err, f.out.String())
 	}
 	password, _ := os.ReadFile(filepath.Join(dir, "secrets", "restic_password"))
-	id := snapshotID(t, f, "")
+	id = snapshotID(t, f, "")
 	os.WriteFile(filepath.Join(fake, "compose.json"), []byte(`{"db":false,"web":false}`), 0o600)
 	os.RemoveAll(dir)
 	err := f.runIn(string(password)+"\n", "restore", "dumpdemo", "--snapshot", id, "--yes")
@@ -429,6 +436,12 @@ func TestFailedReplayStopsTheApp(t *testing.T) {
 	if up := fakedocker.Running(t, fake); up["db"] || up["web"] {
 		t.Fatalf("the app runs without the replay: %v", up)
 	}
+	return f, fake, k, id, func() { status = "delivered" }
+}
+
+func TestFailedReplayStopsTheApp(t *testing.T) {
+	ctx := context.Background()
+	f, fake, k, id, delivered := failedReplay(t, false)
 	// Apply's own steps for the app (the plan's edges need a live NPM here) refuse to start it.
 	s, err := load(f.state, nil, f.o)
 	if err != nil {
@@ -442,7 +455,7 @@ func TestFailedReplayStopsTheApp(t *testing.T) {
 	if up := fakedocker.Running(t, fake); up["db"] || up["web"] {
 		t.Fatalf("apply started the app without the replay: %v", up)
 	}
-	status = "delivered"
+	delivered()
 	if err := f.runIn("", "restore", "dumpdemo", "--snapshot", id, "--yes"); err != nil {
 		t.Fatal(err, f.out.String())
 	}
@@ -465,5 +478,30 @@ func TestColdBackupSaysItStops(t *testing.T) {
 	defer func() { k.match = "" }()
 	if err := f.run("backup", "dumpdemo"); err == nil || !strings.Contains(f.out.String(), "dumpdemo is running again.") {
 		t.Fatalf("failed cold backup: %v\n%s", err, f.out.String())
+	}
+}
+
+// Round 3: backup and unmanage refuse an unfinished restore too, before they stop, start or
+// hand over anything (a cold backup would otherwise start the unreplayed app); restore then
+// still resumes.
+func TestUnfinishedRestoreRefusesBackupAndUnmanage(t *testing.T) {
+	f, fake, _, id, delivered := failedReplay(t, true)
+	for _, cmd := range []string{"backup", "unmanage"} {
+		if err := f.run(cmd, "dumpdemo"); err == nil || !strings.Contains(err.Error(), "a restore of dumpdemo is unfinished and its removal replay not delivered; finish it with kyquickstart restore dumpdemo") {
+			t.Fatalf("%s over the unfinished restore: %v\n%s", cmd, err, f.out.String())
+		}
+		if up := fakedocker.Running(t, fake); up["db"] || up["web"] {
+			t.Fatalf("%s started the app without the replay: %v", cmd, up)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(f.state, "handover.md")); !os.IsNotExist(err) || len(f.stack(t).Apps) != 3 {
+		t.Fatal("the refused unmanage dropped the app or recorded a handover")
+	}
+	delivered()
+	if err := f.runIn("", "restore", "dumpdemo", "--snapshot", id, "--yes"); err != nil || !strings.Contains(f.out.String(), "Resuming the restore of dumpdemo") {
+		t.Fatalf("rerun: %v\n%s", err, f.out.String())
+	}
+	if up := fakedocker.Running(t, fake); !up["db"] || !up["web"] {
+		t.Fatalf("not running after the rerun: %v", up)
 	}
 }
