@@ -153,7 +153,7 @@ func dnsEdgePeer(t *testing.T, ctx context.Context, c *http.Client) (int, dnsNet
 // checkCatalogDNS proves KyDNS's first apply: the amendment and every step ok, the handover,
 // the hardened container publishing only on the forward address, its setup files on the host
 // and its live check. It returns the secrets read from the host.
-func checkCatalogDNS(t *testing.T, out string, d driveTarget, port int) []string {
+func checkCatalogDNS(t *testing.T, out string, d driveTarget, port int, passed bool) []string {
 	t.Helper()
 	if !strings.Contains(out, "ran without kydns's client: adding it with setup amendment ") {
 		t.Fatal("KyDNS amendment not announced")
@@ -163,19 +163,23 @@ func checkCatalogDNS(t *testing.T, out string, d driveTarget, port int) []string
 			t.Fatalf("%s = %q", id, status(out, id))
 		}
 	}
+	// Apply prints the handover only once every step passed.
 	for _, want := range []string{
 		"KyDNS at https://" + catalogDNSURLHost + "/: sign in through KyIdentity as prepared-admin, the one account it admits",
 		"It answers DNS at " + d.forward + ":53 (UDP and TCP)",
 		"Firewall: ports 53 and " + strconv.Itoa(port) + " are open on " + d.forward,
-		"trusts forwarded\n  requests only from egress_address ",
-		"restrict both ports to your LAN and the edge at the host or network firewall",
+		"trusts forwarded\n    requests only from egress_address ",
+		"restrict both ports to your LAN and the edge at\n    the host or network firewall",
 		"Point clients at " + d.forward + " for DNS",
 		"From an interactive shell on nas\n     (ssh -t, so the password does not echo), set one:\n       docker exec -it kyq-kydns-app-1 /usr/local/bin/kydns admin reset-password",
 		"Pair it with KyRecovery",
 	} {
-		if !strings.Contains(out, want) {
+		if passed && !strings.Contains(out, want) {
 			t.Fatalf("KyDNS handover lacks %q", want)
 		}
+	}
+	if !passed && strings.Contains(out, "KyDNS at https://") {
+		t.Fatal("handover printed by a failed apply")
 	}
 	c := docker(t, "ps", "-q", "--filter", "label=com.docker.compose.project=kyq-kydns", "--filter", "label=ky.managed-by=kyquickstart")
 	if strings.Contains(c, "\n") || c == "" {
