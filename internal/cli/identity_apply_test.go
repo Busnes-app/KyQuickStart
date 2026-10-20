@@ -177,11 +177,17 @@ func (n *fakeIdentity) stream(ctx context.Context, namespace, pod, container str
 		if check && !n.applied || !n.staged {
 			return errors.New("not applied")
 		}
-		created := `[]`
-		if !check && !n.applied {
-			n.applied, created = true, `[{"kind":"user","name":"owner-admin","id":"u1"}]`
+		// 0.4.5 reports the mail relay it owns as kind mail.
+		created, reused, mail := `[]`, `[]`, ""
+		if strings.Contains(n.intent, `"mail":`) {
+			mail = `,{"kind":"mail","name":"settings","id":"mail"}`
 		}
-		out = `{"schema":"kyidentity.setup/1","created":` + created + `,"reused":[]}`
+		if !check && !n.applied {
+			n.applied, created = true, `[{"kind":"user","name":"owner-admin","id":"u1"}`+mail+`]`
+		} else if mail != "" {
+			reused = "[" + mail[1:] + "]"
+		}
+		out = `{"schema":"kyidentity.setup/1","created":` + created + `,"reused":` + reused + `}`
 		if check && n.checkReport != "" {
 			out = n.checkReport
 		}

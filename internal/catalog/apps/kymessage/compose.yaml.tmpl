@@ -271,9 +271,10 @@ services:
 secrets:
   session_secret:
     file: ./secrets/session_secret
-  # A copy of the console's directory secret beside its setup bundle: the HMAC secret must equal it.
+  # A copy of the console's directory secret, which the HMAC secret must equal, at a fixed path
+  # in data: backups carry it, as they carry the copy beside the setup bundle.
   directory_secret:
-    file: ./secrets/directory_secret
+    file: ./data/installer/directory_secret
   postgres_password:
     file: ./matrix/secrets/postgres_password
   mas_admin_client_secret:
