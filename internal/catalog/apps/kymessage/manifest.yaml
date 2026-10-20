@@ -59,8 +59,13 @@ media:
 backup:
   service: postgres
   command: [pg_dumpall, -U, postgres, --clean, --if-exists]
-  restore_command: [psql, -X, -q, -v, ON_ERROR_STOP=1, -U, postgres, -d, postgres]
+  # Into the fresh cluster init.sql made: pg_dumpall --clean drops and creates every role,
+  # including the superuser restoring it, which Postgres refuses ("current user cannot be
+  # dropped"); its ALTER ROLE still restores that role's password.
+  restore_command: [sh, -c, "sed -e '/^DROP ROLE IF EXISTS postgres;$/d' -e '/^CREATE ROLE postgres;$/d' | psql -X -q -o /dev/null -v ON_ERROR_STOP=1 -U postgres -d postgres"]
   volumes: [data, backups, matrix, media]
+  # The console's session secret; the hot copy of data carries the directory secret.
+  capsule_secrets: [session_secret]
   restore_order: [postgres, mas, app, synapse, element, livekit]
 upgrade:
   # First catalog release; the console's SQLite, Synapse's and MAS's schemas migrate at start.

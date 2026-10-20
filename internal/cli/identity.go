@@ -121,7 +121,9 @@ func identitySetup(ctx context.Context, exec identityExec, bundle string, check 
 			if item.Kind == "group" {
 				validName = identityGroupReportName.MatchString(item.Name) && strings.TrimSpace(item.Name) == item.Name
 			}
-			if (item.Kind != "user" && item.Kind != "client" && item.Kind != "role" && item.Kind != "connector" && item.Kind != "group") || !validName || !workloadName.MatchString(item.ID) {
+			// 0.4.5's mail relay is one object: {mail, settings, mail}.
+			mail := item.Kind == "mail" && item.Name == "settings" && item.ID == "mail"
+			if (item.Kind != "user" && item.Kind != "client" && item.Kind != "role" && item.Kind != "connector" && item.Kind != "group" && !mail) || !validName || !workloadName.MatchString(item.ID) {
 				return nil, errors.New("invalid KyIdentity setup object report")
 			}
 		}

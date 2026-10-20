@@ -382,7 +382,7 @@ func TestKyMessageSteps(t *testing.T) {
 	}
 	read := func(rel string) string { b, _ := os.ReadFile(filepath.Join(h.dir(), rel)); return string(b) }
 	dir := "data/installer/" + messageSetupID
-	for rel, want := range map[string]string{dir + "/client.secret": consoleCanary, dir + "/directory.secret": directoryCanary, "secrets/directory_secret": directoryCanary, "matrix/secrets/kyidentity_client_secret": chatCanary} {
+	for rel, want := range map[string]string{dir + "/client.secret": consoleCanary, dir + "/directory.secret": directoryCanary, "data/installer/directory_secret": directoryCanary, "matrix/secrets/kyidentity_client_secret": chatCanary} {
 		fi, err := os.Stat(filepath.Join(h.dir(), rel))
 		if read(rel) != want || err != nil || fi.Mode().Perm() != 0o600 {
 			t.Errorf("%s = %q (%v)", rel, read(rel), err)
@@ -667,7 +667,7 @@ func TestKyMessageHandover(t *testing.T) {
 	}
 	for _, want := range []string{"chat at https://chat.example.com/ (Element)", "console at https://message.example.com/", "Server name example.com", "@<the local part of a verified email>:example.com",
 		"everyday accounts only (owner)", "owner-admin signs in to the console alone and has no chat", `both "KyMessages" and "KyMessages chat"`, "email is verified",
-		"192.0.2.1, TCP 7881 and UDP 7882, which are open to your LAN; no\n  TURN", "Federation is closed", "sign-out does not end chat sessions", "offboarding",
+		"192.0.2.1, TCP 7881 and UDP 7882, which are open to your LAN; no\n  TURN", "Federation is closed", "sign-out does not end chat sessions", "Offboarding", "up to two minutes", "only owner keeps chat",
 		"docker logs kyq-kymessage-app-1 on nas", "cd '" + f.h.root + "/kymessage' && docker compose -p kyq-kymessage -f compose.yaml -f compose.kyq.yaml exec -T app /bin/sh -c 'eval \"$KYQ_SECRETS\" && exec /app/kymessages init-admin'",
 		"pair it with KyRecovery"} {
 		if !strings.Contains(s.handover, want) {

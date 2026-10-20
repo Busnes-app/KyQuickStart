@@ -321,7 +321,7 @@ func (s credentialsStep) place(ctx context.Context, mode string) error {
 	for _, f := range []struct{ rel, value string }{
 		{path.Join("data", dir, "client.secret"), console.ClientSecret},
 		{path.Join("data", dir, "directory.secret"), console.DirectorySecret},
-		{"secrets/directory_secret", console.DirectorySecret},
+		{"data/installer/directory_secret", console.DirectorySecret},
 		{"matrix/secrets/kyidentity_client_secret", chat.ClientSecret},
 	} {
 		if err := s.file(ctx, mode, f.rel, []byte(f.value)); err != nil {
@@ -450,11 +450,14 @@ KyMessages chat at https://%[1]s/ (Element), its console at https://%[2]s/.
   Chat: everyday accounts only (%[5]s). %[4]s signs in to the console alone and has no chat.
   To add a person: in KyIdentity assign them to both "KyMessages" and "KyMessages chat", and
   make sure their email is verified (the installer's owner accounts are; anyone else redeems
-  KyIdentity's verification mail). An unverified address gets no Matrix account.
+  KyIdentity's verification mail). An unverified address gets no Matrix account. KyMessages
+  0.4.3 still locks anyone its setup did not create at its next directory sweep, so for now
+  only %[5]s keeps chat.
   Calls: media goes straight to %[6]s, TCP 7881 and UDP 7882, which are open to your LAN; no
   TURN is installed, so callers must reach that address. Federation is closed.
-  A KyIdentity sign-out does not end chat sessions; offboarding (disabling or deleting the
-  person in KyIdentity) does, within a minute.
+  A KyIdentity sign-out does not end chat sessions. Offboarding (disabling or deleting the
+  person in KyIdentity) locks them out of chat and calls at once, but a session already open
+  keeps working for up to two minutes.
   Outstanding human steps:
   1. Its local "admin" break-glass account. Its one-time password is in the console's first
      log (docker logs kyq-%[7]s-app-1 on %[8]s). Replace it: on %[8]s, pipe a new password of
