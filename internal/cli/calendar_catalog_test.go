@@ -477,7 +477,7 @@ func TestKyCalendarUsernamesRefused(t *testing.T) {
 }
 
 // AC16: KyCalendar on a Docker host is refused before any connection, naming Kubernetes.
-func TestKyCalendarOnDockerRefused(t *testing.T) {
+func TestKyCalendarOnDockerRequiresRoute(t *testing.T) {
 	f := newFixture(t, "../catalog/testdata/apps")
 	f.o.Catalog = catalog.Embedded()
 	catalogIdentityPlan(t, f, "kyidentity", "")
@@ -489,7 +489,7 @@ func TestKyCalendarOnDockerRefused(t *testing.T) {
 		return nil, nil
 	}
 	for _, cmd := range [][]string{{"review"}, {"plan", "--noninteractive"}, {"apply"}} {
-		if err := f.run(cmd...); err == nil || !strings.Contains(err.Error(), "kycalendar") || !strings.Contains(err.Error(), "place it on a Kubernetes target") {
+		if err := f.run(cmd...); err == nil || !strings.Contains(err.Error(), "kycalendar") || !strings.Contains(err.Error(), "route") {
 			t.Errorf("%s: %v", cmd[0], err)
 		}
 	}

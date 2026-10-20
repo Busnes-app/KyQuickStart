@@ -199,7 +199,7 @@ and retain their own identity, sealer label and collection adapters.
 
 - Document management must integrate with centralized suite user management through a single administrative interface. Evaluate account lifecycle, groups, document access and offboarding; SSO alone does not satisfy this requirement. SCIM is a possible integration mechanism, not a selected implementation contract.
 
-- Document architecture placement: Euro-Office runs in Kubernetes; the NAS hosts the document-management/storage container and persistent document data. Connect them through authenticated HTTPS file-transfer and save endpoints.
+- Document architecture placement: Euro-Office may run in production on Docker or Kubernetes; the NAS hosts the document-management/storage container and persistent document data. Connect them through authenticated HTTPS file-transfer and save endpoints.
 
 - The installation owner must administer KyDrive through their KyIdentity account. Explicit application administrator grants are separate from directory provisioning; an undisclosed local recovery login is not sufficient owner access.
 
@@ -224,6 +224,10 @@ and retain their own identity, sealer label and collection adapters.
 - Product branding uses the Busnes.app-site Systems stamp icon masters and platform-sized local exports. Busnes Light/Dark reached web and `kypost-android`, whose default is now Busnes Light; the remaining native clients keep their existing defaults until their own pass.
 
 - Web themes default to the Busnes.app cream/light and charcoal/dark palettes with orange accents, following the OS until a browser-local choice is saved. Preserve existing named themes and saved choices.
+
+- KyQuickStart supports Docker placement for every catalog Ky product, including a separate resident runner for KyYard. Kubernetes remains available for products with manifests.
+
+- KyPost owns the shared `kypost-net` Docker network; standalone consumers join it as external. Containerized Nginx Proxy Manager is supported with a fixed address trusted as one `/32` (IPv4) or `/128` (IPv6). Preserve existing manually owned networks as explicit legacy exceptions.
 
 When the user requests a durable behavior change, record it here or in the relevant child AGENTS.md
 
@@ -286,8 +290,7 @@ handover of admin and everyday logins.
   `apply` runs it after the app's health step against the app's one ready pod, and
   `integrate-stack` skips it. Today only KyIdentity (from its `identity` settings) and the
   installed Ky apps with a catalog `oidc` block and a product adapter: KyRecovery, kyPulse,
-  KyNotes, KyCalendar and KyYard on Kubernetes, KyDrive, KyPost and KyDNS on Docker (its one running managed container, through `docker
-  exec` over SSH; KyDNS's shell-less image gets its setup files placed from the host). An installed KyNotes' entry is exactly `bundle: /data/installer/setup.json`
+  KyNotes, KyCalendar and KyYard on Docker or Kubernetes; KyDrive and KyPost on Docker, and KyDNS on Docker (its managed `app` service, through `docker exec` over SSH; KyDNS's shell-less image gets its setup files placed from the host). An installed KyNotes' entry is exactly `bundle: /data/installer/setup.json`
   and its `identity_client` (no `notes` block): apply derives its native preparation, and its
   setup runs after the edge routes KyIdentity and before KyNotes' own route; a routed KyNotes
   without that entry is refused. Apply adds each such app's client, derived from its `oidc`
@@ -298,11 +301,11 @@ handover of admin and everyday logins.
   `kyidentity.retire-bootstrap` disables `kyq-bootstrap` through `disable-user` when advertised,
   else apply prints that it stays active. An app whose `oidc` names `scim_token_file` (KyDrive)
   gets `kyidentity.scim.<app>`, after its setup and the edges: its target's token copied
-  privately into KyIdentity's pod, never replaced, and a pass of the setup that registered its
+  privately into KyIdentity's container, never replaced, and a pass of the setup that registered its
   client with `scim` added (outside the immutable preparation directories, so no reset).
   The catalog KyIdentity sets `KYIDENTITY_ALLOW_PRIVATE_CALLBACKS`, since routes resolve to
   LAN or pod addresses; loopback, link-local and metadata stay refused. Before any step, apply refuses
-  (`issuer_changed`) a plan that moves the issuer KyIdentity's Deployment runs with, or the URLs
+  (`issuer_changed`) a plan that moves the issuer KyIdentity's workload runs with, or the URLs
   of an added client its setup exported, once that setup has run (read-only
   `--check`/`--export-client` on the running pod; unreadable refuses). Each app's setup
   transfers its client's secrets in memory, across targets too, into private files in the app's
@@ -397,7 +400,7 @@ handover of admin and everyday logins.
   `install`, `uninstall` and `unmanage`, and `apply` or `upgrade` that would redeploy the app the
   runner runs in (`owned_by_runner`); the runner acts only on targets marked with its own ID
   (`owned_by_cli` otherwise) and never changes its own pod (`kubernetes.suite_runner`, the
-  catalog KyYard): its workload becomes a note step and requests naming it are refused
+  catalog KyYard): its workload (both Docker containers when on Docker) becomes a note step and requests naming it are refused
   (`runner_host`). The workstation deploys that app only with a digest-pinned runner image
   (`cli.Options.RunnerImage`, stamped into release binaries by `scripts/release-binaries.sh`; empty
   source builds refuse it; `version --runner-image` prints it). The runner's SSH key, kubeconfigs and
@@ -468,6 +471,7 @@ calls and kind nodes must carry their own explicit bounds.
 - `make workflow-lint`: needs Docker (CI runs it in `vulncheck`); actionlint v1.7.12 on every
   workflow and offline, digest-pinned zizmor (medium and up) on `release-image.yml` and
   `kyoffboard-image.yml`.
+- `go test -tags e2e ./test/e2e -run '^TestDockerKy'`: pinned-image Docker startup/readiness/native capabilities/restart for every new template, plus KyYard's private runner socket, credential isolation and container recreation.
 - `make e2e`: needs Docker; runs `apply` against an sshd container on the local Docker socket and
   against a kind cluster (`go run sigs.k8s.io/kind@v0.33.0`), including drift and stale-lock cases.
   Also runs disposable NPM, frpc/frps and cloudflared container tests in `internal/edge`, and
