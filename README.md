@@ -9,9 +9,10 @@ Kubernetes target ([docs/edge.md](docs/edge.md)), KyIdentity behind it
 ([docs/guided-setup.md](docs/guided-setup.md#catalog-kyidentity-on-kubernetes)), and KyRecovery,
 kyPulse, KyNotes and KyCalendar signing in through it ([docs/guided-setup.md](docs/guided-setup.md#catalog-kyrecovery-on-kubernetes),
 [kyPulse](docs/guided-setup.md#catalog-kypulse-on-kubernetes), [KyNotes](docs/guided-setup.md#catalog-kynotes-on-kubernetes),
-[KyCalendar](docs/guided-setup.md#catalog-kycalendar-on-kubernetes)), with KyDrive, KyPost and KyDNS on a
-Docker host routed through that edge ([KyDrive](docs/guided-setup.md#catalog-kydrive-on-docker),
-[KyPost](docs/guided-setup.md#catalog-kypost-on-docker), [KyDNS](docs/guided-setup.md#catalog-kydns-on-docker));
+[KyCalendar](docs/guided-setup.md#catalog-kycalendar-on-kubernetes)), with KyDrive, KyPost, KyDNS and the
+KyMessages chat stack (pending its v0.4.3 pin) on a Docker host routed through that edge
+([KyDrive](docs/guided-setup.md#catalog-kydrive-on-docker), [KyPost](docs/guided-setup.md#catalog-kypost-on-docker),
+[KyDNS](docs/guided-setup.md#catalog-kydns-on-docker), [KyMessages](docs/guided-setup.md#catalog-kymessages-on-docker));
 otherwise only a disposable demo app installs. KyYard, with the suite runner in its pod, installs
 from a [release binary](#install-a-release), which carries the digest of the runner image it was
 released with; source builds refuse it ([KyYard](docs/guided-setup.md#catalog-kyyard-on-kubernetes)).
