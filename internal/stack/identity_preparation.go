@@ -3,6 +3,7 @@ package stack
 import (
 	"encoding/json"
 	"errors"
+	"net"
 	"net/mail"
 	"net/url"
 	"path"
@@ -21,7 +22,46 @@ type IdentityPreparation struct {
 	Everyday IdentityAccount  `yaml:"everyday" json:"everyday"`
 	Clients  []IdentityClient `yaml:"clients" json:"clients"`
 	Groups   []IdentityGroup  `yaml:"groups,omitempty" json:"groups,omitempty"`
+	Mail     *IdentityMail    `yaml:"mail,omitempty" json:"mail,omitempty"`
 }
+
+// IdentityMail is KyIdentity's SMTP relay, set by its first setup only. PasswordFile is a
+// workstation file; apply sends its bytes on stdin to KyIdentity's copy, TargetFile.
+type IdentityMail struct {
+	Host         string `yaml:"host" json:"host"`
+	Port         int    `yaml:"port" json:"port"`
+	Security     string `yaml:"security" json:"security"` // tls or starttls; never plaintext
+	From         string `yaml:"from" json:"from"`
+	Username     string `yaml:"username,omitempty" json:"username,omitempty"`
+	PasswordFile string `yaml:"password_file,omitempty" json:"-"`
+	TargetFile   string `yaml:"-" json:"passwordFile,omitempty"`
+}
+
+func (m IdentityMail) validate() error {
+	var domain string
+	from, err := mail.ParseAddress(m.From)
+	if err == nil {
+		_, domain, _ = strings.Cut(from.Address, "@")
+	}
+	switch {
+	case !Hostname(m.Host) && net.ParseIP(m.Host) == nil:
+		return errors.New("identity.mail.host must be a lowercase DNS name or an IP address")
+	case m.Port < 1 || m.Port > 65535:
+		return errors.New("identity.mail.port must be 1-65535")
+	case m.Security != "tls" && m.Security != "starttls":
+		return errors.New("identity.mail.security must be tls or starttls; plaintext SMTP is never used")
+	case err != nil || !Hostname(strings.ToLower(domain)) || strings.ContainsAny(m.From, "\r\n"):
+		return errors.New("identity.mail.from must be a mail address, optionally with a name")
+	case (m.Username == "") != (m.PasswordFile == ""):
+		return errors.New("identity.mail.username and password_file come together, or neither for a relay without authentication")
+	case m.Username != "" && (len(m.Username) > 256 || strings.ContainsFunc(m.Username, func(r rune) bool { return r < 0x21 || r == 0x7f })):
+		return errors.New("identity.mail.username must be 1-256 printable characters")
+	case m.PasswordFile != "" && !validRoot(m.PasswordFile):
+		return errors.New("identity.mail.password_file must be an absolute path on this workstation")
+	}
+	return nil
+}
+
 type IdentityAccount struct {
 	Username string `yaml:"username" json:"username"`
 	Email    string `yaml:"email" json:"email"`
@@ -110,6 +150,11 @@ func (n *IdentityPreparation) validate(bundle string) error {
 			if !preparationURL(c.SCIM.URL) || !preparationPath(c.SCIM.TokenFile) || c.SCIM.TokenFile == bundle || strings.HasPrefix(c.SCIM.TokenFile, scope+"/") || c.SCIM.Groups && len(c.Groups) == 0 {
 				return bad
 			}
+		}
+	}
+	if n.Mail != nil {
+		if err := n.Mail.validate(); err != nil {
+			return err
 		}
 	}
 	raw, err := json.Marshal(n)
