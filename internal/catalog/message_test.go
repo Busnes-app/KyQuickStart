@@ -57,7 +57,7 @@ func messageCompose(t *testing.T) (App, map[string]composeService, map[string]ma
 	}
 	a := cat["kymessage"]
 	var c struct {
-		Services map[string]composeService `yaml:"services"`
+		Services map[string]composeService  `yaml:"services"`
 		Networks map[string]map[string]bool `yaml:"networks"`
 	}
 	r := a.WithRoute(messageRoute)
