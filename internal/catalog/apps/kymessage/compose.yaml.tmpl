@@ -1,0 +1,285 @@
+# Derived from KyMessage's docker-compose.yml, docker-compose.proxy.yml and
+# docker-compose.matrix.yml. Every service runs as the target user, who owns every bind
+# directory and matrix-init's 0600 files, so no root chown one-shot is needed; Element's nginx
+# too, with writable tmpfs. Postgres and MAS's admin API (8081) are on internal networks only.
+# Each routed service publishes on its route's forward address; LiveKit's media ports on
+# media_address. Nothing else is published.
+x-matrix-env: &matrix-env
+  KY_MATRIX_SERVER_NAME: "{{hostname "server_name"}}"
+  KY_MATRIX_HOST: "https://{{host "matrix"}}"
+  KY_MATRIX_CHAT_HOST: "https://{{host "chat"}}"
+  KY_MATRIX_RTC_HOST: "https://{{host "rtc"}}"
+services:
+  app:
+    image: {{ .Images.kymessage }}
+    platform: linux/amd64
+    user: "${KYQ_UID:?}:${KYQ_GID:?}"
+    restart: unless-stopped
+    # The 5 s HTTP drain and a backup deposit already on the wire.
+    stop_grace_period: 21m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: [/tmp]
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 1
+    pids_limit: 256
+    ports: ["{{forward}}:8080"]
+    secrets: [session_secret, directory_secret, mas_admin_client_secret, kybackup_db_password]
+    # Three values have no file form: KYQ_SECRETS reads them from their files, so none is in
+    # Compose or docker inspect. The handover's init-admin line evaluates it the same way.
+    entrypoint: ["/bin/sh", "-c", "eval \"$$KYQ_SECRETS\" && exec /app/kymessages \"$$@\"", "sh"]
+    environment:
+      <<: *matrix-env
+      KYQ_SECRETS: "KY_SESSION_SECRET=$$(cat /run/secrets/session_secret) && KY_KYIDENTITY_HMAC_SECRET=$$(cat /run/secrets/directory_secret) && KY_MATRIX_ADMIN_CLIENT_ID=$$(cat /matrix/secrets/mas_admin_client_id) && export KY_SESSION_SECRET KY_KYIDENTITY_HMAC_SECRET KY_MATRIX_ADMIN_CLIENT_ID"
+      KY_ENV: production
+      KY_HOST: 0.0.0.0
+      KY_PORT: "8080"
+      KY_APP_NAME: KyMessages
+      KY_APP_URL: "https://{{host}}"
+      KY_DB_DRIVER: sqlite
+      KY_DATA_DIR: /app/data
+      KY_BACKUP_DIR: /app/backups
+      KY_TRUSTED_PROXIES: "{{edge_address}}"
+      # apply-setup writes the KyIdentity issuer, client and secret; only setup's accounts sign in.
+      KY_SSO_ENABLED: "true"
+      KY_SSO_AUTO_PROVISION: "false"
+      KY_SCIM_ENABLED: "false"
+      KY_MATRIX_RTC_KEY_FILE: /matrix/secrets/livekit_api_key
+      KY_MATRIX_RTC_SECRET_FILE: /matrix/secrets/livekit_api_secret
+      KY_MATRIX_ADMIN_URL: http://mas-admin:8081
+      KY_MATRIX_ADMIN_SECRET_FILE: /run/secrets/mas_admin_client_secret
+      KY_MATRIX_DIR: /matrix
+      KY_MATRIX_MEDIA_DIR: /matrix-media
+      KY_MATRIX_DB_HOST: postgres
+      KY_MATRIX_BACKUP_DB_PASSWORD_FILE: /run/secrets/kybackup_db_password
+      GOMEMLIMIT: 384MiB
+    networks: [default, matrix-admin, matrix-db]
+    # ./matrix piece by piece, without secrets/postgres_password (the superuser's). Element's
+    # config.json and the federation file are writable: the console rewrites both in place.
+    volumes:
+      - ./data:/app/data
+      - ./backups:/app/backups
+      - ./matrix/synapse:/matrix/synapse:ro
+      - ./matrix/mas:/matrix/mas:ro
+      - ./matrix/element/config.json:/matrix/element/config.json
+      - ./matrix/federation/federation.yaml:/matrix/federation/federation.yaml
+      - ./matrix/postgres:/matrix/postgres:ro
+      - ./matrix/livekit:/matrix/livekit:ro
+      - ./matrix/secrets/livekit_api_key:/matrix/secrets/livekit_api_key:ro
+      - ./matrix/secrets/livekit_api_secret:/matrix/secrets/livekit_api_secret:ro
+      - ./matrix/secrets/synapse_db_password:/matrix/secrets/synapse_db_password:ro
+      - ./matrix/secrets/mas_db_password:/matrix/secrets/mas_db_password:ro
+      - ./matrix/secrets/synapse_macaroon_secret_key:/matrix/secrets/synapse_macaroon_secret_key:ro
+      - ./matrix/secrets/synapse_form_secret:/matrix/secrets/synapse_form_secret:ro
+      - ./matrix/secrets/mas_synapse_shared_secret:/matrix/secrets/mas_synapse_shared_secret:ro
+      - ./matrix/secrets/mas_encryption:/matrix/secrets/mas_encryption:ro
+      - ./matrix/secrets/mas_signing_rsa:/matrix/secrets/mas_signing_rsa:ro
+      - ./matrix/secrets/mas_signing_ec:/matrix/secrets/mas_signing_ec:ro
+      - ./matrix/secrets/upstream_provider_id:/matrix/secrets/upstream_provider_id:ro
+      - ./matrix/secrets/mas_admin_client_id:/matrix/secrets/mas_admin_client_id:ro
+      - ./matrix/secrets/mas_admin_client_secret:/matrix/secrets/mas_admin_client_secret:ro
+      - ./matrix/secrets/kybackup_db_password:/matrix/secrets/kybackup_db_password:ro
+      - ./matrix/secrets/kyidentity_client_secret:/matrix/secrets/kyidentity_client_secret:ro
+      - ./media:/matrix-media:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/installer/network"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+      start_interval: 2s
+
+  # One-shot (compose run --rm matrix-init), from kymessage.matrix-init and .credentials.
+  matrix-init:
+    profiles: [init]
+    image: {{ .Images.kymessage }}
+    platform: linux/amd64
+    user: "${KYQ_UID:?}:${KYQ_GID:?}"
+    entrypoint: ["/app/kymessages", "matrix-init", "-dir", "/matrix"]
+    network_mode: none
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: [/tmp]
+    mem_limit: 256m
+    memswap_limit: 256m
+    cpus: 1
+    pids_limit: 64
+    # KY_KYIDENTITY_ISSUER and KY_MATRIX_MAS_CLIENT_ID come from the plan, on the run's command line.
+    environment:
+      <<: *matrix-env
+      KY_MATRIX_AUTH_HOST: "https://{{host "auth"}}"
+      KY_ADMIN_HOST: "https://{{host}}"
+      KY_MATRIX_MEDIA_IP: "{{media_address}}"
+    volumes: [./matrix:/matrix]
+
+  postgres:
+    image: {{ .Images.postgres }}
+    user: "${KYQ_UID:?}:${KYQ_GID:?}"
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: [/tmp, /var/run/postgresql]
+    shm_size: 128m
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 1
+    pids_limit: 256
+    stop_grace_period: 2m
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      # A subdirectory: initdb must own its directory.
+      PGDATA: /var/lib/postgresql/data/pgdata
+    secrets: [postgres_password]
+    networks: [matrix-db]
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+      - ./matrix/postgres:/docker-entrypoint-initdb.d:ro
+    # TCP, not the socket: during first-run init the temporary server listens on the socket only.
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_interval: 2s
+
+  synapse:
+    image: {{ .Images.synapse }}
+    user: "${KYQ_UID:?}:${KYQ_GID:?}"
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: [/tmp]
+    mem_limit: 1g
+    memswap_limit: 1g
+    cpus: 2
+    pids_limit: 256
+    # The console-owned federation file, loaded second, sets listeners and the allow-list.
+    command: ["run", "--config-path", "/config/homeserver.yaml", "--config-path", "/federation.yaml"]
+    ports: ["{{forward "matrix"}}:8008"]
+    networks: [default, matrix-db]
+    volumes:
+      - ./matrix/synapse:/config:ro
+      - ./matrix/federation/federation.yaml:/federation.yaml:ro
+      - ./media:/media
+    depends_on:
+      postgres: {condition: service_healthy}
+      mas: {condition: service_started}
+    # MAS's image has no HTTP client: it is probed from here, through its discovery document.
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--fail-early", "-o", "/dev/null", "http://localhost:8008/health", "-o", "/dev/null", "http://mas:8080/.well-known/openid-configuration"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+      start_interval: 2s
+
+  mas:
+    image: {{ .Images.mas }}
+    user: "${KYQ_UID:?}:${KYQ_GID:?}"
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: [/tmp]
+    mem_limit: 256m
+    memswap_limit: 256m
+    cpus: 1
+    pids_limit: 128
+    command: ["server", "--config", "/config/config.yaml"]
+    ports: ["{{forward "auth"}}:8080"]
+    networks:
+      default: {}
+      matrix-db: {}
+      # Its admin listener binds this alias: the admin API exists only on matrix-admin.
+      matrix-admin: {aliases: [mas-admin]}
+    volumes: [./matrix/mas/config.yaml:/config/config.yaml:ro]
+    depends_on:
+      postgres: {condition: service_healthy}
+    # Distroless: only its own CLI. Liveness is in Synapse's healthcheck, which reads MAS's
+    # discovery document; this proves the configuration it serves is valid.
+    healthcheck:
+      test: ["CMD", "mas-cli", "config", "check", "--config", "/config/config.yaml"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_interval: 2s
+
+  element:
+    image: {{ .Images.element }}
+    user: "${KYQ_UID:?}:${KYQ_GID:?}"
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    # nginx as the target user writes its config, cache and pid file here.
+    tmpfs: [/tmp, "/etc/nginx/conf.d:mode=1777", "/var/cache/nginx:mode=1777", "/var/run:mode=1777"]
+    mem_limit: 64m
+    memswap_limit: 64m
+    cpus: 1
+    pids_limit: 128
+    environment:
+      ELEMENT_WEB_PORT: "8080"
+    ports: ["{{forward "chat"}}:8080"]
+    # The file only: the image serves a copy made at start.
+    volumes: [./matrix/element/config.json:/app/config.json:ro]
+    depends_on:
+      synapse: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/config.json"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_interval: 2s
+
+  livekit:
+    image: {{ .Images.livekit }}
+    user: "${KYQ_UID:?}:${KYQ_GID:?}"
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: [/tmp]
+    mem_limit: 256m
+    memswap_limit: 256m
+    cpus: 1
+    pids_limit: 128
+    command: ["--config", "/config/config.yaml"]
+    # Signalling on the route; media straight to media_address, no TURN.
+    ports:
+      - "{{forward "rtc"}}:7880"
+      - "{{media_address}}:7881:7881/tcp"
+      - "{{media_address}}:7882:7882/udp"
+    volumes: [./matrix/livekit:/config:ro]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:7880/"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_interval: 2s
+
+secrets:
+  session_secret:
+    file: ./secrets/session_secret
+  # A copy of the console's directory secret beside its setup bundle: the HMAC secret must equal it.
+  directory_secret:
+    file: ./secrets/directory_secret
+  postgres_password:
+    file: ./matrix/secrets/postgres_password
+  mas_admin_client_secret:
+    file: ./matrix/secrets/mas_admin_client_secret
+  kybackup_db_password:
+    file: ./matrix/secrets/kybackup_db_password
+
+networks:
+  matrix-db:
+    internal: true
+  # The console to MAS's admin API only.
+  matrix-admin:
+    internal: true

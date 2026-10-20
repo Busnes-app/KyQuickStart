@@ -1,0 +1,603 @@
+kycalendar:
+    compose: |
+        # Docker variant of this product's pinned manifest; bind data belongs to the SSH user.
+        services:
+          app:
+            image: ghcr.io/busnes-app/kycalendar:0.4.2@sha256:7ed435458a08c9dd02674657cc55aa6aaef96a254256c14880e27fc93c1cf75b
+            platform: linux/amd64
+            user: "${KYQ_UID:?}:${KYQ_GID:?}"
+            restart: unless-stopped
+            cap_drop: [ALL]
+            security_opt: [no-new-privileges:true]
+            read_only: true
+            tmpfs: [/tmp]
+            mem_limit: 512m
+            memswap_limit: 512m
+            cpus: 1
+            pids_limit: 128
+            stop_grace_period: 1200s
+            ports: ["192.0.2.9:1:8080"]
+            environment:
+              KY_HOST: "0.0.0.0"
+              KY_PORT: "8080"
+              KY_APP_NAME: "KyCalendar"
+              KY_APP_URL: "https://h.example.com"
+              KY_DB_DRIVER: "sqlite"
+              KY_DATA_DIR: "/app/data"
+              KY_SSO_ENABLED: "true"
+              KY_SSO_AUTO_PROVISION: "false"
+              KYCALENDAR_BACKUP_DIR: "/app/backups"
+              KYCALENDAR_BACKUP_KEEP: "7"
+              KYCALENDAR_BACKUP_DEPOSIT_INTERVAL: "24h"
+              GOMEMLIMIT: "384MiB"
+            volumes:
+              - "./data:/app/data"
+              - "./backups:/app/backups"
+            healthcheck:
+              test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/installer/network"]
+              interval: 5s
+              timeout: 3s
+              retries: 30
+              start_period: 10s
+    kubernetes: |
+        image: kycalendar
+        args: []
+        env:
+            GOMEMLIMIT: 384MiB
+            KY_APP_NAME: KyCalendar
+            KY_APP_URL: https://{{host}}
+            KY_DATA_DIR: /app/data
+            KY_DB_DRIVER: sqlite
+            KY_HOST: 0.0.0.0
+            KY_PORT: "8080"
+            KY_SSO_AUTO_PROVISION: "false"
+            KY_SSO_ENABLED: "true"
+            KYCALENDAR_BACKUP_DEPOSIT_INTERVAL: 24h
+            KYCALENDAR_BACKUP_DIR: /app/backups
+            KYCALENDAR_BACKUP_KEEP: "7"
+        ports:
+            - 8080
+        readiness_path: /api/installer/network
+        run_as: 10001
+        resources:
+            cpu: "1"
+            cpu_request: 50m
+            memory: 512Mi
+        volumes:
+            - name: data
+              mount: /app/data
+              size: 10Gi
+            - name: backups
+              mount: /app/backups
+              size: 5Gi
+        capabilities: []
+        writable_root: false
+        low_ports: false
+        node_ports: {}
+        termination_grace_seconds: 1200
+        suite_runner: false
+kydns:
+    compose: |
+        # From KyDNS v0.4.2's docker-compose.yml, on a bridge network instead of a LAN address: DNS and
+        # the admin UI publish only on the route's forward_host. It runs as the target user, who owns
+        # data, so the installer places its setup files from the host (the image has no shell).
+        services:
+          app:
+            image: ghcr.io/busnes-app/kydns-server:0.4.2@sha256:ceb83f29134bb611343d1adf94f85088f5f6c7101863a2c9b170e76591a5405b
+            platform: linux/amd64
+            user: "${KYQ_UID:?}:${KYQ_GID:?}"
+            restart: unless-stopped
+            cap_drop: [ALL]
+            security_opt: [no-new-privileges:true]
+            read_only: true
+            # Lets a non-root process bind 53; per network namespace, not the host's.
+            sysctls:
+              net.ipv4.ip_unprivileged_port_start: "0"
+            # The image's VOLUME is tmpfs, so Docker leaves no anonymous volume behind.
+            tmpfs: [/tmp, "/var/lib/kydns:size=1m"]
+            mem_limit: 256m
+            memswap_limit: 256m
+            cpus: 1
+            pids_limit: 128
+            # 8053 trusts forwarded headers only from the edge's egress_address (apply's kydns.gate
+            # checks a direct peer gets 403); both it and DNS's private-range rule need the Docker
+            # host to show KyDNS real client addresses.
+            ports: ["192.0.2.9:1:8053", "192.0.2.9:53:53/udp", "192.0.2.9:53:53/tcp"]
+            environment:
+              KYDNS_DATA_DIR: /data
+              KYDNS_TRUSTED_PROXIES: "192.0.2.8"
+              KYDNS_BACKUP_ALLOW_PRIVATE_RECOVERY: "false"
+              GOMEMLIMIT: 192MiB
+            volumes: ["./data:/data"]
+    kubernetes: |
+        null
+kydrive:
+    compose: |
+        # From KyDrive v0.4.2's docker-compose.yml. It runs as the target user, who owns its secrets
+        # and bind directories, with data under /data rather than /app/data: KyDrive's setup socket
+        # refuses a parent directory (/app) owned by another user.
+        services:
+          app:
+            image: ghcr.io/busnes-app/kydrive-server:0.4.2@sha256:1b2eec75dd4d197934c98f109ff8f913b4025f39eda1e56b0076cd70428b3e2c
+            platform: linux/amd64
+            user: "${KYQ_UID:?}:${KYQ_GID:?}"
+            restart: unless-stopped
+            # Lets uploads, backups and restic finish on shutdown.
+            stop_grace_period: 20m
+            cap_drop: [ALL]
+            security_opt: [no-new-privileges:true]
+            read_only: true
+            # /tmp holds restic packs and SQLite temp files. The image's unused VOLUME paths are
+            # tmpfs, so Docker leaves no anonymous volumes behind.
+            tmpfs: [/tmp, "/app/data:size=1m", "/app/backups:size=1m"]
+            mem_limit: 1g
+            memswap_limit: 1g
+            cpus: 2
+            pids_limit: 256
+            # Only on the address the edge forwards to; see docs/guided-setup.md for its firewall.
+            ports: ["192.0.2.9:1:8080"]
+            secrets: [session_secret, scim_token]
+            # KY_SESSION_SECRET has no file form: read it from the secret, never from Compose.
+            entrypoint: ["/bin/sh", "-c", "s=$$(cat /run/secrets/session_secret) || exit 1; KY_SESSION_SECRET=$$s; export KY_SESSION_SECRET; unset s; exec /app/kydrive-server"]
+            environment:
+              KY_ENV: production
+              KY_HOST: 0.0.0.0
+              KY_PORT: "8080"
+              KY_APP_NAME: KyDrive
+              KY_APP_URL: "https://h.example.com"
+              KY_DB_DRIVER: sqlite
+              KY_DATA_DIR: /data
+              KY_BACKUP_DIR: /backups
+              # apply-setup writes the KyIdentity issuer, client and secret; only setup's accounts sign in.
+              KY_SSO_ENABLED: "true"
+              KY_SSO_AUTO_PROVISION: "false"
+              KY_SCIM_ENABLED: "true"
+              KY_SCIM_TOKEN_FILE: /run/secrets/scim_token
+              GOMEMLIMIT: 768MiB
+            volumes: ["./data:/data", "./backups:/backups"]
+            # start_interval checks every 2 s while it starts, so apply and restore see it healthy (and
+            # restore replays KyIdentity's removals) seconds after it answers rather than after 30 s.
+            healthcheck:
+              test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+              interval: 30s
+              timeout: 5s
+              retries: 3
+              start_period: 120s
+              start_interval: 2s
+        secrets:
+          session_secret:
+            file: ./secrets/session_secret
+          scim_token:
+            file: ./secrets/scim_token
+    kubernetes: |
+        null
+kyidentity:
+    compose: |
+        # Docker variant of this product's pinned manifest; bind data belongs to the SSH user.
+        services:
+          app:
+            image: ghcr.io/busnes-app/kyidentity-server:0.4.4@sha256:f866a7513988a7b5919363ee76182baa2727ee57407404104049f93c29253c5a
+            platform: linux/amd64
+            user: "${KYQ_UID:?}:${KYQ_GID:?}"
+            restart: unless-stopped
+            cap_drop: [ALL]
+            security_opt: [no-new-privileges:true]
+            read_only: true
+            tmpfs: [/tmp]
+            mem_limit: 768m
+            memswap_limit: 768m
+            cpus: 1
+            pids_limit: 128
+            stop_grace_period: 60s
+            ports: ["192.0.2.9:1:5867"]
+            environment:
+              KYIDENTITY_ISSUER_URL: "https://h.example.com"
+              KYIDENTITY_DATA_DIR: "/data"
+              KYIDENTITY_PORT: "5867"
+              BOOTSTRAP_ADMIN_USER: "kyq-bootstrap"
+              KYIDENTITY_ALLOW_PRIVATE_CALLBACKS: "true"
+              GOMEMLIMIT: "640MiB"
+            volumes:
+              - "./data:/data"
+            healthcheck:
+              test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5867/readyz"]
+              interval: 5s
+              timeout: 3s
+              retries: 30
+              start_period: 10s
+    kubernetes: |
+        image: kyidentity
+        args: []
+        env:
+            BOOTSTRAP_ADMIN_USER: kyq-bootstrap
+            GOMEMLIMIT: 640MiB
+            KYIDENTITY_ALLOW_PRIVATE_CALLBACKS: "true"
+            KYIDENTITY_DATA_DIR: /data
+            KYIDENTITY_ISSUER_URL: https://{{host}}
+            KYIDENTITY_PORT: "5867"
+        ports:
+            - 5867
+        readiness_path: /readyz
+        run_as: 100
+        resources:
+            cpu: "1"
+            cpu_request: 100m
+            memory: 768Mi
+        volumes:
+            - name: data
+              mount: /data
+              size: 1Gi
+        capabilities: []
+        writable_root: false
+        low_ports: false
+        node_ports: {}
+        termination_grace_seconds: 0
+        suite_runner: false
+kynotes:
+    compose: |
+        # Docker variant of this product's pinned manifest; bind data belongs to the SSH user.
+        services:
+          app:
+            image: ghcr.io/busnes-app/kynotes-server:0.4.2@sha256:85f49161f9e5879d9998507ac5b1ef07e3c5e884854e162173791b7292a06ad9
+            platform: linux/amd64
+            user: "${KYQ_UID:?}:${KYQ_GID:?}"
+            restart: unless-stopped
+            cap_drop: [ALL]
+            security_opt: [no-new-privileges:true]
+            read_only: true
+            tmpfs: [/tmp]
+            mem_limit: 512m
+            memswap_limit: 512m
+            cpus: 1
+            pids_limit: 128
+            stop_grace_period: 1020s
+            ports: ["192.0.2.9:1:8080"]
+            environment:
+              PORT: "8080"
+              KYNOTES_DATA_DIR: "/data"
+              KYNOTES_BACKUP_DIR: "/backups"
+              KYNOTES_BACKUP_KEEP: "7"
+              KYNOTES_BACKUP_DEPOSIT_INTERVAL: "24h"
+              GOMEMLIMIT: "384MiB"
+            volumes:
+              - "./data:/data"
+              - "./backups:/backups"
+            healthcheck:
+              test: ["CMD", "/kynotes-server", "healthcheck"]
+              interval: 5s
+              timeout: 3s
+              retries: 30
+              start_period: 10s
+    kubernetes: |
+        image: kynotes
+        args: []
+        env:
+            GOMEMLIMIT: 384MiB
+            KYNOTES_BACKUP_DEPOSIT_INTERVAL: 24h
+            KYNOTES_BACKUP_DIR: /backups
+            KYNOTES_BACKUP_KEEP: "7"
+            KYNOTES_DATA_DIR: /data
+            PORT: "8080"
+        ports:
+            - 8080
+        readiness_path: /healthz
+        run_as: 65532
+        resources:
+            cpu: "1"
+            cpu_request: 50m
+            memory: 512Mi
+        volumes:
+            - name: data
+              mount: /data
+              size: 10Gi
+            - name: backups
+              mount: /backups
+              size: 5Gi
+        capabilities: []
+        writable_root: false
+        low_ports: false
+        node_ports: {}
+        termination_grace_seconds: 1020
+        suite_runner: false
+kypost:
+    compose: |
+        # From KyPost v0.4.2's docker-compose.yml, without its root entrypoint: the same bootstrap,
+        # migration and supervisor run as kypost (uid 1000) with no capabilities. The named volumes
+        # start from the image's kypost-owned 0700 directories, so nothing needs a chown.
+        services:
+          app:
+            image: ghcr.io/busnes-app/kypost-server:0.4.2@sha256:23b596719edbbf81859047264893509cef7a90b6eb7ac48038bc353e9f3d2353
+            platform: linux/amd64
+            user: kypost
+            restart: unless-stopped
+            # The API and the daemon each drain up to 1000 s, one after the other.
+            stop_grace_period: 36m
+            cap_drop: [ALL]
+            security_opt: [no-new-privileges:true]
+            read_only: true
+            # supervisord needs a temporary directory; Ollama writes its key under ~/.ollama.
+            tmpfs: [/tmp, "/home/kypost:uid=1000,gid=1000,mode=0700"]
+            mem_limit: 8g
+            memswap_limit: 8g
+            cpus: 4
+            pids_limit: 512
+            # Only on the address the edge forwards to; KyPost opens no mail port.
+            ports: ["192.0.2.9:1:5866"]
+            entrypoint: ["/bin/sh", "-c", "kypost-server --mode bootstrap-admin && kypost-server migrate-native && exec supervisord -c /etc/supervisord.conf"]
+            environment:
+              WEB_PORT: "5866"
+              # Its OIDC callback, and Secure cookies.
+              SERVER_BASE_URL: "https://h.example.com"
+              TUNING_FILE: /kypost/config/TUNING.md
+              # A webmail client for existing IMAP/SMTP accounts: no native mail, receiving or receiver.
+              KYPOST_NATIVE_MAIL: "false"
+              KYPOST_NATIVE_RECEIVING: "false"
+              KYPOST_NATIVE_RECEIVER: "false"
+              KYPOST_BACKUP_DEPOSIT_INTERVAL: 24h
+              KYPOST_BACKUP_KEEP: "7"
+            volumes:
+              - config:/kypost/config
+              - private:/kypost/private
+              - state:/kypost/state
+              - logs:/kypost/logs
+              - ollama-models:/kypost/ollama-models
+            healthcheck:
+              test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:5866/api/health"]
+              interval: 30s
+              timeout: 5s
+              retries: 3
+              start_period: 180s
+        volumes:
+          config: {}
+          private: {}
+          state: {}
+          logs: {}
+          ollama-models: {}
+    kubernetes: |
+        null
+kypulse:
+    compose: |
+        # Docker variant of this product's pinned manifest; bind data belongs to the SSH user.
+        services:
+          app:
+            image: ghcr.io/busnes-app/kypulse-server:0.4.2@sha256:4d7232d53e07476592379b7c688c8f50b073e498d89b5c08b94cc3404ed3cc16
+            platform: linux/amd64
+            user: "${KYQ_UID:?}:${KYQ_GID:?}"
+            restart: unless-stopped
+            cap_drop: [ALL]
+            security_opt: [no-new-privileges:true]
+            read_only: true
+            tmpfs: [/tmp]
+            mem_limit: 512m
+            memswap_limit: 512m
+            cpus: 1
+            pids_limit: 128
+            stop_grace_period: 60s
+            ports: ["192.0.2.9:1:8080"]
+            environment:
+              KYPULSE_ENV: "production"
+              KYPULSE_HOST: "0.0.0.0"
+              KYPULSE_PORT: "8080"
+              KYPULSE_APP_URL: "https://h.example.com"
+              KYPULSE_DATA_DIR: "/app/data"
+              KYPULSE_AUDIT_KEY_FILE: "/app/secrets/audit.key"
+              KYPULSE_SSO_AUTO_PROVISION: "false"
+              GOMEMLIMIT: "384MiB"
+            volumes:
+              - "./data:/app/data"
+              - "./secrets:/app/secrets"
+            healthcheck:
+              test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+              interval: 5s
+              timeout: 3s
+              retries: 30
+              start_period: 10s
+    kubernetes: |
+        image: kypulse
+        args: []
+        env:
+            GOMEMLIMIT: 384MiB
+            KYPULSE_APP_URL: https://{{host}}
+            KYPULSE_AUDIT_KEY_FILE: /app/secrets/audit.key
+            KYPULSE_DATA_DIR: /app/data
+            KYPULSE_ENV: production
+            KYPULSE_HOST: 0.0.0.0
+            KYPULSE_PORT: "8080"
+            KYPULSE_SSO_AUTO_PROVISION: "false"
+        ports:
+            - 8080
+        readiness_path: /healthz
+        run_as: 10001
+        resources:
+            cpu: "1"
+            cpu_request: 50m
+            memory: 512Mi
+        volumes:
+            - name: data
+              mount: /app/data
+              size: 5Gi
+            - name: secrets
+              mount: /app/secrets
+              size: 16Mi
+        capabilities: []
+        writable_root: false
+        low_ports: false
+        node_ports: {}
+        termination_grace_seconds: 0
+        suite_runner: false
+kyrecovery:
+    compose: |
+        # Docker variant of this product's pinned manifest; bind data belongs to the SSH user.
+        services:
+          app:
+            image: ghcr.io/busnes-app/kyrecovery-server:0.4.2@sha256:61bd690877d202579dd14952cd37d6232ce988e71406083b7438d66321e19eae
+            platform: linux/amd64
+            user: "${KYQ_UID:?}:${KYQ_GID:?}"
+            restart: unless-stopped
+            cap_drop: [ALL]
+            security_opt: [no-new-privileges:true]
+            read_only: true
+            tmpfs: [/tmp]
+            mem_limit: 512m
+            memswap_limit: 512m
+            cpus: 1
+            pids_limit: 128
+            stop_grace_period: 60s
+            ports: ["192.0.2.9:1:8095"]
+            environment:
+              KYRECOVERY_DATA_DIR: "/app/data"
+              KYRECOVERY_COOKIE_SECURE: "true"
+              GOMEMLIMIT: "384MiB"
+            volumes:
+              - "./data:/app/data"
+            healthcheck:
+              test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8095/healthz"]
+              interval: 5s
+              timeout: 3s
+              retries: 30
+              start_period: 10s
+    kubernetes: |
+        image: kyrecovery
+        args: []
+        env:
+            GOMEMLIMIT: 384MiB
+            KYRECOVERY_COOKIE_SECURE: "true"
+            KYRECOVERY_DATA_DIR: /app/data
+        ports:
+            - 8095
+        readiness_path: /healthz
+        run_as: 10001
+        resources:
+            cpu: "1"
+            cpu_request: 50m
+            memory: 512Mi
+        volumes:
+            - name: data
+              mount: /app/data
+              size: 10Gi
+        capabilities: []
+        writable_root: false
+        low_ports: false
+        node_ports: {}
+        termination_grace_seconds: 0
+        suite_runner: false
+kyyard:
+    compose: |
+        # Docker variant of this product's pinned manifest; bind data belongs to the SSH user.
+        services:
+          app:
+            image: ghcr.io/busnes-app/kyyard:0.4.3@sha256:94c1b9cff3cff2f42e636680979f3535ac07220c99e6f4479b857683d2820756
+            platform: linux/amd64
+            user: "${KYQ_UID:?}:${KYQ_GID:?}"
+            restart: unless-stopped
+            cap_drop: [ALL]
+            security_opt: [no-new-privileges:true]
+            read_only: true
+            tmpfs: [/tmp]
+            mem_limit: 512m
+            memswap_limit: 512m
+            cpus: 1
+            pids_limit: 128
+            stop_grace_period: 1200s
+            ports: ["192.0.2.9:1:9273"]
+            environment:
+              KY_HOST: "0.0.0.0"
+              KY_PORT: "9273"
+              KY_ALLOW_PLAINTEXT_BIND: "true"
+              KY_TRUSTED_PROXIES: "192.0.2.8"
+              KY_APP_NAME: "KyYard"
+              KY_APP_URL: "https://h.example.com"
+              KY_DB_DRIVER: "sqlite"
+              KY_DATA_DIR: "/data"
+              KY_DOCKER_SOCKET: ""
+              KY_SSO_ENABLED: "false"
+              KY_SCIM_ENABLED: "false"
+              KY_BACKUP_DIR: "/data/backups"
+              KY_BACKUP_KEEP: "7"
+              KY_BACKUP_DEPOSIT_INTERVAL: "24h"
+              KY_SUITE_RUNNER_SOCKET: "/run/kyquickstart/runner.sock"
+              GOMEMLIMIT: "384MiB"
+            volumes:
+              - "./data:/data"
+            healthcheck:
+              test: ["CMD", "/app/kyyard-server", "healthcheck"]
+              interval: 5s
+              timeout: 3s
+              retries: 30
+              start_period: 10s
+    kubernetes: |
+        image: kyyard
+        args: []
+        env:
+            GOMEMLIMIT: 384MiB
+            KY_ALLOW_PLAINTEXT_BIND: "true"
+            KY_APP_NAME: KyYard
+            KY_APP_URL: https://{{host}}
+            KY_BACKUP_DEPOSIT_INTERVAL: 24h
+            KY_BACKUP_DIR: /data/backups
+            KY_BACKUP_KEEP: "7"
+            KY_DATA_DIR: /data
+            KY_DB_DRIVER: sqlite
+            KY_DOCKER_SOCKET: ""
+            KY_HOST: 0.0.0.0
+            KY_PORT: "9273"
+            KY_SCIM_ENABLED: "false"
+            KY_SSO_ENABLED: "false"
+            KY_SUITE_RUNNER_SOCKET: /run/kyquickstart/sock/runner.sock
+            KY_TRUSTED_PROXIES: 127.0.0.1
+        ports:
+            - 9273
+        readiness_path: /health/ready
+        run_as: 10001
+        resources:
+            cpu: "1"
+            cpu_request: 50m
+            memory: 512Mi
+        volumes:
+            - name: data
+              mount: /data
+              size: 10Gi
+        capabilities: []
+        writable_root: false
+        low_ports: false
+        node_ports: {}
+        termination_grace_seconds: 1200
+        suite_runner: true
+npm:
+    compose: ""
+    kubernetes: |
+        image: npm
+        args: []
+        env:
+            DISABLE_IPV6: "true"
+            PGID: "1000"
+            PUID: "1000"
+        ports:
+            - 81
+            - 80
+            - 443
+        readiness_path: /api/
+        run_as: 0
+        resources:
+            cpu: 500m
+            memory: 512Mi
+        volumes:
+            - name: data
+              mount: /data
+              size: 1Gi
+            - name: letsencrypt
+              mount: /etc/letsencrypt
+              size: 256Mi
+        capabilities:
+            - CHOWN
+            - DAC_OVERRIDE
+            - SETGID
+            - SETUID
+            - KILL
+        writable_root: true
+        low_ports: true
+        node_ports:
+            80: 30080
+            443: 30443
+        termination_grace_seconds: 0
+        suite_runner: false

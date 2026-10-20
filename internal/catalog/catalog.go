@@ -31,6 +31,13 @@ type Manifest struct {
 	Backup      *Backup           `yaml:"backup"`
 	Upgrade     Upgrade           `yaml:"upgrade"`
 	Kubernetes  *Kubernetes       `yaml:"kubernetes"`
+	// Routes are the edge routes of an app reached at several hostnames; the first is the
+	// primary. None means one route to the app.
+	Routes []RouteRole `yaml:"routes"`
+	// Media are ports published on the plan's media_address, outside the edge.
+	Media *Media `yaml:"media"`
+	// ChatOIDC is a second, everyday-only KyIdentity client at one of the app's routes.
+	ChatOIDC *ChatOIDC `yaml:"chat_oidc"`
 	// PodSecurity is the app namespace's enforced level: restricted (the default) or baseline.
 	PodSecurity string `yaml:"pod_security"`
 }
@@ -52,6 +59,35 @@ type OIDC struct {
 	// setup bundle names.
 	SCIMTokenFile string `yaml:"scim_token_file"`
 }
+
+// RouteRole is one of an app's edge routes: a hostname role served by a Compose service's
+// published port. Paths are the only exact paths served (everything else answers 404);
+// DenyPaths are anchored regular expressions that answer 404.
+type RouteRole struct {
+	Role      string   `yaml:"role"`
+	Service   string   `yaml:"service"`
+	Port      int      `yaml:"port"`
+	Paths     []string `yaml:"paths"`
+	DenyPaths []string `yaml:"deny_paths"`
+}
+
+// Media are <port>/<tcp|udp> entries published on the plan's media_address.
+type Media struct {
+	Ports []string `yaml:"ports"`
+}
+
+// ChatOIDC is a client whose redirect is at route role Role; RedirectPath may hold
+// {provider_id}. It has no administrator role: only the everyday role signs in.
+type ChatOIDC struct {
+	Name         string `yaml:"name"`
+	Role         string `yaml:"role"`
+	ClientSuffix string `yaml:"client_suffix"` // the client ID is <app>-<suffix>
+	EverydayRole string `yaml:"everyday_role"`
+	RedirectPath string `yaml:"redirect_path"`
+}
+
+// ProviderIDRef in a ChatOIDC redirect path stands for the derived provider ID.
+const ProviderIDRef = "{provider_id}"
 
 // Backup is what restic takes from the app. Volumes name Compose volumes or ./<name> bind
 // directories and, when the app runs on Kubernetes, kubernetes.volumes; Skip entries are
@@ -133,6 +169,11 @@ type App struct {
 	// Binds are the ./<name> bind directories of its services, sorted; the Docker driver
 	// creates them private before Compose would create them as root.
 	Binds []string
+	// Nested are bind sources inside a bind directory, ./<name>/<path>, sorted; they must
+	// exist before Compose starts, or Docker would create them as root.
+	Nested []string
+	// Init are the services in a Compose profile: one-shot runs, never part of up.
+	Init []string
 }
 
 type Catalog map[string]App
@@ -171,22 +212,50 @@ const ForwardAddrRef = "{{forward_addr}}"
 // the edge's requests from.
 const EdgeAddressRef = "{{edge_address}}"
 
-// routeRefs are every route reference a Compose template may write.
-var routeRefs = []string{HostRef, ForwardRef, ForwardAddrRef, EdgeAddressRef}
+// MediaAddressRef stands for the plan's media_address of the app.
+const MediaAddressRef = "{{media_address}}"
+
+// HostnameRef stands for the route's hostname alone, without a client port.
+const HostnameRef = "{{hostname}}"
+
+// routeRefs are every route reference a Compose template may write; {{host:<role>}} and
+// {{forward:<role>}} name a role of routes.
+var routeRefs = []string{HostRef, ForwardRef, ForwardAddrRef, EdgeAddressRef, MediaAddressRef, HostnameRef, "{{host:", "{{forward:", "{{hostname:"}
+
+// roleRef renders {{host "x"}} as {{host:x}}, and {{host}} as itself.
+func roleRef(name string) func(...string) string {
+	return func(role ...string) string {
+		if len(role) == 0 {
+			return "{{" + name + "}}"
+		}
+		return "{{" + name + ":" + strings.Join(role, ",") + "}}"
+	}
+}
 
 // routeFuncs render a Compose template's route references as themselves; a session replaces
-// them with the app's route (WithRoute).
+// them with the app's routes (WithRoute).
 var routeFuncs = template.FuncMap{
-	"host":         func() string { return HostRef },
-	"forward":      func() string { return ForwardRef },
-	"forward_addr": func() string { return ForwardAddrRef },
-	"edge_address": func() string { return EdgeAddressRef },
+	"host":          roleRef("host"),
+	"forward":       roleRef("forward"),
+	"hostname":      roleRef("hostname"),
+	"forward_addr":  func() string { return ForwardAddrRef },
+	"edge_address":  func() string { return EdgeAddressRef },
+	"media_address": func() string { return MediaAddressRef },
 }
 
-// Route is what a Compose template's route references stand for.
+// roleRefRE finds {{host:<role>}} and {{forward:<role>}} in a rendered Compose file.
+var roleRefRE = regexp.MustCompile(`\{\{(?:host|forward|hostname):([^}]*)\}\}`)
+
+// Route is what a Compose template's route references stand for. Roles holds the
+// non-primary routes' addresses, by role.
 type Route struct {
 	Host, Forward, ForwardAddr, EdgeAddress string
+	Hostname, MediaAddress                  string
+	Roles                                   map[string]RoleAddress
 }
+
+// RoleAddress is one role's URL host, hostname and forward_host:forward_port.
+type RoleAddress struct{ Host, Hostname, Forward string }
 
 // AdminPort is NPM's admin API port. It is never published outside the cluster.
 const AdminPort = 81
@@ -240,6 +309,9 @@ func loadApp(fsys fs.FS, dir string) (App, error) {
 		if m.Kubernetes == nil {
 			return App{}, fmt.Errorf("neither compose.yaml.tmpl nor kubernetes")
 		}
+		if m.Routes != nil || m.Media != nil || m.ChatOIDC != nil {
+			return App{}, fmt.Errorf("routes, media and chat_oidc need compose.yaml.tmpl")
+		}
 		if err := m.validateBackup(nil); err != nil {
 			return App{}, fmt.Errorf("manifest.yaml: backup: %w", err)
 		}
@@ -262,7 +334,10 @@ func loadApp(fsys fs.FS, dir string) (App, error) {
 	if err := m.validateBackup(&c); err != nil {
 		return App{}, fmt.Errorf("manifest.yaml: backup: %w", err)
 	}
-	return App{Manifest: m, Compose: buf.Bytes(), Services: c.services, Binds: c.binds}, nil
+	if err := m.validateRoutes(buf.Bytes(), c); err != nil {
+		return App{}, fmt.Errorf("manifest.yaml: %w", err)
+	}
+	return App{Manifest: m, Compose: buf.Bytes(), Services: c.services, Binds: c.binds, Nested: c.nested, Init: c.init}, nil
 }
 
 // UsesRoute reports whether the app's Compose file takes anything from its route.
@@ -275,8 +350,20 @@ func (a App) UsesEdgeAddress() bool { return bytes.Contains(a.Compose, []byte(Ed
 
 // WithRoute returns a copy whose Compose file has its route references replaced by r.
 func (a App) WithRoute(r Route) App {
-	a.Compose = []byte(strings.NewReplacer(HostRef, r.Host, ForwardRef, r.Forward, ForwardAddrRef, r.ForwardAddr, EdgeAddressRef, r.EdgeAddress).Replace(string(a.Compose)))
+	pairs := []string{HostRef, r.Host, ForwardRef, r.Forward, ForwardAddrRef, r.ForwardAddr, EdgeAddressRef, r.EdgeAddress, MediaAddressRef, r.MediaAddress, HostnameRef, r.Hostname}
+	for role, ra := range r.Roles {
+		pairs = append(pairs, "{{host:"+role+"}}", ra.Host, "{{forward:"+role+"}}", ra.Forward, "{{hostname:"+role+"}}", ra.Hostname)
+	}
+	a.Compose = []byte(strings.NewReplacer(pairs...).Replace(string(a.Compose)))
 	return a
+}
+
+// Primary is the role of the app's primary route, "" for an app with one route.
+func (m Manifest) Primary() string {
+	if len(m.Routes) == 0 {
+		return ""
+	}
+	return m.Routes[0].Role
 }
 
 func (m Manifest) validate(dir string) error {
@@ -556,6 +643,76 @@ func (m Manifest) validateBackup(c *composeFile) error {
 	return nil
 }
 
+var (
+	// exactPathRE is an exact request path nginx can match: no space, quote, brace or ;.
+	exactPathRE = regexp.MustCompile(`^(/[A-Za-z0-9_.~-]+)+$`)
+	denyRE      = regexp.MustCompile(`^\^/[A-Za-z0-9_./()|?*+\[\]-]*$`)
+	mediaRE     = regexp.MustCompile(`^[1-9][0-9]{0,4}/(tcp|udp)$`)
+)
+
+// validateRoutes checks routes, media and chat_oidc against the rendered Compose file:
+// every role reference names a role, every role a service publishing its port.
+func (m Manifest) validateRoutes(compose []byte, c composeFile) error {
+	if m.Kubernetes != nil && (m.Routes != nil || m.Media != nil) {
+		return fmt.Errorf("routes and media are for Docker: a Kubernetes app is one container")
+	}
+	roles := map[string]RouteRole{}
+	for _, r := range m.Routes {
+		switch {
+		case !keyRE.MatchString(r.Role) || roles[r.Role].Role != "":
+			return fmt.Errorf("routes: role %q must be unique and match %s", r.Role, keyRE)
+		case !slices.Contains(c.ports[r.Service], r.Port):
+			return fmt.Errorf("routes: role %s: service %q does not publish port %d", r.Role, r.Service, r.Port)
+		case len(r.Paths) > 0 && len(r.DenyPaths) > 0:
+			return fmt.Errorf("routes: role %s: paths and deny_paths exclude each other", r.Role)
+		}
+		if err := check(r.Paths, func(p string) bool { return exactPathRE.MatchString(p) && !strings.Contains(p, "/../") }); err != nil {
+			return fmt.Errorf("routes: role %s: paths %w must be a unique exact absolute path", r.Role, err)
+		}
+		if err := check(r.DenyPaths, func(p string) bool { _, err := regexp.Compile(p); return denyRE.MatchString(p) && err == nil }); err != nil {
+			return fmt.Errorf("routes: role %s: deny_paths %w must be a unique regular expression anchored at ^/", r.Role, err)
+		}
+		roles[r.Role] = r
+	}
+	for _, ref := range roleRefRE.FindAllSubmatch(compose, -1) {
+		if _, ok := roles[string(ref[1])]; !ok || len(m.Routes) > 0 && string(ref[1]) == m.Primary() {
+			return fmt.Errorf("compose.yaml.tmpl: %s names no non-primary role of routes", ref[0])
+		}
+	}
+	usesMedia := bytes.Contains(compose, []byte(MediaAddressRef))
+	if m.Media != nil {
+		if len(m.Media.Ports) == 0 || !usesMedia {
+			return fmt.Errorf("media: ports need a Compose publication on %s", MediaAddressRef)
+		}
+		if err := check(m.Media.Ports, mediaRE.MatchString); err != nil {
+			return fmt.Errorf("media: port %w must be unique <port>/<tcp|udp>", err)
+		}
+	} else if usesMedia {
+		return fmt.Errorf("compose.yaml.tmpl: %s needs media", MediaAddressRef)
+	}
+	if o := m.ChatOIDC; o != nil {
+		r, ok := roles[o.Role]
+		switch {
+		case m.OIDC == nil:
+			return fmt.Errorf("chat_oidc needs oidc: the console client")
+		case !ok || o.Role == m.Primary():
+			return fmt.Errorf("chat_oidc.role %q must be a non-primary role of routes", o.Role)
+		case len(r.Paths) > 0:
+			return fmt.Errorf("chat_oidc.role %s serves only its paths", o.Role)
+		case !keyRE.MatchString(o.ClientSuffix):
+			return fmt.Errorf("chat_oidc.client_suffix %q must match %s", o.ClientSuffix, keyRE)
+		case !roleRE.MatchString(o.EverydayRole) || o.EverydayRole == m.OIDC.AdminRole || o.EverydayRole == m.OIDC.UserRole:
+			return fmt.Errorf("chat_oidc.everyday_role %q must match %s and differ from oidc's roles", o.EverydayRole, roleRE)
+		case !urlPathRE.MatchString(strings.ReplaceAll(o.RedirectPath, ProviderIDRef, "x")):
+			return fmt.Errorf("chat_oidc.redirect_path %q must be an absolute path", o.RedirectPath)
+		}
+		if err := (OIDC{Name: o.Name, RedirectPaths: []string{"/"}, AdminRole: "x"}).validate(false); err != nil {
+			return fmt.Errorf("chat_oidc.%w", err)
+		}
+	}
+	return nil
+}
+
 // check names the first entry that repeats or fails ok.
 func check(list []string, ok func(string) bool) error {
 	seen := map[string]bool{}
@@ -587,22 +744,32 @@ func compareVersions(a, b string) int {
 }
 
 type composeFile struct {
-	services []string        // sorted
+	services []string        // sorted, outside profiles
+	init     []string        // sorted, in a profile
 	volumes  map[string]bool // named volumes and bind directories
 	binds    []string        // sorted
+	nested   []string        // sorted
+	ports    map[string][]int
 }
 
-// bindRE is a bind directory's source: ./<name>, beside compose.yaml.
-var bindRE = regexp.MustCompile(`^\./([a-z][a-z0-9-]{0,30})$`)
+// bindRE is a bind source beside compose.yaml: ./<name>, or a path inside it.
+var bindRE = regexp.MustCompile(`^\./([a-z][a-z0-9-]{0,30})((/[A-Za-z0-9_][A-Za-z0-9._-]*)*)$`)
+
+// publishRE is a ports entry: an explicit address reference, then host:container[/proto].
+// A bare or wildcard publication would bypass the address the plan chose.
+var publishRE = regexp.MustCompile(`^(\{\{forward(:[a-z][a-z0-9_]{0,31})?\}\}|(\{\{forward_addr\}\}|\{\{media_address\}\}|127\.0\.0\.1):[1-9][0-9]{0,4}):([1-9][0-9]{0,4})(/(tcp|udp))?$`)
 
 // checkCompose returns the sorted service names, the named volumes and the bind directories,
-// refusing builds, any image the manifest does not pin and any other relative bind source.
+// refusing builds, any image the manifest does not pin, any other relative bind source and
+// any publication without an explicit address.
 func checkCompose(b []byte, images map[string]string) (composeFile, error) {
 	var c struct {
 		Services map[string]struct {
-			Image   string `yaml:"image"`
-			Build   any    `yaml:"build"`
-			Volumes []any  `yaml:"volumes"`
+			Image    string   `yaml:"image"`
+			Build    any      `yaml:"build"`
+			Volumes  []any    `yaml:"volumes"`
+			Ports    []any    `yaml:"ports"`
+			Profiles []string `yaml:"profiles"`
 		} `yaml:"services"`
 		Volumes map[string]any `yaml:"volumes"`
 	}
@@ -616,12 +783,10 @@ func checkCompose(b []byte, images map[string]string) (composeFile, error) {
 	for _, ref := range images {
 		pinned[ref] = true
 	}
-	var names []string
-	volumes := map[string]bool{}
+	out := composeFile{volumes: map[string]bool{}, ports: map[string][]int{}}
 	for v := range c.Volumes {
-		volumes[v] = true
+		out.volumes[v] = true
 	}
-	var binds []string
 	for name, s := range c.Services {
 		if s.Build != nil {
 			return composeFile{}, fmt.Errorf("service %s: build is not allowed", name)
@@ -629,7 +794,20 @@ func checkCompose(b []byte, images map[string]string) (composeFile, error) {
 		if !pinned[s.Image] {
 			return composeFile{}, fmt.Errorf("service %s: image %q is not one of the manifest's pinned images", name, s.Image)
 		}
-		names = append(names, name)
+		if len(s.Profiles) > 0 {
+			out.init = append(out.init, name)
+		} else {
+			out.services = append(out.services, name)
+		}
+		for _, p := range s.Ports {
+			short, _ := p.(string)
+			m := publishRE.FindStringSubmatch(short)
+			if m == nil {
+				return composeFile{}, fmt.Errorf("service %s: port %v must publish on {{forward}}, {{forward_addr}} or {{media_address}} as host:container[/proto]", name, p)
+			}
+			port, _ := strconv.Atoi(m[4])
+			out.ports[name] = append(out.ports[name], port)
+		}
 		for _, v := range s.Volumes {
 			short, ok := v.(string)
 			if !ok {
@@ -641,20 +819,27 @@ func checkCompose(b []byte, images map[string]string) (composeFile, error) {
 			}
 			m := bindRE.FindStringSubmatch(source)
 			if m == nil {
-				return composeFile{}, fmt.Errorf("service %s: bind source %q must be ./<name>", name, source)
+				return composeFile{}, fmt.Errorf("service %s: bind source %q must be ./<name> or a path inside it", name, source)
 			}
 			if _, named := c.Volumes[m[1]]; named {
 				return composeFile{}, fmt.Errorf("bind directory %s is also a named volume", m[1])
 			}
-			if !slices.Contains(binds, m[1]) {
-				volumes[m[1]] = true
-				binds = append(binds, m[1])
+			if !slices.Contains(out.binds, m[1]) {
+				out.volumes[m[1]] = true
+				out.binds = append(out.binds, m[1])
+			}
+			if m[2] != "" && !slices.Contains(out.nested, source) {
+				out.nested = append(out.nested, source)
 			}
 		}
 	}
-	sort.Strings(names)
-	sort.Strings(binds)
-	return composeFile{services: names, volumes: volumes, binds: binds}, nil
+	for _, l := range [][]string{out.services, out.init, out.binds, out.nested} {
+		sort.Strings(l)
+	}
+	if len(out.services) == 0 {
+		return composeFile{}, fmt.Errorf("no services outside profiles")
+	}
+	return out, nil
 }
 
 // cpuMilli reads a quantity cpuRE accepted, such as 100m or 2, as millicores.
