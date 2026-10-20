@@ -20,19 +20,16 @@ var yardUsername = regexp.MustCompile(`^[a-z0-9._-]{3,64}$`)
 const yardRunnerPod = "kyq-kyyard/app.kubernetes.io/name=kyyard"
 
 // runnerSelfNote replaces the workload steps of the app the runner runs in.
-const runnerSelfNote = "not redeployed: the suite runner runs in this pod; change it from the workstation with handoff --revoke, apply, then handoff"
+const runnerSelfNote = "not redeployed: the suite runner runs in this workload; change it from the workstation with handoff --revoke, apply, then handoff"
 
 func hostsRunner(a catalog.App) bool { return a.Kubernetes != nil && a.Kubernetes.SuiteRunner }
 
 // yardPlan refuses a plan installing KyYard that its setup or its runner could not take:
-// KyYard off Kubernetes, or an owner admin username KyYard's setup would refuse.
+// an owner admin username KyYard's setup would refuse.
 func yardPlan(st *stack.Stack) error {
 	i := slices.IndexFunc(st.Apps, func(a stack.App) bool { return a.Name == "kyyard" })
 	if i < 0 {
 		return nil
-	}
-	if t, _ := st.Target(st.Apps[i].Target); !t.Kubernetes() {
-		return fmt.Errorf("KyYard runs on Kubernetes only, with the suite runner in its pod; place kyyard on a Kubernetes target, not %s", t.Name)
 	}
 	for _, i := range st.Integrations {
 		if i.Product != "kyidentity" || i.Identity == nil || !i.Installed(st) {
@@ -70,7 +67,7 @@ func (s *session) refuseOwnPod(apps []string) error {
 	}
 	for _, a := range apps {
 		if hostsRunner(s.cat[a]) {
-			return suite.Errorf(suite.RunnerHost, "%s runs this suite runner, which never installs, removes or upgrades its own pod; from the workstation run kyquickstart handoff --revoke, apply, then handoff", a)
+			return suite.Errorf(suite.RunnerHost, "%s runs this suite runner, which never installs, removes or upgrades its own workload; from the workstation run kyquickstart handoff --revoke, apply, then handoff", a)
 		}
 	}
 	return nil
@@ -80,6 +77,9 @@ func (s *session) refuseOwnPod(apps []string) error {
 func yardHandover(state, host, admin string, t stack.Target) string {
 	if abs, err := filepath.Abs(state); err == nil {
 		state = abs
+	}
+	if !t.Kubernetes() {
+		return dockerYardHandover(state, host, admin, t)
 	}
 	return fmt.Sprintf(`
 KyYard at https://%[1]s/: sign in through KyIdentity as %[2]s (administration only). Everyday

@@ -125,3 +125,5 @@ Choosing `finish` saves the plan without touching any server.
 ## License
 
 MIT. See [LICENSE.txt](LICENSE.txt).
+
+All catalog Ky products support Docker targets; see [Docker product setup](docs/guided-setup.md#catalog-ky-products-on-docker) for routes, protected target credentials and KyYard's private resident runner.

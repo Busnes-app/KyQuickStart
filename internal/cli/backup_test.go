@@ -505,3 +505,40 @@ func TestUnfinishedRestoreRefusesBackupAndUnmanage(t *testing.T) {
 		t.Fatalf("not running after the rerun: %v", up)
 	}
 }
+
+func TestRemovalReplayThroughDockerIdentity(t *testing.T) {
+	f := newFixture(t, "../catalog/testdata/apps")
+	f.o.Catalog = catalog.Embedded()
+	drivePlan(t, f, "192.0.2.1")
+	p := filepath.Join(f.state, "stack.yaml")
+	raw, _ := os.ReadFile(p)
+	text := strings.ReplaceAll(string(raw), "  - name: kyidentity\n    target: k1\n", "  - name: kyidentity\n    target: nas\n")
+	text = strings.ReplaceAll(text, "  - product: kyidentity\n    target: k1\n", "  - product: kyidentity\n    target: nas\n")
+	text = strings.ReplaceAll(text, "forward_host: app.kyq-kyidentity.svc.cluster.local", "forward_host: 192.0.2.1")
+	if err := os.WriteFile(p, []byte(text), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := load(f.state, nil, f.o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.drivers["nas"] = sshDriver{t: s.placed["kyidentity"], c: f.h}
+	for _, status := range []string{"delivered", "blocked"} {
+		called := false
+		f.h.exec = func(cmd string, _ []byte) ([]byte, error) {
+			called = true
+			if !strings.Contains(cmd, dockerAppContainer("kyidentity")) || !strings.HasSuffix(cmd, strings.Join([]string{remote.Quote(identityBinary), remote.Quote("resync-system"), remote.Quote("--client"), remote.Quote("kydrive"), remote.Quote("--wait"), remote.Quote("10m0s")}, " ")) {
+				t.Fatal("wrong native replay", cmd)
+			}
+			report := []byte(`{"schema":"kyidentity.resync-system/1","clientId":"kydrive","status":"` + status + `","pending":0,"failed":0}`)
+			if status != "delivered" {
+				return report, errors.New("native command refused")
+			}
+			return report, nil
+		}
+		err = s.replayRemovals(context.Background(), "kydrive")
+		if !called || status == "delivered" && err != nil || status != "delivered" && code(err) != suite.RestoreIncomplete {
+			t.Fatal(status, err)
+		}
+	}
+}

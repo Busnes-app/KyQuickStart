@@ -49,7 +49,7 @@ func TestKyIdentityEntry(t *testing.T) {
 	}
 	a := cat["kyidentity"]
 	k := a.Kubernetes
-	if a.Category != "ky" || a.Version != "0.4.4" || a.PodSecurity != "restricted" || a.OIDC != nil || a.Compose != nil || len(a.Secrets) != 0 {
+	if a.Category != "ky" || a.Version != "0.4.4" || a.PodSecurity != "restricted" || a.OIDC != nil || len(a.Compose) == 0 || len(a.Secrets) != 0 {
 		t.Fatalf("manifest = %+v", a.Manifest)
 	}
 	if !strings.HasPrefix(a.Images[k.Image], "ghcr.io/busnes-app/kyidentity-server:0.4.4@sha256:f866a7513988a7b5919363ee76182baa2727ee57407404104049f93c29253c5a") || k.RunAs != 100 || k.WritableRoot || len(k.Capabilities) != 0 {
@@ -71,7 +71,7 @@ func TestKyRecoveryEntry(t *testing.T) {
 	}
 	a := cat["kyrecovery"]
 	k, o := a.Kubernetes, a.OIDC
-	if a.Category != "ky" || a.Version != "0.4.2" || a.PodSecurity != "restricted" || a.Compose != nil || len(a.Secrets) != 0 || len(a.DependsOn) != 1 || a.DependsOn[0] != "kyidentity" {
+	if a.Category != "ky" || a.Version != "0.4.2" || a.PodSecurity != "restricted" || len(a.Compose) == 0 || len(a.Secrets) != 0 || len(a.DependsOn) != 1 || a.DependsOn[0] != "kyidentity" {
 		t.Fatalf("manifest = %+v", a.Manifest)
 	}
 	if !strings.HasPrefix(a.Images[k.Image], "ghcr.io/busnes-app/kyrecovery-server:0.4.2@sha256:") || k.RunAs != 10001 || k.ReadinessPath != "/healthz" || k.Ports[0] != 8095 || k.Volumes[0].Mount != k.Env["KYRECOVERY_DATA_DIR"] || k.UsesHost() {
@@ -93,7 +93,7 @@ func TestKyPulseEntry(t *testing.T) {
 	}
 	a := cat["kypulse"]
 	k, o := a.Kubernetes, a.OIDC
-	if a.Category != "ky" || a.Version != "0.4.2" || a.PodSecurity != "restricted" || a.Compose != nil || len(a.Secrets) != 0 || len(a.DependsOn) != 1 || a.DependsOn[0] != "kyidentity" {
+	if a.Category != "ky" || a.Version != "0.4.2" || a.PodSecurity != "restricted" || len(a.Compose) == 0 || len(a.Secrets) != 0 || len(a.DependsOn) != 1 || a.DependsOn[0] != "kyidentity" {
 		t.Fatalf("manifest = %+v", a.Manifest)
 	}
 	// It binds loopback unless both are set.
@@ -120,7 +120,7 @@ func TestKyNotesEntry(t *testing.T) {
 	}
 	a := cat["kynotes"]
 	k, o := a.Kubernetes, a.OIDC
-	if a.Category != "ky" || a.Version != "0.4.2" || a.PodSecurity != "restricted" || a.Compose != nil || len(a.Secrets) != 0 || !slices.Equal(a.DependsOn, []string{"kyidentity"}) {
+	if a.Category != "ky" || a.Version != "0.4.2" || a.PodSecurity != "restricted" || len(a.Compose) == 0 || len(a.Secrets) != 0 || !slices.Equal(a.DependsOn, []string{"kyidentity"}) {
 		t.Fatalf("manifest = %+v", a.Manifest)
 	}
 	if a.Images[k.Image] != "ghcr.io/busnes-app/kynotes-server:0.4.2@sha256:85f49161f9e5879d9998507ac5b1ef07e3c5e884854e162173791b7292a06ad9" ||
@@ -146,7 +146,7 @@ func TestKyCalendarEntry(t *testing.T) {
 	}
 	a := cat["kycalendar"]
 	k, o := a.Kubernetes, a.OIDC
-	if a.Category != "ky" || a.Version != "0.4.2" || a.PodSecurity != "restricted" || a.Compose != nil || len(a.Secrets) != 0 || !slices.Equal(a.DependsOn, []string{"kyidentity"}) {
+	if a.Category != "ky" || a.Version != "0.4.2" || a.PodSecurity != "restricted" || len(a.Compose) == 0 || len(a.Secrets) != 0 || !slices.Equal(a.DependsOn, []string{"kyidentity"}) {
 		t.Fatalf("manifest = %+v", a.Manifest)
 	}
 	if a.Images[k.Image] != "ghcr.io/busnes-app/kycalendar:0.4.2@sha256:7ed435458a08c9dd02674657cc55aa6aaef96a254256c14880e27fc93c1cf75b" ||
@@ -245,7 +245,7 @@ func TestKyYardEntry(t *testing.T) {
 	}
 	a := cat["kyyard"]
 	k, o := a.Kubernetes, a.OIDC
-	if a.Category != "ky" || a.Version != "0.4.3" || a.PodSecurity != "restricted" || a.Compose != nil || len(a.Secrets) != 0 || !slices.Equal(a.DependsOn, []string{"kyidentity"}) {
+	if a.Category != "ky" || a.Version != "0.4.3" || a.PodSecurity != "restricted" || len(a.Compose) == 0 || len(a.Secrets) != 0 || !slices.Equal(a.DependsOn, []string{"kyidentity"}) {
 		t.Fatalf("manifest = %+v", a.Manifest)
 	}
 	if a.Images[k.Image] != "ghcr.io/busnes-app/kyyard:0.4.3@sha256:94c1b9cff3cff2f42e636680979f3535ac07220c99e6f4479b857683d2820756" ||

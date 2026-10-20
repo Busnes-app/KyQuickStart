@@ -113,7 +113,11 @@ func (s *session) composeClients(st *stack.Stack) error {
 		}
 		switch i.Product {
 		case "kyrecovery":
-			s.handover += fmt.Sprintf(recoveryCeremony, host, n.Admin.Username)
+			text := fmt.Sprintf(recoveryCeremony, host, n.Admin.Username)
+			if !s.placed["kyrecovery"].Kubernetes() {
+				text = strings.ReplaceAll(text, "pod's log (kubectl -n kyq-kyrecovery logs deployment/app), and lost when that pod is replaced.", "container's log (docker logs kyq-kyrecovery-app-1 on its target), and lost when that container is replaced.")
+			}
+			s.handover += text
 		case "kydrive":
 			t := s.placed["kydrive"]
 			s.handover += fmt.Sprintf(driveHandover, host, n.Admin.Username, path.Join(t.Root, "kydrive"), t.Name, n.Everyday.Username)
@@ -125,7 +129,7 @@ func (s *session) composeClients(st *stack.Stack) error {
 		case "kyyard":
 			s.handover += yardHandover(s.state, host, n.Admin.Username, s.placed["kyyard"])
 		case "kycalendar":
-			s.handover += fmt.Sprintf(calendarHandover, host, n.Admin.Username, n.Everyday.Username, kubectl(s.state, s.placed["kycalendar"]))
+			s.handover += calendarRuntimeHandover(s.state, host, n.Admin.Username, n.Everyday.Username, s.placed["kycalendar"])
 		case "kypost":
 			s.handover += fmt.Sprintf(postHandover, host, n.Admin.Username, n.Everyday.Username, postContainer, s.placed["kypost"].Name)
 		case "kypulse":
@@ -134,7 +138,11 @@ func (s *session) composeClients(st *stack.Stack) error {
 			if len(s.pulseTargets) > 32 {
 				return errors.New("kyPulse's setup watches at most 32 apps")
 			}
-			s.handover += pulseHandover(host, n.Admin.Username, s.pulseTargets, unwatched)
+			text := pulseHandover(host, n.Admin.Username, s.pulseTargets, unwatched)
+			if !s.placed["kypulse"].Kubernetes() {
+				text = strings.ReplaceAll(text, "its first pod's log (kubectl -n kyq-kypulse logs deployment/app), and lost when that pod is replaced.", "its first container's log (docker logs kyq-kypulse-app-1 on its target), and lost when that container is replaced.")
+			}
+			s.handover += text
 		}
 	}
 	if len(s.derived) > 0 {
@@ -187,11 +195,11 @@ func (s *session) amendLate(ctx context.Context, state string, prior func() erro
 	k := slices.IndexFunc(s.integrations, func(i stack.Integration) bool {
 		return i.Product == "kyidentity" && i.Identity != nil && i.Target == t.Name
 	})
-	d, ok := s.drivers[t.Name].(kubeDriver)
-	if k < 0 || !ok || len(s.derived) == 0 {
+	d := s.drivers[t.Name]
+	if k < 0 || d == nil || len(s.derived) == 0 {
 		return prior, nil
 	}
-	if _, found, err := d.c.AppEnv(ctx, "kyidentity", issuerEnv); err != nil || !found {
+	if _, found, err := installedIdentityIssuer(ctx, d); err != nil || !found {
 		return prior, err // not deployed: the first setup takes every client
 	}
 	i := s.integrations[k]
@@ -579,7 +587,7 @@ func (s notesSetupStep) Inspect(ctx context.Context) (bool, error) { return s.Ve
 // Apply names the likeliest cause of a failure; the product's own output stays hidden.
 func (s notesSetupStep) Apply(ctx context.Context) error {
 	if err := s.run(ctx, false); err != nil {
-		return fmt.Errorf("%w; no KyNotes route was added. Its pod must resolve %s and trust its certificate (docs/guided-setup.md, Catalog KyNotes on Kubernetes); rerun apply after fixing", err, s.i.Notes.SSO.IssuerURL)
+		return fmt.Errorf("%w; no KyNotes route was added. Its container must resolve %s and trust its certificate (docs/guided-setup.md); rerun apply after fixing", err, s.i.Notes.SSO.IssuerURL)
 	}
 	return nil
 }

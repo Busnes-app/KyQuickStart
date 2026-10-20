@@ -46,9 +46,8 @@ Plain terminal planning and command orchestration for the operator-run installer
   the app's target lock (restore also KyIdentity's) and are refused under `owner: runner`.
   `dockerhost.Store` does the target work. `removalGate` refuses restoring an app with an
   `oidc` block unless the plan's KyIdentity deployment record is `replayVersion` (0.4.4) or
-  later (an `existing` or Docker-placed KyIdentity is refused); `replayRemovals` runs `resync-system --client
-  <identity_client> --wait 10m` in KyIdentity's pod (`kube.ExecReport`, which keeps the report
-  on failure) and accepts only `delivered`, else `restore_incomplete`. `restoreLocked` refuses a
+  later (an `existing` KyIdentity is refused); `replayRemovals` runs `resync-system --client
+  <identity_client> --wait 10m` through the target driver in KyIdentity's container (`kube.ExecReport` on Kubernetes, managed-service `docker exec` on Docker) and accepts only `delivered`, else `restore_incomplete`. `restoreLocked` refuses a
   running app and existing data without `--replace` before contacting the repository, then a
   foreign snapshot; `--replace`/`--yes` without `--snapshot` are refused; it wants the typed name
   or `--yes`, reads a lost password from `Options.Stdin` (no echo on a terminal) and records
@@ -90,8 +89,7 @@ Plain terminal planning and command orchestration for the operator-run installer
   and exact `kyyard.admin` assignments. Platform administrators receive no implicit tenant
   access; organization/endpoint composition and shared upgrade orchestration remain gates.
   `yard.go` owns the catalog KyYard (admin-only client, `yardSetup` through `clientSetupStep`
-  with no everyday account): `yardPlan` (plan, review, every command) refuses it off Kubernetes
-  and owner admin usernames its setup refuses; `runnerImage`/`checkRunnerImage` (plan, review,
+  with no everyday account): `yardPlan` (plan, review, every command) refuses owner admin usernames its setup refuses; `runnerImage`/`checkRunnerImage` (plan, review,
   preflight, apply, install, upgrade on the workstation) refuse deploying an app with
   `kubernetes.suite_runner` without a digest-pinned `Options.RunnerImage` (empty: "source builds
   pin no runner image; use a release binary"); `yardHandover`
@@ -107,7 +105,7 @@ Plain terminal planning and command orchestration for the operator-run installer
   separate from Matrix chat/call access, whose assignment composition remains a gate.
 - KyRecovery setup runs explicitly as `kyrecovery`, activates live, commits exact administrator grants with its keyed SQL audit, and never performs the custodian ceremony.
   `appsetup.go` owns apply's catalog apps that sign in through KyIdentity (KyRecovery,
-  kyPulse, KyNotes, KyCalendar and KyYard on Kubernetes, KyDrive, KyPost and KyDNS on Docker): `composeClients` adds each one's catalog-derived client to the installed
+  kyPulse, KyNotes, KyCalendar and KyYard on Docker or Kubernetes, KyDrive, KyPost and KyDNS on Docker): `composeClients` adds each one's catalog-derived client to the installed
   KyIdentity's intent in the session only (the saved plan is unchanged; a hand-written client
   must match), `clientSetupStep` (`<app>.setup`) exports that client, places bundle and secrets
   with `placeScript` (secrets no-clobber, kyPulse's bundle replaced, compare-only on check)
@@ -157,6 +155,8 @@ Plain terminal planning and command orchestration for the operator-run installer
 - Stack schema, app admission and target implementations remain owned by the root contract.
 
 ## Local Contracts
+
+- All catalog Ky products with Kubernetes manifests also have Docker templates. Docker resolves issuer/callback metadata from the same route, runs as the target user, and retains product-owned setup. `docker_catalog.go` adds KyYard's digest-pinned runner with private state/socket binds; only the managed `app` service is a native product exec target. Issuer drift, late amendments and removal replay work on both targets.
 
 - `plan` changes only local planning files. Remote preflight or deployment requires choosing
   `check` or `deploy`; each run defaults to `finish` regardless of the previous action.
