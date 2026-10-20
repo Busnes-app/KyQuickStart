@@ -19,8 +19,9 @@ lint:
 ci: tidy-check lint test-race
 
 # Needs Docker. The kind TLS helper runs the test executable in distroless. test/e2e measured
-# 32.8 min on the workstation (TestKubernetesNPMEdge 15.6, TestKubernetesRestore 9.6,
-# TestKubernetesKyYard 4.8): 45m leaves room for a slower CI runner.
+# 34.6 min on the workstation (TestKubernetesNPMEdge 14.9, TestKubernetesImmich 8.0 with
+# KYQ_TEST_IMMICH_SERVER_IMAGE set, TestKubernetesRestore 5.5, TestKubernetesKyYard 3.4):
+# 45m leaves room for a slower CI runner.
 e2e:
 	CGO_ENABLED=0 go test -tags e2e -count=1 -v -timeout 45m ./test/e2e/ ./internal/edge/
 # Real Forgejo: revocation, refused reactivation (no session revocation upstream), revoke again.
