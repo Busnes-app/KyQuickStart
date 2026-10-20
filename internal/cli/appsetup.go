@@ -134,7 +134,7 @@ func (s *session) composeClients(st *stack.Stack) error {
 			s.handover += fmt.Sprintf(postHandover, host, n.Admin.Username, n.Everyday.Username, postContainer, s.placed["kypost"].Name)
 		case "immich":
 			_, r := appRoute(st, "immich")
-			s.handover += immichHandover(host, n.Admin.Username, n.Everyday.Username, r.ForwardHost, r.ForwardPort)
+			s.handover += immichHandover(host, n.Admin.Username, n.Everyday.Username, r.ForwardHost, r.ForwardPort, s.cat["immich"].Images["server"])
 		case "kypulse":
 			var unwatched []string
 			s.pulseTargets, unwatched = pulseTargets(st, s.cat)
@@ -824,9 +824,16 @@ func (s *session) immichSteps(d driver, c clientSetupStep, first stack.Integrati
 	if err != nil {
 		return nil, err
 	}
+	shell, _, err := nativeProductExec(d, c.i, productAdapter{binary: "sh"})
+	if err != nil {
+		return nil, err
+	}
 	setup := immichSetupStep{i: c.i, source: c.source, first: first.Bundle, issuer: c.issuer, mobile: "https://" + url + "/api/oauth/mobile-redirect",
-		admin: first.Identity.Admin, everyday: first.Identity.Everyday, export: c.export, exec: c.exec, place: c.place}
-	return []engine.Step{setup, immichDirectoryStep{setup: setup, app: host.app("immich", s.cat["immich"], s.o.ReleaseSet), origin: "https://" + url}}, nil
+		admin: first.Identity.Admin, everyday: first.Identity.Everyday, export: c.export, exec: c.exec, place: c.place,
+		shell: shell, target: host.t.Name, setup: path.Join(host.t.Root, "immich/setup")}
+	app := host.app("immich", s.cat["immich"], s.o.ReleaseSet)
+	app.Redact = s.redact
+	return []engine.Step{setup, immichDirectoryStep{setup: setup, app: app, origin: "https://" + url}}, nil
 }
 
 // hostDataDir is where an app on a Docker target keeps the installer's files: its ./data bind

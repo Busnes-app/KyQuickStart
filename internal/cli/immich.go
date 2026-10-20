@@ -16,6 +16,7 @@ import (
 	"github.com/Busnes-app/kyquickstart/internal/dockerhost"
 	"github.com/Busnes-app/kyquickstart/internal/remote"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
+	"github.com/google/uuid"
 )
 
 var immichNativeID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
@@ -215,6 +216,8 @@ type immichSetupStep struct {
 	export          identityExec // KyIdentity's apply-setup
 	exec            identityExec // immich-admin in the server
 	place           func(ctx context.Context, args []string, input []byte) error
+	shell           identityExec // sh in the server, which probes a refused placement
+	target, setup   string       // the target's name and its ./setup bind directory, for messages
 }
 
 // immichResult is what a verified setup proves: its report and KyIdentity's client.
@@ -283,7 +286,10 @@ func (s immichSetupStep) run(ctx context.Context, check bool) (immichResult, err
 		mode = "check"
 	}
 	if s.place(ctx, []string{mode, s.i.Bundle}, bundle) != nil {
-		return immichResult{}, errors.New("Immich's setup bundle is missing, unsafe or differs from KyIdentity's current client; it is never replaced")
+		probe := func(ctx context.Context) ([]byte, error) {
+			return s.shell(ctx, []string{"-c", probeScript, "sh", s.i.Bundle})
+		}
+		return immichResult{}, placeRefusal(ctx, probe, "Immich's setup bundle", path.Join(s.setup, strings.TrimPrefix(s.i.Bundle, immichSetupRoot)), s.target)
 	}
 	r, err := immichApply(ctx, s.exec, s.i.Bundle, check)
 	if err != nil {
@@ -358,7 +364,7 @@ const (
 // refused. It creates the bridge's TLS on the target and waits for it to be healthy.
 type immichDirectoryStep struct {
 	setup  immichSetupStep // its read-only check names the accounts and client
-	app    dockerhost.App  // Immich's deployment
+	app    dockerhost.App  // Immich's deployment; its Redact takes the bridge's output
 	origin string          // https://<route URL host>
 }
 
@@ -389,36 +395,90 @@ func (s immichDirectoryStep) files(ctx context.Context, mode string) error {
 	place := func(f string) string {
 		return "sh -c " + remote.Quote(placeScript) + " sh " + remote.Quote(mode) + " " + remote.Quote(path.Join(config, f))
 	}
-	// Each token is read into the shell and handed to placeScript by the printf builtin: in
-	// no argv, no output. The service key is read inside the server, whose view of a symlink
-	// cannot reach the host; the SCIM token is the installer's own, refused if symlinked.
-	scim := remote.Quote(path.Join(dir, "secrets/scim_token"))
-	for _, c := range []struct{ file, read string }{
-		{"immich-token", dockerAppContainer("immich") + `k=$(docker exec "$c" cat ` + remote.Quote(immichServiceKey) + `)`},
-		{"scim-token", `f=` + scim + `; [ ! -L "$f" ] && test -n "$(find "$f" -prune -type f -user "$(id -u)" -perm 600)" && k=$(cat "$f")`},
+	refused := func(f, what string) error {
+		where := path.Join(config, f)
+		probe := func(ctx context.Context) ([]byte, error) {
+			return s.app.Runner.Run(ctx, "sh -c "+remote.Quote(probeScript)+" sh "+remote.Quote(where), nil)
+		}
+		return placeRefusal(ctx, probe, what, where, s.setup.target)
+	}
+	// Each token is read into the shell (exit 3 if it cannot be) and handed to placeScript by
+	// the printf builtin: in no argv, no output. The service key is read inside the server,
+	// whose view of a symlink cannot reach the host; the SCIM token is the installer's own.
+	scim := path.Join(dir, "secrets/scim_token")
+	key := path.Join(s.setup.setup, strings.TrimPrefix(immichServiceKey, immichSetupRoot))
+	for _, c := range []struct{ file, what, read, source string }{
+		{"immich-token", "the bridge's copy of Immich's service key", `k=$(` + dockerAppContainer("immich") + `docker exec "$c" cat ` + remote.Quote(immichServiceKey) + `) || exit 3`,
+			"Immich's service key " + key + " on " + s.setup.target + " cannot be read through its running server; inspect it and the server (immich.setup writes it)"},
+		{"scim-token", "the bridge's copy of the SCIM token", `f=` + remote.Quote(scim) + `; { [ ! -L "$f" ] && test -n "$(find "$f" -prune -type f -user "$(id -u)" -perm 600)" && k=$(cat "$f"); } || exit 3`,
+			"the SCIM token " + scim + " on " + s.setup.target + " is missing, a symlink or not a private file of the target user; inspect it (immich.secrets generates it)"},
 	} {
-		if _, err := s.app.Runner.Run(ctx, c.read+` && [ -n "$k" ] && printf %s "$k" | `+place(c.file), nil); err != nil {
-			return fmt.Errorf("the bridge's %s is missing, unsafe or differs from Immich's; it is never replaced", c.file)
+		_, err := s.app.Runner.Run(ctx, c.read+`; [ -n "$k" ] || exit 3; printf %s "$k" | `+place(c.file), nil)
+		var ee *remote.ExitError
+		switch {
+		case errors.As(err, &ee) && ee.Code == 3:
+			return errors.New(c.source)
+		case err != nil:
+			return refused(c.file, c.what)
 		}
 	}
 	if _, err := s.app.Runner.Run(ctx, place("runtime.json"), immichRuntime(r, s.origin)); err != nil {
-		return errors.New("the bridge's runtime.json is missing, unsafe or names another installation or accounts than Immich's setup; it is never replaced")
+		return refused("runtime.json", "the bridge's configuration")
 	}
 	return nil
 }
 
-// bridge runs the bridge once with args, beside the running one.
-func (s immichDirectoryStep) bridge(ctx context.Context, args string) error {
-	_, err := s.app.Runner.Run(ctx, s.app.Compose("run --rm --no-deps -T directory --config "+immichBridgeConfig+" "+args), nil)
-	return err
+// probeScript says, reading only, why placeScript refused $1: unsafe (a symlink or not a
+// regular file), differs, or missing.
+const probeScript = `f=$1
+if [ -L "$f" ] || { [ -e "$f" ] && [ ! -f "$f" ]; }; then echo unsafe; elif [ -e "$f" ]; then echo differs; else echo missing; fi`
+
+// placeRefusal is the error for a refused placement of what at where on target: which of
+// missing, unsafe or differs it is (probe tells), and what the operator does.
+func placeRefusal(ctx context.Context, probe func(context.Context) ([]byte, error), what, where, target string) error {
+	out, err := probe(ctx)
+	why := "could not be inspected"
+	if err == nil {
+		why = map[string]string{
+			"missing": "is missing and could not be written (is its directory the target user's own and closed to others?)",
+			"unsafe":  "is a symlink or not a regular file",
+			"differs": "differs from what this apply writes (another installation, KyIdentity client or owner accounts) and is never replaced",
+		}[strings.TrimSpace(string(out))]
+	}
+	if why == "" {
+		why = "could not be inspected"
+	}
+	return fmt.Errorf("%s %s on %s %s. Inspect %s; move it aside only if you are sure it is stale, then rerun apply", what, where, target, why, where)
+}
+
+// bridge runs the bridge once with args, beside the running one. A failure carries the
+// bridge's last output line, redacted, and where its logs are.
+func (s immichDirectoryStep) bridge(ctx context.Context, args, failed string) error {
+	out, err := s.app.Runner.Run(ctx, s.app.Compose("run --rm --no-deps -T directory --config "+immichBridgeConfig+" "+args), nil)
+	if err == nil {
+		return nil
+	}
+	var ee *remote.ExitError
+	if errors.As(err, &ee) {
+		out = append(out, ee.Stderr...)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	last := s.app.Redact.Redact(strings.TrimSpace(lines[len(lines)-1]))
+	if len(last) > 300 {
+		last = last[:300]
+	}
+	if last == "" {
+		last = "no output"
+	}
+	return fmt.Errorf("%s (kyoffboard: %s). On %s, docker compose -p kyq-immich logs directory (run in %s) shows the running bridge's log", failed, last, s.setup.target, path.Join(s.app.Root, s.app.Name))
 }
 
 func (s immichDirectoryStep) Apply(ctx context.Context) error {
 	if err := s.files(ctx, "write"); err != nil {
 		return err
 	}
-	if s.bridge(ctx, "--init-tls") != nil {
-		return errors.New("the bridge could not create its TLS key and certificate in directory/config")
+	if err := s.bridge(ctx, "--init-tls", "the bridge could not create its TLS key and certificate in directory/config"); err != nil {
+		return err
 	}
 	// Recreated: before its configuration existed it could only restart, failing.
 	if _, err := s.app.Runner.Run(ctx, s.app.Compose("up -d --no-deps --force-recreate directory"), nil); err != nil {
@@ -432,8 +492,8 @@ func (s immichDirectoryStep) Verify(ctx context.Context) error {
 	if err := s.files(ctx, "check"); err != nil {
 		return err
 	}
-	if s.bridge(ctx, "--check") != nil {
-		return errors.New("the bridge refuses its configuration (kyoffboard --check)")
+	if err := s.bridge(ctx, "--check", "the bridge refuses its configuration (kyoffboard --check)"); err != nil {
+		return err
 	}
 	return dockerhost.Healthy(ctx, s.app, "directory")
 }
@@ -449,10 +509,10 @@ func immichPlan(st *stack.Stack) error {
 	}
 	i := slices.IndexFunc(st.Integrations, func(i stack.Integration) bool { return i.Product == "immich" && i.Installed(st) })
 	if i < 0 {
-		return fmt.Errorf("immich needs its setup, or its first visitor could make themselves its administrator: add {product: immich, target: %s, bundle: %s/installer/<setup UUID>/setup.json, identity_client: immich} to integrations", st.Apps[at].Target, immichSetupRoot)
+		return fmt.Errorf("Immich needs its setup in the plan, or its first visitor could make themselves its administrator. Add this to integrations (the UUID is fresh; any UUID will do): {product: immich, target: %s, bundle: %s, identity_client: immich}", st.Apps[at].Target, immichSetupBundle(""))
 	}
-	if b := st.Integrations[i].Bundle; !strings.HasPrefix(b, immichSetupRoot+"/installer/") {
-		return fmt.Errorf("immich's bundle %s must be %s/installer/<setup UUID>/setup.json, in the bind directory only setup uses", b, immichSetupRoot)
+	if b := st.Integrations[i]; !strings.HasPrefix(b.Bundle, immichSetupRoot+"/installer/") {
+		return fmt.Errorf("Immich's setup bundle %s is outside %s, the bind directory only its setup uses. Change it to: bundle: %s", b.Bundle, immichSetupRoot, immichSetupBundle(b.SetupID()))
 	}
 	for _, k := range st.Integrations {
 		if k.Product != "kyidentity" || k.Identity == nil || !k.Installed(st) {
@@ -460,19 +520,27 @@ func immichPlan(st *stack.Stack) error {
 		}
 		for _, a := range [][2]string{{"admin", k.Identity.Admin.Email}, {"everyday", k.Identity.Everyday.Email}} {
 			if a[1] != strings.ToLower(a[1]) {
-				return fmt.Errorf("Immich takes only lowercase email addresses: change identity.%s.email %q in the kyidentity integration", a[0], a[1])
+				return fmt.Errorf("Immich takes only lowercase email addresses. Change identity.%s.email %q to %q in the kyidentity integration", a[0], a[1], strings.ToLower(a[1]))
 			}
 		}
 	}
 	return nil
 }
 
+// immichSetupBundle is the bundle path for setup id, a fresh one when id is "".
+func immichSetupBundle(id string) string {
+	if id == "" {
+		id = uuid.NewString()
+	}
+	return immichSetupRoot + "/installer/" + id + "/setup.json"
+}
+
 // immichReassign says what assigning a removed person to Immich again does.
 const immichReassign = "  Assigning them again restores their sign-in to the same account, with none of their old\n  sessions or keys.\n"
 
 // immichHandover is printed after every apply that installs Immich at host, forwarded to
-// forward:port and its bridge to forward:port+1.
-func immichHandover(host, admin, everyday, forward string, port int) string {
+// forward:port and its bridge to forward:port+1; server is the catalog's server image.
+func immichHandover(host, admin, everyday, forward string, port int, server string) string {
 	return fmt.Sprintf(`
 Immich at https://%[1]s/: sign in through KyIdentity as %[2]s (administers Immich) or %[3]s
   (your photos). Use %[3]s for photos: Immich lets its administrator keep photos too, and
@@ -482,12 +550,26 @@ Immich at https://%[1]s/: sign in through KyIdentity as %[2]s (administers Immic
   created for them.
   Removing someone from Immich in KyIdentity ends their Immich sessions and API keys and keeps
   their account and photos.
-`, host, admin, everyday) + immichReassign + fmt.Sprintf(`  Immich has no local password: every sign-in goes through KyIdentity.
-  Its ports %[1]s:%[2]d (Immich) and %[1]s:%[3]d (its KyIdentity bridge) are reachable from your
-  LAN, not only from the edge.
-  Immich connects out to GitHub (version check), Hugging Face (machine learning models) and
-  tiles.immich.cloud (map tiles).
-  Source of its KyQuickStart module (AGPL):
-  https://github.com/Busnes-app/KyQuickStart/tree/immich-v3.2.0-ky.1/internal/adapters/immich/module
-`, forward, port, port+1)
+`, host, admin, everyday) + immichReassign + fmt.Sprintf(`  Its accounts have no local password: every sign-in goes through KyIdentity.
+
+  Notes:
+  - Ports %[1]s:%[2]d (Immich) and %[1]s:%[3]d (its KyIdentity bridge) are open to your whole
+    LAN: restrict both to the edge host at your firewall, with a rule tested on that host
+    (docs/guided-setup.md, Catalog Immich on Docker). The edge reaches the bridge over TLS
+    whose self-signed certificate it does not verify.
+  - Immich connects out to GitHub (version check), Hugging Face (machine learning models) and
+    tiles.immich.cloud (map tiles).
+  - Source of its KyQuickStart module (AGPL):
+    https://github.com/Busnes-app/KyQuickStart/tree/%[4]s/internal/adapters/immich/module
+`, forward, port, port+1, immichSourceTag(server))
 }
+
+// immichSourceTag is the repository tag the server image was built from: image tag 3.2.0-ky.1
+// is tag immich-v3.2.0-ky.1.
+func immichSourceTag(image string) string {
+	ref, _, _ := strings.Cut(image, "@")
+	return "immich-v" + ref[strings.LastIndex(ref, ":")+1:]
+}
+
+// immichRestored is printed after a restore of Immich: thumbnails are not backed up.
+const immichRestored = "immich: thumbnails were not backed up; Immich makes them again at its nightly task, or at once from Administration → Jobs → Generate Thumbnails.\n"

@@ -146,6 +146,9 @@ func (s *session) installed(name string) (stack.Target, error) {
 	if _, known := s.cat[name]; known {
 		return t, suite.Errorf(suite.NotInstalled, "%s is not installed", name)
 	}
+	if err := s.cat.UnreleasedError(name); err != nil {
+		return t, suite.Errorf(suite.UnknownApp, "%s", err)
+	}
 	return t, suite.Errorf(suite.UnknownApp, "%s is not in the catalog", name)
 }
 

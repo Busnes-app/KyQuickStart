@@ -75,6 +75,18 @@ type Backup struct {
 	RestoreOrder   []string `yaml:"restore_order"` // Compose services, service first
 }
 
+// Unreleased are the apps built in pending/ whose images are not published yet, by display
+// name; an app leaves it when it moves to apps/.
+var Unreleased = map[string]string{"immich": "Immich"}
+
+// UnreleasedError refuses an app built but not released, "" otherwise.
+func (c Catalog) UnreleasedError(name string) error {
+	if _, ok := c[name]; ok || Unreleased[name] == "" {
+		return nil
+	}
+	return fmt.Errorf("%s is built but not released yet: its images are unpublished", Unreleased[name])
+}
+
 // ResticPassword is the installer's own secret beside an app's: no manifest may declare it.
 const ResticPassword = "restic_password"
 

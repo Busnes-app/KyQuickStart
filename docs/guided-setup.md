@@ -1507,10 +1507,12 @@ it on a cluster, or planning it without the catalog `kyidentity`, is refused bef
 as is an owner email that is not lowercase (the module takes only lowercase addresses). amd64
 only; no hardware acceleration.
 
-**On hold (H1).** The entry is in `internal/catalog/pending/immich` until
-`ghcr.io/busnes-app/kyq-immich-server:3.2.0-ky.1` (`.github/workflows/immich-image.yml`, tag
-`immich-v3.2.0-ky.1`) and `ghcr.io/busnes-app/kyoffboard` (tag `kyoffboard-vX.Y.Z`) are
-published and attested; then both digests are pinned and it moves to `apps/`.
+**Not yet installable: its images are unpublished.** A plan naming `immich` is refused with
+"Immich is built but not released yet". The entry is in `internal/catalog/pending/immich`
+until `ghcr.io/busnes-app/kyq-immich-server:3.2.0-ky.1` (`.github/workflows/immich-image.yml`,
+tag `immich-v3.2.0-ky.1`) and `ghcr.io/busnes-app/kyoffboard` (tag `kyoffboard-vX.Y.Z`) are
+published and attested; then both digests are pinned and it moves to `apps/`. The plan below
+is what it will take.
 
 ```yaml
 apps:
@@ -1527,9 +1529,12 @@ edges:
 integrations:
   - product: immich
     target: docker02
-    bundle: /kyq-setup/installer/<a setup UUID>/setup.json
+    bundle: /kyq-setup/installer/<any UUID, e.g. from uuidgen>/setup.json
     identity_client: immich
 ```
+
+Without that integration the plan is refused (Immich's first visitor could otherwise make
+themselves its administrator); the refusal prints the entry with a fresh UUID to paste.
 
 Its client is named `Immich`, with redirect URIs `https://<route URL host>/auth/login` and
 `https://<route URL host>/api/oauth/mobile-redirect` (the phone app) and roles `admin` (the
@@ -1553,15 +1558,19 @@ joins through `kyidentity.amend.immich`.
   administrator `kyquickstart-service` that cannot sign in, whose one API key (account
   read/create/update and configuration read) is written to `./setup/service.key`, 0600, never
   printed. Right after the first setup Immich must hold exactly those three accounts, with only
-  the owner's admin and the service account as administrators; anything else fails.
+  the owner's admin and the service account as administrators; anything else fails, and setup
+  refuses any account that exists before it. Install on an empty Immich: it must hold no
+  accounts before setup. Its image refuses Immich's own first-administrator sign-up and its
+  database-restore upload entirely, so the setup accounts come only from `apply-setup`.
 - **`immich.directory`** copies the service key and the SCIM token into `./directory/config` on
   the target (never through the workstation, never replacing a different file), writes the
   bridge's runtime (registering the two setup accounts), creates its self-signed TLS leaf on
   the target (`kyoffboard --init-tls`) and starts it. The bridge reaches Immich at
   `http://immich-server:2283` on the internal network.
 - **Connector.** The NPM host for Immich forwards `/scim/immich/` to the bridge over TLS; the
-  bridge's leaf is self-signed and NPM does not verify it, while KyIdentity verifies the edge's
-  certificate. `kyidentity.scim.immich` adds KyIdentity's SCIM connector at
+  bridge's leaf is self-signed and NPM does not verify it, so the edge-to-bridge hop is
+  unverified TLS on the LAN: it hides the bridge's bearer token from a passive listener, not
+  from someone who can intercept that traffic. KyIdentity verifies the edge's certificate. `kyidentity.scim.immich` adds KyIdentity's SCIM connector at
   `https://<route URL host>/scim/immich` with the bridge's token. The edge→app hop is plain
   HTTP, as for every app.
 - **People.** Anyone assigned to Immich in KyIdentity later gets an account through the bridge
@@ -1570,8 +1579,9 @@ joins through `kyidentity.amend.immich`.
   then lifts the block, on the same account, with none of the old sessions or keys. A role
   change reaches Immich as a directory update before the next sign-in; a token whose role
   differs from it refuses sign-in rather than granting.
-- **The owner's admin (H2).** Immich lets its administrator keep photos too; the handover says
-  to use the everyday account for photos.
+- **Use the everyday account for photos.** Immich lets its administrator keep photos too; the
+  handover says to sign in as the everyday account for photos and keep the admin account for
+  administration.
 - **Backups.** `kyquickstart backup immich` snapshots a `pg_dump` of the database plus
   `library`, `setup` and `directory`, without `library/thumbs`, `library/encoded-video` (both
   regenerate) and `library/backups` (Immich's own daily dumps). `model-cache` re-downloads.
@@ -1586,8 +1596,10 @@ joins through `kyidentity.amend.immich`.
 - **Network.** Trusted proxies stay at upstream's default (loopback, link-local, unique local):
   behind Docker NAT the edge arrives from the bridge gateway, and a narrower list would drop the
   `Secure` cookie. A LAN peer reaching the forward port directly can spoof `X-Forwarded-*`,
-  which affects only logged addresses and its own responses. The forward ports are reachable
-  from the LAN (see KyDrive's firewall note). Immich connects out to GitHub (version check),
+  which affects only logged addresses and its own responses. Both forward ports (Immich's and
+  the bridge's, the next one) are reachable from the whole LAN: restrict them to the edge host
+  at your firewall, with a rule tested on that host from the edge and from another LAN host
+  (see KyDrive's firewall note for why an untested `DOCKER-USER` rule is dangerous). Immich connects out to GitHub (version check),
   Hugging Face (models) and `tiles.immich.cloud` (map tiles); nothing restricts it.
 - **Source.** `/api/server/about` points at this repository and the image tag: the AGPL source
   offer for the module.

@@ -506,7 +506,7 @@ func TestKubernetesImmich(t *testing.T) {
 		} else {
 			t.Logf("TIMING readmission window (%s): K accepted for %s, until the replayed removal", label, denied.Sub(first).Round(10*time.Millisecond))
 		}
-		for _, want := range []string{"Restore immich from snapshot ", " on nas\n  paths " + paths + "\n", "immich: KyIdentity replayed its immich connector's state, removals included, and delivered it (", "immich: restored from snapshot "} {
+		for _, want := range []string{"Restore immich from snapshot ", " on nas\n  paths " + paths + "\n", "immich: KyIdentity replayed its immich connector's state, removals included, and delivered it (", "immich: restored from snapshot ", "\nimmich: thumbnails were not backed up; Immich makes them again at its nightly task, or at once from Administration → Jobs → Generate Thumbnails.\n"} {
 			if !strings.Contains(o, want) {
 				t.Fatalf("AC17: restore (%s) output lacks %q", label, want)
 			}
@@ -901,20 +901,24 @@ func checkImmichHandover(t *testing.T, out string, d immichTarget) {
 		"  their account and photos.",
 		"  Assigning them again restores their sign-in to the same account, with none of their old",
 		"  sessions or keys.",
-		"  Immich has no local password: every sign-in goes through KyIdentity.",
-		"  Its ports " + d.forward + ":" + port + " (Immich) and " + d.forward + ":" + bridge + " (its KyIdentity bridge) are reachable from your",
-		"  LAN, not only from the edge.",
-		"  Immich connects out to GitHub (version check), Hugging Face (machine learning models) and",
-		"  tiles.immich.cloud (map tiles).",
-		"  Source of its KyQuickStart module (AGPL):",
-		"  https://github.com/Busnes-app/KyQuickStart/tree/immich-v3.2.0-ky.1/internal/adapters/immich/module",
+		"  Its accounts have no local password: every sign-in goes through KyIdentity.",
+		"",
+		"  Notes:",
+		"  - Ports " + d.forward + ":" + port + " (Immich) and " + d.forward + ":" + bridge + " (its KyIdentity bridge) are open to your whole",
+		"    LAN: restrict both to the edge host at your firewall, with a rule tested on that host",
+		"    (docs/guided-setup.md, Catalog Immich on Docker). The edge reaches the bridge over TLS",
+		"    whose self-signed certificate it does not verify.",
+		"  - Immich connects out to GitHub (version check), Hugging Face (machine learning models) and",
+		"    tiles.immich.cloud (map tiles).",
+		"  - Source of its KyQuickStart module (AGPL):",
+		"    https://github.com/Busnes-app/KyQuickStart/tree/immich-v3.2.0-ky.1/internal/adapters/immich/module",
 	}
 	lines := strings.Split(out, "\n")
 	at := slices.Index(lines, want[0])
 	if at < 0 || len(lines) < at+len(want) || strings.Join(lines[at:at+len(want)], "\n") != strings.Join(want, "\n") {
 		t.Fatalf("AC20: Immich's handover:\n%s\nwant:\n%s", strings.Join(lines[max(at, 0):min(len(lines), max(at, 0)+len(want))], "\n"), strings.Join(want, "\n"))
 	}
-	t.Log("AC20: the Immich handover's 17 lines and the backup lines match")
+	t.Logf("AC20: the Immich handover's %d lines and the backup lines match", len(want))
 }
 
 // immichReceipts are the setup, creation and directory receipts in Immich's database.

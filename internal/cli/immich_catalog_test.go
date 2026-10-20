@@ -71,11 +71,12 @@ type fakeImmich struct {
 	calls   []string // immich-admin arguments
 	placed  []string // placeScript mode and path
 	applied bool
-	stock   bool   // no module: apply-setup does not exist
-	caps    string // overrides the capabilities report
-	created string // overrides the first apply's nativeUsers extra entries
-	later   string // extra nativeUsers once applied
-	owner   string // overrides the owner's native UUID in every report
+	stock   bool              // no module: apply-setup does not exist
+	caps    string            // overrides the capabilities report
+	created string            // overrides the first apply's nativeUsers extra entries
+	later   string            // extra nativeUsers once applied
+	owner   string            // overrides the owner's native UUID in every report
+	probe   map[string]string // container path -> a host path probeScript inspects in its place
 }
 
 func (m *fakeImmich) admin(args []string) ([]byte, error) {
@@ -129,6 +130,9 @@ func (m *fakeImmich) exec(t *testing.T) func(string, []byte) ([]byte, error) {
 		args := strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00")
 		switch args[0] {
 		case "sh":
+			if args[1] == "-c" && args[2] == probeScript {
+				return remote.Local{}.Run(context.Background(), "sh -c "+remote.Quote(probeScript)+" sh "+remote.Quote(m.probe[args[4]]), nil)
+			}
 			if args[1] != "-c" || args[2] != placeScript {
 				return nil, errors.New("unexpected script")
 			}
@@ -214,7 +218,7 @@ func TestImmichClientStepsAndConnector(t *testing.T) {
 	if tok, err := scim.token(ctx); err != nil || string(tok) != immichSCIMToken {
 		t.Fatalf("connector token %q, %v", tok, err)
 	}
-	if !strings.Contains(s.handover, immichHandover("photos.example.com", "owner-admin", "owner", "192.0.2.1", 18443)) {
+	if !strings.Contains(s.handover, immichHandover("photos.example.com", "owner-admin", "owner", "192.0.2.1", 18443, s.cat["immich"].Images["server"])) {
 		t.Fatalf("handover = %s", s.handover)
 	}
 }
@@ -341,6 +345,9 @@ func TestImmichSetupRefusals(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			held := filepath.Join(t.TempDir(), "setup.json")
+			os.WriteFile(held, []byte(m.files[immichBundlePath]), 0o600)
+			m.probe = map[string]string{immichBundlePath: held}
 			before := snapshot(m.files)
 			c.prepare(m, identity)
 			m.calls = nil
@@ -356,6 +363,11 @@ func TestImmichSetupRefusals(t *testing.T) {
 			// Before its first setup only the bundle may be new: the module refused to apply it.
 			if c.applied && snapshot(m.files) != before || !c.applied && len(m.files) > 1 {
 				t.Fatalf("files changed: %v", m.files)
+			}
+			// The bundle as the target shows it: where it is, that it differs, what to do.
+			want := "Immich's setup bundle " + f.h.root + "/immich/setup/installer/" + immichSetupID + "/setup.json on nas differs from what this apply writes"
+			if name == "changed export" && (!strings.Contains(err.Error(), want) || !strings.HasSuffix(err.Error(), "move it aside only if you are sure it is stale, then rerun apply")) {
+				t.Fatalf("changed export: %v", err)
 			}
 			if (name == "missing capability" || name == "stock image") && slices.ContainsFunc(m.calls, func(c string) bool { return strings.Contains(c, "--file") }) {
 				t.Fatalf("an unqualified server reached setup: %q", m.calls)
@@ -380,7 +392,8 @@ case " $* " in
 *" exec c0ffee cat /kyq-setup/service.key "*) cat "$FAKE/root/immich/setup/service.key" ;;
 *" run --rm --no-deps -T directory --config /directory/config/runtime.json --init-tls "*)
   c=$FAKE/root/immich/directory/config; umask 077; [ -e "$c/tls.key" ] || { echo key > "$c/tls.key"; echo crt > "$c/tls.crt"; } ;;
-*" run --rm --no-deps -T directory --config /directory/config/runtime.json --check "*) exit "${CHECK_EXIT:-0}" ;;
+*" run --rm --no-deps -T directory --config /directory/config/runtime.json --check "*)
+  [ -z "$CHECK_EXIT" ] || { echo "starting" >&2; echo "kyoffboard: refused $SECRET" >&2; exit "$CHECK_EXIT"; } ;;
 *" up -d --no-deps --force-recreate directory "*) : > "$FAKE/up" ;;
 *" ps --all --format json "*) [ ! -e "$FAKE/up" ] || echo '{"Service":"directory","State":"running","Health":"healthy"}' ;;
 *) echo "unexpected docker $*" >&2; exit 1 ;;
@@ -424,7 +437,7 @@ func immichDirectory(t *testing.T, m *fakeImmich) (immichDirectoryStep, string) 
 		export: exec, exec: func(_ context.Context, args []string) ([]byte, error) { return m.admin(args) },
 		place: func(_ context.Context, args []string, in []byte) error {
 			return fakePlace(m.files, args[0], args[1], in)
-		}}
+		}, target: "nas", setup: filepath.Join(app, "setup")}
 	if err := setup.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -433,7 +446,9 @@ func immichDirectory(t *testing.T, m *fakeImmich) (immichDirectoryStep, string) 
 		t.Fatal(err)
 	}
 	runner := sh{env: "PATH=" + remote.Quote(filepath.Join(fake, "bin")) + ":$PATH FAKE=" + remote.Quote(fake) + "; export PATH FAKE; "}
-	return immichDirectoryStep{setup: setup, app: dockerhost.App{Name: "immich", Root: filepath.Join(fake, "root"), Runner: runner, Catalog: cat["immich"]}, origin: "https://photos.example.com"}, fake
+	redact := &engine.Redactor{}
+	redact.Add(immichSCIMToken)
+	return immichDirectoryStep{setup: setup, app: dockerhost.App{Name: "immich", Root: filepath.Join(fake, "root"), Runner: runner, Catalog: cat["immich"], Redact: redact}, origin: "https://photos.example.com"}, fake
 }
 
 const wantImmichRuntime = `{"schema":"ky.offboarding-runtime/1","setup_id":"` + immichSetupID + `","listen":"0.0.0.0:8443","state_dir":"/directory/state","cert_file":"tls.crt","key_file":"tls.key",` +
@@ -519,15 +534,25 @@ func TestImmichDirectory(t *testing.T) {
 			return func() { os.Remove(p); os.Rename(p+".real", p) }
 		},
 		"bridge refuses": func(s *immichDirectoryStep) func() {
-			s.app.Runner = sh{env: s.app.Runner.(sh).env + "CHECK_EXIT=1; export CHECK_EXIT; "}
+			s.app.Runner = sh{env: s.app.Runner.(sh).env + "CHECK_EXIT=1 SECRET=" + immichSCIMToken + "; export CHECK_EXIT SECRET; "}
 			return func() {}
 		},
+	}
+	// What each refusal says: the path, which fault, and the action; the bridge's own words.
+	config = filepath.Join(fake, "root/immich/directory/config")
+	says := map[string]string{
+		"other owner account": "the bridge's configuration " + config + "/runtime.json on nas differs from what this apply writes",
+		"changed service key": "the bridge's copy of Immich's service key " + config + "/immich-token on nas differs",
+		"symlinked token":     "the SCIM token " + filepath.Join(fake, "root/immich/secrets/scim_token") + " on nas is missing, a symlink or not a private file",
+		"bridge refuses":      "the bridge refuses its configuration (kyoffboard --check) (kyoffboard: kyoffboard: refused [redacted]). On nas, docker compose -p kyq-immich logs directory (run in " + filepath.Join(fake, "root/immich") + ")",
 	}
 	for name, prepare := range refusals {
 		s := step
 		undo := prepare(&s)
-		if err := s.Verify(ctx); err == nil {
-			t.Errorf("%s: Verify passed", name)
+		if err := s.Verify(ctx); err == nil || !strings.Contains(err.Error(), says[name]) || strings.Contains(err.Error(), immichSCIMToken) {
+			t.Errorf("%s: Verify: %v", name, err)
+		} else if name != "bridge refuses" && name != "symlinked token" && !strings.Contains(err.Error(), "; move it aside only if you are sure it is stale, then rerun apply") {
+			t.Errorf("%s: no action in %v", name, err)
 		}
 		if name != "bridge refuses" {
 			if err := s.Apply(ctx); err == nil || strings.Contains(err.Error(), immichSCIMToken) || strings.Contains(err.Error(), immichKey) {
@@ -583,14 +608,15 @@ func TestImmichPlanRefusals(t *testing.T) {
 		"without kyidentity": {withoutIdentity, "kyidentity"},
 		"uppercase owner": {func(y string) string {
 			return strings.Replace(y, "email: owner@example.test", "email: Owner@example.test", 1)
-		}, "lowercase"},
+		}, `Immich takes only lowercase email addresses. Change identity.everyday.email "Owner@example.test" to "owner@example.test"`},
 		"uppercase admin": {func(y string) string {
 			return strings.Replace(y, "email: admin@example.test", "email: Admin@Example.test", 1)
 		}, "lowercase"},
-		"no setup": {func(y string) string { return y[:strings.Index(y, "  - product: immich\n")] }, "first visitor"},
 		"bundle in library": {func(y string) string {
 			return strings.Replace(y, immichBundlePath, "/data/installer/"+immichSetupID+"/setup.json", 1)
-		}, "/kyq-setup/installer/"},
+		}, "is outside /kyq-setup, the bind directory only its setup uses. Change it to: bundle: " + immichBundlePath},
+		"no setup": {func(y string) string { return y[:strings.Index(y, "  - product: immich\n")] },
+			"Immich needs its setup in the plan, or its first visitor could make themselves its administrator. Add this to integrations (the UUID is fresh; any UUID will do): {product: immich, target: nas, bundle: /kyq-setup/installer/"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := immichFixture(t)
@@ -641,17 +667,26 @@ func TestImmichHandover(t *testing.T) {
 		"  their account and photos.",
 		"  Assigning them again restores their sign-in to the same account, with none of their old",
 		"  sessions or keys.",
-		"  Immich has no local password: every sign-in goes through KyIdentity.",
-		"  Its ports 192.0.2.1:18443 (Immich) and 192.0.2.1:18444 (its KyIdentity bridge) are reachable from your",
-		"  LAN, not only from the edge.",
-		"  Immich connects out to GitHub (version check), Hugging Face (machine learning models) and",
-		"  tiles.immich.cloud (map tiles).",
-		"  Source of its KyQuickStart module (AGPL):",
-		"  https://github.com/Busnes-app/KyQuickStart/tree/immich-v3.2.0-ky.1/internal/adapters/immich/module",
+		"  Its accounts have no local password: every sign-in goes through KyIdentity.",
+		"",
+		"  Notes:",
+		"  - Ports 192.0.2.1:18443 (Immich) and 192.0.2.1:18444 (its KyIdentity bridge) are open to your whole",
+		"    LAN: restrict both to the edge host at your firewall, with a rule tested on that host",
+		"    (docs/guided-setup.md, Catalog Immich on Docker). The edge reaches the bridge over TLS",
+		"    whose self-signed certificate it does not verify.",
+		"  - Immich connects out to GitHub (version check), Hugging Face (machine learning models) and",
+		"    tiles.immich.cloud (map tiles).",
+		"  - Source of its KyQuickStart module (AGPL):",
+		"    https://github.com/Busnes-app/KyQuickStart/tree/immich-v3.2.0-ky.1/internal/adapters/immich/module",
 		"",
 	}
-	if got := strings.Split(immichHandover("photos.example.com", "owner-admin", "owner", "192.0.2.1", 18443), "\n"); !slices.Equal(got, want) {
+	server := "ghcr.io/busnes-app/kyq-immich-server:3.2.0-ky.1@" + catalogtest.Digest
+	if got := strings.Split(immichHandover("photos.example.com", "owner-admin", "owner", "192.0.2.1", 18443, server), "\n"); !slices.Equal(got, want) {
 		t.Fatalf("handover:\n%s", strings.Join(got, "\n"))
+	}
+	// The source link names the tag the running image was built from.
+	if got := immichSourceTag("ghcr.io/busnes-app/kyq-immich-server:3.2.0-ky.2@" + catalogtest.Digest); got != "immich-v3.2.0-ky.2" {
+		t.Fatalf("source tag = %s", got)
 	}
 	// Apply prints it with 008's backup lines when the target has a destination.
 	f := immichFixture(t)
@@ -666,5 +701,22 @@ func TestImmichHandover(t *testing.T) {
 	lines := backupLines("immich", s.placed["immich"], cat["immich"])
 	if lines == "" || !strings.HasSuffix(s.handover, strings.Join(want, "\n")+lines) {
 		t.Fatalf("handover = %s", s.handover)
+	}
+}
+
+// A plan naming an app built but not released says so, before connecting.
+func TestImmichUnreleased(t *testing.T) {
+	f := immichFixture(t)
+	f.o.Catalog = catalog.Embedded()
+	saved := dialTarget
+	t.Cleanup(func() { dialTarget = saved })
+	dialTarget = func(context.Context, stack.Target, remote.SSHConfig, bool) (driver, error) {
+		t.Fatal("connected")
+		return nil, nil
+	}
+	for _, cmd := range [][]string{{"review"}, {"plan", "--noninteractive"}, {"apply"}, {"upgrade", "immich"}} {
+		if err := f.run(cmd...); err == nil || !strings.Contains(err.Error(), "Immich is built but not released yet: its images are unpublished") {
+			t.Errorf("%s: %v", cmd[0], err)
+		}
 	}
 }

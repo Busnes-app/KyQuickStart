@@ -478,6 +478,9 @@ func (s *session) finishRestore(ctx context.Context, st dockerhost.Store, id, st
 		return err
 	}
 	fmt.Fprintf(s.o.Out, "%s: restored from snapshot %s and healthy.\n", name, id)
+	if name == "immich" {
+		fmt.Fprint(s.o.Out, immichRestored)
+	}
 	return nil
 }
 

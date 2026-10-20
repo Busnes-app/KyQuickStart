@@ -344,6 +344,11 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 		}
 	}
 	sort.Slice(s.targets, func(i, j int) bool { return s.targets[i].Name < s.targets[j].Name })
+	for _, n := range names {
+		if err := cat.UnreleasedError(n); err != nil {
+			return nil, err
+		}
+	}
 	if s.order, err = plan.Order(names, cat); err != nil {
 		return nil, err
 	}

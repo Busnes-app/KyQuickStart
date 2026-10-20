@@ -471,6 +471,9 @@ func validateSelection(st *stack.Stack, cat catalog.Catalog, o Options) error {
 		names = append(names, app.Name)
 		t, _ := st.Target(app.Target)
 		a, ok := cat[app.Name]
+		if err := cat.UnreleasedError(app.Name); err != nil {
+			return err
+		}
 		if !ok {
 			return fmt.Errorf("%s is unavailable", app.Name)
 		}
