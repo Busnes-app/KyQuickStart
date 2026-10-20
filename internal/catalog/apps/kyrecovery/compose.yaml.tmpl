@@ -1,0 +1,29 @@
+# Docker variant of this product's pinned manifest; bind data belongs to the SSH user.
+services:
+  app:
+    image: {{ .Images.kyrecovery }}
+    platform: linux/amd64
+    user: "${KYQ_UID:?}:${KYQ_GID:?}"
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: [/tmp]
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 1
+    pids_limit: 128
+    stop_grace_period: 60s
+    ports: ["{{forward}}:8095"]
+    environment:
+      KYRECOVERY_DATA_DIR: "/app/data"
+      KYRECOVERY_COOKIE_SECURE: "true"
+      GOMEMLIMIT: "384MiB"
+    volumes:
+      - "./data:/app/data"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8095/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s

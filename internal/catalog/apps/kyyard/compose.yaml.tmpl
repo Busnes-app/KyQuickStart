@@ -1,0 +1,42 @@
+# Docker variant of this product's pinned manifest; bind data belongs to the SSH user.
+services:
+  app:
+    image: {{ .Images.kyyard }}
+    platform: linux/amd64
+    user: "${KYQ_UID:?}:${KYQ_GID:?}"
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: [/tmp]
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 1
+    pids_limit: 128
+    stop_grace_period: 1200s
+    ports: ["{{forward}}:9273"]
+    environment:
+      KY_HOST: "0.0.0.0"
+      KY_PORT: "9273"
+      KY_ALLOW_PLAINTEXT_BIND: "true"
+      KY_TRUSTED_PROXIES: "{{edge_address}}"
+      KY_APP_NAME: "KyYard"
+      KY_APP_URL: "https://{{host}}"
+      KY_DB_DRIVER: "sqlite"
+      KY_DATA_DIR: "/data"
+      KY_DOCKER_SOCKET: ""
+      KY_SSO_ENABLED: "false"
+      KY_SCIM_ENABLED: "false"
+      KY_BACKUP_DIR: "/data/backups"
+      KY_BACKUP_KEEP: "7"
+      KY_BACKUP_DEPOSIT_INTERVAL: "24h"
+      KY_SUITE_RUNNER_SOCKET: "/run/kyquickstart/runner.sock"
+      GOMEMLIMIT: "384MiB"
+    volumes:
+      - "./data:/data"
+    healthcheck:
+      test: ["CMD", "/app/kyyard-server", "healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s

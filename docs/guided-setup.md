@@ -740,8 +740,7 @@ other installation's.
 The catalog's `kynotes` app installs KyNotes 0.4.2 from its attested release image
 (`ghcr.io/busnes-app/kynotes-server:0.4.2@sha256:85f4…6ad9`, built by
 `Busnes-app/KyNotes-server` `release-image.yml@refs/tags/v0.4.2` from commit `f597e997`). It
-depends on the catalog `kyidentity` and needs one edge route. Kubernetes only: a plan placing it
-on a Docker host is refused by `plan`, `review` and `apply` before any connection. Its
+depends on the catalog `kyidentity` and needs one edge route. Docker and Kubernetes are supported; see [Docker catalog products](#catalog-ky-products-on-docker). Its
 integration names its client and KyNotes' one fixed bundle path, and nothing else: apply derives
 the settings.
 
@@ -817,8 +816,7 @@ Limits:
 The catalog's `kycalendar` app installs KyCalendar 0.4.2 from its attested release image
 (`ghcr.io/busnes-app/kycalendar:0.4.2@sha256:7ed4…f75b`, built by `Busnes-app/KyCalendar`
 `release-image.yml@refs/tags/v0.4.2` from commit `5b7b3c60`). It depends on the catalog
-`kyidentity` and needs one edge route. Kubernetes only: a plan placing it on a Docker host is
-refused by `plan`, `review` and `apply` before any connection. Its integration names its client
+`kyidentity` and needs one edge route. Docker and Kubernetes are supported; see [Docker catalog products](#catalog-ky-products-on-docker). Its integration names its client
 and a bundle whose directory is its own setup UUID:
 
 ```yaml
@@ -908,9 +906,7 @@ The catalog's `kyyard` app installs KyYard 0.4.3 from its attested release image
 (`ghcr.io/busnes-app/kyyard:0.4.3@sha256:94c1…0756`, built by `Busnes-app/KyYard-server`
 `release-image.yml@refs/tags/v0.4.3` from commit `0bf5e1cb`), with the suite runner
 (`kyquickstart serve`) beside it in the same pod. It depends on the catalog `kyidentity` and
-needs one edge route. Kubernetes only: the runner shares its pod, and upstream's Compose file
-binds the Docker socket, which is host root. `plan`, `review` and `apply` refuse a plan placing
-it on a Docker host before any connection.
+needs one edge route. Docker is supported too, with a separate private runner and no Docker socket; see [Docker catalog products](#catalog-ky-products-on-docker).
 
 ```yaml
 apps:
@@ -1541,3 +1537,40 @@ The optional `KYQ_TEST_IMMICH_MULTI=1` producer/create fixture additionally veri
 actual global disablement across native Immich and Forgejo, retained content, independent
 app assignment loss and reopened per-product proofs. Full-suite connector coverage, native-writer coordination, full connector audit/restore
 and production admission remain open. Older unreceipted overlays are refused.
+
+## Catalog Ky products on Docker
+
+All catalog Ky products support Docker targets. KyIdentity, KyNotes, KyCalendar,
+KyRecovery, kyPulse and KyYard now ship per-app Compose templates alongside the
+Kubernetes manifests. The existing KyDrive, KyPost and KyDNS Docker paths remain.
+The same pinned product images, explicit setup selections and owner/everyday
+separation apply. Docker support does not admit an unqualified third-party app.
+
+Choose the Docker target in `apps` and its integration. Give each app one edge
+route with a literal Docker-host `forward_host` and unused `forward_port`; the
+installer publishes only that address. KyYard additionally requires its edge's
+exact `egress_address` and trusts that one address (`/32` for IPv4, `/128` for IPv6). Use the product's existing fixed
+bundle path and an `identity_client`; KyIdentity still takes its typed identity
+preparation. Keep protected credentials on targets. Every template uses the SSH
+user's UID/GID and private bind directories that the driver creates before Compose.
+Products need no host Docker socket.
+
+For KyYard, release binaries inject their verified digest-pinned runner image into
+a second `runner` service. Source builds need the release script's digest stamp; Go API callers can supply `Options.RunnerImage`. The two containers share only the
+private socket bind; runner state/SSH credentials live in a separate private bind.
+Handover prints `handoff --runner-container kyq-kyyard-runner-1`. Revoke ownership
+before workstation upgrades of KyYard, then hand off again. The runner refuses to
+change its own app. No Docker socket or workstation credential is mounted into it.
+
+Late KyIdentity setup amendments, issuer-change refusal and restore removal replay
+use the same native interfaces over `docker exec`. Backups and destructive restores
+still follow the existing explicit gates; Docker support does not relax them.
+The handover prints commands for the selected runtime. kyPulse's one-time local
+bootstrap password is in its first container log; save it securely before replacing
+that container. KyDNS retains its client-address/edge gate and host limitations.
+
+The installer uses per-app bridges and routed host ports. Standalone deployments
+that use shared `kypost-net` create it through KyPost; consumers, including a fixed-IP
+containerized NPM, join it externally. Skipping KyPost requires no shared network.
+The separate KyDrive `docker-compose.office.yml` editor package supports production
+Docker or Kubernetes, with unchanged provenance and acceptance gates.

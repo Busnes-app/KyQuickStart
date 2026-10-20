@@ -1,0 +1,32 @@
+# Docker variant of this product's pinned manifest; bind data belongs to the SSH user.
+services:
+  app:
+    image: {{ .Images.kyidentity }}
+    platform: linux/amd64
+    user: "${KYQ_UID:?}:${KYQ_GID:?}"
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: [/tmp]
+    mem_limit: 768m
+    memswap_limit: 768m
+    cpus: 1
+    pids_limit: 128
+    stop_grace_period: 60s
+    ports: ["{{forward}}:5867"]
+    environment:
+      KYIDENTITY_ISSUER_URL: "https://{{host}}"
+      KYIDENTITY_DATA_DIR: "/data"
+      KYIDENTITY_PORT: "5867"
+      BOOTSTRAP_ADMIN_USER: "kyq-bootstrap"
+      KYIDENTITY_ALLOW_PRIVATE_CALLBACKS: "true"
+      GOMEMLIMIT: "640MiB"
+    volumes:
+      - "./data:/data"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5867/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s

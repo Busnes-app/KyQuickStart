@@ -473,7 +473,7 @@ func TestKyYardPlanRefusals(t *testing.T) {
 	refuse("on Docker", yardRunner, func(y string) string {
 		y = strings.Replace(y, "  - name: kyyard\n    target: k1\n", "  - name: kyyard\n    target: nas\n", 1)
 		return strings.Replace(y, "  - product: kyyard\n    target: k1\n", "  - product: kyyard\n    target: nas\n", 1)
-	}, "KyYard runs on Kubernetes only", "not nas")
+	}, "forward_host", "must be an IP address of nas")
 	for _, name := range []string{"admin", "Admin", "Owner-Admin", "ab"} {
 		refuse("admin "+name, yardRunner, admin(name), `KyYard cannot take the KyIdentity admin username "`+name+`"`, "3 to 64 lowercase letters", "identity.admin.username")
 	}

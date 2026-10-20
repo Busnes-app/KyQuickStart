@@ -48,7 +48,7 @@ func dockerProductInputExec(r remote.Runner, container, binary string, runtimeUs
 // installer-managed container, or fails.
 func dockerAppContainer(app string) string {
 	return "c=$(docker ps -q --filter " + remote.Quote("label=com.docker.compose.project=kyq-"+app) +
-		" --filter " + remote.Quote("label="+managed.Label+"="+managed.Value) + " --filter status=running) && " +
+		" --filter " + remote.Quote("label=com.docker.compose.service=app") + " --filter " + remote.Quote("label="+managed.Label+"="+managed.Value) + " --filter status=running) && " +
 		"case $c in ''|*[!0-9a-f]*) echo " + remote.Quote("want one running "+app+" container") + " >&2; exit 1;; esac && "
 }
 
@@ -308,6 +308,9 @@ func nativeProductExec(target driver, i stack.Integration, adapter productAdapte
 	case sshDriver:
 		input := dockerProductInputExec(d.c, i.Container, adapter.binary, adapter.runtimeUser)
 		if i.Container == "" { // an installed app: its one running container, found per call
+			if i.Product != "kypost" {
+				adapter.runtimeUser = ""
+			}
 			input = dockerExec(d.c, dockerAppContainer(i.Product), `"$c"`, adapter.binary, adapter.runtimeUser)
 		}
 		return func(ctx context.Context, args []string) ([]byte, error) { return input(ctx, args, nil) }, input, nil
@@ -473,12 +476,12 @@ func (s *session) refuseMovedSetup(ctx context.Context) error {
 	k := slices.IndexFunc(s.integrations, func(i stack.Integration) bool {
 		return i.Product == "kyidentity" && i.Identity != nil && i.Target == t.Name
 	})
-	d, ok := s.drivers[t.Name].(kubeDriver)
-	if k < 0 || !ok {
+	d := s.drivers[t.Name]
+	if k < 0 || d == nil {
 		return nil
 	}
 	i := s.integrations[k]
-	have, found, err := d.c.AppEnv(ctx, "kyidentity", issuerEnv)
+	have, found, err := installedIdentityIssuer(ctx, d)
 	if err != nil || !found {
 		return err // not deployed: no setup to move
 	}

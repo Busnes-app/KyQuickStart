@@ -289,7 +289,7 @@ func TestKyNotesSetup(t *testing.T) {
 	}
 	identity.exports["kynotes"] = strings.Replace(notesExport(parentSetup), clientSecret, "Q2hhbmdlZENoYW5nZWRDaGFuZ2VkQ2hhbmdlZENoYW4", 1)
 	err := setup.Apply(ctx)
-	if err == nil || !strings.HasPrefix(err.Error(), "private destination credential import was not verified; no KyNotes route was added. Its pod must resolve https://identity.example.com") || notes.files["/data/installer/client.secret"] != clientSecret {
+	if err == nil || !strings.HasPrefix(err.Error(), "private destination credential import was not verified; no KyNotes route was added. Its container must resolve https://identity.example.com") || notes.files["/data/installer/client.secret"] != clientSecret {
 		t.Fatalf("regenerated secret: %v", err)
 	}
 	errs = append(errs, err.Error())
@@ -407,7 +407,7 @@ func TestKyNotesSetupBetweenRoutes(t *testing.T) {
 }
 
 // AC15: KyNotes on a Docker host is refused before any connection, naming Kubernetes.
-func TestKyNotesOnDockerRefused(t *testing.T) {
+func TestKyNotesOnDockerRequiresRoute(t *testing.T) {
 	f := newFixture(t, "../catalog/testdata/apps")
 	f.o.Catalog = catalog.Embedded()
 	catalogIdentityPlan(t, f, "kyidentity", "")
@@ -419,7 +419,7 @@ func TestKyNotesOnDockerRefused(t *testing.T) {
 		return nil, nil
 	}
 	for _, cmd := range [][]string{{"review"}, {"plan", "--noninteractive"}, {"apply"}} {
-		if err := f.run(cmd...); err == nil || !strings.Contains(err.Error(), "kynotes") || !strings.Contains(err.Error(), "place it on a Kubernetes target") {
+		if err := f.run(cmd...); err == nil || !strings.Contains(err.Error(), "kynotes") || !strings.Contains(err.Error(), "route") {
 			t.Errorf("%s: %v", cmd[0], err)
 		}
 	}
