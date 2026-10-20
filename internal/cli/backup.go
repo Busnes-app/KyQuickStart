@@ -462,6 +462,11 @@ func (s *session) finishRestore(ctx context.Context, st dockerhost.Store, id, st
 			continue
 		}
 		setup, connector, err := s.setupSteps(s.drivers[st.Host], i)
+		if i.ChatClient != "" {
+			var last engine.Step
+			setup, last, err = s.messageSteps(s.drivers[st.Host], i)
+			setup = append(setup, last)
+		}
 		if err != nil {
 			return err
 		}
