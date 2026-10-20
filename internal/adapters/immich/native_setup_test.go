@@ -253,6 +253,11 @@ func qualifyNativeSetup(t *testing.T, ctx context.Context, origin string, transp
 	if code := status(http.MethodPost, "/auth/login", "", map[string]string{"email": "owner@example.test", "password": "disposable-takeover-password"}); code != http.StatusUnauthorized {
 		t.Fatal("native owner gained a local password", code)
 	}
+	// People arrive only through KyIdentity: the native create route stays closed.
+	users := query(`SELECT count(*) FROM "user"`)
+	if code := status(http.MethodPost, "/admin/users", serviceKey, map[string]any{"email": "native@example.test", "name": "Native", "password": "disposable-takeover-password", "isAdmin": true}); code < 400 || code >= 500 || query(`SELECT count(*) FROM "user"`) != users {
+		t.Fatal("native admin account creation was not refused", code)
+	}
 	for _, account := range created.Accounts {
 		if !uuid.MatchString(account.ID) || account.Administrator != (account.Subject == subjects["owner"]) {
 			t.Fatal("native setup account binding invalid")

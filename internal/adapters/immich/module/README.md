@@ -173,7 +173,8 @@ workstation checks the three-account invariant from it right after initial setup
 Accepted risk (Yoshi, 2026-10-10): setup does not disable `passwordLogin`. No account can
 hold a password, though: first-run admin sign-up and pre-setup database restore are always
 refused (accounts come only from apply-setup), initial setup refuses any existing account or
-active maintenance state, and once set up the service account accepts no native update while
+active maintenance state, and once set up the upstream `POST /api/admin/users` refuses every
+new account (people arrive only through the creation route), the service account accepts no native update while
 owned accounts (setup or creation receipts) refuse `password` and `pinCode` from the admin
 API and `password` from their own profile.
 

@@ -122,7 +122,7 @@ the fixture separately caps container memory (server 2 GiB, database 768 MiB, pr
   while a `psql`-planted administrator exists, then delete it so setup owns a blank installation. Verify read-only check, invalid phone-URI/key-path refusal, the stored
   mobile override, owner/everyday/service creation with exactly three native users, reuse of
   the refused run's pre-commit 0600 key file, the service key's bounded permissions, service
-  password-login refusal, refused service-account updates and owner password/PIN, one key across repeats, missing/changed-file refusal, UUID/role
+  password-login refusal, refused service-account updates, owner password/PIN and native admin-user creation, one key across repeats, missing/changed-file refusal, UUID/role
   receipt stability, foreign installation/provider refusal and private-file/symlink/parent checks.
   The owner's own API key then drives the fixture and bridges get the service key.
   After revocation, setup resume must fail and retain the exact fence/time/zero credentials.

@@ -94,7 +94,7 @@ Owned installation setup, native directory projection and content-preserving acc
   no fence at a new epoch, never revoked and email collisions are 409; unknown failures 503.
   Access inspection reports `reactivation: {epoch, reactivatedAt, deletedSessions, deletedApiKeys} | null`.
 - First-run admin sign-up and pre-setup restore are always refused (`isSetupAvailable` is false).
-  After setup the service account refuses every native admin update; owned accounts refuse
+  After setup upstream `POST /api/admin/users` refuses outright (creation route only) and the service account refuses every native admin update; owned accounts refuse
   `password`/`pinCode` (admin API) and `password` (self). Initial setup refuses active maintenance state. Audit: fixed text, user ID and epoch.
 - Disconnect subscribed user sockets and recheck authentication after joining rooms.
 - Requests already authorized before the fence commits may finish; do not claim cancellation of in-flight work.
