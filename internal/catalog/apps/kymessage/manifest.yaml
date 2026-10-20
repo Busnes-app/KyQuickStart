@@ -1,0 +1,69 @@
+name: kymessage
+description: KyMessages, the suite's chat and calls (Matrix, Element, LiveKit); signs in through KyIdentity
+category: ky
+# UNRELEASED: the image below is v0.4.2's, a placeholder until v0.4.3 (KyMessage-Server#70) is
+# released and its attested digest pinned here. v0.4.2's setup refuses KY_SCIM_ENABLED=false.
+version: 0.4.2
+# kymessage: release image of v0.4.2 (commit 1349586d10ae), attested by
+# Busnes-app/KyMessage-Server release-image.yml@refs/tags/v0.4.2 (gh attestation verify).
+# The other five are the stock upstream images KyMessage's docker-compose.matrix.yml pins, by
+# tag and digest; no attestation was found for them (provenance: KyMessage's compose).
+images:
+  kymessage: ghcr.io/busnes-app/kymessage-server:0.4.2@sha256:42e228cfe79e4f04f71891b8bef457765401c87a9fd08bab280905136b524da5
+  postgres: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+  synapse: ghcr.io/element-hq/synapse:v1.162.0@sha256:6b84a7bbac36f080b2d2e51e0289cf1b08b349598ea44a558df38d558f2c2311
+  mas: ghcr.io/element-hq/matrix-authentication-service:1.26.0@sha256:e089f1048a1d4a9a492ed17b9fe759100f1bd619407b001f5927928d88b780c4
+  element: ghcr.io/element-hq/element-web:v1.12.30@sha256:3e7dbd4424de9e11c812bc740acf2725b2abe66ea0d0802023b56fd85d3fa09a
+  livekit: livekit/livekit-server:v1.13.7@sha256:6fd3b7088874c4d119160dd688798dfec852bc014786d392caad15f6f63912a3
+# Generated on the target. KY_SESSION_SECRET has no file form; the console's entrypoint reads it.
+# matrix-init writes the Matrix stack's own secrets under matrix/secrets.
+secrets: [session_secret]
+# Its setup and MAS need KyIdentity's issuer and two clients.
+depends_on: [kyidentity]
+health:
+  # Synapse waits for Postgres and MAS; Element for Synapse.
+  timeout_seconds: 600
+# The console's client: its setup creates the owner's admin and everyday accounts, and the
+# signed directory webhook carries offboarding to the console's sweep, which locks the person in
+# MAS and ends their chat sessions. No SCIM, no automatic provisioning. KyIdentity registers no
+# back-channel logout, so a KyIdentity sign-out leaves chat sessions in place.
+oidc:
+  name: KyMessages
+  redirect_paths: [/api/sso/kyidentity/callback]
+  admin_role: kymessage.admin
+  user_role: kymessage.user
+  directory_path: /api/sso/kyidentity/sync
+# MAS's upstream provider: everyday accounts only, so the dedicated admin has no chat. MAS takes
+# the Matrix localpart from a verified email's local part.
+chat_oidc:
+  name: KyMessages chat
+  role: auth
+  client_suffix: chat
+  everyday_role: kymessage.chat
+  redirect_path: /upstream/callback/{provider_id}
+# One hostname per role; the console is the primary. The server name serves only Matrix's
+# delegation files (the server file answers only while federation is open); the edge closes
+# Synapse's admin and MAS APIs and LiveKit's server API.
+routes:
+  - {role: console, service: app, port: 8080}
+  - {role: server_name, service: app, port: 8080, paths: [/.well-known/matrix/client, /.well-known/matrix/server]}
+  - {role: matrix, service: synapse, port: 8008, deny_paths: ["^/_synapse/(admin|mas)/"]}
+  - {role: auth, service: mas, port: 8080}
+  - {role: chat, service: element, port: 8080}
+  - {role: rtc, service: livekit, port: 7880, deny_paths: ["^/twirp/"]}
+# Call media goes straight to LiveKit on media_address, never through the edge. No TURN.
+media:
+  ports: [7881/tcp, 7882/udp]
+# The console's SQLite database, its sealed capsules, matrix-init's configuration and secrets
+# (signing key included) and Synapse's media, plus Postgres as a dump: its data directory
+# (pgdata) is not backed up raw.
+backup:
+  service: postgres
+  command: [pg_dumpall, -U, postgres, --clean, --if-exists]
+  restore_command: [psql, -X, -q, -v, ON_ERROR_STOP=1, -U, postgres, -d, postgres]
+  volumes: [data, backups, matrix, media]
+  restore_order: [postgres, mas, app, synapse, element, livekit]
+upgrade:
+  # First catalog release; the console's SQLite, Synapse's and MAS's schemas migrate at start.
+  min_from: 0.4.2
+  migrates_data: true
