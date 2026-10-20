@@ -141,7 +141,7 @@ func TestGuidedExistingEdgeChoicesRoundTrip(t *testing.T) {
 			}
 			var out bytes.Buffer
 			p := &prompts{ctx: context.Background(), in: bufio.NewReader(strings.NewReader(strings.Join(tc.answers, "\n") + "\n")), out: &out, answers: map[string]string{}, draft: filepath.Join(t.TempDir(), "answers.json")}
-			if err := guidedEdges(p, st); err != nil {
+			if err := guidedEdges(p, st, nil); err != nil {
 				t.Fatal(err, out.String())
 			}
 			data, _ := yaml.Marshal(st)
@@ -152,7 +152,7 @@ func TestGuidedExistingEdgeChoicesRoundTrip(t *testing.T) {
 			seedEdges(p.answers, st.Edges)
 			st.Edges = nil
 			p.in = bufio.NewReader(strings.NewReader(strings.Repeat("\n", len(tc.answers))))
-			if err := guidedEdges(p, st); err != nil {
+			if err := guidedEdges(p, st, nil); err != nil {
 				t.Fatal(err, out.String())
 			}
 			if !reflect.DeepEqual(first, st.Edges[0]) {

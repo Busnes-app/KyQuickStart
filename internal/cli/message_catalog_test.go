@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -91,6 +93,7 @@ type messageHost struct {
 	overwrite  bool   // matrix-init replaces the seed
 	addresses  string // ip -o -4 addr show's output
 	setupCalls []string
+	cmds       []string // every command, docker or not
 	applied    bool
 	bundle     string
 }
@@ -98,6 +101,7 @@ type messageHost struct {
 func (h *messageHost) dir() string { return filepath.Join(h.root, "kymessage") }
 
 func (h *messageHost) Run(ctx context.Context, cmd string, stdin []byte) ([]byte, error) {
+	h.cmds = append(h.cmds, cmd)
 	switch {
 	case strings.HasPrefix(cmd, "{ ip -o -4 addr show"):
 		h.docker = append(h.docker, cmd)
@@ -393,8 +397,19 @@ func TestKyMessageSteps(t *testing.T) {
 	if err := steps["kymessage.setup"].Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := steps["kymessage.setup"].Verify(ctx); err != nil {
-		t.Fatal(err)
+	// Verify only reads: check placements, --check and --capabilities, read-only exports.
+	h.cmds, identity.calls, h.setupCalls = nil, nil, nil
+	for _, id := range []string{"kymessage.matrix-init", "kymessage.credentials", "kymessage.setup"} {
+		if err := steps[id].Verify(ctx); err != nil {
+			t.Fatalf("%s verify: %v", id, err)
+		}
+	}
+	for _, c := range append(append(h.cmds, identity.calls...), h.setupCalls...) {
+		if strings.Contains(c, " run --rm") || strings.Contains(c, "sh -c") && !strings.Contains(c, "'check'") && !strings.Contains(c, " check ") ||
+			strings.Contains(c, "apply-setup") && !strings.Contains(c, "--check") && !strings.Contains(c, "--capabilities") && !strings.Contains(c, "--export-client") ||
+			strings.Contains(c, "--restart") {
+			t.Errorf("Verify wrote: %s", c)
+		}
 	}
 	var b struct {
 		SSO      map[string]string
@@ -408,6 +423,9 @@ func TestKyMessageSteps(t *testing.T) {
 	// AC11: no secret in any argv, output, the plan or the state directory.
 	var seen []string
 	seen = append(seen, h.docker...)
+	for _, c := range h.cmds {
+		seen = append(seen, c) // argv of every host command
+	}
 	seen = append(seen, identity.calls...)
 	seen = append(seen, f.out.String())
 	filepath.WalkDir(f.state, func(p string, d fs.DirEntry, err error) error {
@@ -602,7 +620,58 @@ func TestKyIdentityMailBundle(t *testing.T) {
 	// Without identity.mail the intent is byte for byte master's: TestStepInputsGolden.
 }
 
+func bufioReader(s string) *bufio.Reader { return bufio.NewReader(strings.NewReader(s)) }
+
+func strconvItoa(n int) string { return strconv.Itoa(n) }
+
 func readAll(r io.Reader) []byte {
 	b, _ := io.ReadAll(r)
 	return b
+}
+
+// The guided plan asks KyMessages' six hostnames under one domain, the server name being the
+// domain itself, with one forward port per published service.
+func TestGuidedKyMessageRoutes(t *testing.T) {
+	cat, err := catalog.Load(catalog.Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := &stack.Stack{Version: 1, Targets: []stack.Target{{Name: "nas", Host: "192.0.2.1", User: "kyq", Port: 22, Root: "/opt/kyq"}},
+		Apps: []stack.App{{Name: "kymessage", Target: "nas", MediaAddress: "192.0.2.1"}}}
+	answers := []string{"lan", "https://npm.example.com", "192.168.1.0/24", "", "yes", "example.com", "192.0.2.1", "3", "", "", "", "", "", "", "", "", "", "", ""}
+	var out strings.Builder
+	p := &prompts{ctx: context.Background(), in: bufioReader(strings.Join(answers, "\n") + "\n"), out: &out, answers: map[string]string{}, draft: filepath.Join(t.TempDir(), "answers.json")}
+	if err := guidedEdges(p, st, cat); err != nil {
+		t.Fatal(err, out.String())
+	}
+	var got []string
+	for _, r := range st.Edges[0].Routes {
+		got = append(got, r.Role+"="+r.Hostname+":"+strconvItoa(r.ForwardPort))
+	}
+	want := []string{"=message.example.com:8080", "server_name=example.com:8080", "matrix=matrix.example.com:8008", "auth=auth.example.com:8081", "chat=chat.example.com:8082", "rtc=rtc.example.com:7880"}
+	if !slices.Equal(got, want) || !strings.Contains(out.String(), "permanent") {
+		t.Fatalf("routes = %v\n%s", got, out.String())
+	}
+	if _, err := withRoute(st, "kymessage", st.Targets[0], cat["kymessage"]); err != nil {
+		t.Fatalf("guided routes refused: %v", err)
+	}
+}
+
+// AC24: the handover names what a human must know and do.
+func TestKyMessageHandover(t *testing.T) {
+	f := newMessageFixture(t)
+	messageStackPlan(t, f, nil)
+	s, err := load(f.state, nil, f.o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"chat at https://chat.example.com/ (Element)", "console at https://message.example.com/", "Server name example.com", "@<the local part of a verified email>:example.com",
+		"everyday accounts only (owner)", "owner-admin signs in to the console alone and has no chat", `both "KyMessages" and "KyMessages chat"`, "email is verified",
+		"192.0.2.1, TCP 7881 and UDP 7882, which are open to your LAN; no\n  TURN", "Federation is closed", "sign-out does not end chat sessions", "offboarding",
+		"docker logs kyq-kymessage-app-1 on nas", "cd '" + f.h.root + "/kymessage' && docker compose -p kyq-kymessage -f compose.yaml -f compose.kyq.yaml exec -T app /bin/sh -c 'eval \"$KYQ_SECRETS\" && exec /app/kymessages init-admin'",
+		"pair it with KyRecovery"} {
+		if !strings.Contains(s.handover, want) {
+			t.Errorf("handover lacks %q:\n%s", want, s.handover)
+		}
+	}
 }

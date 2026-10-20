@@ -176,7 +176,11 @@ func guidedIntegration(p *prompts, st *stack.Stack, e stack.Existing) error {
 		if err := dec.Decode(&i.Identity); err != nil || dec.Decode(new(any)) != io.EOF {
 			return errors.New("invalid saved KyIdentity preparation metadata")
 		}
+		if i.Identity.Mail != nil {
+			i.Identity.Mail.PasswordFile = p.answers[key+"mail-password-file"]
+		}
 	}
+	i.ChatClient = p.answers[key+"chat-client"]
 	st.Integrations = append(st.Integrations, i)
 	return nil
 }
