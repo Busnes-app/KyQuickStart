@@ -280,6 +280,28 @@ location / {
 	}
 }
 
+// An app with a bridge gets one more location, its bridge path to the port after its own over
+// TLS with the same forwarding headers; every other host's configuration is unchanged.
+func TestBridgeLocation(t *testing.T) {
+	e := testEdge()
+	e.Provider, e.ConnectorCIDR, e.ProxyPort = "lan", "", 0
+	e.AllowCIDRs, e.ClientPort = []string{"192.168.1.0/24"}, 443
+	e.Routes[0].ForwardHost = "192.168.1.91"
+	plain := &NPM{installation: testID}
+	other := &NPM{installation: testID, Bridges: map[string]string{"immich": "/scim/immich"}}
+	before, hash := plain.config(e, e.Routes[0], 1), hostStep{n: plain, e: e, r: e.Routes[0]}.InputHash()
+	if after := other.config(e, e.Routes[0], 1); !reflect.DeepEqual(before, after) || (hostStep{n: other, e: e, r: e.Routes[0]}).InputHash() != hash {
+		t.Fatal("a bridge on another app changed this host")
+	}
+	bridged := &NPM{installation: testID, Bridges: map[string]string{"hello": "/scim/immich"}}
+	got := bridged.config(e, e.Routes[0], 1).Advanced
+	rest, ok := strings.CutPrefix(got, before.Advanced)
+	head, _, _ := strings.Cut(strings.SplitN(before.Advanced, "location / {\n", 2)[1], "  proxy_pass")
+	if want := "location /scim/immich/ {\n" + head + "  proxy_pass https://192.168.1.91:8081;\n}\n"; !ok || rest != want {
+		t.Fatalf("bridged advanced_config:\n%s", got)
+	}
+}
+
 // A kube:// NPM is reached only through the supplied tunnel, as plain HTTP inside it.
 func TestKubeTunnel(t *testing.T) {
 	var hostHeader string

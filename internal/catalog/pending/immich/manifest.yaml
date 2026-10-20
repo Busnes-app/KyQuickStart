@@ -1,0 +1,57 @@
+name: immich
+description: Immich, photo and video library with phone backup, search and sharing
+category: third-party
+version: 3.2.0
+images:
+  # Built and attested by this repository's immich-image.yml@refs/tags/immich-v3.2.0-ky.1:
+  # upstream v3.2.0 (commit 1b6098c9dbfffe978bec2d414606ed7a4c8e019a) with the AGPL module in
+  # internal/adapters/immich/module, FROM the amd64 server below. ON HOLD: published by Yoshi (H1).
+  server: ghcr.io/busnes-app/kyq-immich-server:3.2.0-ky.1@sha256:pending
+  # Upstream ghcr.io/immich-app/immich-machine-learning:v3.2.0, linux/amd64 manifest of index
+  # sha256:f8b2869891c861a58dde969d86e7ea8a186e6059a55886632ee3249e51fb574a. Its only provenance
+  # is an unsigned BuildKit SLSA attestation naming commit 1b6098c9; no GitHub attestation, no
+  # cosign signature (2026-10-19):
+  #   docker buildx imagetools inspect ghcr.io/immich-app/immich-machine-learning:v3.2.0 --format '{{json .Provenance}}'
+  # The server overlay's base, ghcr.io/immich-app/immich-server:v3.2.0 amd64
+  # sha256:949bbf9ff32543539f471bc275437e6d1a1a4fee43c55bb9e4c06b946909bf1c, has the same kind.
+  machine_learning: ghcr.io/immich-app/immich-machine-learning:v3.2.0@sha256:30b81e0c6f68d80d6a8e6d0a8dddd7780e78d0c89e44d7701d9a4212ae8d90ca
+  # Pinned by upstream's own v3.2.0 docker/docker-compose.yml (index digests).
+  postgres: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+  valkey: docker.io/valkey/valkey:9@sha256:70739f85ad2ee01a726a965584a0f94895f01b0c60b3cc8b0aeef11eaa6888cf
+  # The offboarding bridge, attested by kyoffboard-image.yml@refs/tags/kyoffboard-v0.1.0. ON HOLD (H1).
+  directory: ghcr.io/busnes-app/kyoffboard:0.1.0@sha256:pending
+# Generated on the target. scim_token is the bearer KyIdentity's connector presents to the bridge.
+secrets: [db_password, scim_token]
+depends_on: [kyidentity]
+components: [server, machine learning, database (Postgres), cache (Valkey), bridge (kyoffboard)]
+health:
+  # The first start migrates the database and downloads no model; models download on first use.
+  timeout_seconds: 600
+  # The bridge has no configuration until immich.directory writes it from Immich's setup.
+  after_setup: [directory]
+# Immich maps the roles claim (rolesClaim: roles) to its administrator; KyIdentity sends roles,
+# never role. People arrive through the bridge (directory), which KyIdentity reaches over SCIM
+# at scim_path with scim_token; the server itself never reads that token.
+oidc:
+  name: Immich
+  redirect_paths: [/auth/login, /api/oauth/mobile-redirect]
+  admin_role: admin
+  user_role: user
+  scim_token_file: /run/secrets/scim_token
+  scim_path: /scim/immich
+# The dump is the database; library holds originals, uploads and profiles; setup and directory
+# hold the setup receipts' bundle, the service key and the bridge's state. thumbs and
+# encoded-video regenerate; backups are Immich's own daily dumps, which would double the size.
+backup:
+  service: database
+  command: [pg_dump, -U, postgres, --clean, --if-exists, immich]
+  # Upstream's restore: pg_dump clears search_path, which vectorchord's types need.
+  restore_command: [sh, -c, "sed \"s/SELECT pg_catalog.set_config('search_path', '', false);/SELECT pg_catalog.set_config('search_path', 'public, pg_catalog', true);/g\" | psql -U postgres -d immich --single-transaction -v ON_ERROR_STOP=1 -q"]
+  volumes: [library, setup, directory]
+  skip: [library/thumbs, library/encoded-video, library/backups]
+  capsule_secrets: [db_password, scim_token]
+  restore_order: [database, redis, immich-server, immich-machine-learning, directory]
+upgrade:
+  # First catalog release; the server migrates its database at startup.
+  min_from: 3.2.0
+  migrates_data: true

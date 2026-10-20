@@ -254,6 +254,7 @@ type session struct {
 	drivers      map[string]driver       // target name -> driver
 	edges        []stack.Edge
 	npms         map[string]*edge.NPM
+	bridges      map[string]string // app -> the path its bridge serves on its route
 
 	plan          *stack.Stack        // as loaded, or with the amendments amendLate records
 	derived       []string            // KyIdentity clients composeClients took from the catalog
@@ -323,7 +324,7 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 	if redact == nil {
 		redact = &engine.Redactor{}
 	}
-	s := &session{plan: st, revision: st.Revision, installation: st.InstallationID, saved: st.InstallationID, trust: trust, redact: redact, allTargets: st.Targets, integrations: st.Integrations, o: o, state: state, demo: st.Demo, cat: cat, placed: map[string]stack.Target{}, drivers: map[string]driver{}, edges: st.Edges, npms: map[string]*edge.NPM{}}
+	s := &session{plan: st, revision: st.Revision, installation: st.InstallationID, saved: st.InstallationID, trust: trust, redact: redact, allTargets: st.Targets, integrations: st.Integrations, o: o, state: state, demo: st.Demo, cat: cat, placed: map[string]stack.Target{}, drivers: map[string]driver{}, edges: st.Edges, npms: map[string]*edge.NPM{}, bridges: map[string]string{}}
 	var names []string
 	used := map[string]bool{}
 	for _, a := range st.Apps {
@@ -378,6 +379,9 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 		cat[a.Name] = app
 	}
 	for name, t := range s.placed {
+		if cat[name].UsesBridge() {
+			s.bridges[name] = cat[name].OIDC.SCIMPath
+		}
 		if cat[name], err = withRoute(st, name, t, cat[name]); err != nil {
 			return nil, err
 		}
@@ -408,6 +412,9 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 		return nil, err
 	}
 	if err := calendarAccounts(st); err != nil {
+		return nil, err
+	}
+	if err := immichPlan(st); err != nil {
 		return nil, err
 	}
 	if err := s.composeClients(st); err != nil {
@@ -454,7 +461,23 @@ func withRoute(st *stack.Stack, name string, t stack.Target, app catalog.App) (c
 	if app.Kubernetes != nil {
 		app.Kubernetes = app.Kubernetes.WithHost(hosts[0])
 	}
-	return app.WithRoute(catalog.Route{Host: hosts[0], Forward: addr + ":" + strconv.Itoa(routes[0].ForwardPort), ForwardAddr: addr, EdgeAddress: edges[0].EgressAddress}), nil
+	r := catalog.Route{Host: hosts[0], Forward: addr + ":" + strconv.Itoa(routes[0].ForwardPort), ForwardAddr: addr, EdgeAddress: edges[0].EgressAddress}
+	if app.UsesBridge() {
+		// The bridge takes the port after the app's: no route may forward to it.
+		bridge := routes[0].ForwardPort + 1
+		for _, e := range st.Edges {
+			for _, o := range e.Routes {
+				if o.ForwardHost == routes[0].ForwardHost && o.ForwardPort == bridge {
+					bridge = 0
+				}
+			}
+		}
+		if bridge == 0 || bridge > 65535 {
+			return app, fmt.Errorf("app %q publishes its bridge on forward_port + 1, which must be a free port of %s: choose another forward_port", name, routes[0].ForwardHost)
+		}
+		r.BridgeForward = addr + ":" + strconv.Itoa(bridge)
+	}
+	return app.WithRoute(r), nil
 }
 
 func (s *session) connect(ctx context.Context, trust trustFlag) error {
@@ -480,7 +503,7 @@ func (s *session) connect(ctx context.Context, trust trustFlag) error {
 		if err != nil {
 			return fmt.Errorf("edge %s: %w", e.Target, err)
 		}
-		n.Adopt, n.Secrets, n.Redact = s.adopt, s.drivers[e.Target].edgeSecrets(), s.redact
+		n.Adopt, n.Secrets, n.Redact, n.Bridges = s.adopt, s.drivers[e.Target].edgeSecrets(), s.redact, s.bridges
 		s.npms[e.Target] = n
 	}
 	return nil
@@ -522,6 +545,9 @@ func (s *session) upstreams(target string) []netip.AddrPort {
 		for _, r := range e.Routes {
 			if e.Target == target && s.placed[r.App].Name != target {
 				out = append(out, netip.AddrPortFrom(netip.MustParseAddr(r.ForwardHost), uint16(r.ForwardPort)))
+				if _, ok := s.bridges[r.App]; ok {
+					out = append(out, netip.AddrPortFrom(netip.MustParseAddr(r.ForwardHost), uint16(r.ForwardPort+1)))
+				}
 			}
 		}
 	}

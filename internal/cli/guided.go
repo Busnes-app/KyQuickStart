@@ -496,6 +496,9 @@ func validateSelection(st *stack.Stack, cat catalog.Catalog, o Options) error {
 	if err := calendarAccounts(st); err != nil {
 		return err
 	}
+	if err := immichPlan(st); err != nil {
+		return err
+	}
 	_, err := plan.Order(names, cat)
 	return err
 }
@@ -600,6 +603,9 @@ func showPlan(out io.Writer, st *stack.Stack, cat catalog.Catalog) {
 	}
 	for _, a := range st.Apps {
 		fmt.Fprintf(out, "Install %s on %s; required: %s\n", a.Name, a.Target, strings.Join(cat[a.Name].DependsOn, ", "))
+		if c := cat[a.Name].Components; len(c) > 0 {
+			fmt.Fprintf(out, "  Components: %s\n", strings.Join(c, ", "))
+		}
 		if target, _ := st.Target(a.Target); target.Kubernetes() && len(cat[a.Name].Secrets) > 0 {
 			fmt.Fprintf(out, "  Required temporary credential generator: %s (cluster-local; removed after generation)\n", kube.CredentialGeneratorImage)
 		}

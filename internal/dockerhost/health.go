@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -66,6 +67,9 @@ func unhealthy(cs []container, services []string) string {
 type healthStep struct {
 	a    App
 	hash string
+	// skip are the services apply's setup configures (health.after_setup); restore and
+	// backup wait for them too.
+	skip []string
 }
 
 func (h healthStep) ID() string        { return h.a.Name + ".health" }
@@ -76,7 +80,25 @@ func (h healthStep) state(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return unhealthy(cs, h.a.Catalog.Services), nil
+	cs = slices.DeleteFunc(cs, func(c container) bool { return slices.Contains(h.skip, c.Service) })
+	return unhealthy(cs, without(h.a.Catalog.Services, h.skip)), nil
+}
+
+// without is services less skip.
+func without(services, skip []string) []string {
+	return slices.DeleteFunc(slices.Clone(services), func(s string) bool { return slices.Contains(skip, s) })
+}
+
+// WaitHealthy waits, up to the app's health timeout, until service runs and is healthy.
+func WaitHealthy(ctx context.Context, a App, service string) error {
+	a.Catalog.Services = []string{service}
+	return healthStep{a: a}.Apply(ctx)
+}
+
+// Healthy reports why service is not running and healthy, nil if it is.
+func Healthy(ctx context.Context, a App, service string) error {
+	a.Catalog.Services = []string{service}
+	return healthStep{a: a}.Verify(ctx)
 }
 
 func (h healthStep) Inspect(ctx context.Context) (bool, error) {

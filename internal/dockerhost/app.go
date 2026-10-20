@@ -56,7 +56,7 @@ func hashOf(parts ...string) string {
 func Steps(a App) []engine.Step {
 	ov := override(a.Catalog.Services, labels(a.ReleaseSet, a.Catalog.Version))
 	hash := hashOf(string(a.Catalog.Compose), string(ov))
-	steps := []engine.Step{deployStep{a: a, override: ov, hash: hash}, healthStep{a: a, hash: hash}}
+	steps := []engine.Step{deployStep{a: a, override: ov, hash: hash}, healthStep{a: a, hash: hash, skip: a.Catalog.Health.AfterSetup}}
 	if len(a.Catalog.Secrets) > 0 {
 		steps = append([]engine.Step{secretsStep{a}}, steps...)
 	}
@@ -77,6 +77,10 @@ func (a App) compose(args string) string {
 	return "cd " + remote.Quote(a.dir()) + " && " + ComposeEnv + " docker compose -p " + remote.Quote("kyq-"+a.Name) +
 		" -f compose.yaml -f compose.kyq.yaml " + args
 }
+
+// Compose is the docker compose command line for this app's project, for steps outside this
+// package that run one of its services.
+func (a App) Compose(args string) string { return a.compose(args) }
 
 func (a App) ps(ctx context.Context) ([]container, error) {
 	out, err := a.Runner.Run(ctx, a.compose("ps --all --format json"), nil)

@@ -60,3 +60,41 @@ func TestHealthApplyTimesOut(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// An after_setup service crash-looping before its setup step neither fails deploy's check nor
+// holds apply's health step; restore's Start and backup's restart still wait for it.
+func TestAfterSetupSkippedOnlyByApply(t *testing.T) {
+	pollInterval = time.Millisecond
+	ps := `{"Service":"web","State":"running","Health":"healthy"}` + "\n" + `{"Service":"bridge","State":"restarting","Health":"unhealthy"}`
+	hash := ""
+	f := &fakeRunner{reply: func(cmd string) ([]byte, error) {
+		if strings.Contains(cmd, ".input-hash") {
+			return []byte(hash), nil
+		}
+		return []byte(ps), nil
+	}}
+	a := fakeApp(f)
+	a.Catalog.Services = []string{"bridge", "web"}
+	a.Catalog.Health.AfterSetup = []string{"bridge"}
+	steps := Steps(a)
+	hash = steps[0].InputHash()
+	ctx := context.Background()
+	for _, s := range steps {
+		if err := s.Verify(ctx); err != nil {
+			t.Errorf("%s: %v", s.ID(), err)
+		}
+	}
+	if err := Healthy(ctx, a, "bridge"); err == nil {
+		t.Error("an unhealthy bridge passed")
+	}
+	if err := WaitHealthy(ctx, a, "bridge"); err == nil || !strings.Contains(err.Error(), "service bridge is not running") {
+		t.Errorf("Start's wait: %v", err)
+	}
+	if err := (Store{App: a}).restart(ctx); err == nil {
+		t.Error("restart did not wait for the bridge")
+	}
+	a.Catalog.Health.AfterSetup = nil
+	if err := Steps(a)[1].Verify(ctx); err == nil {
+		t.Error("without after_setup the bridge was skipped")
+	}
+}

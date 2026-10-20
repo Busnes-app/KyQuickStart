@@ -64,6 +64,9 @@ type NPM struct {
 	Secrets Secrets
 	// Redact receives every credential read, before it is used.
 	Redact *engine.Redactor
+	// Bridges maps an app to the path its bridge serves on its route, over TLS on the port
+	// after the app's forward_port.
+	Bridges map[string]string
 }
 
 // Secrets reads target-held edge credentials by reference, and keeps the LAN DNS ledger
@@ -277,8 +280,7 @@ func (n *NPM) config(e stack.Edge, r stack.Route, cert int) hostConfig {
 	}
 	// A server-level proxy_set_header loses to NPM's default location. Own the whole
 	// location, which also suppresses NPM's default forwarding-header configuration.
-	advanced += fmt.Sprintf(`location / {
-  proxy_set_header Host $host;
+	headers := fmt.Sprintf(`  proxy_set_header Host $host;
   proxy_set_header X-Forwarded-Host $host;
   proxy_set_header X-Forwarded-For $remote_addr;
   proxy_set_header X-Real-IP $remote_addr;
@@ -291,9 +293,13 @@ func (n *NPM) config(e stack.Edge, r stack.Route, cert int) hostConfig {
   proxy_set_header Upgrade $http_upgrade;
   proxy_set_header Connection $http_connection;
   proxy_http_version 1.1;
-  proxy_pass $forward_scheme://$server:$port$request_uri;
-}
 `, port)
+	advanced += "location / {\n" + headers + "  proxy_pass $forward_scheme://$server:$port$request_uri;\n}\n"
+	if p, ok := n.Bridges[r.App]; ok {
+		// The bridge's leaf is self-signed on its target, and NPM leaves proxy_ssl_verify off:
+		// this hop's TLS hides the token on the LAN. KyIdentity verifies the edge's certificate.
+		advanced += fmt.Sprintf("location %s/ {\n%s  proxy_pass https://%s:%d;\n}\n", p, headers, r.ForwardHost, r.ForwardPort+1)
+	}
 	return hostConfig{
 		Domains: []string{r.Hostname}, Scheme: r.ForwardScheme, Host: r.ForwardHost,
 		Port: r.ForwardPort, Certificate: cert, SSLForced: true,

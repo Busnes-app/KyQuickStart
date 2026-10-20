@@ -33,6 +33,8 @@ type Manifest struct {
 	Kubernetes  *Kubernetes       `yaml:"kubernetes"`
 	// PodSecurity is the app namespace's enforced level: restricted (the default) or baseline.
 	PodSecurity string `yaml:"pod_security"`
+	// Components name what the app runs, for plan and review; none for a single program.
+	Components []string `yaml:"components"`
 }
 
 // OIDC is the app's client in KyIdentity. Paths are relative to the app's public origin.
@@ -49,9 +51,15 @@ type OIDC struct {
 	DirectoryPath string `yaml:"directory_path"`
 	Public        bool   `yaml:"public"` // PKCE without a client secret
 	// SCIMTokenFile is /run/secrets/<secret>: the app's inbound SCIM bearer token, which its
-	// setup bundle names.
+	// setup bundle or its bridge names.
 	SCIMTokenFile string `yaml:"scim_token_file"`
+	// SCIMPath is where KyIdentity's connector reaches that token's receiver on the app's
+	// origin: the app itself (DefaultSCIMPath) or its bridge (BridgeForwardRef).
+	SCIMPath string `yaml:"scim_path"`
 }
+
+// DefaultSCIMPath is a SCIM receiver's path in the app itself.
+const DefaultSCIMPath = "/scim/v2"
 
 // Backup is what restic takes from the app. Volumes name Compose volumes or ./<name> bind
 // directories and, when the app runs on Kubernetes, kubernetes.volumes; Skip entries are
@@ -78,6 +86,9 @@ type Upgrade struct {
 
 type Health struct {
 	TimeoutSeconds int `yaml:"timeout_seconds"`
+	// AfterSetup are Compose services that become healthy only once the app's setup step has
+	// configured them; the health step waits for every other service.
+	AfterSetup []string `yaml:"after_setup"`
 }
 
 // Kubernetes is how a Ky product or edge component runs in a cluster: one container.
@@ -171,21 +182,26 @@ const ForwardAddrRef = "{{forward_addr}}"
 // the edge's requests from.
 const EdgeAddressRef = "{{edge_address}}"
 
+// BridgeForwardRef stands for forward_addr:(forward_port+1): the app's bridge publishes its TLS
+// port on the port after the app's, where the edge forwards oidc.scim_path.
+const BridgeForwardRef = "{{bridge_forward}}"
+
 // routeRefs are every route reference a Compose template may write.
-var routeRefs = []string{HostRef, ForwardRef, ForwardAddrRef, EdgeAddressRef}
+var routeRefs = []string{HostRef, ForwardRef, ForwardAddrRef, EdgeAddressRef, BridgeForwardRef}
 
 // routeFuncs render a Compose template's route references as themselves; a session replaces
 // them with the app's route (WithRoute).
 var routeFuncs = template.FuncMap{
-	"host":         func() string { return HostRef },
-	"forward":      func() string { return ForwardRef },
-	"forward_addr": func() string { return ForwardAddrRef },
-	"edge_address": func() string { return EdgeAddressRef },
+	"host":           func() string { return HostRef },
+	"forward":        func() string { return ForwardRef },
+	"forward_addr":   func() string { return ForwardAddrRef },
+	"edge_address":   func() string { return EdgeAddressRef },
+	"bridge_forward": func() string { return BridgeForwardRef },
 }
 
 // Route is what a Compose template's route references stand for.
 type Route struct {
-	Host, Forward, ForwardAddr, EdgeAddress string
+	Host, Forward, ForwardAddr, EdgeAddress, BridgeForward string
 }
 
 // AdminPort is NPM's admin API port. It is never published outside the cluster.
@@ -231,6 +247,9 @@ func loadApp(fsys fs.FS, dir string) (App, error) {
 	if err := m.validate(dir); err != nil {
 		return App{}, fmt.Errorf("manifest.yaml: %w", err)
 	}
+	if m.OIDC != nil && m.OIDC.SCIMTokenFile != "" && m.OIDC.SCIMPath == "" {
+		m.OIDC.SCIMPath = DefaultSCIMPath
+	}
 	text, err := fs.ReadFile(fsys, path.Join(dir, "compose.yaml.tmpl"))
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -239,6 +258,9 @@ func loadApp(fsys fs.FS, dir string) (App, error) {
 		}
 		if m.Kubernetes == nil {
 			return App{}, fmt.Errorf("neither compose.yaml.tmpl nor kubernetes")
+		}
+		if len(m.Health.AfterSetup) > 0 {
+			return App{}, fmt.Errorf("manifest.yaml: health.after_setup needs compose.yaml.tmpl")
 		}
 		if err := m.validateBackup(nil); err != nil {
 			return App{}, fmt.Errorf("manifest.yaml: backup: %w", err)
@@ -262,6 +284,12 @@ func loadApp(fsys fs.FS, dir string) (App, error) {
 	if err := m.validateBackup(&c); err != nil {
 		return App{}, fmt.Errorf("manifest.yaml: backup: %w", err)
 	}
+	if err := m.validateAfterSetup(c.services); err != nil {
+		return App{}, fmt.Errorf("manifest.yaml: health.after_setup: %w", err)
+	}
+	if bytes.Contains(buf.Bytes(), []byte(BridgeForwardRef)) && (m.OIDC == nil || m.OIDC.SCIMTokenFile == "") {
+		return App{}, fmt.Errorf("compose.yaml.tmpl: %s is a bridge's, which needs oidc.scim_token_file", BridgeForwardRef)
+	}
 	return App{Manifest: m, Compose: buf.Bytes(), Services: c.services, Binds: c.binds}, nil
 }
 
@@ -270,12 +298,15 @@ func (a App) UsesRoute() bool {
 	return slices.ContainsFunc(routeRefs, func(ref string) bool { return bytes.Contains(a.Compose, []byte(ref)) })
 }
 
+// UsesBridge reports whether the app runs a bridge on the port after its forward_port.
+func (a App) UsesBridge() bool { return bytes.Contains(a.Compose, []byte(BridgeForwardRef)) }
+
 // UsesEdgeAddress reports whether the app's Compose file takes its edge's egress_address.
 func (a App) UsesEdgeAddress() bool { return bytes.Contains(a.Compose, []byte(EdgeAddressRef)) }
 
 // WithRoute returns a copy whose Compose file has its route references replaced by r.
 func (a App) WithRoute(r Route) App {
-	a.Compose = []byte(strings.NewReplacer(HostRef, r.Host, ForwardRef, r.Forward, ForwardAddrRef, r.ForwardAddr, EdgeAddressRef, r.EdgeAddress).Replace(string(a.Compose)))
+	a.Compose = []byte(strings.NewReplacer(HostRef, r.Host, ForwardRef, r.Forward, ForwardAddrRef, r.ForwardAddr, EdgeAddressRef, r.EdgeAddress, BridgeForwardRef, r.BridgeForward).Replace(string(a.Compose)))
 	return a
 }
 
@@ -311,6 +342,9 @@ func (m Manifest) validate(dir string) error {
 			return fmt.Errorf("depends_on %q is not another app", d)
 		}
 	}
+	if err := check(m.Components, func(c string) bool { return c != "" && len(c) <= 64 && !strings.ContainsAny(c, ",\r\n\t") }); err != nil {
+		return fmt.Errorf("components: %w must be unique, 1-64 characters, one line and without commas", err)
+	}
 	if m.Health.TimeoutSeconds < 1 || m.Health.TimeoutSeconds > 1800 {
 		return fmt.Errorf("health.timeout_seconds %d must be 1-1800", m.Health.TimeoutSeconds)
 	}
@@ -332,6 +366,9 @@ func (m Manifest) validate(dir string) error {
 		}
 		if f := m.OIDC.SCIMTokenFile; f != "" && !slices.Contains(m.Secrets, strings.TrimPrefix(f, "/run/secrets/")) {
 			return fmt.Errorf("oidc.scim_token_file %q must be /run/secrets/<one of secrets>", f)
+		}
+		if p := m.OIDC.SCIMPath; p != "" && (m.OIDC.SCIMTokenFile == "" || !urlPathRE.MatchString(p) || strings.HasSuffix(p, "/")) {
+			return fmt.Errorf("oidc.scim_path %q needs scim_token_file and must be an absolute path without a trailing slash", p)
 		}
 	}
 	if m.PodSecurity != "restricted" && m.PodSecurity != "baseline" {
@@ -552,6 +589,19 @@ func (m Manifest) validateBackup(c *composeFile) error {
 	}
 	if b.Service != "" && len(b.RestoreOrder) > 0 && b.RestoreOrder[0] != b.Service {
 		return fmt.Errorf("restore_order must start with service %q", b.Service)
+	}
+	return nil
+}
+
+// validateAfterSetup refuses a service the health step must not skip: one Compose does not
+// run, the backup dump's, or one a restore with restore_order would never start.
+func (m Manifest) validateAfterSetup(services []string) error {
+	err := check(m.Health.AfterSetup, func(s string) bool {
+		b := m.Backup
+		return slices.Contains(services, s) && (b == nil || s != b.Service && (len(b.RestoreOrder) == 0 || slices.Contains(b.RestoreOrder, s)))
+	})
+	if err != nil {
+		return fmt.Errorf("%w must be a unique Compose service, not backup.service, and in restore_order when it is set", err)
 	}
 	return nil
 }

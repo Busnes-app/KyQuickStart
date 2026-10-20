@@ -57,7 +57,8 @@ func (d deployStep) check(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	services := d.a.Catalog.Services
+	// An after_setup service may wait, failing, for the configuration its setup step writes.
+	services := without(d.a.Catalog.Services, d.a.Catalog.Health.AfterSetup)
 	if d.a.Only != "" {
 		services = []string{d.a.Only}
 	}

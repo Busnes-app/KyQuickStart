@@ -132,6 +132,9 @@ func (s *session) composeClients(st *stack.Stack) error {
 			s.handover += calendarRuntimeHandover(s.state, host, n.Admin.Username, n.Everyday.Username, s.placed["kycalendar"])
 		case "kypost":
 			s.handover += fmt.Sprintf(postHandover, host, n.Admin.Username, n.Everyday.Username, postContainer, s.placed["kypost"].Name)
+		case "immich":
+			_, r := appRoute(st, "immich")
+			s.handover += immichHandover(host, n.Admin.Username, n.Everyday.Username, r.ForwardHost, r.ForwardPort)
 		case "kypulse":
 			var unwatched []string
 			s.pulseTargets, unwatched = pulseTargets(st, s.cat)
@@ -783,8 +786,14 @@ func (s *session) setupSteps(d driver, i stack.Integration) (steps []engine.Step
 	case "kypost":
 		step.native = postBundle
 	}
+	steps = []engine.Step{step}
+	if i.Product == "immich" {
+		if steps, err = s.immichSteps(d, step, first); err != nil {
+			return nil, nil, err
+		}
+	}
 	if o.SCIMTokenFile == "" {
-		return []engine.Step{step}, nil, nil
+		return steps, nil, nil
 	}
 	host, err := routeHost(s.plan, i.Product)
 	if err != nil {
@@ -795,13 +804,29 @@ func (s *session) setupSteps(d driver, i stack.Integration) (steps []engine.Step
 		return nil, nil, err
 	}
 	installer := path.Dir(path.Dir(source.Bundle))
-	scim := stack.IdentitySCIM{URL: "https://" + host + "/scim/v2", TokenFile: path.Join(installer, "scim-"+i.IdentityClient+".token")}
+	scim := stack.IdentitySCIM{URL: "https://" + host + o.SCIMPath, TokenFile: path.Join(installer, "scim-"+i.IdentityClient+".token")}
 	connector = scimStep{app: i.Product, tokenFile: scim.TokenFile, file: path.Join(installer, "scim-"+i.IdentityClient+".json"),
 		bundle: scimPass(source, parent, i.IdentityClient, scim), place: identityPlace, exec: export,
 		token: func(ctx context.Context) ([]byte, error) {
 			return d.appSecret(ctx, i.Product, path.Base(o.SCIMTokenFile))
 		}}
-	return []engine.Step{step}, connector, nil
+	return steps, connector, nil
+}
+
+// immichSteps are Immich's immich.setup and immich.directory, from the generic step's
+// integration, client and execs; first is KyIdentity's first setup.
+func (s *session) immichSteps(d driver, c clientSetupStep, first stack.Integration) ([]engine.Step, error) {
+	host, ok := d.(sshDriver)
+	if !ok {
+		return nil, errors.New("Immich runs on a Docker target only")
+	}
+	url, err := routeHost(s.plan, "immich")
+	if err != nil {
+		return nil, err
+	}
+	setup := immichSetupStep{i: c.i, source: c.source, first: first.Bundle, issuer: c.issuer, mobile: "https://" + url + "/api/oauth/mobile-redirect",
+		admin: first.Identity.Admin, everyday: first.Identity.Everyday, export: c.export, exec: c.exec, place: c.place}
+	return []engine.Step{setup, immichDirectoryStep{setup: setup, app: host.app("immich", s.cat["immich"], s.o.ReleaseSet), origin: "https://" + url}}, nil
 }
 
 // hostDataDir is where an app on a Docker target keeps the installer's files: its ./data bind

@@ -1,0 +1,21 @@
+{
+  "kycalendar": {
+    "/app/data/installer/3c8f1b2a-7d4e-4f5a-9b6c-0d1e2f3a4b5c/client.secret": "Q2xpZW50U2VjcmV0Q2xpZW50U2VjcmV0Q2xpZW50U2U",
+    "/app/data/installer/3c8f1b2a-7d4e-4f5a-9b6c-0d1e2f3a4b5c/directory.secret": "RGlyZWN0b3J5U2VjcmV0RGlyZWN0b3J5U2VjcmV0RGk",
+    "/app/data/installer/3c8f1b2a-7d4e-4f5a-9b6c-0d1e2f3a4b5c/setup.json": "{\"admins\":[{\"issuer\":\"https://identity.example.com\",\"subject\":\"5e0c8a52-6d1b-4f7e-9a3c-2b1d0e9f8a7c\",\"username\":\"owner-admin\"}],\"everyday\":[{\"issuer\":\"https://identity.example.com\",\"subject\":\"9b1d4e7a-2c3f-4a5b-8d6e-7f8091a2b3c4\",\"username\":\"owner\"}],\"schema\":\"ky.product-setup/1\",\"service\":\"kycalendar\",\"setupId\":\"3c8f1b2a-7d4e-4f5a-9b6c-0d1e2f3a4b5c\",\"sso\":{\"clientId\":\"kycalendar\",\"clientSecretFile\":\"/app/data/installer/3c8f1b2a-7d4e-4f5a-9b6c-0d1e2f3a4b5c/client.secret\",\"directorySecretFile\":\"/app/data/installer/3c8f1b2a-7d4e-4f5a-9b6c-0d1e2f3a4b5c/directory.secret\",\"issuerUrl\":\"https://identity.example.com\",\"redirectUri\":\"https://calendar.example.com/api/sso/kysignon/callback\"}}"
+  },
+  "kydns": {
+    "client.secret": "Q2xpZW50U2VjcmV0Q2xpZW50U2VjcmV0Q2xpZW50U2U",
+    "directory.secret": "RGlyZWN0b3J5U2VjcmV0RGlyZWN0b3J5U2VjcmV0RGk",
+    "setup.json": "{\"admins\":[{\"issuer\":\"https://identity.example.com\",\"subject\":\"5e0c8a52-6d1b-4f7e-9a3c-2b1d0e9f8a7c\",\"username\":\"owner-admin\"}],\"schema\":\"ky.product-setup/1\",\"service\":\"kydns\",\"setupId\":\"8a1f3c5e-7b9d-4e2f-a6c8-0d2e4f6a8b1c\",\"sso\":{\"clientId\":\"kydns\",\"clientSecretFile\":\"/data/installer/8a1f3c5e-7b9d-4e2f-a6c8-0d2e4f6a8b1c/client.secret\",\"directorySecretFile\":\"/data/installer/8a1f3c5e-7b9d-4e2f-a6c8-0d2e4f6a8b1c/directory.secret\",\"issuerUrl\":\"https://identity.example.com\",\"redirectUri\":\"https://dns.example.com/auth/sso/callback\"}}"
+  },
+  "kydrive": {
+    "/data/installer/3c5a7e91-2b4d-4f6a-8c1e-9d0b2a4c6e8f/client.secret": "RHJpdmVTZWNyZXREcml2ZVNlY3JldERyaXZlU2VjcmU",
+    "/data/installer/3c5a7e91-2b4d-4f6a-8c1e-9d0b2a4c6e8f/setup.json": "{\"admins\":[{\"issuer\":\"https://identity.example.com\",\"subject\":\"5e0c8a52-6d1b-4f7e-9a3c-2b1d0e9f8a7c\",\"username\":\"owner-admin\"}],\"schema\":\"ky.product-setup/1\",\"service\":\"kydrive\",\"setupId\":\"3c5a7e91-2b4d-4f6a-8c1e-9d0b2a4c6e8f\",\"sso\":{\"clientId\":\"kydrive\",\"clientSecretFile\":\"/data/installer/3c5a7e91-2b4d-4f6a-8c1e-9d0b2a4c6e8f/client.secret\",\"issuerUrl\":\"https://identity.example.com\",\"redirectUri\":\"https://drive.example.com/api/sso/kysignon/callback\",\"scimTokenFile\":\"/run/secrets/scim_token\"}}",
+    "connector /data/installer/scim-kydrive.token /data/installer/scim-kydrive.json": "{\"admin\":{\"username\":\"owner-admin\",\"email\":\"admin@example.test\",\"passwordFile\":\"/data/installer/271333e2-c221-4601-b249-563b3d828530/admin.password\"},\"clients\":[{\"id\":\"kydrive\",\"name\":\"KyDrive\",\"redirectUris\":[\"https://drive.example.com/api/sso/kysignon/callback\"],\"postLogoutUris\":null,\"administratorRole\":\"kydrive.admin\",\"everydayRole\":\"kydrive.user\",\"scim\":{\"url\":\"https://drive.example.com/scim/v2\",\"tokenFile\":\"/data/installer/scim-kydrive.token\"},\"secretFile\":\"/data/installer/271333e2-c221-4601-b249-563b3d828530/client-kydrive.secret\"}],\"everyday\":{\"username\":\"owner\",\"email\":\"owner@example.test\",\"passwordFile\":\"/data/installer/271333e2-c221-4601-b249-563b3d828530/everyday.password\"},\"schema\":\"kyidentity.setup/1\",\"setupId\":\"271333e2-c221-4601-b249-563b3d828530\"}"
+  },
+  "kypost": {
+    "/kypost/private/installer/8d4f2a6c-3b1e-4c5d-9a7f-6e0b1c2d3e4f/client.secret": "UG9zdFNlY3JldFBvc3RTZWNyZXRQb3N0U2VjcmV0UG8",
+    "/kypost/private/installer/8d4f2a6c-3b1e-4c5d-9a7f-6e0b1c2d3e4f/setup.json": "{\"version\":1,\"sso\":{\"enabled\":true,\"issuerUrl\":\"https://identity.example.com\",\"clientId\":\"kypost\",\"autoProvision\":true},\"clientSecretFile\":\"/kypost/private/installer/8d4f2a6c-3b1e-4c5d-9a7f-6e0b1c2d3e4f/client.secret\"}"
+  }
+}

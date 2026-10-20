@@ -44,11 +44,19 @@ func dockerProductInputExec(r remote.Runner, container, binary string, runtimeUs
 	return dockerExec(r, "", remote.Quote(container), binary, runtimeUser...)
 }
 
+// appService is the Compose service running an app's setup command when it is not "app".
+var appService = map[string]string{"immich": "immich-server"}
+
 // dockerAppContainer is a shell prefix that sets $c to the ID of installed app's one running
-// installer-managed container, or fails.
+// installer-managed container (of its appService), or fails.
 func dockerAppContainer(app string) string {
+	service := "app"
+	if s := appService[app]; s != "" {
+		service = s
+	}
 	return "c=$(docker ps -q --filter " + remote.Quote("label=com.docker.compose.project=kyq-"+app) +
-		" --filter " + remote.Quote("label=com.docker.compose.service=app") + " --filter " + remote.Quote("label="+managed.Label+"="+managed.Value) + " --filter status=running) && " +
+		" --filter " + remote.Quote("label=com.docker.compose.service="+service) +
+		" --filter " + remote.Quote("label="+managed.Label+"="+managed.Value) + " --filter status=running) && " +
 		"case $c in ''|*[!0-9a-f]*) echo " + remote.Quote("want one running "+app+" container") + " >&2; exit 1;; esac && "
 }
 

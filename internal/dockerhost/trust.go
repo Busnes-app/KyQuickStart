@@ -29,3 +29,9 @@ done`, remote.Quote(dir))
 	}
 	return nil
 }
+
+// PrivateDir creates dir if missing and refuses it unless it is the target user's own,
+// reached through no symlink and closed to group and others.
+func PrivateDir(ctx context.Context, r remote.Runner, dir string) error {
+	return trustedDir(ctx, r, dir)
+}

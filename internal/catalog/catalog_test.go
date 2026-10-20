@@ -291,7 +291,7 @@ func TestKyDriveEntry(t *testing.T) {
 		t.Fatalf("image = %s", a.Images["kydrive"])
 	}
 	// KyDrive refuses a directory webhook and requires its SCIM token in setup.
-	if o.RedirectPaths[0] != "/api/sso/kysignon/callback" || o.AdminRole != "kydrive.admin" || o.UserRole != "kydrive.user" || o.DirectoryPath != "" || o.SCIMTokenFile != "/run/secrets/scim_token" || o.Public {
+	if o.RedirectPaths[0] != "/api/sso/kysignon/callback" || o.AdminRole != "kydrive.admin" || o.UserRole != "kydrive.user" || o.DirectoryPath != "" || o.SCIMTokenFile != "/run/secrets/scim_token" || o.SCIMPath != DefaultSCIMPath || o.Public {
 		t.Fatalf("oidc = %+v", o)
 	}
 	if !slices.Equal(a.Secrets, []string{"session_secret", "scim_token"}) || !slices.Equal(a.Binds, []string{"backups", "data"}) || !slices.Equal(a.Backup.Volumes, []string{"data", "backups"}) || !a.Upgrade.MigratesData {
@@ -474,13 +474,20 @@ func TestLoadRejects(t *testing.T) {
 		"node_port out of range":  {edgeKube("ports: [81, 80]", "{80: 8080}"), compose, "30000-32767"},
 		"node_port repeated":      {edgeKube("ports: [81, 80, 443]", "{80: 30080, 443: 30080}"), compose, "unique"},
 
-		"nested bind":         {manifest, compose + "    volumes: [./a/b:/b]\n", "must be ./<name>"},
-		"parent bind":         {manifest, compose + "    volumes: [../x:/x]\n", "must be ./<name>"},
-		"long volume form":    {manifest, compose + "    volumes:\n      - {type: bind, source: ./x, target: /x}\n", "short source:target"},
-		"bind is volume":      {manifest, compose + "    volumes: [./data:/data]\nvolumes:\n  data:\n", "also a named volume"},
-		"other compose func":  {manifest, compose + "    environment: {A: '{{ print 1 }}{{ nope }}'}\n", "nope"},
-		"scim not secret":     {manifest + oidc + "  scim_token_file: /run/secrets/scim\n", compose, "scim_token_file"},
-		"scim outside secret": {manifest + "secrets: [scim]\n" + oidc + "  scim_token_file: /data/scim\n", compose, "scim_token_file"},
+		"nested bind":            {manifest, compose + "    volumes: [./a/b:/b]\n", "must be ./<name>"},
+		"parent bind":            {manifest, compose + "    volumes: [../x:/x]\n", "must be ./<name>"},
+		"long volume form":       {manifest, compose + "    volumes:\n      - {type: bind, source: ./x, target: /x}\n", "short source:target"},
+		"bind is volume":         {manifest, compose + "    volumes: [./data:/data]\nvolumes:\n  data:\n", "also a named volume"},
+		"other compose func":     {manifest, compose + "    environment: {A: '{{ print 1 }}{{ nope }}'}\n", "nope"},
+		"scim not secret":        {manifest + oidc + "  scim_token_file: /run/secrets/scim\n", compose, "scim_token_file"},
+		"scim outside secret":    {manifest + "secrets: [scim]\n" + oidc + "  scim_token_file: /data/scim\n", compose, "scim_token_file"},
+		"scim_path no token":     {manifest + oidc + "  scim_path: /scim/a\n", compose, "scim_path"},
+		"scim_path slash":        {manifest + "secrets: [scim]\n" + oidc + "  scim_token_file: /run/secrets/scim\n  scim_path: /scim/a/\n", compose, "scim_path"},
+		"after_setup unknown":    {manifest + "  after_setup: [db]\n", compose, "after_setup"},
+		"after_setup dump":       {manifest + "  after_setup: [web]\n" + backup, composeVol, "after_setup"},
+		"after_setup unrestored": {manifest + "  after_setup: [db]\n" + backup, composeTwo, "after_setup"},
+		"component comma":        {manifest + "components: [a, 'b,c']\n", compose, "components"},
+		"component repeated":     {manifest + "components: [a, a]\n", compose, "components"},
 
 		"runner other uid":     {manifest + kube + runnerKube, compose, "suite_runner needs run_as 10001"},
 		"runner no socket":     {manifest + strings.Replace(kube, "65532", "10001", 1) + "  suite_runner: true\n", compose, "KY_SUITE_RUNNER_SOCKET"},
@@ -603,6 +610,25 @@ func TestComposeRoute(t *testing.T) {
 	}
 	if a, _ := Load(os.DirFS("testdata/apps")); a["hello"].UsesRoute() || a["hello"].Binds != nil {
 		t.Fatal("hello takes a route or binds")
+	}
+}
+
+// The bridge's reference renders as the forward address with the port after the app's.
+func TestBridgeRoute(t *testing.T) {
+	tmpl := compose + "    ports: ['{{forward}}:8080']\n  bridge:\n    image: {{ .Images.web }}\n    ports: ['{{bridge_forward}}:8443']\n"
+	m := strings.Replace(manifest, "timeout_seconds: 30\n", "timeout_seconds: 30\n  after_setup: [bridge]\n", 1)
+	if _, err := Load(fstest.MapFS{"a/manifest.yaml": {Data: []byte(m)}, "a/compose.yaml.tmpl": {Data: []byte(tmpl)}}); err == nil || !strings.Contains(err.Error(), "needs oidc.scim_token_file") {
+		t.Fatalf("bridge without a SCIM token: %v", err)
+	}
+	m += "secrets: [scim]\n" + oidc + "  scim_token_file: /run/secrets/scim\n  scim_path: /scim/a\n"
+	cat, err := Load(fstest.MapFS{"a/manifest.yaml": {Data: []byte(m)}, "a/compose.yaml.tmpl": {Data: []byte(tmpl)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := cat["a"]
+	got := a.WithRoute(Route{Forward: "192.168.1.91:18443", BridgeForward: "192.168.1.91:18444"})
+	if !a.UsesBridge() || got.UsesBridge() || !strings.Contains(string(got.Compose), "ports: ['192.168.1.91:18444:8443']") || !slices.Equal(a.Health.AfterSetup, []string{"bridge"}) || a.OIDC.SCIMPath != "/scim/a" {
+		t.Fatalf("compose:\n%s", got.Compose)
 	}
 }
 
