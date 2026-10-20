@@ -23,6 +23,7 @@ type reactivationModule struct {
 	posts      int
 	directory  int
 	legacy     bool // a module without the reactivation receipt
+	unproved   bool // a receipt without deletion counts (older module)
 	status     int  // reply status for a committed POST
 	refuse     bool // 409 without committing
 	applyAdmin *bool
@@ -52,7 +53,11 @@ func (m *reactivationModule) serve(t *testing.T) *httptest.Server {
 				state["setupId"], state["revokedAt"] = m.setupID, "2026-10-09T00:00:00Z"
 			}
 			if m.epoch != nil {
-				state["reactivation"] = map[string]any{"epoch": *m.epoch, "reactivatedAt": "2026-10-10T00:00:00.000Z"}
+				receipt := map[string]any{"epoch": *m.epoch, "reactivatedAt": "2026-10-10T00:00:00.000Z", "deletedSessions": 0, "deletedApiKeys": 2}
+				if m.unproved {
+					delete(receipt, "deletedSessions")
+				}
+				state["reactivation"] = receipt
 			}
 			if m.legacy {
 				delete(state, "reactivation")
@@ -98,7 +103,7 @@ func (m *reactivationModule) serve(t *testing.T) *httptest.Server {
 
 func TestReactivateVerifiesFenceEpochAndProfile(t *testing.T) {
 	wanted := Profile{Name: "Later", Email: "later@example.test", Administrator: true}
-	for _, mode := range []string{"success", "repeat", "lost-response", "refused", "never-revoked", "legacy-module", "role-mismatch", "session-restored", "later-profile", "invalid-epoch"} {
+	for _, mode := range []string{"success", "repeat", "lost-response", "refused", "never-revoked", "legacy-module", "role-mismatch", "session-restored", "later-profile", "invalid-epoch", "unproved", "resumed", "resumed-unproved"} {
 		t.Run(mode, func(t *testing.T) {
 			m := &reactivationModule{b: Binding{ID: "271333e2-c221-4601-b249-563b3d828530", Issuer: "https://identity.example.test", ClientID: "photos", Subject: "owned-subject"},
 				setupID: "371333e2-c221-4601-b249-563b3d828530", revoked: true, profile: Profile{Name: "Before", Email: "later@example.test"}, status: 200}
@@ -118,6 +123,11 @@ func TestReactivateVerifiesFenceEpochAndProfile(t *testing.T) {
 				m.sessions = 1
 			case "invalid-epoch":
 				epoch = 3
+			case "unproved":
+				m.unproved = true
+			case "resumed", "resumed-unproved":
+				// The epoch committed before a lost reply; a fresh sign-in has since made a session.
+				m.revoked, m.epoch, m.profile, m.sessions, m.unproved = false, &epoch, wanted, 1, mode == "resumed-unproved"
 			}
 			server := m.serve(t)
 			defer server.Close()
@@ -167,6 +177,18 @@ func TestReactivateVerifiesFenceEpochAndProfile(t *testing.T) {
 			case "invalid-epoch":
 				if err == nil || m.posts != 0 {
 					t.Fatal("odd epoch reached the module")
+				}
+			case "unproved":
+				if !errors.Is(err, ErrUncertain) || m.posts != 1 {
+					t.Fatal("posted reactivation without deletion proof reported done", err)
+				}
+			case "resumed":
+				if err != nil || m.posts != 0 {
+					t.Fatal("resumed reactivation with deletion proof not done", err)
+				}
+			case "resumed-unproved":
+				if !errors.Is(err, ErrUncertain) || m.posts != 0 {
+					t.Fatal("resumed reactivation without deletion proof reported done", err)
 				}
 			}
 		})

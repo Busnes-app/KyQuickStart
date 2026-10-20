@@ -53,7 +53,7 @@ func (m *immichModule) serve(t *testing.T) *httptest.Server {
 				state["setupId"], state["revokedAt"] = b.SetupID, "2026-10-10T00:00:00Z"
 			}
 			if m.epoch != nil {
-				state["reactivation"] = map[string]any{"epoch": *m.epoch, "reactivatedAt": "2026-10-11T00:00:00Z"}
+				state["reactivation"] = map[string]any{"epoch": *m.epoch, "reactivatedAt": "2026-10-11T00:00:00Z", "deletedSessions": 1, "deletedApiKeys": 0}
 			}
 			json.NewEncoder(w).Encode(state)
 		case base + "/kyquickstart/directory":

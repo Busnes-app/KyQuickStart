@@ -121,7 +121,8 @@ bindings, durable directory intent, revocation work and audit delivery.
   permanent; reactivated accounts stay out of group membership.
 - Immich directory targets reactivate natively (`immichReactivate`, one line in `target.go`;
   delete it to fall back to `reactivation_unsupported`). The adapter receives the even epoch,
-  verifies the module's fence removal, epoch receipt, zero credentials and directory profile, and
+  verifies the module's fence removal, epoch receipt with its `deletedSessions`/`deletedApiKeys`
+  proof (required on fresh and resumed attempts), and directory profile, and
   converges a later profile through the directory update. Revocation-only Immich, BookStack
   (no module route yet) and Forgejo stay unsupported. Forgejo 16.0.5 cannot revoke web sessions (session auth loads only the user ID; no admin
   API; codeberg forgejo#796), so re-enabling sign-in revives pre-revocation sessions; it stays

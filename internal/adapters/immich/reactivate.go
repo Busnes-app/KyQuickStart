@@ -11,9 +11,16 @@ import (
 // ErrRefused is a definite native refusal: nothing changed, and retrying the same request cannot succeed.
 var ErrRefused = errors.New("Immich refused the reactivation")
 
+type reactivationReceipt struct {
+	Epoch uint32
+	// Proved: the receipt records the credential deletion of its own transaction.
+	// An older module's receipt lacks it and never proves an epoch done.
+	Proved bool
+}
+
 // reactivation reads the module's latest reactivation receipt; nil means never reactivated.
 // A module without the field cannot reactivate.
-func (c *Client) reactivation(ctx context.Context, b Binding) (*uint32, error) {
+func (c *Client) reactivation(ctx context.Context, b Binding) (*reactivationReceipt, error) {
 	var state struct {
 		Contract, UserID string
 		Reactivation     json.RawMessage
@@ -28,8 +35,10 @@ func (c *Client) reactivation(ctx context.Context, b Binding) (*uint32, error) {
 		return nil, nil
 	}
 	var receipt struct {
-		Epoch         *uint32
-		ReactivatedAt string
+		Epoch           *uint32
+		ReactivatedAt   string
+		DeletedSessions *int64 `json:"deletedSessions"`
+		DeletedAPIKeys  *int64 `json:"deletedApiKeys"`
 	}
 	if json.Unmarshal(state.Reactivation, &receipt) != nil || receipt.Epoch == nil {
 		return nil, errors.New("Immich reactivation proof conflicts")
@@ -37,12 +46,14 @@ func (c *Client) reactivation(ctx context.Context, b Binding) (*uint32, error) {
 	if _, err := time.Parse(time.RFC3339Nano, receipt.ReactivatedAt); err != nil {
 		return nil, errors.New("Immich reactivation proof conflicts")
 	}
-	return receipt.Epoch, nil
+	proved := receipt.DeletedSessions != nil && *receipt.DeletedSessions >= 0 && receipt.DeletedAPIKeys != nil && *receipt.DeletedAPIKeys >= 0
+	return &reactivationReceipt{*receipt.Epoch, proved}, nil
 }
 
 // Reactivate lifts the revocation fence for bridge epoch epoch. The module sets the
 // profile and administrator flag before re-enabling sign-in, in one transaction,
-// and restores no session or key. Lost or unverified outcomes return ErrUncertain.
+// deleting every session and key. Only this epoch's receipt with its deletion counts
+// proves that, on a fresh write or a resumed one. Lost or unverified outcomes return ErrUncertain.
 func (c *Client) Reactivate(ctx context.Context, b Binding, setupID string, epoch uint32, p Profile) error {
 	if epoch < 2 || epoch%2 != 0 || !validProfile(p) {
 		return errors.New("invalid Immich reactivation")
@@ -76,14 +87,14 @@ func (c *Client) Reactivate(ctx context.Context, b Binding, setupID string, epoc
 			}
 			return ErrUncertain
 		}
-	} else if done == nil || *done != epoch {
+	} else if done == nil || done.Epoch != epoch {
 		return ErrRefused // Never revoked, or reactivated by another epoch.
 	}
 	after, err := c.accessProof(ctx, b, setupID)
 	if err != nil || after.Revoked || (posted && (after.APIKeys != 0 || after.Sessions != 0)) {
 		return ErrUncertain
 	}
-	if done, err = c.reactivation(ctx, b); err != nil || done == nil || *done != epoch {
+	if done, err = c.reactivation(ctx, b); err != nil || done == nil || done.Epoch != epoch || !done.Proved {
 		return ErrUncertain
 	}
 	directory, err := c.InspectDirectory(ctx, b, setupID)

@@ -467,15 +467,16 @@ Immich reactivates natively when its directory mapping is configured (revocation
 targets answer `reactivation_unsupported`). The epoch's job calls the community module's
 `POST /api/admin/users/<uuid>/kyquickstart/reactivate` with the service administrator's key,
 the exact setup/issuer/client/subject, the even epoch and the PUT's profile. In one native
-transaction the module sets name, email and `isAdmin` and the directory receipt, then removes
-the `ky.immich-access/1` fence and records `ky.immich-reactivation/1`. It restores no session
-or API key; those were deleted at revocation, so every pre-revocation credential stays denied.
+transaction the module sets name, email and `isAdmin` and the directory receipt, deletes every
+session and API key of the account, then removes the `ky.immich-access/1` fence and records
+`ky.immich-reactivation/1` with `deletedSessions` and `deletedApiKeys`. It restores no
+credential, so every pre-revocation credential stays denied.
 
 The bridge reports success only after reading back: no fence, the module's reactivation
-receipt at this epoch, no session or key after its own write, and the directory profile equal
-to the PUT's. A lost
-response or unverified readback stays pending; the retry reads the receipt and verifies instead
-of posting again. If a later PUT changed the profile after the epoch committed, the retry
+receipt at this epoch carrying both deletion counts, and the directory profile equal to the
+PUT's; a fresh write additionally sees no session or key. A receipt without the counts (an
+older module) never completes an epoch. A lost response or unverified readback stays pending;
+the retry reads the receipt and verifies it the same way instead of posting again. If a later PUT changed the profile after the epoch committed, the retry
 applies it through the directory update. The module's 409 (never revoked, an older epoch, or a
 repeated epoch with another profile) is `native_refused`.
 
