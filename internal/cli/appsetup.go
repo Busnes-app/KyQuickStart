@@ -46,12 +46,12 @@ func catalogClient(id, host string, o *catalog.OIDC) (stack.IdentityClient, erro
 	return c, nil
 }
 
-// routeHost is the URL host of app's one edge route.
+// routeHost is the URL host of app's one edge route, or its primary route.
 func routeHost(st *stack.Stack, app string) (string, error) {
 	var hosts []string
 	for _, e := range st.Edges {
 		for _, r := range e.Routes {
-			if r.App == app {
+			if r.App == app && r.Role == "" {
 				hosts = append(hosts, e.URLHost(r))
 			}
 		}
@@ -87,29 +87,36 @@ func (s *session) composeClients(st *stack.Stack) error {
 		if err != nil {
 			return err
 		}
-		want, err := catalogClient(i.IdentityClient, host, s.cat[i.Product].OIDC)
+		console, err := catalogClient(i.IdentityClient, host, s.cat[i.Product].OIDC)
 		if err != nil {
 			return err
 		}
-		found := false
-		for _, c := range n.Clients {
-			if strings.EqualFold(c.ID, want.ID) {
-				if i.IdentityAmendment != "" {
-					return fmt.Errorf("KyIdentity client %s comes in setup amendment %s; remove it from identity.clients", c.ID, i.IdentityAmendment)
+		wanted := []stack.IdentityClient{console}
+		if o := s.cat[i.Product].ChatOIDC; o != nil && i.ChatClient != "" {
+			wanted = append(wanted, chatClientFor(i.ChatClient, roleHost(st, i.Product, o.Role), providerID(st.InstallationID, i.Product), o))
+		}
+		for _, want := range wanted {
+			found := false
+			for _, c := range n.Clients {
+				if strings.EqualFold(c.ID, want.ID) {
+					if i.IdentityAmendment != "" {
+						return fmt.Errorf("KyIdentity client %s comes in setup amendment %s; remove it from identity.clients", c.ID, i.IdentityAmendment)
+					}
+					if !reflect.DeepEqual(c, want) {
+						return fmt.Errorf("KyIdentity client %s differs from the catalog's %s client; remove it from identity.clients and apply derives it", c.ID, want.Name)
+					}
+					found = true
 				}
-				if !reflect.DeepEqual(c, want) {
-					return fmt.Errorf("KyIdentity client %s differs from the catalog's %s client; remove it from identity.clients and apply derives it", c.ID, want.Name)
+			}
+			if i.IdentityAmendment == "" {
+				if !found {
+					n.Clients = append(n.Clients, want)
 				}
-				found = true
+				s.derived = append(s.derived, want.ID)
 			}
 		}
 		if i.IdentityAmendment != "" {
-			s.amendments = append(s.amendments, newAmendment(i, s.integrations[k], want))
-		} else {
-			if !found {
-				n.Clients = append(n.Clients, want)
-			}
-			s.derived = append(s.derived, want.ID)
+			s.amendments = append(s.amendments, newAmendment(i, s.integrations[k], wanted...))
 		}
 		switch i.Product {
 		case "kyrecovery":
@@ -132,6 +139,8 @@ func (s *session) composeClients(st *stack.Stack) error {
 			s.handover += calendarRuntimeHandover(s.state, host, n.Admin.Username, n.Everyday.Username, s.placed["kycalendar"])
 		case "kypost":
 			s.handover += fmt.Sprintf(postHandover, host, n.Admin.Username, n.Everyday.Username, postContainer, s.placed["kypost"].Name)
+		case "kymessage":
+			s.handover += messageHandover(st, i.Product, s.placed[i.Product], n.Admin.Username, n.Everyday.Username)
 		case "kypulse":
 			var unwatched []string
 			s.pulseTargets, unwatched = pulseTargets(st, s.cat)
@@ -145,7 +154,13 @@ func (s *session) composeClients(st *stack.Stack) error {
 			s.handover += text
 		}
 	}
-	if len(s.derived) > 0 {
+	if n.Mail != nil {
+		// KyIdentity reads its copy of the relay password beside its preparation directories.
+		m := *n.Mail
+		m.TargetFile = path.Join(path.Dir(path.Dir(s.integrations[k].Bundle)), "smtp.password")
+		n.Mail = &m
+	}
+	if len(s.derived) > 0 || n.Mail != nil {
 		s.integrations = slices.Clone(s.integrations)
 		s.integrations[k].Identity = &n
 	}
@@ -164,11 +179,11 @@ type identityAmendment struct {
 	source stack.Integration
 }
 
-func newAmendment(app, parent stack.Integration, c stack.IdentityClient) identityAmendment {
+func newAmendment(app, parent stack.Integration, c ...stack.IdentityClient) identityAmendment {
 	p := parent.Identity
 	source := parent
 	source.Bundle = path.Join(path.Dir(path.Dir(parent.Bundle)), app.IdentityAmendment, "setup.json")
-	source.Identity = &stack.IdentityPreparation{Schema: p.Schema, SetupID: app.IdentityAmendment, Admin: p.Admin, Everyday: p.Everyday, Clients: []stack.IdentityClient{c}}
+	source.Identity = &stack.IdentityPreparation{Schema: p.Schema, SetupID: app.IdentityAmendment, Admin: p.Admin, Everyday: p.Everyday, Clients: c}
 	bundle, err := json.Marshal(struct {
 		Schema  string                 `json:"schema"`
 		SetupID string                 `json:"setupId"`
@@ -222,7 +237,7 @@ func (s *session) amendLate(ctx context.Context, state string, prior func() erro
 	next := *s.plan
 	next.Integrations = slices.Clone(next.Integrations)
 	for j, a := range next.Integrations {
-		if a.Product != "kyidentity" && a.Installed(&next) && slices.Contains(late, a.IdentityClient) {
+		if a.Product != "kyidentity" && a.Installed(&next) && (slices.Contains(late, a.IdentityClient) || a.ChatClient != "" && slices.Contains(late, a.ChatClient)) {
 			next.Integrations[j].IdentityAmendment = amendmentID(i.Identity.SetupID, a.IdentityClient)
 			fmt.Fprintf(s.o.Out, "KyIdentity setup %s ran without %s's client: adding it with setup amendment %s, recorded in stack.yaml when apply passes\n", i.Identity.SetupID, a.Product, next.Integrations[j].IdentityAmendment)
 		}
@@ -311,11 +326,11 @@ KyDNS at https://%[1]s/: sign in through KyIdentity as %[2]s, the one account it
   - Never set egress_address to a Docker network gateway: every peer can look like it.
 `
 
-// appRoute is app's one edge route and its edge, which routeHost has found.
+// appRoute is app's one edge route, or its primary, and its edge, which routeHost has found.
 func appRoute(st *stack.Stack, app string) (stack.Edge, stack.Route) {
 	for _, e := range st.Edges {
 		for _, r := range e.Routes {
-			if r.App == app {
+			if r.App == app && r.Role == "" {
 				return e, r
 			}
 		}
@@ -398,6 +413,7 @@ type clientSetupStep struct {
 	setup     func(context.Context, identityExec, string, bool) ([]byte, error)
 	place     func(ctx context.Context, args []string, input []byte) error
 	native    func(clientCredentials, string) any // KyPost's own bundle from the export and secret file; nil for ky.product-setup/1
+	after     func(context.Context) error         // KyMessages' chat client recheck; nil for any other app
 }
 
 // everydayUser is the owner's everyday account, whose subject KyIdentity's read-only
@@ -525,6 +541,11 @@ func (s clientSetupStep) run(ctx context.Context, check bool) error {
 	}
 	if _, err := s.setup(ctx, s.exec, s.i.Bundle, check); err != nil {
 		return err
+	}
+	if s.after != nil {
+		if err := s.after(ctx); err != nil {
+			return err
+		}
 	}
 	if !check {
 		verified, err := s.export(ctx, exportArgs)
@@ -705,8 +726,25 @@ func (s *session) setupSteps(d driver, i stack.Integration) (steps []engine.Step
 	if err != nil {
 		return nil, nil, err
 	}
+	place := func(d driver, i stack.Integration, user string) (func(context.Context, []string, []byte) error, error) {
+		// The pod's or container's shell, as its runtime user: sh -c placeScript sh <mode> <path>.
+		_, shell, err := nativeProductExec(d, i, productAdapter{binary: "sh", runtimeUser: user})
+		return func(ctx context.Context, args []string, input []byte) error {
+			_, err := shell(ctx, append([]string{"-c", placeScript, "sh"}, args...), input)
+			return err
+		}, err
+	}
 	if i.Product == "kyidentity" {
-		steps := []engine.Step{identitySetupStep{id: "kyidentity.setup", i: i, intent: i.Identity, exec: exec, input: input, late: s.derived}}
+		first := identitySetupStep{id: "kyidentity.setup", i: i, intent: i.Identity, exec: exec, input: input, late: s.derived}
+		if m := i.Identity.Mail; m != nil {
+			first.caps, first.mail = []string{"mail-relay"}, m
+			if m.PasswordFile != "" {
+				if first.place, err = place(d, i, ""); err != nil {
+					return nil, nil, err
+				}
+			}
+		}
+		steps := []engine.Step{first}
 		for _, a := range s.amendments {
 			steps = append(steps, identitySetupStep{id: "kyidentity.amend." + a.app, i: a.source, intent: a.bundle, caps: []string{"setup-amendments"}, exec: exec, input: input})
 		}
@@ -735,14 +773,6 @@ func (s *session) setupSteps(d driver, i stack.Integration) (steps []engine.Step
 			return nil, nil, err
 		}
 		return []engine.Step{notesSetupStep{i: i, source: source, export: export, exec: exec, input: input}}, nil, nil
-	}
-	place := func(d driver, i stack.Integration, user string) (func(context.Context, []string, []byte) error, error) {
-		// The pod's or container's shell, as its runtime user: sh -c placeScript sh <mode> <path>.
-		_, shell, err := nativeProductExec(d, i, productAdapter{binary: "sh", runtimeUser: user})
-		return func(ctx context.Context, args []string, input []byte) error {
-			_, err := shell(ctx, append([]string{"-c", placeScript, "sh"}, args...), input)
-			return err
-		}, err
 	}
 	o := s.cat[i.Product].OIDC
 	step := clientSetupStep{i: i, name: o.Name, source: source, issuer: issuer, scimToken: o.SCIMTokenFile,

@@ -348,7 +348,9 @@ type identitySetupStep struct {
 	caps   []string          // capabilities beyond preparation's
 	exec   identityExec
 	input  func(context.Context, []string, []byte) ([]byte, error)
-	late   []string // clients other installed apps added to the intent
+	late   []string                                                     // clients other installed apps added to the intent
+	mail   *stack.IdentityMail                                          // the first setup's relay; nil for none
+	place  func(ctx context.Context, args []string, input []byte) error // KyIdentity's shell, for its relay password
 }
 
 func (s identitySetupStep) ID() string { return s.id }
@@ -368,14 +370,40 @@ func (s identitySetupStep) Inspect(ctx context.Context) (bool, error) {
 }
 
 func (s identitySetupStep) Apply(ctx context.Context) error {
+	if err := s.relayPassword(ctx, "write"); err != nil {
+		return err
+	}
 	if err := stageIdentity(ctx, s.exec, s.input, s.intent, s.i.Bundle, false, s.caps...); err != nil {
+		if s.mail != nil {
+			return fmt.Errorf("%w. KyIdentity's mail relay is set once, by its first setup: to change identity.mail after it ran (or add it later), change the relay in KyIdentity's admin UI (Settings > Mail) and put the plan's identity.mail back as it was", s.lateClients(ctx, err))
+		}
 		return s.lateClients(ctx, err)
 	}
 	_, err := identitySetup(ctx, s.exec, s.i.Bundle, false)
 	return err
 }
 
+// relayPassword copies the workstation's SMTP password file into KyIdentity's container,
+// in memory and on stdin only, never replacing a different copy; check only compares.
+func (s identitySetupStep) relayPassword(ctx context.Context, mode string) error {
+	if s.mail == nil || s.mail.PasswordFile == "" {
+		return nil
+	}
+	b, err := readMailPassword(s.mail.PasswordFile)
+	if err != nil {
+		return err
+	}
+	defer clear(b)
+	if s.place(ctx, []string{mode, s.mail.TargetFile}, b) != nil {
+		return fmt.Errorf("KyIdentity's copy of the SMTP password, %s, is missing, unsafe or differs from %s; it is never replaced. To change the relay password, use KyIdentity's admin UI (Settings > Mail)", s.mail.TargetFile, s.mail.PasswordFile)
+	}
+	return nil
+}
+
 func (s identitySetupStep) Verify(ctx context.Context) error {
+	if err := s.relayPassword(ctx, "check"); err != nil {
+		return err
+	}
 	if err := stageIdentity(ctx, s.exec, s.input, s.intent, s.i.Bundle, true, s.caps...); err != nil {
 		return err
 	}
@@ -504,8 +532,10 @@ func (s *session) refuseMovedSetup(ctx context.Context) error {
 		}
 	}
 	for _, a := range s.amendments {
-		if err := movedClient(ctx, exec, a.source, a.source.Identity.Clients[0].ID); err != nil {
-			return err
+		for _, c := range a.source.Identity.Clients {
+			if err := movedClient(ctx, exec, a.source, c.ID); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

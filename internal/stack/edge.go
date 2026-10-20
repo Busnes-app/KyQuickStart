@@ -68,7 +68,7 @@ type Connector struct {
 type Route struct {
 	App string `yaml:"app"`
 	// Role names one of the app's catalog routes; empty is its primary (or only) route.
-	Role          string `yaml:"role,omitempty"`
+	Role          string `yaml:"role,omitempty" json:",omitempty"`
 	Hostname      string `yaml:"hostname"`
 	ForwardHost   string `yaml:"forward_host"`
 	ForwardPort   int    `yaml:"forward_port"`
@@ -77,8 +77,8 @@ type Route struct {
 	Certificate   string `yaml:"certificate,omitempty"` // an edge certificate's name, instead of an ID
 	StatusPath    string `yaml:"status_path,omitempty"`
 	// Paths and DenyPaths come from the app's catalog route, never the plan.
-	Paths     []string `yaml:"-"`
-	DenyPaths []string `yaml:"-"`
+	Paths     []string `yaml:"-" json:"-"`
+	DenyPaths []string `yaml:"-" json:"-"`
 }
 
 // URLHost is the host an app's route is reached at: its hostname, plus the port when clients

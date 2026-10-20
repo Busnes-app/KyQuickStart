@@ -51,7 +51,7 @@ type Integration struct {
 	IdentityAmendment string `yaml:"identity_amendment,omitempty"`
 	// ChatClient is an installed app's second KyIdentity client (KyMessages' MAS), which comes
 	// with identity_client in the same first setup or amendment.
-	ChatClient string `yaml:"chat_client,omitempty"`
+	ChatClient string `yaml:"chat_client,omitempty" json:",omitempty"`
 }
 
 // Existing is a reference, never permission to adopt or change a workload.
@@ -136,7 +136,7 @@ type App struct {
 	// NodePorts overrides an edge's published NodePorts: container port -> node port.
 	NodePorts map[int]int `yaml:"node_ports,omitempty"`
 	// MediaAddress is the one IPv4 address of a Docker target the app publishes call media on.
-	MediaAddress string `yaml:"media_address,omitempty"`
+	MediaAddress string `yaml:"media_address,omitempty" json:",omitempty"`
 }
 
 // MediaAddress accepts one unicast IPv4 address a LAN client can reach.

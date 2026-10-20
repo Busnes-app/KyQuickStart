@@ -410,6 +410,10 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 	if err := calendarAccounts(st); err != nil {
 		return nil, err
 	}
+	if err := messagePlan(st, cat); err != nil {
+		return nil, err
+	}
+	s.edges = routePaths(st.Edges, cat)
 	if err := s.composeClients(st); err != nil {
 		return nil, err
 	}
@@ -419,6 +423,27 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 // withRoute fills app's route references from its one edge route: the URL host, and on Docker
 // the address it publishes on and its edge's egress_address. It needs no connection.
 func withRoute(st *stack.Stack, name string, t stack.Target, app catalog.App) (catalog.App, error) {
+	for _, a := range st.Apps {
+		if a.Name != name {
+			continue
+		}
+		switch {
+		case app.Media != nil && a.MediaAddress == "":
+			return app, fmt.Errorf("app %q publishes call media (%s) straight to clients: set media_address to one LAN IPv4 address of %s", name, strings.Join(app.Media.Ports, ", "), t.Name)
+		case app.Media == nil && a.MediaAddress != "":
+			return app, fmt.Errorf("app %q publishes no media: remove its media_address", name)
+		}
+	}
+	if len(app.Routes) > 0 && !t.Kubernetes() {
+		return withRoutes(st, name, t, app)
+	}
+	for _, e := range st.Edges {
+		for _, r := range e.Routes {
+			if r.App == name && r.Role != "" {
+				return app, fmt.Errorf("app %q has one route: remove role %q from route %s", name, r.Role, r.Hostname)
+			}
+		}
+	}
 	if t.Kubernetes() && !app.Kubernetes.UsesHost() || !t.Kubernetes() && !app.UsesRoute() {
 		return app, nil
 	}
@@ -576,7 +601,13 @@ func (s *session) close() {
 func (s *session) preflight(ctx context.Context) error {
 	failed := 0
 	for _, t := range s.targets {
-		for _, f := range s.drivers[t.Name].preflight(ctx) {
+		findings := s.drivers[t.Name].preflight(ctx)
+		for _, a := range s.plan.Apps {
+			if host, ok := s.drivers[t.Name].(sshDriver); ok && a.Target == t.Name && a.MediaAddress != "" {
+				findings = append(findings, finding(dockerhost.AddressCheck(ctx, host.c, a.Name, a.MediaAddress)))
+			}
+		}
+		for _, f := range findings {
 			mark := "ok  "
 			if !f.OK {
 				mark = "FAIL"
@@ -669,6 +700,9 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 	if err := s.refuseMovedSetup(ctx); err != nil {
 		return nil, err
 	}
+	if err := s.refuseMovedServerName(ctx); err != nil {
+		return nil, err
+	}
 	var steps, held, connectors []engine.Step
 	for _, name := range s.order {
 		if s.o.RunnerID != "" && hostsRunner(s.cat[name]) {
@@ -688,9 +722,21 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 		if note != "" {
 			steps = append(steps, noteStep{id: name + ".upgrade", note: note})
 		}
-		steps = append(steps, d.steps(name, s.cat[name], s.o.ReleaseSet, s.redact)...)
+		app := d.steps(name, s.cat[name], s.o.ReleaseSet, s.redact)
 		for _, i := range s.integrations {
-			if i.Product == name && i.Target == s.placed[name].Name {
+			if i.Product == name && i.Target == s.placed[name].Name && i.ChatClient != "" {
+				before, setup, err := s.messageSteps(d, i)
+				if err != nil {
+					return nil, err
+				}
+				// Before its deploy: Compose refuses MAS without the configuration they write.
+				k := slices.IndexFunc(app, func(st engine.Step) bool { return st.ID() == name+".deploy" })
+				app = append(append(append(append([]engine.Step{}, app[:k]...), before...), app[k:]...), setup)
+			}
+		}
+		steps = append(steps, app...)
+		for _, i := range s.integrations {
+			if i.Product == name && i.Target == s.placed[name].Name && i.ChatClient == "" {
 				setup, connector, err := s.setupSteps(d, i)
 				if err != nil {
 					return nil, err
