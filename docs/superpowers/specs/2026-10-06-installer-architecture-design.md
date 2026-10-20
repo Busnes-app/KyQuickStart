@@ -168,8 +168,12 @@ A resident Go service built from this repository, deployed by the installer.
 - **Targets:** every generated secret (database passwords, OIDC client secrets, the restic
   password, bridge credentials) is created once where it is used. On re-run the installer reads
   the existing secret instead of generating a new one.
-- **Recovery:** each app's secrets are sealed into its KyRecovery capsule.
-- **Handover:** printed once at the end; not written to the state directory.
+- **Recovery:** the installer seals nothing to KyRecovery. `backup` puts a Docker app's
+  `capsule_secrets` into its restic snapshot, encrypted by restic (`docs/guided-setup.md`,
+  "Backups and restore on Docker"). Products that make their own KyRecovery capsules do so
+  after the owner pairs them, an outstanding human step apply prints.
+- **Handover:** apply prints its handover at the end and does not save it. `unmanage` appends
+  a section without secrets to `<state>/handover.md` saying the app is no longer managed.
 - A lost workstation leaks no secret.
 
 ## Install sequence
