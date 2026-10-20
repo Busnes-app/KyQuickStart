@@ -94,8 +94,11 @@ func TestSCIMDirectoryBoundaryAndNativeRoleProjection(t *testing.T) {
 	if _, err := s.Request(id, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if w := directoryRequest(receiver, id, directoryBody); w.Code != http.StatusConflict || calls.Load() != 2 {
+	if w := directoryRequest(receiver, id, directoryBody); w.Code != http.StatusTooManyRequests || w.Header().Get("Retry-After") == "" || calls.Load() != 2 {
 		t.Fatal("active PUT reset revocation", w.Code)
+	}
+	if j, _, err := s.Inspect(id); err != nil || j.Status != "pending" || j.Attempts != 0 {
+		t.Fatal("PUT changed pending revocation", err)
 	}
 }
 

@@ -16,7 +16,7 @@ import (
 )
 
 var ErrDirectoryUncertain = errors.New("directory mutation is held for outcome reconciliation")
-var ErrRevoked = errors.New("directory mutation conflicts with irreversible revocation")
+var ErrRevoked = errors.New("directory mutation conflicts with revocation")
 
 type DirectoryProfile struct {
 	Name          string `json:"name"`
@@ -106,10 +106,10 @@ func (s *Store) ApplyDirectory(ctx context.Context, target *Target, id string, p
 	err = func() error {
 		unlock := s.lock(id)
 		defer unlock()
-		// Intent is irreversible even while native revocation is pending.
-		if _, err := s.job(id); err == nil {
+		// Only a completed reactivation reopens the directory lane after revocation intent.
+		if j, epoch, _, err := s.epochs(id); err == nil && (!reactivating(epoch) || j.Status != "complete") {
 			return ErrRevoked
-		} else if !errors.Is(err, os.ErrNotExist) {
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return ErrState
 		}
 		var err error

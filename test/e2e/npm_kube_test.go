@@ -348,6 +348,8 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	}
 	catalogSignOn(t, ctx, cs, kc, certPEM, nodeIP)
 	driveSignOn(t, ctx, kc, certPEM, nodeIP, driveSecrets[1])
+	backupOutputs, backupSecrets := testDriveBackupGate(t, ctx, work, state, catalogDir, plan, drive, trust, apply)
+	outputs = append(outputs, backupOutputs...)
 
 	// KyNotes joins after KyIdentity's first setup: its client comes in a setup amendment, and
 	// its setup runs after KyIdentity's route and before its own.
@@ -504,7 +506,7 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	}
 
 	// No credential reached apply output or workstation state.
-	secretsSeen := slices.Concat([]string{password, token, stored()}, recoverySecrets, pulseSecrets, driveSecrets, notesSecrets, calendarSecrets, postSecrets, dnsSecrets)
+	secretsSeen := slices.Concat([]string{password, token, stored()}, backupSecrets, recoverySecrets, pulseSecrets, driveSecrets, notesSecrets, calendarSecrets, postSecrets, dnsSecrets)
 	for _, o := range outputs {
 		for _, s := range secretsSeen {
 			if strings.Contains(o, s) {

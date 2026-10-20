@@ -20,6 +20,7 @@ import (
 	"github.com/Busnes-app/kyquickstart/internal/kube"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
@@ -283,7 +284,7 @@ func trustTestCA(t *testing.T, ctx context.Context, cs kubernetes.Interface, c *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cs.CoreV1().ConfigMaps(ns).Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "test-ca"}, Data: map[string]string{"ca.pem": string(certPEM)}}, metav1.CreateOptions{}); err != nil {
+	if _, err := cs.CoreV1().ConfigMaps(ns).Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "test-ca"}, Data: map[string]string{"ca.pem": string(certPEM)}}, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
 		t.Fatal(err)
 	}
 	dep, err := cs.AppsV1().Deployments(ns).Get(ctx, "app", metav1.GetOptions{})

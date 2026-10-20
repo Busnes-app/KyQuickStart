@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -66,6 +67,60 @@ type Target struct {
 	Context    string `yaml:"context"`    // empty uses the kubeconfig's current context
 	// StorageClass names the class for the target's claims; empty needs a cluster default.
 	StorageClass string `yaml:"storage_class,omitempty"`
+	// Backup is a Docker target's off-host restic rest-server; nil means none.
+	Backup *BackupDestination `yaml:"backup,omitempty"`
+}
+
+// BackupDestination is a restic rest-server reached over TLS. Each app's repository is
+// Repository/<app>; the server's --private-repos keeps the user inside its own path.
+type BackupDestination struct {
+	Repository     string `yaml:"repository"`        // rest:https://<host>[:port]/<user>
+	CredentialFile string `yaml:"credential_file"`   // target path: the rest-server password for <user>
+	CAFile         string `yaml:"ca_file,omitempty"` // target path: the server's CA; empty uses system trust
+}
+
+// restUserRE is the one path segment naming the rest-server user.
+var restUserRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
+// RestUser returns the rest-server user, the repository's one path segment.
+func (b BackupDestination) RestUser() string {
+	u, _ := url.Parse(strings.TrimPrefix(b.Repository, "rest:"))
+	return strings.Trim(u.Path, "/")
+}
+
+// ValidBackupRepository reports whether s is a rest:https repository URL kyquickstart accepts.
+func ValidBackupRepository(s string) bool { return validRepository(s) == nil }
+
+// ValidTargetPath reports whether s is a clean absolute path without . or .. segments.
+func ValidTargetPath(s string) bool { return validRoot(s) }
+
+func validRepository(repo string) error {
+	raw, ok := strings.CutPrefix(repo, "rest:")
+	u, err := url.Parse(raw)
+	switch {
+	case !ok || err != nil || u.Scheme != "https" || u.Opaque != "":
+		return errors.New("backup.repository must be rest:https://<host>[:port]/<user>")
+	case u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(raw, "#"):
+		return errors.New("backup.repository takes no credentials, query or fragment: the password is in credential_file")
+	case !hostRE.MatchString(u.Hostname()) && net.ParseIP(u.Hostname()) == nil || !validPort(u.Port()):
+		return errors.New("backup.repository needs a hostname or IP address and an optional port 1-65535")
+	case !restUserRE.MatchString(strings.TrimPrefix(u.Path, "/")) || u.RawPath != "":
+		return errors.New("backup.repository needs exactly one path segment, the rest-server user")
+	}
+	return nil
+}
+
+func (b BackupDestination) validate() error {
+	if err := validRepository(b.Repository); err != nil {
+		return err
+	}
+	switch {
+	case !validRoot(b.CredentialFile):
+		return errors.New("backup.credential_file must be an absolute path on the target")
+	case b.CAFile != "" && !validRoot(b.CAFile):
+		return errors.New("backup.ca_file must be an absolute path on the target")
+	}
+	return nil
 }
 
 // Kubernetes reports whether the target is a cluster reached through a kubeconfig.
@@ -174,6 +229,8 @@ func (s *Stack) validate() error {
 				return fmt.Errorf("target %q: context %q must match %s", t.Name, t.Context, contextRE)
 			case t.StorageClass != "" && len(validation.IsDNS1123Subdomain(t.StorageClass)) > 0:
 				return fmt.Errorf("target %q: storage_class %q must be a DNS-1123 subdomain name", t.Name, t.StorageClass)
+			case t.Backup != nil:
+				return fmt.Errorf("target %q: backup destinations are for Docker targets; Kubernetes apps are not backed up by kyquickstart backup", t.Name)
 			}
 			seen[t.Name] = true
 			continue
@@ -194,6 +251,11 @@ func (s *Stack) validate() error {
 			return fmt.Errorf("target %q: user %q must match %s", t.Name, t.User, userRE)
 		case !validRoot(t.Root):
 			return fmt.Errorf("target %q: root %q must be an absolute path without . or ..", t.Name, t.Root)
+		}
+		if t.Backup != nil {
+			if err := t.Backup.validate(); err != nil {
+				return fmt.Errorf("target %q: %w", t.Name, err)
+			}
 		}
 		seen[t.Name] = true
 	}
@@ -233,6 +295,14 @@ func (s *Stack) validate() error {
 		return err
 	}
 	return s.validateEdges()
+}
+
+func validPort(p string) bool {
+	if p == "" {
+		return true
+	}
+	n, err := strconv.Atoi(p)
+	return err == nil && n >= 1 && n <= 65535
 }
 
 func validRoot(r string) bool {

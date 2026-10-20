@@ -49,16 +49,17 @@ func TestKyIdentityEntry(t *testing.T) {
 	}
 	a := cat["kyidentity"]
 	k := a.Kubernetes
-	if a.Category != "ky" || a.Version != "0.4.3" || a.PodSecurity != "restricted" || a.OIDC != nil || a.Compose != nil || len(a.Secrets) != 0 {
+	if a.Category != "ky" || a.Version != "0.4.4" || a.PodSecurity != "restricted" || a.OIDC != nil || a.Compose != nil || len(a.Secrets) != 0 {
 		t.Fatalf("manifest = %+v", a.Manifest)
 	}
-	if !strings.HasPrefix(a.Images[k.Image], "ghcr.io/busnes-app/kyidentity-server:0.4.3@sha256:") || k.RunAs != 100 || k.WritableRoot || len(k.Capabilities) != 0 {
+	if !strings.HasPrefix(a.Images[k.Image], "ghcr.io/busnes-app/kyidentity-server:0.4.4@sha256:f866a7513988a7b5919363ee76182baa2727ee57407404104049f93c29253c5a") || k.RunAs != 100 || k.WritableRoot || len(k.Capabilities) != 0 {
 		t.Fatalf("kubernetes = %+v", k)
 	}
 	if k.Env["KYIDENTITY_ISSUER_URL"] != "https://"+HostRef || k.ReadinessPath != "/readyz" || k.Ports[0] != 5867 || k.Volumes[0].Mount != k.Env["KYIDENTITY_DATA_DIR"] {
 		t.Fatalf("env %v, probe %s, volumes %+v", k.Env, k.ReadinessPath, k.Volumes)
 	}
-	if !a.Upgrade.MigratesData || a.Upgrade.MinFrom != "0.4.0" || a.Backup.Volumes[0] != "data" {
+	// 0.4.4 adds no schema change: an upgrade from 0.4.3 needs only an acknowledgement.
+	if a.Upgrade.MigratesData || a.Upgrade.MinFrom != "0.4.0" || a.Backup.Volumes[0] != "data" {
 		t.Fatalf("upgrade %+v, backup %+v", a.Upgrade, a.Backup)
 	}
 }
@@ -296,6 +297,10 @@ func TestKyDriveEntry(t *testing.T) {
 	if !slices.Equal(a.Secrets, []string{"session_secret", "scim_token"}) || !slices.Equal(a.Binds, []string{"backups", "data"}) || !slices.Equal(a.Backup.Volumes, []string{"data", "backups"}) || !a.Upgrade.MigratesData {
 		t.Fatalf("secrets %v, binds %v, backup %+v", a.Secrets, a.Binds, a.Backup)
 	}
+	// No dump command: a cold backup, carrying both secrets in the snapshot.
+	if b := a.Backup; len(b.Command) != 0 || !slices.Equal(b.CapsuleSecrets, []string{"session_secret", "scim_token"}) {
+		t.Fatalf("backup %+v", b)
+	}
 	c := string(a.WithRoute(Route{Host: "drive.example.com", Forward: "192.168.1.91:18443"}).Compose)
 	for _, want := range []string{`user: "${KYQ_UID:?}:${KYQ_GID:?}"`, "read_only: true", "cap_drop: [ALL]", "no-new-privileges:true", "stop_grace_period: 20m",
 		`ports: ["192.168.1.91:18443:8080"]`, `KY_APP_URL: "https://drive.example.com"`, "KY_ENV: production", "KY_SSO_AUTO_PROVISION: \"false\"", "KY_SCIM_TOKEN_FILE: /run/secrets/scim_token",
@@ -384,9 +389,12 @@ const manifest = "name: a\ncategory: ky\nversion: 2.4.0\nimages:\n  web: " + dig
 
 const oidc = "oidc:\n  name: App\n  redirect_paths: [/auth/callback]\n  logout_paths: [/]\n  admin_role: admin\n  user_role: user\n"
 
-const backup = "secrets: [db]\nbackup:\n  service: web\n  command: [pg_dump, -Fc]\n  volumes: [data]\n  skip: [data/cache]\n  capsule_secrets: [db]\n  restore_order: [web]\n"
+const backup = "secrets: [db]\nbackup:\n  service: web\n  command: [pg_dump, -Fc]\n  restore_command: [pg_restore]\n  volumes: [data]\n  skip: [data/cache]\n  capsule_secrets: [db]\n  restore_order: [web]\n"
 
 const composeVol = compose + "volumes:\n  data: {}\n"
+
+// composeTwo has a second service, which restore_order lists first.
+const composeTwo = compose + "  db:\n    image: {{ .Images.web }}\nvolumes:\n  data: {}\n"
 
 const kube = "kubernetes:\n  image: web\n  ports: [8080]\n  readiness_path: /\n  run_as: 65532\n  resources:\n    cpu: 50m\n    memory: 32Mi\n"
 
@@ -448,6 +456,11 @@ func TestLoadRejects(t *testing.T) {
 		"capsule not a secret":  {manifest + strings.Replace(backup, "capsule_secrets: [db]", "capsule_secrets: [other]", 1), composeVol, "capsule_secrets"},
 		"restore unknown":       {manifest + strings.Replace(backup, "restore_order: [web]", "restore_order: [db]", 1), composeVol, "restore_order"},
 		"backup volume not k8s": {manifest + kube + backup, composeVol, "declared by every deployment"},
+		"dump without restore":  {manifest + strings.Replace(backup, "  restore_command: [pg_restore]\n", "", 1), composeVol, "come together"},
+		"restore without dump":  {manifest + strings.Replace(backup, "  command: [pg_dump, -Fc]\n", "", 1), composeVol, "come together"},
+		"restore empty arg":     {manifest + strings.Replace(backup, "[pg_restore]", `[pg_restore, ""]`, 1), composeVol, "empty argument"},
+		"restore order first":   {manifest + strings.Replace(backup, "restore_order: [web]", "restore_order: [db, web]", 1), composeTwo, "must start with service"},
+		"restic_password":       {manifest + "secrets: [restic_password]\n", compose, "reserved"},
 
 		"pod_security unknown":    {manifest + "pod_security: privileged\n", compose, "pod_security"},
 		"pod_security case":       {manifest + "pod_security: Baseline\n", compose, "pod_security"},
@@ -530,7 +543,7 @@ func TestFullManifest(t *testing.T) {
 	if a.Version != "2.4.0" || !a.OIDC.Public || a.OIDC.BackchannelLogoutPath != "/auth/backchannel" {
 		t.Errorf("oidc = %+v", a.OIDC)
 	}
-	if a.Backup.Service != "web" || a.Backup.Skip[0] != "data/cache" || a.Backup.CapsuleSecrets[0] != "db" {
+	if a.Backup.Service != "web" || a.Backup.RestoreCommand[0] != "pg_restore" || a.Backup.Skip[0] != "data/cache" || a.Backup.CapsuleSecrets[0] != "db" {
 		t.Errorf("backup = %+v", a.Backup)
 	}
 	if a.Upgrade.MinFrom != "2.0.0" || len(a.Upgrade.NoSkip) != 2 || !a.Upgrade.MigratesData {
@@ -540,7 +553,7 @@ func TestFullManifest(t *testing.T) {
 
 func TestKubernetesBackup(t *testing.T) {
 	m := manifest + kube + "  env:\n    LOG_LEVEL: info\n  volumes:\n    - name: data\n      mount: /data\n      size: 1Gi\n" +
-		"backup:\n  command: [sqlite3, /data/app.db, .dump]\n  volumes: [data]\n"
+		"backup:\n  command: [sqlite3, /data/app.db, .dump]\n  restore_command: [sqlite3, /data/app.db]\n  volumes: [data]\n"
 	cat, err := Load(fstest.MapFS{"a/manifest.yaml": {Data: []byte(m)}})
 	if err != nil {
 		t.Fatal(err)

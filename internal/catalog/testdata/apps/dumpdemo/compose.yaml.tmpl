@@ -1,0 +1,29 @@
+services:
+  db:
+    image: {{ .Images.postgres }}
+    mem_limit: 256m
+    memswap_limit: 256m
+    cpus: 1
+    pids_limit: 128
+    secrets: [db_password]
+    # The entrypoint reads the secret as root, before it drops to postgres.
+    entrypoint: ["/bin/sh", "-c", "POSTGRES_PASSWORD=$$(cat /run/secrets/db_password) || exit 1; export POSTGRES_PASSWORD; exec docker-entrypoint.sh postgres"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+  web:
+    image: {{ .Images.whoami }}
+    mem_limit: 64m
+    memswap_limit: 64m
+    cpus: 1
+    pids_limit: 32
+    depends_on: [db]
+    volumes: ["./files:/files:ro"]
+volumes:
+  pgdata: {}
+secrets:
+  db_password:
+    file: ./secrets/db_password

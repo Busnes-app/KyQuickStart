@@ -357,11 +357,23 @@ handover of admin and everyday logins.
   sets each product's trusted-proxy value to exactly where its edge connects from (pinned /32 on
   Docker, NAT-free LAN /32 across hosts, pod network plus an edge-only NetworkPolicy in the
   cluster), never `0.0.0.0/0`, and `verify` checks the client address the product reports.
-- Bulk data goes to restic (K8up on Kubernetes) on an append-only rest-server container on the
-  KyRecovery host, off the NAS, one repository and password per app. The password lives on the
-  app's target and a copy is sealed in KyRecovery; the rest-server host never holds one.
-- Restores start from KyRecovery's UI or the CLI and always run in `kyquickstart restore`.
-  Nothing decrypts inside KyRecovery, server or browser.
+- Bulk data goes to restic on an operator-run, append-only (`--append-only --private-repos`)
+  TLS rest-server off the app's host, one repository (`<repository>/<app>`) and password per
+  app. `kyquickstart backup APP` (Docker apps only, no schedule, no prune) snapshots the app's
+  dump or, without a dump command, its stopped bind directories, plus its `capsule_secrets`,
+  tagged with app and installation. The password (`restic_password`) is generated on the app's
+  target, never leaves it through the installer and is never in a snapshot; the owner records
+  it once with the printed `ssh … cat` command. Sealing it in KyRecovery and K8up on
+  Kubernetes come later; the rest-server host never holds one.
+- Restores run in `kyquickstart restore`, never inside KyRecovery: typed confirmation, refusal
+  of a running app and, without `--replace` (which moves data aside, never deletes), of any
+  existing data. An app whose people come from KyIdentity restores only when the plan's
+  KyIdentity is v0.4.4 or later, replays removals with `resync-system` as soon as the app is
+  healthy and keeps the app stopped until that is delivered (`restore_incomplete` otherwise), so
+  a removed person is readmitted only for the measured seconds between the app's start and the
+  replay; until that replay is delivered (`.restore-pending`), every command but `restore` that
+  touches the app (`apply`, `install`, `upgrade`, `backup`, `unmanage`) refuses.
+  A snapshot's symlinked volume, secret, dump or any directory above them is refused.
 - Secrets are generated once on their targets and read back on re-run; the workstation state
   directory never holds a secret.
   Docker generation uses the target's `/dev/urandom` and private temporary files, with
@@ -394,8 +406,9 @@ handover of admin and everyday logins.
   authorized_keys line, or a ServiceAccount bound to the preflight permission list.
 - Deployments record their catalog version (`kyquickstart/version` in `compose.kyq.yaml` or on
   the app namespace), which outlives uninstall. `apply`, `install` and `upgrade` gate a version
-  change on the manifest's upgrade rules: `migrates_data` is always `backup_required` until
-  KyRecovery backups land; any other upgrade needs an explicit, recorded acknowledgement.
+  change on the manifest's upgrade rules: `migrates_data` is always `backup_required` (a
+  `kyquickstart backup` does not lift it yet); any other upgrade needs an explicit, recorded
+  acknowledgement.
   Uninstall keeps data and secrets; unmanage drops the managed labels and the installer then
   refuses to install over the app. Error codes are `internal/suite` codes.
 - Remote commands are POSIX `sh`, quoted with `remote.Quote`. The SSH runner sends each one
@@ -453,7 +466,8 @@ calls and kind nodes must carry their own explicit bounds.
   `cmd/kyquickstart/release_test.go` runs `scripts/release-binaries.sh` (the stamp in all four
   binaries, its refusals) and checks `release-image.yml`'s job graph, permissions and pins.
 - `make workflow-lint`: needs Docker (CI runs it in `vulncheck`); actionlint v1.7.12 on every
-  workflow and offline, digest-pinned zizmor (medium and up) on `release-image.yml`.
+  workflow and offline, digest-pinned zizmor (medium and up) on `release-image.yml` and
+  `kyoffboard-image.yml`.
 - `make e2e`: needs Docker; runs `apply` against an sshd container on the local Docker socket and
   against a kind cluster (`go run sigs.k8s.io/kind@v0.33.0`), including drift and stale-lock cases.
   Also runs disposable NPM, frpc/frps and cloudflared container tests in `internal/edge`, and
@@ -506,6 +520,16 @@ calls and kind nodes must carry their own explicit bounds.
   port, private setup files, live `--check`, health and an untrusted-proxy network status
   through the edge, admin and everyday sign-in (`/api/users` 200/403), the handover's
   break-glass read and session-ending restart run verbatim on the target, and a skipped rerun.
+  Backups (`test/e2e/backup_test.go`) go to a disposable append-only TLS rest-server on its own
+  network, published on the default bridge's gateway. `TestApply` backs up and restores the
+  test-only `dumpdemo` (Postgres dump, a file volume with a `skip` path, a capsule secret) from
+  its own root; `TestKubernetesNPMEdge` gives the Docker target a destination, asserts KyDrive's
+  handover lines, backs KyDrive up cold and proves a restore of the running app is refused.
+  `TestKubernetesRestore` runs the KyDrive drill on its own kind cluster: with KyIdentity at the
+  attested 0.4.3 release (a catalog copy), restore is refused before any restic call; after
+  `upgrade kyidentity` to the catalog's 0.4.4 it proves a disaster restore with the handover's
+  password, the refusals, `--replace`, a refused `forget`, and no readmission of a person
+  unassigned or deleted after the snapshot.
   Set `KYQ_TEST_IDENTITY_BINARY` to a local static KyIdentity build to additionally test real
   container-local identity setup over SSH and kind, including target-held preparation,
   inspection/resume and changed-intent refusal; SSH additionally refuses lost credentials.
@@ -530,7 +554,8 @@ calls and kind nodes must carry their own explicit bounds.
 
 - `cmd/kyoffboard/AGENTS.md`: resident bridge command flags, safe output and signal lifecycle;
   the root retains deployment and credential provisioning.
-- `internal/cli/AGENTS.md`: guided questions, local plan persistence and command orchestration.
+- `internal/cli/AGENTS.md`: guided questions, local plan persistence and command orchestration,
+  including `backup` and `restore`.
 - `internal/runner/AGENTS.md`: `kyquickstart serve` and the serve-* commands inside the runner
   container; the root owns the ownership rule and the CLI owns handoff.
 - `internal/edge/AGENTS.md`: NPM reconciliation, connector deployment and public forwarded-header verification.

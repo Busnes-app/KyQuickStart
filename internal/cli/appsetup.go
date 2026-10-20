@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -139,6 +140,9 @@ func (s *session) composeClients(st *stack.Stack) error {
 	if len(s.derived) > 0 {
 		s.integrations = slices.Clone(s.integrations)
 		s.integrations[k].Identity = &n
+	}
+	for _, name := range slices.Sorted(maps.Keys(s.placed)) {
+		s.handover += backupLines(name, s.placed[name], s.cat[name])
 	}
 	return nil
 }

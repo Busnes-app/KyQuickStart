@@ -3,6 +3,7 @@ package dockerhost
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"path"
 	"strings"
@@ -49,11 +50,19 @@ func (s secretsStep) Apply(ctx context.Context) error {
 		if ok {
 			continue
 		}
-		f := s.file(n)
-		dir := path.Dir(f)
-		// Generate on the target. Publish only a complete private file; ln refuses
-		// replacement and the trap removes both random and encoded scratch files.
-		cmd := fmt.Sprintf(`umask 077
+		if err := generateSecret(ctx, s.a.Runner, s.file(n)); err != nil {
+			return fmt.Errorf("generate target secret %s: %w", n, err)
+		}
+	}
+	return nil
+}
+
+// generateSecret writes 32 random bytes from the target's /dev/urandom to file as unpadded
+// base64url, once: it publishes only a complete private file, and ln refuses replacement.
+// The trap removes both random and encoded scratch files.
+func generateSecret(ctx context.Context, r remote.Runner, f string) error {
+	dir := path.Dir(f)
+	cmd := fmt.Sprintf(`umask 077
 f=%s
 t=$(mktemp %s) || exit 1
 raw=
@@ -67,12 +76,11 @@ tr '+/' '-_' < "$t" > "$raw" || exit 1
 tr -d '=\n' < "$raw" > "$t" || exit 1
 [ "$(wc -c < "$t")" -eq 43 ] || exit 1
 ln "$t" "$f"`, remote.Quote(f), remote.Quote(path.Join(dir, ".tmp.XXXXXX")), remote.Quote(path.Join(dir, ".random.XXXXXX")))
-		if _, err := s.a.Runner.Run(ctx, cmd, nil); err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			return fmt.Errorf("generate target secret %s: target refused creation", n)
+	if _, err := r.Run(ctx, cmd, nil); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
+		return errors.New("target refused creation")
 	}
 	return nil
 }
