@@ -274,7 +274,7 @@ another NPM user already has the email, apply refuses: NPM signs in by email, an
 could shadow the operator's login. Use an address of its own, such as a `+acme` alias.
 
 **The Cloudflare token.** Create an API token in Cloudflare with only **Zone > DNS > Edit**,
-limited to **Include > Specific zone > `example.com`** (for the pilot, `urlxl.us`). Then store it
+limited to **Include > Specific zone > `example.com`**. Then store it
 in the cluster from a hidden prompt, so it never appears on a command line or in shell history:
 
 ```sh
