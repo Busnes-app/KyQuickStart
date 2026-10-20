@@ -108,7 +108,7 @@ func testClusterDNS(t *testing.T, ctx context.Context, cs kubernetes.Interface, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	hosts := strings.Join([]string{catalogIdentityHost, catalogRecoveryHost, catalogPulseHost, catalogDriveHost, catalogNotesHost, catalogCalendarHost, catalogDNSHost, catalogYardHost, "hello.example.test"}, " ")
+	hosts := strings.Join([]string{catalogIdentityHost, catalogRecoveryHost, catalogPulseHost, catalogDriveHost, catalogNotesHost, catalogCalendarHost, catalogDNSHost, catalogYardHost, "hello.example.test", "message.example.test", "home.example.test", "matrix.example.test", "auth.example.test", "chat.example.test", "rtc.example.test"}, " ")
 	corefile := strings.Replace(dns.Data["Corefile"], "    kubernetes cluster.local", "    hosts {\n       "+nodeIP+" "+hosts+"\n       fallthrough\n    }\n    kubernetes cluster.local", 1)
 	if corefile == dns.Data["Corefile"] {
 		t.Fatalf("unexpected Corefile:\n%s", corefile)

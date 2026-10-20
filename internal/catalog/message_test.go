@@ -130,6 +130,10 @@ func TestKyMessageComposeHygiene(t *testing.T) {
 		if s.Healthcheck == nil && !slices.Equal(s.Profiles, []string{"init"}) {
 			t.Errorf("service %s has no healthcheck", name)
 		}
+		// Compose refuses start_interval without start_period.
+		if s.Healthcheck["start_interval"] != nil && s.Healthcheck["start_period"] == nil {
+			t.Errorf("service %s: start_interval without start_period", name)
+		}
 		total += memMiB(t, s.MemLimit)
 		for k, v := range s.Environment {
 			if strings.HasPrefix(k, "KY_KYIDENTITY_") || k == "KY_SCIM_TOKEN" || k == "KY_ADMIN_PASSWORD" || k == "KY_BACKUP_KEEP" || k == "KY_BACKUP_DEPOSIT_INTERVAL" || k == "KY_SESSION_SECRET" ||
