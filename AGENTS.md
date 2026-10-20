@@ -549,6 +549,17 @@ calls and kind nodes must carry their own explicit bounds.
   `upgrade kyidentity` to the catalog's 0.4.4 it proves a disaster restore with the handover's
   password, the refusals, `--replace`, a refused `forget`, and no readmission of a person
   unassigned or deleted after the snapshot.
+  `TestKubernetesImmich` (`test/e2e/immich_kube_test.go`) closes Immich's admission gates on its
+  own kind cluster (NPM, KyIdentity 0.4.4) with Immich on the sshd Docker target: five hardened
+  containers healthy at their pins, the owner's admin as Immich administrator and the everyday
+  account refused the admin API on two fresh sign-ins, a role change reaching the next sign-in,
+  upload, thumbnail and smart search, a later KyIdentity assignee signing in on the web and the
+  phone flow, offboarding (sessions, phone token, API key and socket denied, account and photos
+  kept), reactivation on the same account with every old credential still denied, no takeover,
+  backup and two restore drills (disaster and `--replace`) without readmission, skipped reruns,
+  the handover and no secret in output or state. Until H1 publishes its images it needs
+  `KYQ_TEST_IMMICH_SERVER_IMAGE` (a local build of the module image; kyoffboard is built from
+  this checkout), pushed to a digest-pinned local registry the target pulls from; unset, it skips.
   Set `KYQ_TEST_IDENTITY_BINARY` to a local static KyIdentity build to additionally test real
   container-local identity setup over SSH and kind, including target-held preparation,
   inspection/resume and changed-intent refusal; SSH additionally refuses lost credentials.

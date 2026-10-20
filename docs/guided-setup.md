@@ -1576,8 +1576,13 @@ joins through `kyidentity.amend.immich`.
   `library`, `setup` and `directory`, without `library/thumbs`, `library/encoded-video` (both
   regenerate) and `library/backups` (Immich's own daily dumps). `model-cache` re-downloads.
   Restore loads the dump with upstream's search_path fix into the fresh database before the
-  server starts. A photo uploaded during a backup may be in the files but not the dump; after a
-  restore it is an orphan file, and nothing the restored database references is lost.
+  server starts, in the same transaction clearing the mount checks of the three skipped folders
+  (Immich writes their markers again at startup). Thumbnails come back at Immich's nightly
+  missing-thumbnail task, or at once from Administration → Jobs → Generate Thumbnails. Until
+  KyIdentity's replay of removals is delivered, about 10 seconds after the restored app starts,
+  someone removed after the snapshot can use an old API key (008's measured window). A photo
+  uploaded during a backup may be in the files but not the dump; after a restore it is an
+  orphan file, and nothing the restored database references is lost.
 - **Network.** Trusted proxies stay at upstream's default (loopback, link-local, unique local):
   behind Docker NAT the edge arrives from the bridge gateway, and a narrower list would drop the
   `Secure` cookie. A LAN peer reaching the forward port directly can spoof `X-Forwarded-*`,
