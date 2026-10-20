@@ -496,6 +496,9 @@ func validateSelection(st *stack.Stack, cat catalog.Catalog, o Options) error {
 	if err := calendarAccounts(st); err != nil {
 		return err
 	}
+	if err := messagePlan(st, cat); err != nil {
+		return err
+	}
 	_, err := plan.Order(names, cat)
 	return err
 }
