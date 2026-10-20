@@ -102,7 +102,22 @@ Plain terminal planning and command orchestration for the operator-run installer
   It also holds the catalog KyPost's native bundle (`postBundle`) and handover (`postHandover`).
 - KyCalendar uses the common contract and graceful activation; owned issuer bindings and application grants remain separate from personal calendars and CalDAV, and sign-in settings are read-only in its administration screen.
 - KyMessages uses the common contract and graceful activation; exact console grants stay
-  separate from Matrix chat/call access, whose assignment composition remains a gate.
+  separate from Matrix chat. `message.go` owns the catalog KyMessages (Docker only):
+  `messagePlan` (plan, review, every command) refuses a plan without `installation_id`, a
+  `chat_client` other than `<app>-chat`, owner usernames its setup refuses and an unsafe
+  `identity.mail.password_file`; `withRoutes` checks its six roles (one edge, one forward_host,
+  one forward_port per service port) and fills its role references; `routePaths` gives the
+  edges' routes their catalog paths. `composeClients` derives the console client and
+  `chatClientFor`'s everyday-only MAS client (redirect at the auth host with `providerID`, a
+  ULID derived from installation_id), both in the first setup or one amendment.
+  `messageSteps` puts `<app>.matrix-init` (seed `matrix/secrets/upstream_provider_id`, refusing
+  another with `provider_id_mismatch`, then `dockerhost.RunInit`) and `<app>.credentials`
+  (both clients' export, `hostFile` writes on the host, never replacing, then the second pass)
+  before its deploy, and its `clientSetupStep` (everyday binding, chat client rechecked by
+  `after`) after its health. `refuseMovedServerName` refuses `server_name_changed` from the
+  installed Synapse's `homeserver.yaml`. `identitySetupStep` copies `identity.mail`'s workstation
+  password file (`readMailPassword`) to KyIdentity's `<installer>/smtp.password` before staging,
+  and requires `mail-relay`. `messageHandover` and `initAdminLine` are what apply prints.
 - KyRecovery setup runs explicitly as `kyrecovery`, activates live, commits exact administrator grants with its keyed SQL audit, and never performs the custodian ceremony.
   `appsetup.go` owns apply's catalog apps that sign in through KyIdentity (KyRecovery,
   kyPulse, KyNotes, KyCalendar and KyYard on Docker or Kubernetes, KyDrive, KyPost and KyDNS on Docker): `composeClients` adds each one's catalog-derived client to the installed

@@ -290,7 +290,8 @@ handover of admin and everyday logins.
   `apply` runs it after the app's health step against the app's one ready pod, and
   `integrate-stack` skips it. Today only KyIdentity (from its `identity` settings) and the
   installed Ky apps with a catalog `oidc` block and a product adapter: KyRecovery, kyPulse,
-  KyNotes, KyCalendar and KyYard on Docker or Kubernetes; KyDrive and KyPost on Docker, and KyDNS on Docker (its managed `app` service, through `docker exec` over SSH; KyDNS's shell-less image gets its setup files placed from the host). An installed KyNotes' entry is exactly `bundle: /data/installer/setup.json`
+  KyNotes, KyCalendar and KyYard on Docker or Kubernetes; KyDrive, KyPost and KyMessages (its
+  whole chat stack, with a second, everyday-only `chat_client` for MAS) on Docker, and KyDNS on Docker (its managed `app` service, through `docker exec` over SSH; KyDNS's shell-less image gets its setup files placed from the host). An installed KyNotes' entry is exactly `bundle: /data/installer/setup.json`
   and its `identity_client` (no `notes` block): apply derives its native preparation, and its
   setup runs after the edge routes KyIdentity and before KyNotes' own route; a routed KyNotes
   without that entry is refused. Apply adds each such app's client, derived from its `oidc`
@@ -434,8 +435,16 @@ handover of admin and everyday logins.
   `{{host}}`, replaced by the URL host of the app's one edge route (hostname, plus `:client_port` when it is not 443); no other template syntax.
 - A Compose template may write `{{host}}`, `{{forward}}` (the route's
   `forward_host:forward_port`, an IP of the Docker target, where the app publishes its port),
-  `{{forward_addr}}` (that IP alone) and `{{edge_address}}` (the route's edge's
-  `egress_address`; a plan whose edge has none is refused before connecting).
+  `{{forward_addr}}` (that IP alone), `{{hostname}}` (the route's hostname without a client
+  port) and `{{edge_address}}` (the route's edge's `egress_address`; a plan whose edge has none
+  is refused before connecting). An app whose manifest declares `routes` (KyMessages, Docker only)
+  takes one plan route per role, the primary without `role`, and writes `{{host "<role>"}}`,
+  `{{forward "<role>"}}` and `{{hostname "<role>"}}`; `media` ports publish on the app's
+  `media_address` (`{{media_address}}`, one LAN IPv4 of the target, checked at preflight). Every
+  `ports:` entry starts with `{{forward…}}`, `{{forward_addr}}`, `{{media_address}}` or
+  `127.0.0.1`: no bare or wildcard publication. A service in a Compose profile is a one-shot run
+  (`compose run --rm`), never part of `up` or health; a bind source inside a bind directory
+  must exist before deploy starts the app.
   Compose runs with `KYQ_UID`/`KYQ_GID` set to the target user's; `./<name>` bind directories
   are created private by the driver before Compose, and no other relative bind source is
   accepted.
