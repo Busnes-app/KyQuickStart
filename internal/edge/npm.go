@@ -213,7 +213,15 @@ func (n *NPM) prefix(e stack.Edge) string {
 func legacyPrefix(e stack.Edge) string { return "# kyquickstart:" + e.Target + ":" }
 
 func (n *NPM) marker(e stack.Edge, r stack.Route) string {
-	return n.prefix(e) + r.App + ":" + r.Hostname + "\n"
+	return n.prefix(e) + routeMark(r)
+}
+
+// routeMark ends a host's marker: app, then a non-primary route's role, then hostname.
+func routeMark(r stack.Route) string {
+	if r.Role != "" {
+		return r.App + ":" + r.Role + ":" + r.Hostname + "\n"
+	}
+	return r.App + ":" + r.Hostname + "\n"
 }
 
 type claim int
@@ -277,7 +285,7 @@ func (n *NPM) config(e stack.Edge, r stack.Route, cert int) hostConfig {
 	}
 	// A server-level proxy_set_header loses to NPM's default location. Own the whole
 	// location, which also suppresses NPM's default forwarding-header configuration.
-	advanced += fmt.Sprintf(`location / {
+	proxy := fmt.Sprintf(` {
   proxy_set_header Host $host;
   proxy_set_header X-Forwarded-Host $host;
   proxy_set_header X-Forwarded-For $remote_addr;
@@ -294,6 +302,19 @@ func (n *NPM) config(e stack.Edge, r stack.Route, cert int) hostConfig {
   proxy_pass $forward_scheme://$server:$port$request_uri;
 }
 `, port)
+	const closed = " {\n  return 404;\n}\n"
+	// The catalog's paths alone, or everything but its denied paths.
+	for _, p := range r.Paths {
+		advanced += "location = " + p + proxy
+	}
+	for _, p := range r.DenyPaths {
+		advanced += "location ~ " + p + closed
+	}
+	if len(r.Paths) > 0 {
+		advanced += "location /" + closed
+	} else {
+		advanced += "location /" + proxy
+	}
 	return hostConfig{
 		Domains: []string{r.Hostname}, Scheme: r.ForwardScheme, Host: r.ForwardHost,
 		Port: r.ForwardPort, Certificate: cert, SSLForced: true,
@@ -352,7 +373,7 @@ func (n *NPM) find(ctx context.Context, e stack.Edge, r stack.Route) (*host, err
 			if !overlaps(name, r.Hostname) {
 				continue
 			}
-			rest := r.App + ":" + r.Hostname + "\n"
+			rest := routeMark(r)
 			if h.ID < 1 || len(h.Domains) != 1 || name != r.Hostname || !n.owns(*h, e, rest) {
 				return nil, n.refuse(*h, e, rest, fmt.Sprintf("hostname %s is claimed by an unmanaged or different edge host; refusing adoption", r.Hostname))
 			}
