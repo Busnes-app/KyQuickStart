@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -35,14 +36,22 @@ type Receiver struct {
 }
 
 func NewReceiver(store *Store, target *Target, token string) (*Receiver, error) {
-	raw, err := hex.DecodeString(token)
-	if store == nil || target == nil || target.revoke == nil || !appName.MatchString(target.spec.App) || err != nil || len(raw) != 32 || strings.ToLower(token) != token {
+	if store == nil || target == nil || target.revoke == nil || !appName.MatchString(target.spec.App) || !validSCIMToken(token) {
 		return nil, ErrState
 	}
 	if target.spec.Groups != nil && (target.groupAbsent == nil || target.groupRead == nil || target.groupLabel == nil || target.groupCreate == nil || target.groupReplace == nil) {
 		return nil, ErrState
 	}
 	return &Receiver{store: store, target: target, token: token, base: "/scim/" + target.spec.App, slots: make(chan struct{}, 4)}, nil
+}
+
+// validSCIMToken accepts 32 random bytes as lowercase hex or canonical unpadded base64url.
+func validSCIMToken(token string) bool {
+	if raw, err := hex.DecodeString(token); err == nil {
+		return len(raw) == 32 && strings.ToLower(token) == token
+	}
+	raw, err := base64.RawURLEncoding.Strict().DecodeString(token)
+	return err == nil && len(raw) == 32 && base64.RawURLEncoding.EncodeToString(raw) == token
 }
 
 func scimReply(w http.ResponseWriter, status int, body any) {

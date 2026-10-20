@@ -17,6 +17,7 @@ import (
 // Directory events supply neither target configuration nor native account IDs.
 type TargetSpec struct {
 	App, Kind, Origin, Issuer       string
+	APIOrigin                       string // Immich only: Compose service origin; Origin stays identity
 	SetupID                         string
 	SourceID                        int64
 	ClientID                        string
@@ -30,7 +31,7 @@ type Target struct {
 	spec          TargetSpec
 	inspect       func(context.Context, Binding) error
 	revoke        func(context.Context, Binding) error
-	reactivate    func(context.Context, Binding, *DirectoryProfile) error // nil: unsupported; no kind has one yet
+	reactivate    func(context.Context, Binding, uint32, *DirectoryProfile) error // nil: unsupported
 	directory     func(context.Context, Binding, DirectoryProfile) error
 	directoryRead func(context.Context, Binding) (DirectoryProfile, error)
 	create        func(context.Context, Binding, DirectoryProfile) (Binding, error)
@@ -55,7 +56,7 @@ func newTarget(spec TargetSpec, token, directoryToken, creationToken string) (*T
 	if spec.CreateAccounts && ((spec.Kind != "forgejo" && spec.Kind != "immich" && spec.Kind != "bookstack") || spec.AdministratorRole == "" || !setupID.MatchString(spec.SetupID)) {
 		return nil, ErrState
 	}
-	if spec.Kind != "immich" && spec.ClientID != "" {
+	if spec.Kind != "immich" && (spec.ClientID != "" || spec.APIOrigin != "") {
 		return nil, ErrState
 	}
 	if (spec.Kind != "bookstack" && spec.BookStackDirectory != nil) ||
@@ -82,6 +83,9 @@ func newTarget(spec TargetSpec, token, directoryToken, creationToken string) (*T
 			return nil, ErrState
 		}
 		c, err := immich.New(spec.Origin, token)
+		if spec.APIOrigin != "" {
+			c, err = immich.NewInternal(spec.APIOrigin, token)
+		}
 		if err != nil {
 			return nil, ErrState
 		}
@@ -136,6 +140,8 @@ func newTarget(spec TargetSpec, token, directoryToken, creationToken string) (*T
 				}
 				return err
 			}
+			// Fallback (job 007 Work 2c): delete this line and Immich answers reactivation_unsupported.
+			t.reactivate = immichReactivate(c, binding)
 		}
 
 	case "bookstack":
@@ -311,7 +317,22 @@ func (s *Store) deliver(ctx context.Context, t *Target, id string, now time.Time
 	}
 	reactivate := t.reactivate
 	if reactivate == nil {
-		reactivate = func(context.Context, Binding, *DirectoryProfile) error { return ErrReactivationUnsupported }
+		reactivate = func(context.Context, Binding, uint32, *DirectoryProfile) error { return ErrReactivationUnsupported }
 	}
 	return s.run(ctx, id, now, epoch, t.revoke, reactivate)
+}
+
+// immichReactivate lifts the module fence. Failures other than a definite refusal
+// leave the epoch pending, so the worker reconciles instead of reporting done.
+func immichReactivate(c *immich.Client, binding func(Binding) immich.Binding) func(context.Context, Binding, uint32, *DirectoryProfile) error {
+	return func(ctx context.Context, b Binding, epoch uint32, p *DirectoryProfile) error {
+		if p == nil {
+			return ErrReactivationRefused
+		}
+		err := c.Reactivate(ctx, binding(b), b.SetupID, epoch, immich.Profile{Name: p.Name, Email: p.Email, Administrator: p.Administrator})
+		if errors.Is(err, immich.ErrRefused) {
+			return ErrNativeRefused
+		}
+		return err
+	}
 }

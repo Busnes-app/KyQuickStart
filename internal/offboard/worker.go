@@ -96,7 +96,7 @@ func (s *Store) ServeWorker(ctx context.Context, targets []*Target) error {
 					defer joined.Done()
 					defer func() { <-slots }()
 					err := s.Deliver(runCtx, target, id, time.Now())
-					if err != nil && !errors.Is(err, ErrPending) && !errors.Is(err, ErrReactivationUnsupported) && !errors.Is(err, ErrReactivationRefused) &&
+					if err != nil && !errors.Is(err, ErrPending) && !errors.Is(err, ErrReactivationUnsupported) && !errors.Is(err, ErrReactivationRefused) && !errors.Is(err, ErrNativeRefused) &&
 						!errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 						select {
 						case failures <- ErrState:

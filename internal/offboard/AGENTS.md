@@ -112,14 +112,18 @@ bindings, durable directory intent, revocation work and audit delivery.
   started/result audits, native call through `Run`/the worker); its profile/roles are the
   projection, and native administration must follow them before sign-in is re-enabled.
   Revocation-only targets refuse a native administrator (409, `administrator_refused`).
-  A kind without native reactivation returns 409, audited `reactivation_unsupported`; another
-  PUT is another attempt, the worker never retries a refusal. A later PATCH starts the next
+  A kind without native reactivation returns 409, audited `reactivation_unsupported`; a definite
+  product refusal is `native_refused`. Another PUT is another attempt, the worker never retries
+  a refusal; every other failure (lost response, unverified readback) stays pending. A later PATCH starts the next
   revocation epoch, also over an unfinished reactivation. A published result settles an
   interrupted attempt without another native call. GET `active` follows the latest completed
   epoch. Bindings, group retirement and the creation refusal for retained subjects stay
   permanent; reactivated accounts stay out of group membership.
-- No kind reactivates natively yet. BookStack/Immich modules have no route (their app jobs add
-  one). Forgejo 16.0.5 cannot revoke web sessions (session auth loads only the user ID; no admin
+- Immich directory targets reactivate natively (`immichReactivate`, one line in `target.go`;
+  delete it to fall back to `reactivation_unsupported`). The adapter receives the even epoch,
+  verifies the module's fence removal, epoch receipt, zero credentials and directory profile, and
+  converges a later profile through the directory update. Revocation-only Immich, BookStack
+  (no module route yet) and Forgejo stay unsupported. Forgejo 16.0.5 cannot revoke web sessions (session auth loads only the user ID; no admin
   API; codeberg forgejo#796), so re-enabling sign-in revives pre-revocation sessions; it stays
   unsupported until a Forgejo release with session revocation.
 - Keep native errors, credentials and request bodies out of durable diagnostics.
@@ -236,6 +240,13 @@ bindings, durable directory intent, revocation work and audit delivery.
 - Runtime JSON has schema `ky.offboarding-runtime/1`, one installation UUID, explicit IP/port,
   separate private state/config directories, server certificate/key basenames and 1–32 app
   entries. Each app pins product/issuer/source and distinct private product/SCIM token files.
+  SCIM tokens are 32 bytes as lowercase hex or canonical unpadded base64url (installer secrets).
+- Immich apps may set `api_origin`, a Compose service origin (`http(s)://<one lowercase DNS
+  label>[:port]`, no IP/localhost/path) used only as transport; `origin` stays the public
+  identity pinned in bindings. Immich `accounts` (1–32 unique `native_uuid`/`subject`) are the
+  setup-created accounts. `Serve` registers them before listening: a retained identical binding
+  is kept without native I/O, a new one is proved by `Register`, a different retained binding
+  stops the runtime before native I/O and is never replaced. Loading/check never registers.
   Validate all public fields before credentials; forbid inline secrets, duplicate apps/origins,
   reused file/credential authority, symlinks and unsafe ownership/permissions. Config is bounded
   to 128 KiB, credential/TLS files to 16 KiB. No files or keys are generated during loading.
@@ -247,6 +258,12 @@ bindings, durable directory intent, revocation work and audit delivery.
 - Config/credential/TLS files are service-owned 0600 under a canonical 0700 target directory
   outside state. Server keys match an unexpired server-auth leaf certificate; CA private keys
   are refused. Native outbound clients retain verified standard trust, no redirects/proxy.
+  `InitTLS` creates a missing key and self-signed P-256 server leaf (SAN `directory` plus a
+  specified listen IP, 825 days) with O_EXCL 0600; a valid existing pair is kept, one file or
+  an invalid pair is refused. Renew by deleting both. It never writes state.
+- `Healthcheck` probes the configured listener (loopback for an unspecified IP) with an
+  unauthenticated GET on the first app's Users; only 401/403 is healthy. It skips certificate
+  verification because it probes the bridge's own self-signed leaf and sends no credential.
   Runtime targets require matching installation UUID as well as app/source scope.
 - `Runtime.Serve` owns the state lease, TLS 1.2+ listener, native worker and optional audit relay.
   Cancel/join HTTP handlers and both workers before closing state; failed startup/shutdown diagnostics stay generic.
@@ -332,9 +349,16 @@ those fences. Source `internal/sync/delivery.go` and `scim.go` own that protocol
   revoke/reactivate/revoke with every epoch's job and audits byte-identical afterwards, 429
   during pending/attempting revocation, an origin/master store loading as epoch 1, retired
   groups and user DELETE staying permanent, POST refusal for a retained subject,
-  `reactivation_unsupported` for BookStack/Immich/Forgejo with no native write, administrator
+  `reactivation_unsupported` for BookStack/revocation-only Immich/Forgejo with no native write, administrator
   refusal and role projection on the generic path, restart without a repeated native call,
   revocation superseding a failed reactivation and safe diagnostics.
+- `immich_reactivation_test.go`: TLS module fixture; Immich directory re-assignment opens even
+  epochs 2 and 4 with the PUT's roles, lost response held (429, pending) then reconciled without
+  a second write, 409 audited `native_refused`, only directory Immich wired, and KyIdentity
+  0.4.4's inactive replay (linked GET/externalId lookup then PATCH; it sends no inactive PUT).
+- `runtime_immich_test.go`: account registration before listening, restart without native
+  re-proof, conflicting binding refused unchanged, strict `accounts`/`api_origin`, SCIM token
+  encodings, `InitTLS` create/keep/refuse and `Healthcheck` status handling.
 - With the Forgejo native fixture's `KYQ_TEST_FORGEJO_REACTIVATE=1` (beside the queue and SCIM
   flags), `TestNativeForgejoReactivation` reopens the revoked store twice over TLS SCIM: the
   re-assignment PUT is refused and audited twice, then a PATCH revokes again in epoch 3.

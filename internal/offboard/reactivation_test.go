@@ -80,7 +80,7 @@ func lifecycleTarget(b Binding) (*Target, *atomic.Int32, *atomic.Int32, *atomic.
 	var projected atomic.Pointer[DirectoryProfile]
 	target := directoryTarget(b, func(context.Context, Binding, DirectoryProfile) error { return nil })
 	target.revoke = func(context.Context, Binding) error { revokes.Add(1); return nil }
-	target.reactivate = func(_ context.Context, _ Binding, p *DirectoryProfile) error {
+	target.reactivate = func(_ context.Context, _ Binding, _ uint32, p *DirectoryProfile) error {
 		reactivations.Add(1)
 		projected.Store(p)
 		return nil
@@ -245,7 +245,7 @@ func TestOriginStoreLoadsUnchangedAsEpochOne(t *testing.T) {
 
 func TestRetiredGroupAndUserDeleteStayPermanentAcrossReactivation(t *testing.T) {
 	s, target, r, account := groupReceiverFixture(t)
-	target.reactivate = func(context.Context, Binding, *DirectoryProfile) error { return nil }
+	target.reactivate = func(context.Context, Binding, uint32, *DirectoryProfile) error { return nil }
 	collection := r.base + "/Groups"
 	w := groupRequest(r, "POST", collection, groupBody("Engineering", account))
 	var created struct{ ID string }
@@ -280,7 +280,7 @@ func TestCreationStaysRefusedForRetainedSubject(t *testing.T) {
 		b.NativeID = 31
 		return b, nil
 	})
-	target.reactivate = func(context.Context, Binding, *DirectoryProfile) error { return nil }
+	target.reactivate = func(context.Context, Binding, uint32, *DirectoryProfile) error { return nil }
 	r, _ := NewReceiver(s, target, strings.Repeat("cd", 32))
 	post := kyIdentityPut(scope.Subject, scope.Username, p.Name, p.Email, "user")
 	if w := groupRequest(r, "POST", r.base+"/Users", post); w.Code != 201 {
@@ -388,7 +388,7 @@ func TestReactivationAdministrationFollowsRoles(t *testing.T) {
 			id, _ := s.Bind(b)
 			target, _, _, _ := lifecycleTarget(b)
 			var projected *DirectoryProfile
-			target.reactivate = func(_ context.Context, _ Binding, p *DirectoryProfile) error {
+			target.reactivate = func(_ context.Context, _ Binding, _ uint32, p *DirectoryProfile) error {
 				// The projection is durable intent before any native write.
 				j, err := s.epochJob(id, 2)
 				if _, startErr := s.epochAudit(id, 2, j.Attempts, "started"); err != nil || startErr != nil || j.Status != "attempting" || (p != nil && *j.Profile != *p) {
@@ -473,7 +473,7 @@ func TestReactivationDiagnosticsAndSupersedingRevocation(t *testing.T) {
 	id, _ := s.Bind(b)
 	target, revokes, _, _ := lifecycleTarget(b)
 	token := strings.Repeat("cd", 32)
-	target.reactivate = func(context.Context, Binding, *DirectoryProfile) error {
+	target.reactivate = func(context.Context, Binding, uint32, *DirectoryProfile) error {
 		return errors.New("PRIVATE-NATIVE-BODY " + token)
 	}
 	r, _ := NewReceiver(s, target, token)

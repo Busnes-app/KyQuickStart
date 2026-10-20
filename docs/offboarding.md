@@ -422,13 +422,39 @@ immutable `started`/`result` audit files. A completed epoch is never rewritten.
   administrator is refused (409, audited `administrator_refused`).
 - A product without native reactivation returns 409, audited `reactivation_unsupported`. The
   account stays revoked; another PUT is another audited attempt.
+- A definite product refusal returns 409, audited `native_refused`; the worker does not retry
+  it. Any other failure, including a lost response, keeps the epoch pending (429) until the
+  product's state is verified.
 - A later `PATCH active=false` starts the next revocation epoch, also over an unfinished
   reactivation. GET reports `active` from the latest completed epoch.
 - Bindings, group retirement by DELETE (still 404) and the creation refusal for a retained
   subject stay permanent. Reactivated accounts stay out of group membership.
 
-**No product reactivates natively yet.** BookStack and Immich have no module route; their app
-jobs add one. Forgejo 16.0.5 cannot revoke web sessions: its session check
+### Immich reactivation
+
+Immich reactivates natively when its directory mapping is configured (revocation-only Immich
+targets answer `reactivation_unsupported`). The epoch's job calls the community module's
+`POST /api/admin/users/<uuid>/kyquickstart/reactivate` with the service administrator's key,
+the exact setup/issuer/client/subject, the even epoch and the PUT's profile. In one native
+transaction the module sets name, email and `isAdmin` and the directory receipt, then removes
+the `ky.immich-access/1` fence and records `ky.immich-reactivation/1`. It restores no session
+or API key; those were deleted at revocation, so every pre-revocation credential stays denied.
+
+The bridge reports success only after reading back: no fence, the module's reactivation
+receipt at this epoch, no session or key after its own write, and the directory profile equal
+to the PUT's. A lost
+response or unverified readback stays pending; the retry reads the receipt and verifies instead
+of posting again. If a later PUT changed the profile after the epoch committed, the retry
+applies it through the directory update. The module's 409 (never revoked, an older epoch, or a
+repeated epoch with another profile) is `native_refused`.
+
+If a real-product check shows any old credential working after reactivation, remove the one
+`t.reactivate` line in `internal/offboard/target.go`; Immich then answers
+`reactivation_unsupported` like the other products.
+
+### Other products
+
+BookStack has no module route yet; its app job adds one. Forgejo 16.0.5 cannot revoke web sessions: its session check
 (`services/auth/method/session.go`) only loads the session's user ID, the admin API has no
 session revocation, and upstream tracks it as a feature request
 ([forgejo#796](https://codeberg.org/forgejo/forgejo/issues/796)). Revocation denies old
@@ -436,4 +462,3 @@ sessions only through `prohibit_login`, so re-enabling sign-in revived the pre-r
 session in the real-image fixture. Forgejo therefore refuses with `reactivation_unsupported`
 until a Forgejo release with session revocation reopens it. The kyPulse relay transports epoch-1
 revocation audits only; later epochs' audits are local proofs.
-

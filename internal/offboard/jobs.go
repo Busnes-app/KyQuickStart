@@ -61,7 +61,7 @@ func schemas(epoch uint32) (string, string, uint32) {
 	return "ky.offboarding-epoch/1", "ky.offboarding-epoch-audit/1", epoch
 }
 
-var refusals = map[string]error{"reactivation_unsupported": ErrReactivationUnsupported, "administrator_refused": ErrReactivationRefused}
+var refusals = map[string]error{"reactivation_unsupported": ErrReactivationUnsupported, "administrator_refused": ErrReactivationRefused, "native_refused": ErrNativeRefused}
 
 func (s *Store) epochAudit(id string, epoch, attempt uint32, phase string) (Audit, error) {
 	var a Audit
@@ -191,7 +191,7 @@ func (s *Store) Run(ctx context.Context, id string, now time.Time, revoke func(c
 }
 
 // run drives the latest epoch; want, when nonzero, must still be the latest.
-func (s *Store) run(ctx context.Context, id string, now time.Time, want uint32, revoke func(context.Context, Binding) error, reactivate func(context.Context, Binding, *DirectoryProfile) error) error {
+func (s *Store) run(ctx context.Context, id string, now time.Time, want uint32, revoke func(context.Context, Binding) error, reactivate func(context.Context, Binding, uint32, *DirectoryProfile) error) error {
 	b, err := s.Binding(id)
 	if err != nil || revoke == nil || now.IsZero() {
 		return ErrState
@@ -256,7 +256,7 @@ func (s *Store) run(ctx context.Context, id string, now time.Time, want uint32, 
 	callCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	started := time.Now()
 	if reactivating(epoch) {
-		err = reactivate(callCtx, b, j.Profile)
+		err = reactivate(callCtx, b, epoch, j.Profile)
 	} else {
 		err = revoke(callCtx, b)
 	}
@@ -270,6 +270,8 @@ func (s *Store) run(ctx context.Context, id string, now time.Time, want uint32, 
 		a.Outcome = "reactivation_unsupported"
 	case reactivating(epoch) && errors.Is(err, ErrReactivationRefused):
 		a.Outcome = "administrator_refused"
+	case reactivating(epoch) && errors.Is(err, ErrNativeRefused):
+		a.Outcome = "native_refused"
 	}
 	unlock := s.lock(id)
 	defer unlock()

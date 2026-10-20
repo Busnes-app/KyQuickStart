@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -46,8 +47,43 @@ func https(s string, origin bool) bool {
 	return err == nil && u.Scheme == "https" && u.Hostname() != "" && u.User == nil && u.Opaque == "" && u.RawQuery == "" && !u.ForceQuery && u.Fragment == "" && !strings.Contains(s, "#") && (!origin || u.Path == "") && visible(s, 2048)
 }
 func New(origin, token string) (*Client, error) {
-	if !https(origin, true) || !visible(token, 16384) || strings.IndexFunc(token, unicode.IsSpace) >= 0 {
+	if !https(origin, true) {
 		return nil, errors.New("Immich requires a verified HTTPS origin and private API key")
+	}
+	return newClient(origin, token)
+}
+
+var serviceName = regexp.MustCompile(`^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`)
+
+// InternalOrigin is a Compose service origin: one DNS label, never an IP or localhost.
+func InternalOrigin(s string) bool {
+	u, err := url.Parse(s)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.Opaque != "" || u.Path != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(s, "#") || !visible(s, 2048) {
+		return false
+	}
+	host, port := u.Hostname(), u.Port()
+	if !serviceName.MatchString(host) || host == "localhost" {
+		return false
+	}
+	if port == "" {
+		return u.Host == host
+	}
+	n, err := strconv.Atoi(port)
+	return err == nil && n >= 1 && n <= 65535 && strconv.Itoa(n) == port
+}
+
+// NewInternal reaches the server by its Compose service name. Plain HTTP is
+// acceptable there: the hop stays on an internal Docker network, like edge-to-app.
+func NewInternal(apiOrigin, token string) (*Client, error) {
+	if !InternalOrigin(apiOrigin) {
+		return nil, errors.New("Immich requires a Compose service origin and private API key")
+	}
+	return newClient(apiOrigin, token)
+}
+
+func newClient(origin, token string) (*Client, error) {
+	if !visible(token, 16384) || strings.IndexFunc(token, unicode.IsSpace) >= 0 {
+		return nil, errors.New("Immich requires a private API key")
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil

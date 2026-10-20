@@ -9,6 +9,7 @@ import (
 
 var ErrReactivationUnsupported = errors.New("this product has no native reactivation")
 var ErrReactivationRefused = errors.New("reactivation of this account is refused")
+var ErrNativeRefused = errors.New("the product definitely refused this reactivation")
 
 // errActive means no revocation applies: the PUT is an ordinary directory update.
 var errActive = errors.New("account is active")

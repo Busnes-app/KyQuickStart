@@ -12,6 +12,9 @@ Standalone resident offboarding bridge command.
 
 - Require an absolute private target configuration via `--config`; credentials are never
   command-line values. `--check` reads/validates only and reports schema/status/app count.
+  `--init-tls` creates the missing bridge key/leaf (no output; the image has no shell).
+  `--healthcheck` probes the local listener for the Compose healthcheck: exit 0 silently, or
+  1 with one fixed line. The modes are exclusive (exit 2) and none writes state.
 - Help exits 0, usage errors exit 2 and configuration/service failures exit 1. Graceful signal
   cancellation exits 0. Diagnostics contain no supplied flags, paths, file bodies or tokens.
 - This executable does not admit products, compose KyIdentity connectors or prove deployment.
@@ -29,7 +32,8 @@ Standalone resident offboarding bridge command.
 
 ## Verification
 
-- `go test ./cmd/kyoffboard`: exit-code/diagnostic boundary and private input redaction.
+- `go test ./cmd/kyoffboard`: exit-code/diagnostic boundary and private input redaction;
+  `--init-tls` twice, then serve and `--healthcheck` before and while serving.
 - `internal/offboard` tests verify protected loading and serving behavior.
 - `workflow_test.go`: `kyoffboard-image.yml` trigger, permissions, SHA-pinned actions, CI guard
   naming every ci.yml job, attestation identity and gitCommit check; no kyoffboard digest pin.
