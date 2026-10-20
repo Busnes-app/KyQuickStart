@@ -19,9 +19,9 @@ lint:
 ci: tidy-check lint test-race
 
 # Needs Docker. goolm is the test-only Matrix client's pure-Go Olm. The kind TLS helper runs the
-# test executable in distroless. test/e2e measured
-# 32.8 min on the workstation (TestKubernetesNPMEdge 15.6, TestKubernetesRestore 9.6,
-# TestKubernetesKyYard 4.8): 45m leaves room for a slower CI runner.
+# test executable in distroless. test/e2e measured 34.9 min on the workstation
+# (TestKubernetesNPMEdge 13.8, TestKubernetesKyMessage 8.8, TestKubernetesRestore 4.6,
+# TestKubernetesKyYard 3.2): 45m leaves room for a slower CI runner.
 e2e:
 	CGO_ENABLED=0 go test -tags e2e,goolm -count=1 -v -timeout 45m ./test/e2e/ ./internal/edge/
 # Real Forgejo: revocation, refused reactivation (no session revocation upstream), revoke again.
