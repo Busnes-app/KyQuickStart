@@ -321,3 +321,31 @@ func TestRoutesRejects(t *testing.T) {
 		})
 	}
 }
+
+// AC1: the five stock images are exactly the digests KyMessage's docker-compose.matrix.yml
+// pins. The fixture is that file byte for byte (KyMessage-Server 3b1f6c1; refreshed from
+// v0.4.3 at the pin).
+func TestKyMessageStockImages(t *testing.T) {
+	b, err := os.ReadFile("testdata/kymessage-docker-compose.matrix.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var upstream []string
+	for _, m := range regexp.MustCompile(`(?m)^\s+image: ([^$\s]+@sha256:[0-9a-f]{64})$`).FindAllStringSubmatch(string(b), -1) {
+		if !slices.Contains(upstream, m[1]) {
+			upstream = append(upstream, m[1])
+		}
+	}
+	a, _, _ := messageCompose(t)
+	var ours []string
+	for k, img := range a.Images {
+		if k != "kymessage" {
+			ours = append(ours, img)
+		}
+	}
+	sort.Strings(upstream)
+	sort.Strings(ours)
+	if len(upstream) != 5 || !slices.Equal(upstream, ours) {
+		t.Fatalf("stock images %v, upstream %v", ours, upstream)
+	}
+}

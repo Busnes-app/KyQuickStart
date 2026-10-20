@@ -1,0 +1,250 @@
+# Matrix stack: Postgres, Synapse, MAS, Element and LiveKit, configured by `kymessages matrix-init`
+# (./matrix). Append to COMPOSE_FILE after the proxy overlay; only LiveKit media is published; the proxy
+# reaches synapse:8008, mas:8080 and element:8080 on kymessages-net. Postgres is only on the
+# internal matrix-db network, shared with Synapse and MAS. The app reaches MAS's admin API
+# (mas-admin:8081) on the internal matrix-admin network, which only the app and MAS join.
+# The app also joins matrix-db and reads ./matrix (minus the Postgres superuser password) and the
+# media volume read-only, for server backups (docs/RESTORE.md). It writes two files there, in
+# place: Element's config.json, whose "brand" the console sets, and federation/federation.yaml,
+# Synapse's listeners and federation allow-list (Settings > Federation; closed by default).
+# Cost, recorded (owner decision 2026-10-11): the app can write any Synapse setting through
+# that file, so a compromised app can run code in Synapse. It already reads every secret
+# Synapse holds and can act as Synapse admin.
+# Images are the official upstream builds, pinned by tag and digest, configured only by files.
+# Postgres, Synapse and MAS run as the owner of ./matrix (KY_MATRIX_UID/GID, printed by
+# matrix-init) so its 0600 files stay unreadable to anyone else.
+# Element's page loads the logo from <KY_ADMIN_HOST>/app-icon.png. Its nginx sends no CSP
+# header and its own meta CSP allows img-src *; a proxy in front must not add an img-src that
+# excludes the admin host. Route https://<server name>/.well-known/matrix/{client,server} to the
+# app (the server file answers only while federation is open).
+x-hardening: &hardening
+  restart: unless-stopped
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+# A read-only bind of a path matrix-init made; a missing one refuses the start, never creates it.
+x-matrix-ro: &matrix-ro {type: bind, read_only: true, bind: {create_host_path: false}}
+
+services:
+  # Serves /.well-known/matrix/{client,server} and the members' Open chat link.
+  app:
+    # The owner of ./matrix, so it writes its two files there without any capability.
+    user: "${KY_MATRIX_UID:?Set KY_MATRIX_UID (printed by matrix-init)}:${KY_MATRIX_GID:?Set KY_MATRIX_GID (printed by matrix-init)}"
+    environment:
+      - KY_MATRIX_SERVER_NAME=${KY_MATRIX_SERVER_NAME:?Set KY_MATRIX_SERVER_NAME}
+      - KY_MATRIX_HOST=${KY_MATRIX_HOST:?Set KY_MATRIX_HOST}
+      - KY_MATRIX_CHAT_HOST=${KY_MATRIX_CHAT_HOST:?Set KY_MATRIX_CHAT_HOST}
+      - KY_MATRIX_RTC_HOST=${KY_MATRIX_RTC_HOST:?Set KY_MATRIX_RTC_HOST}
+      - KY_MATRIX_RTC_KEY_FILE=/matrix/secrets/livekit_api_key
+      - KY_MATRIX_RTC_SECRET_FILE=/matrix/secrets/livekit_api_secret
+      # Signs KyIdentity's directory webhook; without it offboarding never reaches MAS.
+      - KY_KYIDENTITY_HMAC_SECRET=${KY_KYIDENTITY_HMAC_SECRET:?Set KY_KYIDENTITY_HMAC_SECRET (the KyIdentity suite_webhook secret)}
+      # Offboarding sync: MAS's admin API, reachable only on matrix-admin.
+      - KY_MATRIX_ADMIN_URL=http://mas-admin:8081
+      - KY_MATRIX_ADMIN_CLIENT_ID=${KY_MATRIX_ADMIN_CLIENT_ID:?Set KY_MATRIX_ADMIN_CLIENT_ID (printed by matrix-init)}
+      - KY_MATRIX_ADMIN_SECRET_FILE=/run/secrets/mas_admin_client_secret
+      # Server backups: pg_dump as the read-only kybackup role on matrix-db, plus matrix-init's
+      # files and the media store, both read-only. Cost, recorded: the configs it must back up
+      # hold the synapse and mas owner passwords and the shared secrets, so a compromised app can
+      # write both databases and act as Synapse admin. It cannot decrypt E2EE messages. The
+      # superuser password is never mounted here and never backed up.
+      - KY_MATRIX_DIR=/matrix
+      - KY_MATRIX_MEDIA_DIR=/matrix-media
+      - KY_MATRIX_DB_HOST=postgres
+      - KY_MATRIX_BACKUP_DB_PASSWORD_FILE=/run/secrets/kybackup_db_password
+      - KY_BACKUP_MEDIA_FULL_KEEP=${KY_BACKUP_MEDIA_FULL_KEEP:-3}
+    secrets: [mas_admin_client_secret, kybackup_db_password]
+    networks:
+      default: {}
+      matrix-admin: {}
+      matrix-db: {}
+    # ./matrix piece by piece, so secrets/postgres_password (the superuser's) is not in view:
+    # every secret matrix-init writes but that one, plus the operator's KyIdentity client
+    # secret (TestComposeMountsEverySecretButTheSuperusers keeps the list in step).
+    volumes:
+      - {<<: *matrix-ro, source: ./matrix/synapse, target: /matrix/synapse}
+      - {<<: *matrix-ro, source: ./matrix/mas, target: /matrix/mas}
+      # Writable, and all of ./matrix/element: the console sets Element's "brand" in it, in place
+      # (same inode, so Element's bind keeps it; Element shows it after a restart). Not nested in
+      # a read-only ./matrix/element bind: Docker cannot recreate a mountpoint inside one, which
+      # breaks `docker cp` from the app.
+      - {type: bind, source: ./matrix/element/config.json, target: /matrix/element/config.json, read_only: false, bind: {create_host_path: false}}
+      # Same pattern: the whole of ./matrix/federation, rewritten in place by Settings > Federation.
+      - {type: bind, source: ./matrix/federation/federation.yaml, target: /matrix/federation/federation.yaml, read_only: false, bind: {create_host_path: false}}
+      - {<<: *matrix-ro, source: ./matrix/postgres, target: /matrix/postgres}
+      - {<<: *matrix-ro, source: ./matrix/livekit, target: /matrix/livekit}
+      - {<<: *matrix-ro, source: ./matrix/secrets/livekit_api_key, target: /matrix/secrets/livekit_api_key}
+      - {<<: *matrix-ro, source: ./matrix/secrets/livekit_api_secret, target: /matrix/secrets/livekit_api_secret}
+      - {<<: *matrix-ro, source: ./matrix/secrets/synapse_db_password, target: /matrix/secrets/synapse_db_password}
+      - {<<: *matrix-ro, source: ./matrix/secrets/mas_db_password, target: /matrix/secrets/mas_db_password}
+      - {<<: *matrix-ro, source: ./matrix/secrets/synapse_macaroon_secret_key, target: /matrix/secrets/synapse_macaroon_secret_key}
+      - {<<: *matrix-ro, source: ./matrix/secrets/synapse_form_secret, target: /matrix/secrets/synapse_form_secret}
+      - {<<: *matrix-ro, source: ./matrix/secrets/mas_synapse_shared_secret, target: /matrix/secrets/mas_synapse_shared_secret}
+      - {<<: *matrix-ro, source: ./matrix/secrets/mas_encryption, target: /matrix/secrets/mas_encryption}
+      - {<<: *matrix-ro, source: ./matrix/secrets/mas_signing_rsa, target: /matrix/secrets/mas_signing_rsa}
+      - {<<: *matrix-ro, source: ./matrix/secrets/mas_signing_ec, target: /matrix/secrets/mas_signing_ec}
+      - {<<: *matrix-ro, source: ./matrix/secrets/upstream_provider_id, target: /matrix/secrets/upstream_provider_id}
+      - {<<: *matrix-ro, source: ./matrix/secrets/mas_admin_client_id, target: /matrix/secrets/mas_admin_client_id}
+      - {<<: *matrix-ro, source: ./matrix/secrets/mas_admin_client_secret, target: /matrix/secrets/mas_admin_client_secret}
+      - {<<: *matrix-ro, source: ./matrix/secrets/kybackup_db_password, target: /matrix/secrets/kybackup_db_password}
+      - {<<: *matrix-ro, source: ./matrix/secrets/kyidentity_client_secret, target: /matrix/secrets/kyidentity_client_secret}
+      - matrix-media:/matrix-media:ro
+
+  postgres:
+    <<: *hardening
+    image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+    user: "${KY_MATRIX_UID:?Set KY_MATRIX_UID (printed by matrix-init)}:${KY_MATRIX_GID:?Set KY_MATRIX_GID (printed by matrix-init)}"
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      # A subdirectory: the volume root belongs to the image's postgres user, and initdb must
+      # own its directory.
+      PGDATA: /var/lib/postgresql/data/pgdata
+    secrets: [postgres_password]
+    networks: [matrix-db]
+    volumes:
+      - matrix-postgres:/var/lib/postgresql/data
+      - ./matrix/postgres:/docker-entrypoint-initdb.d:ro
+    # TCP, not the socket: during first-run init the entrypoint's temporary server listens on
+    # the socket only, so this passes once init.sql has run and the real server is up.
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # The media volume starts root-owned (the image's /media); hand it to the Synapse user once
+  # per start. Only CAP_CHOWN, no network.
+  synapse-media-owner:
+    image: ghcr.io/element-hq/synapse:v1.162.0@sha256:6b84a7bbac36f080b2d2e51e0289cf1b08b349598ea44a558df38d558f2c2311
+    entrypoint: ["chown", "${KY_MATRIX_UID:?}:${KY_MATRIX_GID:?}", "/media"]
+    network_mode: none
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    cap_add: [CHOWN]
+    volumes:
+      - matrix-media:/media
+
+  synapse:
+    <<: *hardening
+    image: ghcr.io/element-hq/synapse:v1.162.0@sha256:6b84a7bbac36f080b2d2e51e0289cf1b08b349598ea44a558df38d558f2c2311
+    # start.py execs Synapse directly when not root; it changes no ownership in run mode.
+    user: "${KY_MATRIX_UID:?}:${KY_MATRIX_GID:?}"
+    # The stock start.py passes these through; Synapse merges the files in order, so the
+    # console-owned federation file sets listeners and the allow-list.
+    command: ["run", "--config-path", "/config/homeserver.yaml", "--config-path", "/federation.yaml"]
+    networks: [default, matrix-db]
+    volumes:
+      - ./matrix/synapse:/config:ro
+      - {<<: *matrix-ro, source: ./matrix/federation/federation.yaml, target: /federation.yaml}
+      # nocopy: while the volume is empty, Docker copies the image's root-owned /media onto it
+      # at every mount, undoing synapse-media-owner's chown.
+      - {type: volume, source: matrix-media, target: /media, volume: {nocopy: true}}
+    depends_on:
+      postgres: {condition: service_healthy}
+      synapse-media-owner: {condition: service_completed_successfully}
+      mas: {condition: service_started}
+    # The MAS image is distroless with no HTTP client, so MAS is probed from here through its
+    # public discovery resource: the homeserver cannot sign anyone in without it.
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--fail-early", "-o", "/dev/null", "http://localhost:8008/health", "-o", "/dev/null", "http://mas:8080/.well-known/openid-configuration"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  mas:
+    <<: *hardening
+    image: ghcr.io/element-hq/matrix-authentication-service:1.26.0@sha256:e089f1048a1d4a9a492ed17b9fe759100f1bd619407b001f5927928d88b780c4
+    user: "${KY_MATRIX_UID:?}:${KY_MATRIX_GID:?}"
+    command: ["server", "--config", "/config/config.yaml"]
+    networks:
+      default: {}
+      matrix-db: {}
+      # MAS binds its admin listener to this alias, so the admin API exists only here.
+      matrix-admin: {aliases: [mas-admin]}
+    volumes:
+      # The file, never created by Docker: until the operator saves KyIdentity's client secret
+      # and re-runs matrix-init, `up` refuses MAS ("bind source path does not exist").
+      - type: bind
+        source: ./matrix/mas/config.yaml
+        target: /config/config.yaml
+        read_only: true
+        bind: {create_host_path: false}
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  element:
+    <<: *hardening
+    image: ghcr.io/element-hq/element-web:v1.12.30@sha256:3e7dbd4424de9e11c812bc740acf2725b2abe66ea0d0802023b56fd85d3fa09a
+    environment:
+      ELEMENT_WEB_PORT: "8080"
+    volumes:
+      # The file only: its 0700 directory is closed to the image's nginx user. The image serves
+      # a copy made at start, so a console rename shows after `docker compose restart element`
+      # (the restart keeps this bind's inode, which both writers update in place).
+      - ./matrix/element/config.json:/app/config.json:ro
+    depends_on:
+      synapse: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/config.json"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  livekit:
+    <<: *hardening
+    image: livekit/livekit-server:v1.13.7@sha256:6fd3b7088874c4d119160dd688798dfec852bc014786d392caad15f6f63912a3
+    user: "${KY_MATRIX_UID:?}:${KY_MATRIX_GID:?}"
+    command: ["--config", "/config/config.yaml"]
+    volumes:
+      - {<<: *matrix-ro, source: ./matrix/livekit, target: /config}
+    # Media bypasses the HTTP tunnel. Forward these two ports unchanged to this host. No
+    # wildcard default: the operator names the interface that may receive media.
+    # 7880 signalling/admin stays private, reached by the proxy and KyMessages.
+    ports:
+      - "${KY_MATRIX_MEDIA_BIND_IP:?set KY_MATRIX_MEDIA_BIND_IP to the host address for call media, or 0.0.0.0 for every interface}:7881:7881/tcp"
+      - "${KY_MATRIX_MEDIA_BIND_IP:?set KY_MATRIX_MEDIA_BIND_IP to the host address for call media, or 0.0.0.0 for every interface}:7882:7882/udp"
+
+  # One-shot, after `kymessages restore` and `kymessages matrix-init` (which recreates the
+  # superuser password the capsule leaves out), against a fresh stack with only postgres up:
+  #   docker compose run --rm restore-matrix
+  # Loads the restored dumps as their owners and writes media back. It runs as the owner of
+  # ./matrix, which must own the restored data/ and be able to read ./backups/media. The only
+  # writer of the media volume besides Synapse; everything else is read-only.
+  restore-matrix:
+    profiles: [restore]
+    image: ${KY_IMAGE:-ghcr.io/busnes-app/kymessage-server:stable}
+    pull_policy: never
+    entrypoint: ["/app/kymessages", "restore-matrix"]
+    user: "${KY_MATRIX_UID:?}:${KY_MATRIX_GID:?}"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    networks: [matrix-db]
+    volumes:
+      - ./data:/app/data:ro
+      - ./backups:/app/backups:ro
+      - ./matrix:/matrix:ro
+      # nocopy, as for synapse: keeps synapse-media-owner's chown of the empty volume.
+      - {type: volume, source: matrix-media, target: /media, volume: {nocopy: true}}
+    depends_on:
+      postgres: {condition: service_healthy}
+      synapse-media-owner: {condition: service_completed_successfully}
+
+secrets:
+  postgres_password:
+    file: ./matrix/secrets/postgres_password
+  mas_admin_client_secret:
+    file: ./matrix/secrets/mas_admin_client_secret
+  kybackup_db_password:
+    file: ./matrix/secrets/kybackup_db_password
+
+networks:
+  matrix-db:
+    internal: true
+  # KyMessages to MAS's admin API only.
+  matrix-admin:
+    internal: true
+
+volumes:
+  matrix-postgres:
+  matrix-media:
