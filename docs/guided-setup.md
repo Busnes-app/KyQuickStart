@@ -30,8 +30,8 @@ The wizard asks for:
 5. Review and confirmation of the plan.
 6. `finish`, `check` or `deploy`. `finish` is always the default and changes no servers.
 
-The first computer-name question accepts DNS names such as `K80.urlxl.us`, including
-uppercase letters. It derives a safe installation label (`k80-urlxl-us`); Docker's SSH
+The first computer-name question accepts DNS names such as `K80.example.com`, including
+uppercase letters. It derives a safe installation label (`k80-example-com`); Docker's SSH
 address defaults to the name you entered. Kubernetes still connects through its kubeconfig.
 A Kubernetes target may name a StorageClass for app volumes (`storage_class`); blank needs a
 default class. Preflight checks the named class exists. A volume's class cannot change later:

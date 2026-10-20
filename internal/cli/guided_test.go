@@ -180,7 +180,7 @@ func TestGuidedCancellationReleasesEditorLock(t *testing.T) {
 }
 
 func TestComputerDNSNamesAndSSHDefault(t *testing.T) {
-	for _, name := range []string{"K80.urlxl.us", "K80", "nas.example.lan.", "1host.example.lan", strings.Repeat("a", 63) + ".example.lan"} {
+	for _, name := range []string{"K80.example.com", "K80", "nas.example.lan.", "1host.example.lan", strings.Repeat("a", 63) + ".example.lan"} {
 		label, ok := computerName(name)
 		if !ok || !stack.ValidName(label) {
 			t.Fatalf("computer %q produced invalid label %q", name, label)
@@ -193,7 +193,7 @@ func TestComputerDNSNamesAndSSHDefault(t *testing.T) {
 	}
 	dir := t.TempDir()
 	var out bytes.Buffer
-	answers := "yes\n1\nK80.urlxl.us\ndocker\n\nkyq\n22\n/opt/test\ninstall\nK80.urlxl.us\n1\nkyidentity\nK80.urlxl.us\nhttps://id.example.test\nnone\nyes\nfinish\n"
+	answers := "yes\n1\nK80.example.com\ndocker\n\nkyq\n22\n/opt/test\ninstall\nK80.example.com\n1\nkyidentity\nK80.example.com\nhttps://id.example.test\nnone\nyes\nfinish\n"
 	err := Run(context.Background(), []string{"plan", "--demo", "--state", dir}, Options{Catalog: catalog.Embedded(), In: strings.NewReader(answers), Out: &out})
 	if err != nil {
 		t.Fatal(err, out.String())
@@ -202,10 +202,10 @@ func TestComputerDNSNamesAndSSHDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Targets[0].Name != "k80-urlxl-us" || st.Targets[0].Host != "K80.urlxl.us" || st.Apps[0].Target != "k80-urlxl-us" {
+	if st.Targets[0].Name != "k80-example-com" || st.Targets[0].Host != "K80.example.com" || st.Apps[0].Target != "k80-example-com" {
 		t.Fatal("computer DNS name did not flow through target selection")
 	}
-	if st.Existing[0].Target != "k80-urlxl-us" {
+	if st.Existing[0].Target != "k80-example-com" {
 		t.Fatal("existing product target did not accept the DNS name")
 	}
 }
