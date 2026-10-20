@@ -381,6 +381,12 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 		if cat[name], err = withRoute(st, name, t, cat[name]); err != nil {
 			return nil, err
 		}
+		if !t.Kubernetes() && hostsRunner(cat[name]) && catalog.Pinned(o.RunnerImage) {
+			cat[name], err = cat[name].WithDockerRunner(o.RunnerImage)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 	// A cluster edge's egress policy admits an upstream off the cluster by address only.
 	for _, e := range st.Edges {
@@ -444,6 +450,9 @@ func withRoute(st *stack.Stack, name string, t stack.Target, app catalog.App) (c
 	addr := ip.String()
 	if strings.Contains(addr, ":") { // not reached while stack refuses an IPv6 forward_host
 		addr = "[" + addr + "]" // Docker's port syntax
+	}
+	if app.Kubernetes != nil {
+		app.Kubernetes = app.Kubernetes.WithHost(hosts[0])
 	}
 	return app.WithRoute(catalog.Route{Host: hosts[0], Forward: addr + ":" + strconv.Itoa(routes[0].ForwardPort), ForwardAddr: addr, EdgeAddress: edges[0].EgressAddress}), nil
 }

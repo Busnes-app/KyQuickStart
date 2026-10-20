@@ -18,6 +18,7 @@ import (
 	"github.com/Busnes-app/kyquickstart/internal/dockerhost"
 	"github.com/Busnes-app/kyquickstart/internal/engine"
 	"github.com/Busnes-app/kyquickstart/internal/managed"
+	"github.com/Busnes-app/kyquickstart/internal/remote"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
 	"github.com/Busnes-app/kyquickstart/internal/suite"
 	"golang.org/x/term"
@@ -231,9 +232,6 @@ func restore(ctx context.Context, state string, r restoreRequest, trust trustFla
 		existing := slices.ContainsFunc(s.plan.Existing, func(e stack.Existing) bool { return e.Product == "kyidentity" })
 		if existing || !hasIdentity {
 			return removalGate(app, existing, managed.Deployed{})
-		}
-		if !identity.Kubernetes() {
-			return suite.Errorf(suite.RestoreRefused, "restore replays removals with resync-system in KyIdentity's pod, which needs KyIdentity on Kubernetes; it is on Docker target %s. Nothing was changed", identity.Name)
 		}
 		if identity.Name != t.Name {
 			s.targets = append(s.targets, identity)
@@ -505,17 +503,29 @@ func (s *session) replayRemovals(ctx context.Context, name string) error {
 	incomplete := func(detail string) error {
 		return suite.Errorf(suite.RestoreIncomplete, "%s is restored but stopped: KyIdentity's %s connector did not deliver the replay of removals (%s), and until it does someone removed after the snapshot could sign in. Fix the connector, then rerun kyquickstart restore %s, which starts the app and replays again", name, client, detail, name)
 	}
-	k, ok := s.drivers[s.placed["kyidentity"].Name].(kubeDriver)
-	if !ok {
-		return incomplete("this build runs resync-system in a Kubernetes KyIdentity only")
-	}
-	ns, pod, container, err := k.c.AppPod(ctx, "kyidentity")
-	if err != nil {
-		return incomplete(err.Error())
-	}
 	start := time.Now()
-	args := []string{productAdapters["kyidentity"].binary, "resync-system", "--client", client, "--wait", resyncWait.String()}
-	out, err := k.c.ExecReport(ctx, ns, pod, container, args)
+	var out []byte
+	var err error
+	args := []string{"resync-system", "--client", client, "--wait", resyncWait.String()}
+	switch d := s.drivers[s.placed["kyidentity"].Name].(type) {
+	case kubeDriver:
+		ns, pod, container, podErr := d.c.AppPod(ctx, "kyidentity")
+		if podErr != nil {
+			return incomplete(podErr.Error())
+		}
+		out, err = d.c.ExecReport(ctx, ns, pod, container, append([]string{productAdapters["kyidentity"].binary}, args...))
+	case sshDriver:
+		words := []string{remote.Quote(productAdapters["kyidentity"].binary)}
+		for _, arg := range args {
+			words = append(words, remote.Quote(arg))
+		}
+		out, err = d.c.Run(ctx, dockerAppContainer("kyidentity")+`docker exec "$c" `+strings.Join(words, " "), nil)
+		if err != nil {
+			err = errors.New("native KyIdentity resync-system command failed")
+		}
+	default:
+		return incomplete("KyIdentity's target is not connected")
+	}
 	var rep resyncReport
 	line := strings.TrimSpace(string(out))
 	if len(line) > 1024 || json.Unmarshal([]byte(line), &rep) != nil || rep.Schema != "kyidentity.resync-system/1" || rep.ClientID != client {
