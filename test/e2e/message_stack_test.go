@@ -24,7 +24,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/kube"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
 	"golang.org/x/crypto/ssh"
@@ -51,8 +50,7 @@ type messageTarget struct {
 }
 
 // startMessageTarget starts the target and copies the catalog KyMessages into catalogDir with
-// test-only plumbing: the local console image (KYQ_TEST_KYMESSAGE_IMAGE, digest-pinned) until
-// v0.4.3 is pinned, identity.example.test through a relay to the lan edge, and the edge's
+// test-only plumbing: identity.example.test through a relay to the lan edge, and the edge's
 // throwaway certificate trusted by the console and MAS, which both call KyIdentity.
 func startMessageTarget(t *testing.T, work, catalogDir, nodeIP string, certPEM []byte) messageTarget {
 	t.Helper()
@@ -141,18 +139,6 @@ chown kyq `+base)
 		{`    ports: ["{{forward "auth"}}:8080"]` + "\n", `    ports: ["{{forward "auth"}}:8080"]` + "\n" + extra + "    environment: {SSL_CERT_FILE: /test-ca/ca.pem}\n"},
 		{"    volumes: [./matrix/mas/config.yaml:/config/config.yaml:ro]\n", "    volumes: [./matrix/mas/config.yaml:/config/config.yaml:ro, \"" + ca + ":/test-ca/ca.pem:ro\"]\n"},
 	})
-	if img := os.Getenv("KYQ_TEST_KYMESSAGE_IMAGE"); img != "" {
-		if !catalog.Pinned(img) {
-			t.Fatalf("KYQ_TEST_KYMESSAGE_IMAGE %q is not pinned by digest", img)
-		}
-		m := filepath.Join(dir, "manifest.yaml")
-		b, _ := os.ReadFile(m)
-		lines := strings.Split(string(b), "\n")
-		k := slices.IndexFunc(lines, func(l string) bool { return strings.HasPrefix(l, "  kymessage: ") })
-		lines[k] = "  kymessage: " + img
-		os.WriteFile(m, []byte(strings.Join(lines, "\n")), 0o600)
-		t.Logf("test-only plumbing: the console image is %s, not the catalog pin", img)
-	}
 	return messageTarget{name: name, port: port, root: base + "/root", fp: fp, forward: gateway, ports: ports, relay: relay}
 }
 
@@ -203,9 +189,6 @@ func messageTransport(t *testing.T, certPEM []byte, nodeIP string) *http.Transpo
 // routes and closed surfaces, its hardening on the target, console sign-on, a skipped rerun and
 // the handover's init-admin line run as printed.
 func TestKubernetesKyMessage(t *testing.T) {
-	if m, _ := os.ReadFile("../../internal/catalog/apps/kymessage/manifest.yaml"); os.Getenv("KYQ_TEST_KYMESSAGE_IMAGE") == "" && bytes.Contains(m, []byte("\nversion: 0.4.2\n")) {
-		t.Skip("the catalog pins no KyMessage with installer setup yet (v0.4.3); set KYQ_TEST_KYMESSAGE_IMAGE to a digest-pinned local build")
-	}
 	ctx := context.Background()
 	start := time.Now()
 	work := t.TempDir()

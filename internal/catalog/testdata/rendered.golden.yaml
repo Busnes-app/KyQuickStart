@@ -176,7 +176,7 @@ kyidentity:
         # Docker variant of this product's pinned manifest; bind data belongs to the SSH user.
         services:
           app:
-            image: ghcr.io/busnes-app/kyidentity-server:0.4.4@sha256:f866a7513988a7b5919363ee76182baa2727ee57407404104049f93c29253c5a
+            image: ghcr.io/busnes-app/kyidentity-server:0.4.5@sha256:7cfa76b1a6cd9f935acb9872d0919de2071ea5f7752ebeec94119ba5be744709
             platform: linux/amd64
             user: "${KYQ_UID:?}:${KYQ_GID:?}"
             restart: unless-stopped

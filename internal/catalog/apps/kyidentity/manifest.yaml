@@ -1,20 +1,21 @@
 name: kyidentity
 description: KyIdentity, the suite's identity provider (OIDC, MFA, SCIM); every other app signs in through it
 category: ky
-version: 0.4.4
-# Release image of v0.4.4, attested by release-image.yml@refs/tags/v0.4.4 (gh attestation verify;
-# source commit 474a0c9 = v0.4.4^{commit}). It advertises setup amendments, disable-user and
-# resync-system, and its resync replays removals, which kyquickstart restore requires.
+version: 0.4.5
+# Release image of v0.4.5, attested by release-image.yml@refs/tags/v0.4.5 (gh attestation verify;
+# source commit 6e344eb = v0.4.5^{commit}). It advertises setup amendments, disable-user,
+# resync-system (its resync replays removals, which kyquickstart restore requires),
+# installer-verified-email (MAS's chat sign-in needs it) and mail-relay.
 images:
-  kyidentity: ghcr.io/busnes-app/kyidentity-server:0.4.4@sha256:f866a7513988a7b5919363ee76182baa2727ee57407404104049f93c29253c5a
+  kyidentity: ghcr.io/busnes-app/kyidentity-server:0.4.5@sha256:7cfa76b1a6cd9f935acb9872d0919de2071ea5f7752ebeec94119ba5be744709
 health:
   timeout_seconds: 300
 # Its signing, session and encryption keys are generated in the data directory on first start.
 backup:
   volumes: [data]
 upgrade:
-  # Migrations run at startup; the release notes cover upgrades from 0.4.x only. 0.4.4 adds no
-  # schema change (v0.4.3..v0.4.4), so an upgrade from 0.4.3 needs only an acknowledgement.
+  # Migrations run at startup; the release notes cover upgrades from 0.4.x only. Neither 0.4.4
+  # nor 0.4.5 changes the schema (v0.4.3..v0.4.5), so an upgrade needs only an acknowledgement.
   min_from: 0.4.0
   migrates_data: false
 kubernetes:
