@@ -2,8 +2,9 @@
 
 Community extension for Immich v3.2.0, source
 `1b6098c9dbfffe978bec2d414606ed7a4c8e019a`, under upstream AGPL-3.0.
-`source.patch` retains upstream copyright/license notices. This is unfinished installer
-integration and a disposable qualification image, not an admitted production release.
+`source.patch` retains upstream copyright/license notices. The catalog's server image
+(`Dockerfile`, published by `immich-image.yml`) is this patch's build; Immich is not
+admitted until its job's acceptance gates pass.
 
 `GET /api/admin/users/:id/kyquickstart/access` reports provider/account pins, immutable
 installation ownership, revocation time and session/API-key counts. `POST
@@ -17,11 +18,33 @@ with deletion of that user's sessions and API keys. Fenced accounts cannot authe
 with sessions, keys or shared links, or sign in again; subject denial survives OAuth
 unlinking. Revocation disconnects the user's subscribed sockets. A second authentication
 check after joining rooms closes the connection/revocation race. Account, asset and
-album fields are retained. Repeats remove late unusable credentials and retain the first
-revocation timestamp. There is no clearing/reactivation route yet: the bridge refuses a
-KyIdentity re-assignment as `reactivation_unsupported` until the Immich app job adds one.
+album fields are retained. Repeats remove late unusable credentials and retain the
+revocation timestamp. The fence is write-once per epoch: only reactivation (below) clears
+it, and a later revocation writes a new fence with a new time.
 Requests authorized before commit may finish; this is not cancellation of in-flight
 requests. Restore must retain the metadata fence with the account and content.
+
+## Reactivation
+
+`POST /api/admin/users/:id/kyquickstart/reactivate` takes exactly `setupId`, `issuer`,
+`clientId`, `subject`, `epoch` (an even integer from 2 to 2^31-1, 008's reactivation epoch)
+and `profile` (`name`, lowercase `email`, `administrator`). It requires a native
+administrator API key with user-update permission; session-only authority and
+self-reactivation are refused. The binding must match the stored fence, else the directory
+receipt, exactly as for revocation. The account must be owned (setup IDs or creation
+receipt), active, undeleted and match its directory receipt.
+
+One serializable transaction first writes name/email/administrator and the next
+`ky.immich-directory/1` revision from `profile`, then deletes the `ky.immich-access/1`
+fence and writes `ky.immich-reactivation/1` user metadata (`contract`, `setupId`, `epoch`,
+`reactivatedAt`, `revokedAt` of the cleared fence). No session or API key is restored;
+revocation deleted them. Repeating the committed epoch with an equal profile returns 200
+with the same receipt. A lower or equal epoch over a new fence, a different profile, a
+higher epoch without a fence, an account never revoked and an email held by another
+account are 409. Unexpected failures are a fixed 503: the commit may have succeeded, so the
+caller reads `GET .../kyquickstart/access` back. Its `reactivation` (`epoch`,
+`reactivatedAt`, or `null`) appears beside the existing fields; credential counts are live.
+The server logs a fixed line with the user ID and epoch.
 
 Build in an isolated, disk-backed source checkout; `/tmp` on the development workstation
 is RAM-backed. Use the pinned tag with a sparse checkout of `server` and `packages`,
@@ -37,11 +60,12 @@ pnpm --dir server exec tsc --noEmit
 pnpm --filter immich build
 ```
 
-Build `Dockerfile.fixture` with the source `server` directory as context and the SHA-256
-of `source.patch` as `KYQ_SOURCE_PATCH_SHA256`; retain the `--iidfile` image digest.
-The overlay keeps runtime dependencies and the web UI from the official pinned amd64
-image and replaces server `dist` with this source build. Source/patch labels identify
-fixture inputs; they do not constitute a production provenance attestation.
+Build `Dockerfile` with the source `server` directory as context, the SHA-256 of
+`source.patch` as `KYQ_SOURCE_PATCH_SHA256`, `--platform linux/amd64`, and `VERSION`/
+`SOURCE_TAG` for the AGPL source offer; retain the `--iidfile` image digest. The overlay
+keeps runtime dependencies and the web UI from the official pinned amd64 image and
+replaces server `dist` with this source build. Labels on a local build identify its inputs;
+only `immich-image.yml`'s published image carries a provenance attestation.
 
 From this repository, set `KYQ_TEST_IMMICH_MODULE_IMAGE` to that immutable local
 `sha256:` image digest and run the parent's native qualification command with
@@ -97,25 +121,57 @@ coordination, audit/restore and production deployment remain gated.
 
 `immich-admin apply-setup --file /protected/setup.json` accepts a target-local
 `immich.setup/1` bundle with lowercase `setupId`, `provider` (`issuer`, `clientId`, `clientSecret`,
-`rolesClaim`), and separate `administrator`/`everyday` objects (`subject`, `email`, `name`).
+`rolesClaim`, `mobileRedirectUri`), `serviceKeyFile`, and separate `administrator`/`everyday`
+objects (`subject`, `email`, `name`). The schema name stays `immich.setup/1`: the module is
+unreleased and no installation holds its receipts. `mobileRedirectUri` is exactly
+`https://<host>/api/oauth/mobile-redirect` (no userinfo, query or fragment); setup writes it
+with `mobileOverrideEnabled: true` so the phone app's `app.immich:///oauth-callback` is
+replaced by an https redirect KyIdentity accepts. KyIdentity sends roles as the array claim
+`roles`, so `rolesClaim` must be `roles`; any other name leaves the owner without its
+administrator role and managed sign-in refuses it.
 Subjects come from protected KyIdentity provisioning receipts. Client secrets stay in the
 container bundle and native configuration; reports include only account UUIDs/subjects/roles.
 The file must be an absolute canonical nonsymlink path, a regular 0600 file owned by the
 command user, beneath root/user-owned parents without group/other write permission.
 `IMMICH_CONFIG_FILE` installations require a separate migration and are refused here.
 
-`--capabilities` reports the native bundle/version/features without a bundle. It refuses
+`--capabilities` reports the native bundle/version/features (`native-oidc`,
+`owned-initial-accounts`, `immutable-receipts`, `check`, `mobile-redirect`,
+`service-administrator`, `reactivation`) without a bundle. It refuses
 combined setup flags. `--check` validates and reports plans without writes. `--resume` requires an existing
-installation receipt. Initial setup accepts only a blank OIDC provider and absent accounts;
-email/subject matches are conflicts. It creates passwordless native administrator/everyday
-accounts and cluster groups, preserves unrelated accounts/settings and commits configuration
-and an immutable `ky.immich-setup/1` system-metadata receipt in one serializable transaction.
+installation receipt. Initial setup accepts only a blank OIDC provider and an installation
+with no native account at all, deleted ones included. It creates passwordless native
+administrator/everyday accounts, the service administrator and their cluster groups,
+preserves unrelated settings and commits configuration and an immutable `ky.immich-setup/1`
+system-metadata receipt (including the service account and key IDs) in one serializable
+transaction, refusing unless the native users are then exactly those three with only the
+owner and the service account administrators.
 Repeated CLI processes verify exact intent, UUIDs, current owned profiles/roles and active/unfenced accounts;
-changes and revoked accounts require reconciliation. Setup cannot reactivate accounts.
+changes and revoked accounts require reconciliation. Setup never reactivates accounts.
 
-Accepted risk (Yoshi, 2026-10-10): setup does not refuse pre-existing administrators and
-does not disable `passwordLogin`. An admin created through Immich's first-run sign-up
-before setup keeps password access. Run setup before Immich is reachable by anyone else.
+The service administrator `kyquickstart-service` (`kyquickstart-service@kyquickstart.invalid`)
+has no password and no OAuth subject, so neither password nor OAuth sign-in reaches it. It
+holds one native API key with exactly `adminUser.create`, `adminUser.read`,
+`adminUser.update` and `systemConfig.read`: the bridge's account, directory, creation,
+access, revocation and reactivation routes plus its provider readback. The bridge needs this
+separate account because the module refuses self-revocation. Initial setup generates the
+key and writes it to `serviceKeyFile` (an absolute canonical path beneath the same protected
+parents as the bundle) with `O_CREAT|O_EXCL`, mode 0600 and fsync before the database
+commit; a rerun after a crash before commit reuses a valid existing file. The file holds only
+the key (ASCII letters and digits, no newline); it never reaches stdout or stderr. After
+commit, repeats verify the account, its administrator flag, zero sessions and exactly one key
+whose stored hash matches the file and whose permissions are exact; a missing or changed
+file refuses, and no second key is ever minted.
+
+The report (`immich.setup-report/1`) keeps `accounts` as the administrator and everyday
+pair, and adds `service` (`{"id"}`, `null` in a plan) and `nativeUsers`: every undeleted
+native user as `{"id", "administrator"}`, sorted by ID and refused above 1000. The
+workstation checks the three-account invariant from it right after initial setup;
+`immich-admin list-users` output is not parseable.
+
+Accepted risk (Yoshi, 2026-10-10): setup does not disable `passwordLogin`. Because initial
+setup now refuses any existing account, a first-run sign-up before setup blocks setup
+instead of keeping password access; run setup before Immich is reachable by anyone else.
 
 Access inspection and revoke accept OIDC disabled, a rotated provider and inactive or
 soft-deleted accounts. The binding comes from the stored fence, else the account's directory

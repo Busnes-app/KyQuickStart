@@ -52,7 +52,7 @@ func qualifyNativeDirectory(t *testing.T, ctx context.Context, c *Client, contai
 		case "expectedRevision":
 			bad[field] = 0
 		case "email-conflict":
-			bad["profile"] = Profile{"Conflict", "bootstrap@example.test", true}
+			bad["profile"] = Profile{"Conflict", "owner@example.test", true}
 		}
 		var ignored json.RawMessage
 		if c.call(ctx, http.MethodPost, "/admin/users/"+b.ID+"/kyquickstart/directory", bad, &ignored) == nil {

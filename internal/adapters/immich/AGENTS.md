@@ -11,10 +11,12 @@ Verify exact native OIDC ownership, administrator projection and content-preserv
 - `access.go`: installation-bound module proof and permanent revocation with uncertain-outcome refusal.
 - `directory.go`: owned current profile/revision inspection and verified atomic native name/email/administrator projection.
 - `creation.go`: protected native subject-absence proof and ordinary creation with verified immutable UUID/profile receipts.
-- `module/`: pinned native apply-setup/owned account receipts, revocation source extension
-  and disposable server overlay; no production release.
+- `module/`: pinned native apply-setup/owned account and service-administrator receipts,
+  revocation/reactivation source extension and the catalog server overlay `Dockerfile`.
 - `native_test.go`: owned digest-pinned service/database/cache, native signed login/grant/logout verification.
-- `native_setup_test.go`: protected bundle, read-only check, ownership/conflict rollback and native account creation/repeat.
+- `native_setup_test.go`: protected bundle, blank-installation refusal, read-only check, phone redirect override,
+  owner/everyday/service-administrator creation, private service key reuse/no second key and repeat.
+- `native_reactivation_test.go`: module reactivation refusals, epoch idempotence, dead old credentials, fresh sign-in and re-revocation.
 - `native_directory_test.go`: profile/role transactions, setup compatibility, stale/foreign refusal and existing-session authorization.
 - `native_creation_test.go`: atomic native creation, collision rollback, repeat, independent role projection and retained revocation.
 - `native_installer_test.go`: actual saved integrate-stack over SSH/Docker with target locking and host-key pinning.
@@ -38,8 +40,8 @@ Verify exact native OIDC ownership, administrator projection and content-preserv
 - Native DELETE schedules content deletion and is not offboarding. No deletion or restore call is implemented.
 - Native signed back-channel logout revokes OAuth sessions but preserves personal API keys;
   it does not satisfy complete offboarding. Never substitute account deletion for revocation.
-- The community module adds transactional session/key removal, a permanent metadata fence,
-  subject denial and socket disconnection. Require `ky.immich-access/1`, exact installation
+- The community module adds transactional session/key removal, a metadata fence (write-once
+  per epoch, cleared only by its epoch-bound reactivation route), subject denial and socket disconnection. Require `ky.immich-access/1`, exact installation
   ownership, explicit nonnegative counts and valid revocation time; failed writes/readback
   require reconciliation. Stock servers cannot use this revocation path.
 - Provider configuration requires a protected full-configuration preflight fingerprint that
@@ -101,10 +103,20 @@ the fixture separately caps container memory (server 2 GiB, database 768 MiB, pr
   and completion/audit proofs must survive restart. Maintain socket heartbeat during retry
   so observed disconnection cannot be an idle timeout. This controlled sender does not qualify actual KyIdentity event delivery.
 - `KYQ_TEST_IMMICH_SETUP=1` additionally requires the module image: invoke native apply-setup
-  with a target-local bundle; verify read-only check, missing-resume refusal, atomic rollback
-  on a foreign account, native owner/everyday creation, UUID/role receipt stability across CLI
-  processes, foreign installation/provider refusal and private-file/symlink/parent checks.
+  with a target-local bundle; verify missing-resume refusal, refusal (plan included) while the
+  fixture's bootstrap administrator exists, then hard-delete it with `psql` so setup owns a
+  blank installation. Verify read-only check, invalid phone-URI/key-path refusal, the stored
+  mobile override, owner/everyday/service creation with exactly three native users, reuse of
+  the refused run's pre-commit 0600 key file, the service key's bounded permissions, service
+  password-login refusal, one key across repeats, missing/changed-file refusal, UUID/role
+  receipt stability, foreign installation/provider refusal and private-file/symlink/parent checks.
+  The owner's own API key then drives the fixture and bridges get the service key.
   After revocation, setup resume must fail and retain the exact fence/time/zero credentials.
+  Without producer mode, reactivation then refuses bad epochs/fields/bindings, session-only
+  authority, self, a never-revoked account and email collisions; reactivates at epoch 2 with
+  administrator from the profile (synthetic `daily-admin` code, or KyIdentity's roles); repeats
+  idempotently; keeps the old session, key and socket subscription dead; admits a fresh
+  sign-in on the same UUID; and re-revokes with a new fence before epoch 4.
   Signed native login must use those created IDs. This is initial setup, not an ongoing
   directory connector or dedicated-administrator ordinary-workflow qualification.
 - `KYQ_TEST_IMMICH_INSTALLER=1` additionally requires setup qualification and an immutable

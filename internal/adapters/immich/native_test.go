@@ -302,10 +302,54 @@ func TestNativeProviderAccountAndAdministrator(t *testing.T) {
 			producer.Cross.prepare(t, ctx, identity)
 		}
 	}
+	sessions := map[string]string{}
+	callbackURL := func(actor string) string {
+		t.Helper()
+		verifier := strings.Repeat("a", 43)
+		digest := sha256.Sum256([]byte(verifier))
+		challenge := base64.RawURLEncoding.EncodeToString(digest[:])
+		state := "owned-" + actor
+		var authorize struct{ URL string }
+		redirect := front.URL + "/auth/login"
+		request(http.MethodPost, "/oauth/authorize", "", map[string]string{"redirectUri": redirect, "state": state, "codeChallenge": challenge}, &authorize)
+		parsed, err := url.Parse(authorize.URL)
+		if err != nil || parsed.Scheme+"://"+parsed.Host != providerURL || parsed.Query().Get("state") != state || parsed.Query().Get("code_challenge") != challenge {
+			t.Fatal("native OAuth authorization not pinned")
+		}
+		if identity != nil {
+			return identity.authorize(t, actor, authorize.URL, redirect, true)
+		}
+		return redirect + "?code=" + actor + "&state=" + state
+	}
+	signin := func(actor string) Binding {
+		t.Helper()
+		var result struct {
+			UserID, AccessToken string
+			IsAdmin             bool
+		}
+		request(http.MethodPost, "/oauth/callback", "", map[string]string{"url": callbackURL(actor), "state": "owned-" + actor, "codeVerifier": strings.Repeat("a", 43)}, &result)
+		if result.UserID == "" || result.AccessToken == "" || result.IsAdmin != (actor == "owner") {
+			t.Fatal("native OAuth account or authority incorrect")
+		}
+		sessions[actor] = result.AccessToken
+		return Binding{ID: result.UserID, Issuer: providerURL, ClientID: "fixture-client", Subject: subjects[actor]}
+	}
 	var setup nativeSetupReport
 	var expectedProviderWrites int32 = 1
 	if os.Getenv("KYQ_TEST_IMMICH_SETUP") == "1" {
-		setup = qualifyNativeSetup(t, ctx, c, nonce+"-server", provider, subjects)
+		var serviceKey string
+		setup, serviceKey = qualifyNativeSetup(t, ctx, c, nonce+"-server", provider, subjects)
+		providerWrites.Store(0) // Setup's refused service-key PUT probe is not a configuration write.
+		// Setup removed the bootstrap to own a blank installation. The owner's own
+		// administrator key drives the fixture; bridges use the service administrator's key.
+		signin("owner")
+		var ownerKey struct{ Secret string }
+		request(http.MethodPost, "/api-keys", sessions["owner"], map[string]any{"name": "fixture-owner", "permissions": []string{"all"}}, &ownerKey)
+		if c, err = New(front.URL, ownerKey.Secret); err != nil {
+			t.Fatal("native owner API credential unusable")
+		}
+		c.http.Transport = client.Transport
+		login.AccessToken, key.Secret = sessions["owner"], serviceKey
 		preflight, err = c.InspectProviderConfiguration(ctx)
 		if err != nil {
 			t.Fatal("native setup provider readback failed")
@@ -330,25 +374,6 @@ func TestNativeProviderAccountAndAdministrator(t *testing.T) {
 	if os.Getenv("KYQ_TEST_IMMICH_CREATE") == "1" {
 		qualifyNativeCreation(t, ctx, c, provider, subjects["daily"], login.AccessToken)
 	}
-	sessions := map[string]string{}
-	callbackURL := func(actor string) string {
-		t.Helper()
-		verifier := strings.Repeat("a", 43)
-		digest := sha256.Sum256([]byte(verifier))
-		challenge := base64.RawURLEncoding.EncodeToString(digest[:])
-		state := "owned-" + actor
-		var authorize struct{ URL string }
-		redirect := front.URL + "/auth/login"
-		request(http.MethodPost, "/oauth/authorize", "", map[string]string{"redirectUri": redirect, "state": state, "codeChallenge": challenge}, &authorize)
-		parsed, err := url.Parse(authorize.URL)
-		if err != nil || parsed.Scheme+"://"+parsed.Host != providerURL || parsed.Query().Get("state") != state || parsed.Query().Get("code_challenge") != challenge {
-			t.Fatal("native OAuth authorization not pinned")
-		}
-		if identity != nil {
-			return identity.authorize(t, actor, authorize.URL, redirect, true)
-		}
-		return redirect + "?code=" + actor + "&state=" + state
-	}
 	if len(setup.Accounts) != 0 && identity == nil {
 		body, _ := json.Marshal(map[string]string{"url": callbackURL("unprovisioned"), "state": "owned-unprovisioned", "codeVerifier": strings.Repeat("a", 43)})
 		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, front.URL+"/api/oauth/callback", bytes.NewReader(body))
@@ -366,19 +391,6 @@ func TestNativeProviderAccountAndAdministrator(t *testing.T) {
 			t.Fatal("refused first login created or adopted a native account")
 		}
 		t.Log("managed first login refuses signed unprovisioned subject and preserves native absence")
-	}
-	signin := func(actor string) Binding {
-		t.Helper()
-		var result struct {
-			UserID, AccessToken string
-			IsAdmin             bool
-		}
-		request(http.MethodPost, "/oauth/callback", "", map[string]string{"url": callbackURL(actor), "state": "owned-" + actor, "codeVerifier": strings.Repeat("a", 43)}, &result)
-		if result.UserID == "" || result.AccessToken == "" || result.IsAdmin != (actor == "owner") {
-			t.Fatal("native OAuth account or authority incorrect")
-		}
-		sessions[actor] = result.AccessToken
-		return Binding{ID: result.UserID, Issuer: providerURL, ClientID: "fixture-client", Subject: subjects[actor]}
 	}
 	owner, daily := signin("owner"), signin("daily")
 	if len(setup.Accounts) != 0 {
@@ -792,6 +804,26 @@ func TestNativeProviderAccountAndAdministrator(t *testing.T) {
 			if err != nil || !afterRefusal.Revoked || afterRefusal.RevokedAt != repeated.RevokedAt || afterRefusal.APIKeys != 0 || afterRefusal.Sessions != 0 {
 				t.Fatal("native setup refusal changed retained revocation")
 			}
+		}
+		if os.Getenv("KYQ_TEST_IMMICH_SETUP") == "1" && producer == nil {
+			service, err := New(front.URL, key.Secret)
+			if err != nil {
+				t.Fatal("native service administrator key unusable")
+			}
+			service.http.Transport = client.Transport
+			// The synthetic provider's daily-admin code is daily's subject holding the admin role.
+			actor := "daily-admin"
+			if identity != nil {
+				actor = "daily"
+			}
+			qualifyNativeReactivation(t, ctx, c, service, daily, owner, setupID, sessions["owner"], []string{sessions["daily"]}, ordinaryKey.Secret, identity == nil, func() (string, bool, string) {
+				var result struct {
+					UserID, AccessToken string
+					IsAdmin             bool
+				}
+				request(http.MethodPost, "/oauth/callback", "", map[string]string{"url": callbackURL(actor), "state": "owned-" + actor, "codeVerifier": strings.Repeat("a", 43)}, &result)
+				return result.UserID, result.IsAdmin, result.AccessToken
+			})
 		}
 		if producer == nil {
 			t.Log("community module denies personal key and new signed login, preserves owner/account/photo bytes and verifies permanent installation-bound repeat")

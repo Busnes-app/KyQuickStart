@@ -61,8 +61,12 @@ func TestNativeContainerProvider(t *testing.T) {
 		t.Fatal("invalid private provider key")
 	}
 	issuer := cfg.Issuer
+	// daily-admin is daily's subject after an administrator role grant.
+	roles := map[string]string{"owner": "admin", "daily": "user", "unprovisioned": "user", "daily-admin": "admin"}
 	claims := func(actor string) map[string]any {
-		return map[string]any{"iss": issuer, "sub": "owned-" + actor, "aud": "fixture-client", "iat": time.Now().Unix(), "exp": time.Now().Add(time.Minute).Unix(), "name": actor, "email": actor + "@example.test", "email_verified": true, "preferred_username": actor, "roles": []string{map[string]string{"owner": "admin", "daily": "user", "unprovisioned": "user"}[actor]}}
+		role := roles[actor]
+		actor = strings.TrimSuffix(actor, "-admin")
+		return map[string]any{"iss": issuer, "sub": "owned-" + actor, "aud": "fixture-client", "iat": time.Now().Unix(), "exp": time.Now().Add(time.Minute).Unix(), "name": actor, "email": actor + "@example.test", "email_verified": true, "preferred_username": actor, "roles": []string{role}}
 	}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -72,7 +76,7 @@ func TestNativeContainerProvider(t *testing.T) {
 		case "/keys":
 			_ = json.NewEncoder(w).Encode(map[string]any{"keys": []any{map[string]any{"kty": "RSA", "use": "sig", "alg": "RS256", "kid": "owned-fixture", "n": base64.RawURLEncoding.EncodeToString(key.N.Bytes()), "e": base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes())}}})
 		case "/token":
-			if r.ParseForm() != nil || r.Form.Get("client_id") != "fixture-client" || r.Form.Get("client_secret") != "disposable-client-secret" || r.Form.Get("code_verifier") != strings.Repeat("a", 43) || (r.Form.Get("code") != "owner" && r.Form.Get("code") != "daily" && r.Form.Get("code") != "unprovisioned") {
+			if r.ParseForm() != nil || r.Form.Get("client_id") != "fixture-client" || r.Form.Get("client_secret") != "disposable-client-secret" || r.Form.Get("code_verifier") != strings.Repeat("a", 43) || roles[r.Form.Get("code")] == "" {
 				w.WriteHeader(400)
 				return
 			}
@@ -85,7 +89,7 @@ func TestNativeContainerProvider(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "access-" + actor, "token_type": "Bearer", "expires_in": 60, "id_token": token})
 		case "/userinfo":
 			actor := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer access-")
-			if actor != "owner" && actor != "daily" && actor != "unprovisioned" {
+			if roles[actor] == "" {
 				w.WriteHeader(401)
 				return
 			}

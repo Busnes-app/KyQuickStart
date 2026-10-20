@@ -47,7 +47,7 @@ func qualifyNativeCreation(t *testing.T, ctx context.Context, c *Client, provide
 		case "subject":
 			bad[conflict] = initialSubject
 		case "email":
-			bad["profile"] = map[string]string{"name": profile.Name, "email": "bootstrap@example.test"}
+			bad["profile"] = map[string]string{"name": profile.Name, "email": "owner@example.test"}
 		case "role":
 			bad["profile"] = map[string]any{"name": profile.Name, "email": profile.Email, "administrator": true}
 		}

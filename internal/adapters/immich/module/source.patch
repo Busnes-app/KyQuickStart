@@ -18,17 +18,107 @@ index 0d03e4c..bf8ca1e 100644
    PromptEmailQuestion,
 diff --git a/server/src/commands/kyquickstart-setup.command.ts b/server/src/commands/kyquickstart-setup.command.ts
 new file mode 100644
-index 0000000..202d6c4
+index 0000000..122763e
 --- /dev/null
 +++ b/server/src/commands/kyquickstart-setup.command.ts
-@@ -0,0 +1,123 @@
+@@ -0,0 +1,191 @@
 +import { Command, CommandRunner, Option } from 'nest-commander';
++import { randomBytes } from 'node:crypto';
 +import { constants } from 'node:fs';
-+import { lstat, open, realpath } from 'node:fs/promises';
++import { FileHandle, lstat, open, realpath } from 'node:fs/promises';
 +import { dirname, isAbsolute, resolve } from 'node:path';
-+import { KyQuickStartSetupSchema } from 'src/dtos/kyquickstart-setup.dto';
++import { KYQUICKSTART_SERVICE_KEY, KyQuickStartSetupSchema } from 'src/dtos/kyquickstart-setup.dto';
 +import { ConfigRepository } from 'src/repositories/config.repository';
 +import { SystemMetadataRepository } from 'src/repositories/system-metadata.repository';
++
++// Absolute canonical path beneath root/user-owned nonsymlink parents without group/other write.
++async function protectedParents(path: string) {
++  if (!isAbsolute(path) || resolve(path) !== path) {
++    throw new Error('Protected path unavailable');
++  }
++  let parent = dirname(path);
++  if ((await realpath(parent)) !== parent) {
++    throw new Error('Protected path unavailable');
++  }
++  while (true) {
++    const info = await lstat(parent);
++    if (
++      !info.isDirectory() ||
++      info.isSymbolicLink() ||
++      (info.mode & 0o022) !== 0 ||
++      (info.uid !== 0 && info.uid !== process.getuid?.())
++    ) {
++      throw new Error('Protected parent unavailable');
++    }
++    if (parent === '/') {
++      return;
++    }
++    parent = dirname(parent);
++  }
++}
++
++// A regular 0600 file owned by the command user, read without following links.
++async function readPrivate(path: string, max: number): Promise<Buffer> {
++  await protectedParents(path);
++  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
++  try {
++    const info = await file.stat();
++    if (
++      !info.isFile() ||
++      (info.mode & 0o777) !== 0o600 ||
++      info.uid !== process.getuid?.() ||
++      info.size === 0 ||
++      info.size > max
++    ) {
++      throw new Error('File is not private');
++    }
++    const data = Buffer.alloc(max + 1);
++    const read = await file.read(data, 0, data.length, 0);
++    if (read.bytesRead !== info.size) {
++      throw new Error('File changed during read');
++    }
++    return data.subarray(0, read.bytesRead);
++  } finally {
++    await file.close();
++  }
++}
++
++async function readServiceKey(path: string): Promise<string> {
++  const data = await readPrivate(path, 64);
++  const key = data.toString('ascii');
++  if (!KYQUICKSTART_SERVICE_KEY.test(key)) {
++    throw new Error('Service key file is invalid');
++  }
++  return key;
++}
++
++// Reuse a key a crashed run left before its commit; otherwise create it exclusively and durably.
++async function ensureServiceKey(path: string): Promise<string> {
++  await protectedParents(path);
++  const key = randomBytes(32).toString('base64').replaceAll(/\W/g, '');
++  let file: FileHandle;
++  try {
++    file = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
++  } catch (error) {
++    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
++      return readServiceKey(path);
++    }
++    throw error;
++  }
++  try {
++    await file.writeFile(key);
++    await file.sync();
++  } finally {
++    await file.close();
++  }
++  const directory = await open(dirname(path), constants.O_RDONLY | constants.O_DIRECTORY);
++  try {
++    await directory.sync();
++  } finally {
++    await directory.close();
++  }
++  return readServiceKey(path);
++}
 +
 +@Command({ name: 'apply-setup', description: 'Apply a protected KyQuickStart installation bundle' })
 +export class KyQuickStartSetupCommand extends CommandRunner {
@@ -75,68 +165,46 @@ index 0000000..202d6c4
 +            bundleSchema: 'immich.setup/1',
 +            nativeVersion: '3.2.0',
 +            moduleContract: 'ky.immich-setup/1',
-+            features: ['native-oidc', 'owned-initial-accounts', 'immutable-receipts', 'check'],
++            features: [
++              'native-oidc',
++              'owned-initial-accounts',
++              'immutable-receipts',
++              'check',
++              'mobile-redirect',
++              'service-administrator',
++              'reactivation',
++            ],
 +          })}\n`,
 +        );
 +        return;
 +      }
-+      if (!options.file) {
++      if (!options.file || this.config.getEnv().configFile) {
 +        throw new Error('Protected bundle required');
 +      }
-+      if (
-+        !isAbsolute(options.file) ||
-+        resolve(options.file) !== options.file ||
-+        (await realpath(options.file)) !== options.file ||
-+        this.config.getEnv().configFile
-+      ) {
-+        throw new Error('Protected bundle path unavailable');
-+      }
-+      let parent = dirname(options.file);
-+      while (true) {
-+        const info = await lstat(parent);
-+        if (
-+          !info.isDirectory() ||
-+          info.isSymbolicLink() ||
-+          (info.mode & 0o022) !== 0 ||
-+          (info.uid !== 0 && info.uid !== process.getuid?.())
-+        ) {
-+          throw new Error('Bundle parent is not protected');
-+        }
-+        if (parent === '/') {
-+          break;
-+        }
-+        parent = dirname(parent);
-+      }
-+      const file = await open(options.file, constants.O_RDONLY | constants.O_NOFOLLOW);
-+      let data: Buffer;
-+      try {
-+        const info = await file.stat();
-+        if (
-+          !info.isFile() ||
-+          (info.mode & 0o777) !== 0o600 ||
-+          info.uid !== process.getuid?.() ||
-+          info.size === 0 ||
-+          info.size > 65_536
-+        ) {
-+          throw new Error('Bundle is not private');
-+        }
-+        data = Buffer.alloc(65_537);
-+        const read = await file.read(data, 0, data.length, 0);
-+        if (read.bytesRead !== info.size) {
-+          throw new Error('Bundle changed during read');
-+        }
-+        data = data.subarray(0, read.bytesRead);
-+      } finally {
-+        await file.close();
-+      }
++      const data = await readPrivate(options.file, 65_536);
 +      const spec = KyQuickStartSetupSchema.parse(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(data)));
-+      const report = await this.metadata.applyKyQuickStartSetup(spec, {
++      if (spec.serviceKeyFile === options.file) {
++        throw new Error('Service key file conflicts with the bundle');
++      }
++      // After commit the key file must already hold the stored key. Before commit,
++      // the file is written (or a crash-left file reused) before the database commit.
++      const serviceKey = (await this.metadata.hasKyQuickStartSetup())
++        ? await readServiceKey(spec.serviceKeyFile)
++        : options.check || options.resume
++          ? undefined
++          : await ensureServiceKey(spec.serviceKeyFile);
++      const report = await this.metadata.applyKyQuickStartSetup(spec, serviceKey, {
 +        check: options.check === true,
 +        resume: options.resume === true,
 +      });
 +      if (!options.check) {
-+        const proof = await this.metadata.applyKyQuickStartSetup(spec, { check: true, resume: true });
++        const proof = await this.metadata.applyKyQuickStartSetup(spec, await readServiceKey(spec.serviceKeyFile), {
++          check: true,
++          resume: true,
++        });
 +        report.accounts = proof.accounts;
++        report.service = proof.service;
++        report.nativeUsers = proof.nativeUsers;
 +      }
 +      process.stdout.write(`${JSON.stringify(report)}\n`);
 +    } catch {
@@ -146,10 +214,10 @@ index 0000000..202d6c4
 +  }
 +}
 diff --git a/server/src/controllers/user-admin.controller.ts b/server/src/controllers/user-admin.controller.ts
-index 18798c0..07fcdef 100644
+index 18798c0..ba7ed2c 100644
 --- a/server/src/controllers/user-admin.controller.ts
 +++ b/server/src/controllers/user-admin.controller.ts
-@@ -4,6 +4,13 @@ import { Endpoint, HistoryBuilder } from 'src/decorators';
+@@ -4,6 +4,14 @@ import { Endpoint, HistoryBuilder } from 'src/decorators';
  import { AssetStatsDto, AssetStatsResponseDto } from 'src/dtos/asset.dto';
  import { AuthDto } from 'src/dtos/auth.dto';
  import { CalendarHeatmapDto, CalendarHeatmapResponseDto } from 'src/dtos/calendar-heatmap.dto';
@@ -158,12 +226,13 @@ index 18798c0..07fcdef 100644
 +  KyQuickStartCreationQueryDto,
 +  KyQuickStartDirectoryQueryDto,
 +  KyQuickStartDirectoryUpdateDto,
++  KyQuickStartReactivateDto,
 +  KyQuickStartRevokeDto,
 +} from 'src/dtos/kyquickstart.dto';
  import { SessionResponseDto } from 'src/dtos/session.dto';
  import { UserPreferencesResponseDto, UserPreferencesUpdateDto } from 'src/dtos/user-preferences.dto';
  import {
-@@ -101,6 +108,59 @@ export class UserAdminController {
+@@ -101,6 +109,71 @@ export class UserAdminController {
      return this.service.delete(auth, id, dto);
    }
  
@@ -220,17 +289,42 @@ index 18798c0..07fcdef 100644
 +    return this.service.revokeKyQuickStartAccess(auth, id, dto);
 +  }
 +
++  @Post(':id/kyquickstart/reactivate')
++  @HttpCode(HttpStatus.OK)
++  @ApiExcludeEndpoint()
++  @Authenticated({ permission: Permission.AdminUserUpdate, admin: true })
++  reactivateKyQuickStartAccess(
++    @Auth() auth: AuthDto,
++    @Param() { id }: UUIDParamDto,
++    @Body() dto: KyQuickStartReactivateDto,
++  ) {
++    return this.service.reactivateKyQuickStartAccess(auth, id, dto);
++  }
++
    @Get(':id/calendar-heatmap')
    @Authenticated({ permission: Permission.AdminUserRead, admin: true })
    @Endpoint({
 diff --git a/server/src/dtos/kyquickstart-setup.dto.ts b/server/src/dtos/kyquickstart-setup.dto.ts
 new file mode 100644
-index 0000000..5cc029b
+index 0000000..28175b3
 --- /dev/null
 +++ b/server/src/dtos/kyquickstart-setup.dto.ts
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,87 @@
++import { posix } from 'node:path';
 +import { KyQuickStartRevokeSchema } from 'src/dtos/kyquickstart.dto';
 +import z from 'zod';
++
++export const KYQUICKSTART_SERVICE_EMAIL = 'kyquickstart-service@kyquickstart.invalid';
++export const KYQUICKSTART_SERVICE_NAME = 'kyquickstart-service';
++// Exactly what the bridge's Immich target calls: account/directory/creation/access/reactivation routes and provider readback.
++export const KYQUICKSTART_SERVICE_PERMISSIONS = [
++  'adminUser.create',
++  'adminUser.read',
++  'adminUser.update',
++  'systemConfig.read',
++] as const;
++// Native API key secrets are base64 text with non-word characters removed.
++export const KYQUICKSTART_SERVICE_KEY = /^[A-Za-z0-9]{40,64}$/;
 +
 +const account = z.strictObject({
 +  subject: KyQuickStartRevokeSchema.shape.subject,
@@ -258,7 +352,32 @@ index 0000000..5cc029b
 +        .max(16_384)
 +        .regex(/^\P{Cc}+$/u),
 +      rolesClaim: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/),
++      mobileRedirectUri: z
++        .string()
++        .max(2048)
++        .refine((value) => {
++          if (!URL.canParse(value)) {
++            return false;
++          }
++          const url = new URL(value);
++          return (
++            url.protocol === 'https:' &&
++            !url.username &&
++            !url.password &&
++            !url.search &&
++            !url.hash &&
++            url.pathname === '/api/oauth/mobile-redirect' &&
++            value === `https://${url.host}/api/oauth/mobile-redirect`
++          );
++        }),
 +    }),
++    serviceKeyFile: z
++      .string()
++      .max(4096)
++      .refine(
++        (value) =>
++          value.length > 1 && posix.isAbsolute(value) && posix.normalize(value) === value && !value.endsWith('/'),
++      ),
 +    administrator: account,
 +    everyday: account,
 +  })
@@ -274,14 +393,16 @@ index 0000000..5cc029b
 +  intentDigest: z.string().regex(/^[a-f0-9]{64}$/),
 +  administratorId: z.uuid(),
 +  everydayId: z.uuid(),
++  serviceId: z.uuid(),
++  serviceKeyId: z.uuid(),
 +});
 +export type KyQuickStartSetupReceipt = z.infer<typeof KyQuickStartSetupReceiptSchema>;
 diff --git a/server/src/dtos/kyquickstart.dto.ts b/server/src/dtos/kyquickstart.dto.ts
 new file mode 100644
-index 0000000..a8c72f5
+index 0000000..0745148
 --- /dev/null
 +++ b/server/src/dtos/kyquickstart.dto.ts
-@@ -0,0 +1,82 @@
+@@ -0,0 +1,104 @@
 +import { createZodDto } from 'nestjs-zod';
 +import z from 'zod';
 +
@@ -364,8 +485,30 @@ index 0000000..a8c72f5
 +export type KyQuickStartCreation = z.infer<typeof KyQuickStartCreationSchema>;
 +export class KyQuickStartCreationDto extends createZodDto(KyQuickStartCreationSchema) {}
 +export class KyQuickStartCreationQueryDto extends createZodDto(KyQuickStartRevokeSchema) {}
++
++// 008's reactivation epochs: each reactivation opens a new even epoch, 2 or later.
++const epoch = z
++  .number()
++  .int()
++  .min(2)
++  .max(2 ** 31 - 1)
++  .refine((value) => value % 2 === 0);
++export const KyQuickStartReactivateSchema = KyQuickStartRevokeSchema.extend({
++  epoch,
++  profile: KyQuickStartDirectoryProfileSchema,
++});
++export class KyQuickStartReactivateDto extends createZodDto(KyQuickStartReactivateSchema) {}
++export type KyQuickStartReactivate = z.infer<typeof KyQuickStartReactivateSchema>;
++export const KyQuickStartReactivationSchema = z.strictObject({
++  contract: z.literal('ky.immich-reactivation/1'),
++  setupId: z.uuid(),
++  epoch,
++  reactivatedAt: z.iso.datetime(),
++  revokedAt: z.iso.datetime(),
++});
++export type KyQuickStartReactivation = z.infer<typeof KyQuickStartReactivationSchema>;
 diff --git a/server/src/enum.ts b/server/src/enum.ts
-index 8cb6582..0182110 100644
+index 8cb6582..3a10159 100644
 --- a/server/src/enum.ts
 +++ b/server/src/enum.ts
 @@ -352,6 +352,7 @@ export enum StorageFolder {
@@ -376,13 +519,14 @@ index 8cb6582..0182110 100644
    MediaLocation = 'MediaLocation',
    ReverseGeocodingState = 'reverse-geocoding-state',
    FacialRecognitionState = 'facial-recognition-state',
-@@ -366,6 +367,9 @@ export enum SystemMetadataKey {
+@@ -366,6 +367,10 @@ export enum SystemMetadataKey {
  }
  
  export enum UserMetadataKey {
 +  KyQuickStartAccess = 'kyquickstart-access',
 +  KyQuickStartDirectory = 'kyquickstart-directory',
 +  KyQuickStartCreation = 'kyquickstart-creation',
++  KyQuickStartReactivation = 'kyquickstart-reactivation',
    Preferences = 'preferences',
    License = 'license',
    Onboarding = 'onboarding',
@@ -512,29 +656,38 @@ index bbf7ef0..cb58af8 100644
            [
              'Algorithm mismatch. Make sure the signing algorithm is set correctly in the OAuth settings.',
 diff --git a/server/src/repositories/system-metadata.repository.ts b/server/src/repositories/system-metadata.repository.ts
-index 755dc4c..1f800c7 100644
+index 755dc4c..06ca3ad 100644
 --- a/server/src/repositories/system-metadata.repository.ts
 +++ b/server/src/repositories/system-metadata.repository.ts
-@@ -1,14 +1,32 @@
+@@ -1,14 +1,41 @@
 -import { Injectable } from '@nestjs/common';
 -import { Insertable, Kysely } from 'kysely';
 +import { ConflictException, Injectable } from '@nestjs/common';
-+import { Insertable, Kysely, sql } from 'kysely';
++import { Insertable, Kysely, sql, Transaction } from 'kysely';
  import { InjectKysely } from 'nestjs-kysely';
 +import { createHash } from 'node:crypto';
  import { readFile } from 'node:fs/promises';
 +import { isDeepStrictEqual } from 'node:util';
  import { GenerateSql } from 'src/decorators';
 +import { AdminConfigDto, defaults } from 'src/dtos/config.dto';
-+import { KyQuickStartSetup, KyQuickStartSetupReceiptSchema } from 'src/dtos/kyquickstart-setup.dto';
++import {
++  KYQUICKSTART_SERVICE_EMAIL,
++  KYQUICKSTART_SERVICE_NAME,
++  KYQUICKSTART_SERVICE_PERMISSIONS,
++  KyQuickStartSetup,
++  KyQuickStartSetupReceiptSchema,
++} from 'src/dtos/kyquickstart-setup.dto';
 +import {
 +  KyQuickStartCreation,
 +  KyQuickStartCreationReceiptSchema,
 +  KyQuickStartDirectoryReceiptSchema,
 +  KyQuickStartDirectoryUpdate,
++  KyQuickStartFenceSchema,
++  KyQuickStartReactivate,
++  KyQuickStartReactivationSchema,
 +  KyQuickStartRevokeSchema,
 +} from 'src/dtos/kyquickstart.dto';
-+import { OAuthTokenEndpointAuthMethod, SystemMetadataKey, UserMetadataKey, UserStatus } from 'src/enum';
++import { OAuthTokenEndpointAuthMethod, Permission, SystemMetadataKey, UserMetadataKey, UserStatus } from 'src/enum';
  import { DB } from 'src/schema';
  import { SystemMetadataTable } from 'src/schema/tables/system-metadata.table';
  import { SystemMetadata } from 'src/types';
@@ -550,7 +703,7 @@ index 755dc4c..1f800c7 100644
  @Injectable()
  export class SystemMetadataRepository {
    constructor(@InjectKysely() private db: Kysely<DB>) {}
-@@ -40,6 +58,525 @@ export class SystemMetadataRepository {
+@@ -40,6 +67,750 @@ export class SystemMetadataRepository {
      await this.db.deleteFrom('system_metadata').where('key', '=', key).execute();
    }
  
@@ -563,7 +716,11 @@ index 755dc4c..1f800c7 100644
 +    return row !== undefined;
 +  }
 +
-+  async applyKyQuickStartSetup(spec: KyQuickStartSetup, options: { check: boolean; resume: boolean }) {
++  async applyKyQuickStartSetup(
++    spec: KyQuickStartSetup,
++    serviceKey: string | undefined,
++    options: { check: boolean; resume: boolean },
++  ) {
 +    const intentDigest = createHash('sha256').update(JSON.stringify(spec)).digest('hex');
 +    return this.db
 +      .transaction()
@@ -588,6 +745,13 @@ index 755dc4c..1f800c7 100644
 +        ) {
 +          throw new Error('Installation ownership conflicts');
 +        }
++        if (receipt ? !serviceKey : !options.check && !serviceKey) {
++          throw new Error('Service key file unavailable');
++        }
++        // Initial setup owns a blank installation: any existing account, even deleted, refuses.
++        if (!receipt && (await tx.selectFrom('user').select('id').limit(1).executeTakeFirst())) {
++          throw new Error('Native accounts already exist');
++        }
 +        const partial = z.record(z.string(), z.unknown()).parse(stored?.value ?? {});
 +        const partialOAuth = z.record(z.string(), z.unknown()).parse(partial.oauth ?? {});
 +        const oauth = AdminConfigDto.schema.parse({ ...defaults, oauth: { ...defaults.oauth, ...partialOAuth } }).oauth;
@@ -602,6 +766,8 @@ index 755dc4c..1f800c7 100644
 +          scope: 'openid email profile',
 +          signingAlgorithm: 'RS256',
 +          tokenEndpointAuthMethod: OAuthTokenEndpointAuthMethod.ClientSecretPost,
++          mobileOverrideEnabled: true,
++          mobileRedirectUri: spec.provider.mobileRedirectUri,
 +        };
 +        const configured = Object.entries(desired).every(([key, value]) =>
 +          isDeepStrictEqual(Reflect.get(oauth, key), value),
@@ -686,14 +852,92 @@ index 755dc4c..1f800c7 100644
 +            account.isAdmin = directory.profile.administrator;
 +          }
 +        }
++        const serviceKeyHash = serviceKey ? createHash('sha256').update(serviceKey).digest() : undefined;
++        const permissions = [...KYQUICKSTART_SERVICE_PERMISSIONS] as Permission[];
++        if (receipt) {
++          const service = await tx
++            .selectFrom('user')
++            .select(['id', 'oauthId', 'email', 'name', 'isAdmin', 'password', 'deletedAt', 'status'])
++            .where('id', '=', receipt.serviceId)
++            .$if(!options.check, (qb) => qb.forUpdate())
++            .executeTakeFirst();
++          const keys = await tx
++            .selectFrom('api_key')
++            .select(['id', 'key', 'permissions'])
++            .where('userId', '=', receipt.serviceId)
++            .limit(2)
++            .execute();
++          const sessions = await tx
++            .selectFrom('session')
++            .select('id')
++            .where('userId', '=', receipt.serviceId)
++            .limit(1)
++            .execute();
++          const metadata = await tx
++            .selectFrom('user_metadata')
++            .select('key')
++            .where('userId', '=', receipt.serviceId)
++            .where('key', 'in', [
++              UserMetadataKey.KyQuickStartAccess,
++              UserMetadataKey.KyQuickStartDirectory,
++              UserMetadataKey.KyQuickStartCreation,
++              UserMetadataKey.KyQuickStartReactivation,
++            ])
++            .limit(1)
++            .execute();
++          if (
++            !service ||
++            service.oauthId !== '' ||
++            service.email !== KYQUICKSTART_SERVICE_EMAIL ||
++            service.name !== KYQUICKSTART_SERVICE_NAME ||
++            !service.isAdmin ||
++            service.password !== null ||
++            service.deletedAt !== null ||
++            service.status !== UserStatus.Active ||
++            keys.length !== 1 ||
++            keys[0]?.id !== receipt.serviceKeyId ||
++            !serviceKeyHash ||
++            !keys[0].key.equals(serviceKeyHash) ||
++            !isDeepStrictEqual([...keys[0].permissions].sort(), permissions) ||
++            sessions.length > 0 ||
++            metadata.length > 0
++          ) {
++            throw new Error('Service administrator conflicts');
++          }
++        }
 +        const nativeAccounts: { id: string; subject: string; administrator: boolean }[] = [];
-+        const report = {
++        const kinds = ['provider', 'administrator', 'everyday', 'service'];
++        const report: {
++          schema: string;
++          setupId: string;
++          check: boolean;
++          created: string[];
++          planned: string[];
++          accounts: typeof nativeAccounts;
++          service: { id: string } | null;
++          nativeUsers: { id: string; administrator: boolean }[];
++        } = {
 +          schema: 'immich.setup-report/1',
 +          setupId: spec.setupId,
 +          check: options.check,
-+          created: receipt || options.check ? [] : ['provider', 'administrator', 'everyday'],
-+          planned: !receipt && options.check ? ['provider', 'administrator', 'everyday'] : [],
++          created: receipt || options.check ? [] : kinds,
++          planned: !receipt && options.check ? kinds : [],
 +          accounts: nativeAccounts,
++          service: receipt ? { id: receipt.serviceId } : null,
++          nativeUsers: [],
++        };
++        const listNativeUsers = async () => {
++          const users = await tx
++            .selectFrom('user')
++            .select(['id', 'isAdmin'])
++            .where('deletedAt', 'is', null)
++            .orderBy('id')
++            .limit(1001)
++            .execute();
++          if (users.length > 1000) {
++            throw new Error('Too many native accounts to report');
++          }
++          return users.map((user) => ({ id: user.id, administrator: user.isAdmin }));
 +        };
 +        if (receipt) {
 +          report.accounts = accounts.map((account) => ({
@@ -701,9 +945,10 @@ index 755dc4c..1f800c7 100644
 +            subject: account.subject,
 +            administrator: account.isAdmin,
 +          }));
++          report.nativeUsers = await listNativeUsers();
 +          return report;
 +        }
-+        if (options.check) {
++        if (options.check || !serviceKeyHash) {
 +          return report;
 +        }
 +        const ids = new Map<string, string>();
@@ -740,6 +985,40 @@ index 755dc4c..1f800c7 100644
 +          ids.set(account.kind, user.id);
 +          report.accounts.push({ id: user.id, subject: account.subject, administrator: account.isAdmin });
 +        }
++        // Passwordless and without an OAuth subject: this account cannot sign in at all.
++        const serviceGroup = await tx
++          .insertInto('cluster_group')
++          .defaultValues()
++          .returning('id')
++          .executeTakeFirstOrThrow();
++        const service = await tx
++          .insertInto('user')
++          .values({
++            email: KYQUICKSTART_SERVICE_EMAIL,
++            name: KYQUICKSTART_SERVICE_NAME,
++            isAdmin: true,
++            clusterGroupId: serviceGroup.id,
++            shouldChangePassword: false,
++          })
++          .returning('id')
++          .executeTakeFirstOrThrow();
++        const serviceApiKey = await tx
++          .insertInto('api_key')
++          .values({ name: KYQUICKSTART_SERVICE_NAME, key: serviceKeyHash, userId: service.id, permissions })
++          .returning('id')
++          .executeTakeFirstOrThrow();
++        report.service = { id: service.id };
++        report.nativeUsers = await listNativeUsers();
++        const admins = new Set([ids.get('administrator'), service.id]);
++        if (
++          report.nativeUsers.length !== 3 ||
++          report.nativeUsers.some(
++            (user) =>
++              user.administrator !== admins.has(user.id) || (!admins.has(user.id) && user.id !== ids.get('everyday')),
++          )
++        ) {
++          throw new Error('Native accounts are not exactly the owned setup accounts');
++        }
 +        await tx
 +          .insertInto('system_metadata')
 +          .values({
@@ -756,6 +1035,8 @@ index 755dc4c..1f800c7 100644
 +          intentDigest,
 +          administratorId: ids.get('administrator'),
 +          everydayId: ids.get('everyday'),
++          serviceId: service.id,
++          serviceKeyId: serviceApiKey.id,
 +        });
 +        await tx
 +          .insertInto('system_metadata')
@@ -949,6 +1230,88 @@ index 755dc4c..1f800c7 100644
 +      });
 +  }
 +
++  // Owned-account checks shared by directory projection and reactivation; the fence is returned, not judged.
++  private async ownedKyQuickStartDirectory(tx: Transaction<DB>, userId: string, setupId: string, lock: boolean) {
++    const config = await tx
++      .selectFrom('system_metadata')
++      .select('value')
++      .where('key', '=', SystemMetadataKey.SystemConfig)
++      .$if(lock, (qb) => qb.forUpdate())
++      .executeTakeFirst();
++    const stored = await tx
++      .selectFrom('system_metadata')
++      .select('value')
++      .where('key', '=', SystemMetadataKey.KyQuickStartSetup)
++      .$if(lock, (qb) => qb.forUpdate())
++      .executeTakeFirst();
++    const installation = KyQuickStartSetupReceiptSchema.parse(stored?.value);
++    if (installation.setupId !== setupId) {
++      throw new ConflictException('KyQuickStart directory ownership conflicts');
++    }
++    let created: z.infer<typeof KyQuickStartCreationReceiptSchema> | undefined;
++    if (userId !== installation.administratorId && userId !== installation.everydayId) {
++      const creation = await tx
++        .selectFrom('user_metadata')
++        .select('value')
++        .where('userId', '=', userId)
++        .where('key', '=', UserMetadataKey.KyQuickStartCreation)
++        .executeTakeFirst();
++      created = KyQuickStartCreationReceiptSchema.parse(creation?.value);
++      if (
++        created.setupId !== setupId ||
++        created.userId !== userId ||
++        created.intentDigest !== creationIntentDigest(created)
++      ) {
++        throw new ConflictException('KyQuickStart directory creation ownership conflicts');
++      }
++    }
++    const user = await tx
++      .selectFrom('user')
++      .select(['id', 'oauthId', 'name', 'email', 'isAdmin', 'password', 'deletedAt', 'status'])
++      .where('id', '=', userId)
++      .$if(lock, (qb) => qb.forUpdate())
++      .executeTakeFirstOrThrow();
++    const row = await tx
++      .selectFrom('user_metadata')
++      .select('value')
++      .where('userId', '=', userId)
++      .where('key', '=', UserMetadataKey.KyQuickStartDirectory)
++      .executeTakeFirst();
++    const receipt = KyQuickStartDirectoryReceiptSchema.parse(row?.value);
++    const partial = z.record(z.string(), z.unknown()).parse(config?.value ?? {});
++    const oauth = AdminConfigDto.schema.parse({
++      ...defaults,
++      oauth: { ...defaults.oauth, ...z.record(z.string(), z.unknown()).parse(partial.oauth ?? {}) },
++    }).oauth;
++    if (
++      !oauth.enabled ||
++      oauth.allowInsecureRequests ||
++      oauth.issuerUrl !== receipt.issuer ||
++      oauth.clientId !== receipt.clientId ||
++      receipt.setupId !== setupId ||
++      user.oauthId !== receipt.subject ||
++      (created &&
++        (created.issuer !== receipt.issuer ||
++          created.clientId !== receipt.clientId ||
++          created.subject !== receipt.subject)) ||
++      user.deletedAt !== null ||
++      user.password !== null ||
++      user.status !== UserStatus.Active ||
++      user.name !== receipt.profile.name ||
++      user.email !== receipt.profile.email ||
++      user.isAdmin !== receipt.profile.administrator
++    ) {
++      throw new ConflictException('KyQuickStart directory account conflicts');
++    }
++    const fence = await tx
++      .selectFrom('user_metadata')
++      .select('value')
++      .where('userId', '=', userId)
++      .where('key', '=', UserMetadataKey.KyQuickStartAccess)
++      .executeTakeFirst();
++    return { receipt, fence: fence?.value };
++  }
++
 +  async projectKyQuickStartDirectory(
 +    userId: string,
 +    options: { kind: 'inspect'; setupId: string } | { kind: 'apply'; update: KyQuickStartDirectoryUpdate },
@@ -961,83 +1324,9 @@ index 755dc4c..1f800c7 100644
 +      .transaction()
 +      .setIsolationLevel('serializable')
 +      .execute(async (tx) => {
-+        const config = await tx
-+          .selectFrom('system_metadata')
-+          .select('value')
-+          .where('key', '=', SystemMetadataKey.SystemConfig)
-+          .$if(options.kind === 'apply', (qb) => qb.forUpdate())
-+          .executeTakeFirst();
-+        const stored = await tx
-+          .selectFrom('system_metadata')
-+          .select('value')
-+          .where('key', '=', SystemMetadataKey.KyQuickStartSetup)
-+          .$if(options.kind === 'apply', (qb) => qb.forUpdate())
-+          .executeTakeFirst();
-+        const installation = KyQuickStartSetupReceiptSchema.parse(stored?.value);
-+        if (installation.setupId !== setupId) {
-+          throw new ConflictException('KyQuickStart directory ownership conflicts');
-+        }
-+        let created: z.infer<typeof KyQuickStartCreationReceiptSchema> | undefined;
-+        if (userId !== installation.administratorId && userId !== installation.everydayId) {
-+          const creation = await tx
-+            .selectFrom('user_metadata')
-+            .select('value')
-+            .where('userId', '=', userId)
-+            .where('key', '=', UserMetadataKey.KyQuickStartCreation)
-+            .executeTakeFirst();
-+          created = KyQuickStartCreationReceiptSchema.parse(creation?.value);
-+          if (
-+            created.setupId !== setupId ||
-+            created.userId !== userId ||
-+            created.intentDigest !== creationIntentDigest(created)
-+          ) {
-+            throw new ConflictException('KyQuickStart directory creation ownership conflicts');
-+          }
-+        }
-+        const user = await tx
-+          .selectFrom('user')
-+          .select(['id', 'oauthId', 'name', 'email', 'isAdmin', 'password', 'deletedAt', 'status'])
-+          .where('id', '=', userId)
-+          .$if(options.kind === 'apply', (qb) => qb.forUpdate())
-+          .executeTakeFirstOrThrow();
-+        const row = await tx
-+          .selectFrom('user_metadata')
-+          .select('value')
-+          .where('userId', '=', userId)
-+          .where('key', '=', UserMetadataKey.KyQuickStartDirectory)
-+          .executeTakeFirst();
-+        let receipt = KyQuickStartDirectoryReceiptSchema.parse(row?.value);
-+        const partial = z.record(z.string(), z.unknown()).parse(config?.value ?? {});
-+        const oauth = AdminConfigDto.schema.parse({
-+          ...defaults,
-+          oauth: { ...defaults.oauth, ...z.record(z.string(), z.unknown()).parse(partial.oauth ?? {}) },
-+        }).oauth;
-+        if (
-+          !oauth.enabled ||
-+          oauth.allowInsecureRequests ||
-+          oauth.issuerUrl !== receipt.issuer ||
-+          oauth.clientId !== receipt.clientId ||
-+          receipt.setupId !== setupId ||
-+          user.oauthId !== receipt.subject ||
-+          (created &&
-+            (created.issuer !== receipt.issuer ||
-+              created.clientId !== receipt.clientId ||
-+              created.subject !== receipt.subject)) ||
-+          user.deletedAt !== null ||
-+          user.password !== null ||
-+          user.status !== UserStatus.Active ||
-+          user.name !== receipt.profile.name ||
-+          user.email !== receipt.profile.email ||
-+          user.isAdmin !== receipt.profile.administrator
-+        ) {
-+          throw new ConflictException('KyQuickStart directory account conflicts');
-+        }
-+        const fence = await tx
-+          .selectFrom('user_metadata')
-+          .select('key')
-+          .where('userId', '=', userId)
-+          .where('key', '=', UserMetadataKey.KyQuickStartAccess)
-+          .executeTakeFirst();
++        const owned = await this.ownedKyQuickStartDirectory(tx, userId, setupId, options.kind === 'apply');
++        let receipt = owned.receipt;
++        const fence = owned.fence;
 +        if (options.kind === 'apply') {
 +          const update = options.update;
 +          if (
@@ -1073,14 +1362,103 @@ index 755dc4c..1f800c7 100644
 +      });
 +  }
 +
++  async reactivateKyQuickStartAccess(userId: string, dto: KyQuickStartReactivate) {
++    if (process.env.IMMICH_CONFIG_FILE) {
++      throw new ConflictException('KyQuickStart reactivation is unavailable');
++    }
++    return this.db
++      .transaction()
++      .setIsolationLevel('serializable')
++      .execute(async (tx) => {
++        const owned = await this.ownedKyQuickStartDirectory(tx, userId, dto.setupId, true);
++        const fence = owned.fence === undefined ? undefined : KyQuickStartFenceSchema.safeParse(owned.fence);
++        // The stored fence, else the directory receipt, pins the exact binding, as for revocation.
++        const pin = fence ? (fence.success ? fence.data : undefined) : owned.receipt;
++        const row = await tx
++          .selectFrom('user_metadata')
++          .select('value')
++          .where('userId', '=', userId)
++          .where('key', '=', UserMetadataKey.KyQuickStartReactivation)
++          .executeTakeFirst();
++        const stored = row === undefined ? undefined : KyQuickStartReactivationSchema.safeParse(row.value);
++        if (
++          !pin ||
++          pin.setupId !== dto.setupId ||
++          pin.issuer !== dto.issuer ||
++          pin.clientId !== dto.clientId ||
++          pin.subject !== dto.subject ||
++          (stored && !stored.success)
++        ) {
++          throw new ConflictException('KyQuickStart reactivation ownership conflicts');
++        }
++        const previous = stored?.data;
++        if (!fence) {
++          // Only an exact repeat of the committed reactivation is accepted without a fence.
++          if (!previous || previous.epoch !== dto.epoch || !isDeepStrictEqual(owned.receipt.profile, dto.profile)) {
++            throw new ConflictException('KyQuickStart reactivation conflicts');
++          }
++          return previous;
++        }
++        if (!fence.success || (previous && dto.epoch <= previous.epoch)) {
++          throw new ConflictException('KyQuickStart reactivation conflicts');
++        }
++        // Authority first, then the fence clears; no session or key is restored.
++        if (!isDeepStrictEqual(owned.receipt.profile, dto.profile)) {
++          const collision = await tx
++            .selectFrom('user')
++            .select('id')
++            .where('email', '=', dto.profile.email)
++            .where('id', '!=', userId)
++            .executeTakeFirst();
++          if (collision) {
++            throw new ConflictException('KyQuickStart reactivation email is already retained');
++          }
++          await tx
++            .updateTable('user')
++            .set({
++              name: dto.profile.name,
++              email: dto.profile.email,
++              isAdmin: dto.profile.administrator,
++              updatedAt: new Date(),
++            })
++            .where('id', '=', userId)
++            .execute();
++          await tx
++            .updateTable('user_metadata')
++            .set({ value: { ...owned.receipt, revision: owned.receipt.revision + 1, profile: dto.profile } })
++            .where('userId', '=', userId)
++            .where('key', '=', UserMetadataKey.KyQuickStartDirectory)
++            .execute();
++        }
++        await tx
++          .deleteFrom('user_metadata')
++          .where('userId', '=', userId)
++          .where('key', '=', UserMetadataKey.KyQuickStartAccess)
++          .execute();
++        const reactivation = KyQuickStartReactivationSchema.parse({
++          contract: 'ky.immich-reactivation/1',
++          setupId: dto.setupId,
++          epoch: dto.epoch,
++          reactivatedAt: new Date().toISOString(),
++          revokedAt: fence.data.revokedAt,
++        });
++        await tx
++          .insertInto('user_metadata')
++          .values({ userId, key: UserMetadataKey.KyQuickStartReactivation, value: reactivation })
++          .onConflict((oc) => oc.columns(['userId', 'key']).doUpdateSet({ value: reactivation }))
++          .execute();
++        return reactivation;
++      });
++  }
++
    readFile(filename: string): Promise<string> {
      return readFile(filename, { encoding: 'utf8' });
    }
 diff --git a/server/src/repositories/user.repository.ts b/server/src/repositories/user.repository.ts
-index afe14fb..9fb6759 100644
+index afe14fb..338469c 100644
 --- a/server/src/repositories/user.repository.ts
 +++ b/server/src/repositories/user.repository.ts
-@@ -1,11 +1,16 @@
+@@ -1,11 +1,17 @@
 -import { Injectable } from '@nestjs/common';
 +import { ConflictException, Injectable } from '@nestjs/common';
  import { ExpressionBuilder, Insertable, Kysely, sql, Updateable } from 'kysely';
@@ -1093,13 +1471,14 @@ index afe14fb..9fb6759 100644
 +import {
 +  KyQuickStartDirectoryReceiptSchema,
 +  KyQuickStartFenceSchema,
++  KyQuickStartReactivationSchema,
 +  KyQuickStartRevokeDto,
 +} from 'src/dtos/kyquickstart.dto';
 +import { AssetType, AssetVisibility, UserMetadataKey, UserStatus } from 'src/enum';
  import { DB } from 'src/schema';
  import { UserTable } from 'src/schema/tables/user.table';
  import { UserMetadata, UserMetadataItem } from 'src/types';
-@@ -57,6 +62,122 @@ export class UserRepository {
+@@ -57,6 +63,138 @@ export class UserRepository {
        .executeTakeFirst();
    }
  
@@ -1145,6 +1524,16 @@ index afe14fb..9fb6759 100644
 +    if (directory && !directory.success) {
 +      throw new ConflictException('KyQuickStart directory proof is unavailable');
 +    }
++    const reactivated = await this.db
++      .selectFrom('user_metadata')
++      .select('value')
++      .where('userId', '=', userId)
++      .where('key', '=', UserMetadataKey.KyQuickStartReactivation)
++      .executeTakeFirst();
++    const reactivation = reactivated ? KyQuickStartReactivationSchema.safeParse(reactivated.value) : undefined;
++    if (reactivation && !reactivation.success) {
++      throw new ConflictException('KyQuickStart reactivation proof is unavailable');
++    }
 +    const keys = await this.db
 +      .selectFrom('api_key')
 +      .select((eb) => eb.fn.countAll().as('count'))
@@ -1160,7 +1549,13 @@ index afe14fb..9fb6759 100644
 +    if (!Number.isSafeInteger(apiKeys) || apiKeys < 0 || !Number.isSafeInteger(sessionCount) || sessionCount < 0) {
 +      throw new ConflictException('KyQuickStart credential counts are unavailable');
 +    }
-+    return { fence: fence?.data ?? null, directory: directory?.data ?? null, apiKeys, sessions: sessionCount };
++    return {
++      fence: fence?.data ?? null,
++      directory: directory?.data ?? null,
++      reactivation: reactivation?.data ?? null,
++      apiKeys,
++      sessions: sessionCount,
++    };
 +  }
 +
 +  async revokeKyQuickStartAccess(userId: string, dto: KyQuickStartRevokeDto) {
@@ -1247,7 +1642,7 @@ index 3b43285..ff692ec 100644
      this.server?.to(room).emit(event, ...data);
    }
 diff --git a/server/src/services/auth.service.spec.ts b/server/src/services/auth.service.spec.ts
-index 6a74693..09ad51d 100644
+index 6a74693..3794225 100644
 --- a/server/src/services/auth.service.spec.ts
 +++ b/server/src/services/auth.service.spec.ts
 @@ -3,7 +3,7 @@ import { DateTime } from 'luxon';
@@ -1267,7 +1662,7 @@ index 6a74693..09ad51d 100644
      mocks.oauth.authorize.mockResolvedValue({ url: 'http://test', state: 'state', codeVerifier: 'codeVerifier' });
      mocks.oauth.getLogoutEndpoint.mockResolvedValue('http://end-session-endpoint');
    });
-@@ -694,6 +695,110 @@ describe(AuthService.name, () => {
+@@ -694,6 +695,163 @@ describe(AuthService.name, () => {
    });
  
    describe('callback', () => {
@@ -1370,6 +1765,59 @@ index 6a74693..09ad51d 100644
 +          await expect(result).resolves.toBeDefined();
 +        } else {
 +          await expect(result).rejects.toBeInstanceOf(UnauthorizedException);
++        }
++        expect(mocks.user.update).not.toHaveBeenCalled();
++      },
++    );
++
++    // KyIdentity 0.4.4 sends an array `roles` claim and no `role`; only rolesClaim `roles` grants the owner admin.
++    it.each([
++      { roleClaim: 'roles', accepted: true },
++      { roleClaim: 'role', accepted: false },
++      { roleClaim: 'immich_role', accepted: false },
++    ])(
++      'signs in the KyIdentity owner administrator only with roleClaim $roleClaim',
++      async ({ roleClaim, accepted }) => {
++        const user = UserFactory.create({ oauthId: 'owner-subject', isAdmin: true });
++        const profile = OAuthProfileFactory.create({ sub: user.oauthId });
++        Reflect.set(profile, 'roles', ['admin']);
++        mocks.systemMetadata.get.mockResolvedValue({
++          oauth: {
++            ...systemConfigStub.oauthEnabled.oauth,
++            enabled: true,
++            issuerUrl: 'https://identity.example.test',
++            clientId: 'photos',
++            roleClaim,
++          },
++        });
++        mocks.systemMetadata.hasKyQuickStartSetup.mockResolvedValue(true);
++        mocks.oauth.getProfileAndOAuthSid.mockResolvedValue({ profile });
++        mocks.user.getByOAuthId.mockResolvedValue(user);
++        mocks.user.getMetadata.mockResolvedValue([
++          {
++            key: UserMetadataKey.KyQuickStartDirectory,
++            value: {
++              contract: 'ky.immich-directory/1',
++              setupId: '271333e2-c221-4601-b249-563b3d828530',
++              issuer: 'https://identity.example.test',
++              clientId: 'photos',
++              subject: user.oauthId,
++              revision: 0,
++              profile: { name: user.name, email: user.email, administrator: true },
++            },
++          },
++        ]);
++        mocks.session.create.mockResolvedValue(SessionFactory.create());
++        const result = sut.callback(
++          { url: 'http://immich/auth/login?code=abc123', state: 'xyz789', codeVerifier: 'foobar' },
++          {},
++          loginDetails,
++        );
++        if (accepted) {
++          await expect(result).resolves.toMatchObject({ userId: user.id, isAdmin: true });
++        } else {
++          await expect(result).rejects.toBeInstanceOf(UnauthorizedException);
++          expect(mocks.session.create).not.toHaveBeenCalled();
 +        }
 +        expect(mocks.user.update).not.toHaveBeenCalled();
 +      },
@@ -1514,7 +1962,7 @@ index 3229ae2..2128444 100644
      const hashed = this.cryptoRepository.hashSha256(token);
  
 diff --git a/server/src/services/user-admin.service.spec.ts b/server/src/services/user-admin.service.spec.ts
-index c52ae54..65f9190 100644
+index c52ae54..1b75949 100644
 --- a/server/src/services/user-admin.service.spec.ts
 +++ b/server/src/services/user-admin.service.spec.ts
 @@ -1,4 +1,9 @@
@@ -1528,7 +1976,16 @@ index c52ae54..65f9190 100644
  import { mapUserAdmin } from 'src/dtos/user.dto';
  import { JobName, UserStatus } from 'src/enum';
  import { UserAdminService } from 'src/services/user-admin.service';
-@@ -21,6 +26,91 @@ describe(UserAdminService.name, () => {
+@@ -7,7 +12,7 @@ import { UserFactory } from 'test/factories/user.factory';
+ import { authStub } from 'test/fixtures/auth.stub';
+ import { userStub } from 'test/fixtures/user.stub';
+ import { newTestService, ServiceMocks } from 'test/utils';
+-import { describe } from 'vitest';
++import { describe, vitest } from 'vitest';
+ 
+ describe(UserAdminService.name, () => {
+   let sut: UserAdminService;
+@@ -21,6 +26,151 @@ describe(UserAdminService.name, () => {
      );
    });
  
@@ -1584,7 +2041,13 @@ index c52ae54..65f9190 100644
 +      revision: 0,
 +      profile: { name: 'Daily', email: 'daily@example.test', administrator: false },
 +    };
-+    const access = (directory: typeof receipt | null) => ({ fence: null, directory, apiKeys: 1, sessions: 1 });
++    const access = (directory: typeof receipt | null) => ({
++      fence: null,
++      directory,
++      reactivation: null,
++      apiKeys: 1,
++      sessions: 1,
++    });
 +    const user = UserFactory.create({ oauthId: pins.subject, status: UserStatus.Deleted, deletedAt: new Date() });
 +    beforeEach(() => {
 +      mocks.user.get.mockResolvedValue(user);
@@ -1617,14 +2080,68 @@ index c52ae54..65f9190 100644
 +    });
 +  });
 +
++  describe('reactivateKyQuickStartAccess', () => {
++    const pins = {
++      setupId: '271333e2-c221-4601-b249-563b3d828530',
++      issuer: 'https://identity.example.test',
++      clientId: 'photos',
++      subject: 'owned-subject',
++    };
++    const profile = { name: 'Daily', email: 'daily@example.test', administrator: true };
++    const dto = { ...pins, epoch: 2, profile };
++    const auth = AuthFactory.from({ isAdmin: true }).apiKey().build();
++    const user = UserFactory.create({ oauthId: pins.subject });
++    const fence = { ...pins, contract: 'ky.immich-access/1' as const, revokedAt: new Date().toISOString() };
++    beforeEach(() => {
++      mocks.user.get.mockResolvedValue(user);
++      mocks.user.inspectKyQuickStartAccess.mockResolvedValue({
++        fence,
++        directory: null,
++        reactivation: null,
++        apiKeys: 0,
++        sessions: 0,
++      });
++    });
++    it('refuses session-only authority and self-reactivation before repository access', async () => {
++      await expect(sut.reactivateKyQuickStartAccess(authStub.admin, user.id, dto)).rejects.toBeInstanceOf(
++        ForbiddenException,
++      );
++      const self = AuthFactory.from({ id: user.id, isAdmin: true }).apiKey().build();
++      await expect(sut.reactivateKyQuickStartAccess(self, user.id, dto)).rejects.toBeInstanceOf(ForbiddenException);
++      expect(mocks.systemMetadata.reactivateKyQuickStartAccess).not.toHaveBeenCalled();
++    });
++    it('refuses a binding other than the stored fence', async () => {
++      await expect(
++        sut.reactivateKyQuickStartAccess(auth, user.id, { ...dto, subject: 'foreign-subject' }),
++      ).rejects.toBeInstanceOf(ForbiddenException);
++      expect(mocks.systemMetadata.reactivateKyQuickStartAccess).not.toHaveBeenCalled();
++    });
++    it('reactivates on the exact binding and audits the epoch without secrets', async () => {
++      const log = vitest.spyOn(sut['logger'], 'log');
++      await sut.reactivateKyQuickStartAccess(auth, user.id, dto);
++      expect(mocks.systemMetadata.reactivateKyQuickStartAccess).toHaveBeenCalledWith(user.id, dto);
++      expect(log).toHaveBeenCalledWith(`KyQuickStart reactivated user ${user.id} at epoch 2`);
++    });
++    it('keeps known conflicts 409 and a lost commit acknowledgment uncertain', async () => {
++      mocks.systemMetadata.reactivateKyQuickStartAccess.mockRejectedValueOnce(new ConflictException('private'));
++      await expect(sut.reactivateKyQuickStartAccess(auth, user.id, dto)).rejects.toEqual(
++        new ConflictException('KyQuickStart reactivation conflicts'),
++      );
++      mocks.systemMetadata.reactivateKyQuickStartAccess.mockRejectedValueOnce(new Error('private database diagnostic'));
++      await expect(sut.reactivateKyQuickStartAccess(auth, user.id, dto)).rejects.toEqual(
++        new ServiceUnavailableException('KyQuickStart reactivation requires outcome reconciliation'),
++      );
++    });
++  });
++
    describe('create', () => {
      it('should not create a user if there is no local admin account', async () => {
        mocks.user.getAdmin.mockResolvedValueOnce(void 0);
 diff --git a/server/src/services/user-admin.service.ts b/server/src/services/user-admin.service.ts
-index f80a810..c3d5890 100644
+index f80a810..1d34d20 100644
 --- a/server/src/services/user-admin.service.ts
 +++ b/server/src/services/user-admin.service.ts
-@@ -1,8 +1,20 @@
+@@ -1,8 +1,21 @@
 -import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
 +import {
 +  BadRequestException,
@@ -1641,12 +2158,21 @@ index f80a810..c3d5890 100644
 +  KyQuickStartCreationDto,
 +  KyQuickStartCreationQueryDto,
 +  KyQuickStartDirectoryUpdateDto,
++  KyQuickStartReactivateDto,
 +  KyQuickStartRevokeDto,
 +} from 'src/dtos/kyquickstart.dto';
  import { SessionResponseDto, mapSession } from 'src/dtos/session.dto';
  import { UserPreferencesResponseDto, UserPreferencesUpdateDto, mapPreferences } from 'src/dtos/user-preferences.dto';
  import {
-@@ -96,6 +108,92 @@ export class UserAdminService extends BaseService {
+@@ -19,6 +32,7 @@ import { BaseService } from 'src/services/base.service';
+ import { getCalendarHeatmap } from 'src/services/shared/user-methods';
+ import { findOrFail } from 'src/utils/misc';
+ import { getPreferences, getPreferencesPartial, mergePreferences } from 'src/utils/preferences';
++import { ZodError } from 'zod';
+ 
+ @Injectable()
+ export class UserAdminService extends BaseService {
+@@ -96,6 +110,118 @@ export class UserAdminService extends BaseService {
      return mapUserAdmin(updatedUser);
    }
  
@@ -1716,6 +2242,9 @@ index f80a810..c3d5890 100644
 +      setupId: state.fence?.setupId ?? null,
 +      revokedAt: state.fence?.revokedAt ?? null,
 +      revoked: state.fence !== null,
++      reactivation: state.reactivation
++        ? { epoch: state.reactivation.epoch, reactivatedAt: state.reactivation.reactivatedAt }
++        : null,
 +      apiKeys: state.apiKeys,
 +      sessions: state.sessions,
 +    };
@@ -1733,6 +2262,29 @@ index f80a810..c3d5890 100644
 +    }
 +    await this.userRepository.revokeKyQuickStartAccess(id, dto);
 +    this.websocketRepository.disconnectUser(id);
++    return this.inspectKyQuickStartAccess(auth, id);
++  }
++
++  async reactivateKyQuickStartAccess(auth: AuthDto, id: string, dto: KyQuickStartReactivateDto) {
++    const state = await this.inspectKyQuickStartAccess(auth, id);
++    if (
++      auth.user.id === id ||
++      state.issuer !== dto.issuer ||
++      state.clientId !== dto.clientId ||
++      state.subject !== dto.subject
++    ) {
++      throw new ForbiddenException('KyQuickStart reactivation binding conflicts');
++    }
++    try {
++      await this.systemMetadataRepository.reactivateKyQuickStartAccess(id, dto);
++    } catch (error) {
++      if (error instanceof ConflictException || error instanceof ZodError) {
++        throw new ConflictException('KyQuickStart reactivation conflicts');
++      }
++      // A database commit may have succeeded before its acknowledgment was lost.
++      throw new ServiceUnavailableException('KyQuickStart reactivation requires outcome reconciliation');
++    }
++    this.logger.log(`KyQuickStart reactivated user ${id} at epoch ${dto.epoch}`);
 +    return this.inspectKyQuickStartAccess(auth, id);
 +  }
 +
@@ -1769,10 +2321,10 @@ index 633ed9b..e7173f6 100644
    [UserMetadataKey.License]: { licenseKey: string; activationKey: string; activatedAt: string };
    [UserMetadataKey.Onboarding]: { isOnboarded: boolean };
 diff --git a/server/test/repositories/system-metadata.repository.mock.ts b/server/test/repositories/system-metadata.repository.mock.ts
-index ab9e300..980d925 100644
+index ab9e300..66bef2f 100644
 --- a/server/test/repositories/system-metadata.repository.mock.ts
 +++ b/server/test/repositories/system-metadata.repository.mock.ts
-@@ -10,5 +10,9 @@ export const newSystemMetadataRepositoryMock = (): Mocked<RepositoryInterface<Sy
+@@ -10,5 +10,10 @@ export const newSystemMetadataRepositoryMock = (): Mocked<RepositoryInterface<Sy
      set: vitest.fn(),
      delete: vitest.fn(),
      readFile: vitest.fn(),
@@ -1780,5 +2332,6 @@ index ab9e300..980d925 100644
 +    applyKyQuickStartSetup: vitest.fn(),
 +    projectKyQuickStartDirectory: vitest.fn(),
 +    provisionKyQuickStartDirectory: vitest.fn(),
++    reactivateKyQuickStartAccess: vitest.fn(),
    };
  };
