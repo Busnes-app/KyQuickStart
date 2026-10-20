@@ -69,6 +69,8 @@ Plain terminal planning and command orchestration for the operator-run installer
   which skips installed apps' entries (`apply` runs those).
   Validate every selection before connecting; run KyIdentity first and otherwise preserve
   saved order. Optional typed KyNotes and KyIdentity preparation settings are retained by guided resume,
+  where `askMail` also asks a resumed KyIdentity preparation's optional `identity.mail` (blank or
+  `none` for no relay or no username; the password file checked by `readMailPassword`),
   disclosed in plan/review and sent over bounded native CLI stdin. Verify the prepared
   bundle before applying; `--check` compares metadata without creating files. Reuse each
   product's target lock, native adapter and live verification. Identity requires native
@@ -117,7 +119,9 @@ Plain terminal planning and command orchestration for the operator-run installer
   `after`) after its health. `refuseMovedServerName` refuses `server_name_changed` from the
   installed Synapse's `homeserver.yaml`. `identitySetupStep` copies `identity.mail`'s workstation
   password file (`readMailPassword`) to KyIdentity's `<installer>/smtp.password` before staging,
-  and requires `mail-relay`. `messageHandover` and `initAdminLine` are what apply prints.
+  and requires `mail-relay`; `identitySetup` accepts 0.4.5's one relay object
+  (`{mail, settings, mail}`) in its report. The console's HMAC copy of the directory secret is
+  `data/installer/directory_secret`, inside a backed-up volume. `messageHandover` and `initAdminLine` are what apply prints.
 - KyRecovery setup runs explicitly as `kyrecovery`, activates live, commits exact administrator grants with its keyed SQL audit, and never performs the custodian ceremony.
   `appsetup.go` owns apply's catalog apps that sign in through KyIdentity (KyRecovery,
   kyPulse, KyNotes, KyCalendar and KyYard on Docker or Kubernetes, KyDrive, KyPost and KyDNS on Docker): `composeClients` adds each one's catalog-derived client to the installed
