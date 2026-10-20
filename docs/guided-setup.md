@@ -1414,18 +1414,30 @@ integrations:
   file of yours on this workstation (not a symlink); apply copies it on stdin to
   `<data>/installer/smtp.password` in KyIdentity's container. The relay is set by KyIdentity's
   first setup only: changing or adding it later is refused, pointing at KyIdentity's admin UI.
+  `plan` asks for it when it resumes a KyIdentity preparation: blank (or `none`) for no relay,
+  and for a relay without authentication, a blank username.
 - **Steps.** `kymessage.secrets`, `kymessage.matrix-init` (seed, then matrix-init's first pass from
   the pinned image), `kymessage.credentials` (both clients' secrets from KyIdentity's export to
   0600 files on the host, never replaced, then the second pass that writes MAS's configuration),
   `kymessage.deploy`, `kymessage.health`, `kymessage.setup` (the console's setup with the owner's
   admin and everyday accounts, then both clients rechecked), then the six routes.
 - **Offboarding.** Disabling or deleting a person in KyIdentity reaches the console's directory
-  webhook, which locks them in MAS and ends their chat sessions. A KyIdentity sign-out does not:
-  KyIdentity registers no back-channel logout.
+  webhook, whose sweep locks them in MAS at once: new chat sign-in and call grants are refused
+  at once, but an open session keeps working for up to 2 minutes (Synapse's cache of MAS's token
+  checks; measured 2m0s), and no session is ended, so MAS still refreshes their tokens (which
+  then do not work). A KyIdentity sign-out ends nothing: KyIdentity registers no back-channel
+  logout.
+- **Only the owner's everyday account keeps chat (KyMessage v0.4.3).** The console's directory
+  takes only the identities its setup created and refuses anyone else's (KyIdentity shows the
+  KyMessages system failing for them); its sweep then locks them in MAS as not known to
+  KyMessages, at its next run. Someone else assigned to both clients can sign in to chat until
+  that sweep. Fixing it is KyMessage's (an upstream request).
 - **Backup and restore** follow [Backups and restore on Docker](#backups-and-restore-on-docker):
-  a `pg_dumpall` of the stack's Postgres plus `data`, `backups`, `matrix` (configuration, secrets,
-  signing key) and `media`. Restore starts Postgres, loads the dump, then MAS and the console before
-  Synapse, and replays KyIdentity's removals.
+  a `pg_dumpall` of the stack's Postgres plus `data` (with the console's copy of its directory
+  secret), `backups`, `matrix` (configuration, secrets, signing key), `media` and the session
+  secret, taken while the stack runs. Restore starts Postgres, loads the dump (without the dump's
+  `DROP ROLE`/`CREATE ROLE postgres`, which Postgres refuses for the role restoring it), then MAS
+  and the console before Synapse, and replays KyIdentity's removals.
 - **Residuals.** Routed ports are published on `forward_host` and reachable on the LAN without
   the edge, so the edge's path blocks are defence in depth; Synapse's admin API, MAS and LiveKit's
   API still need their own tokens. Secret files are readable by anyone with Docker access on the

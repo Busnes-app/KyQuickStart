@@ -5,19 +5,14 @@ package e2e
 import (
 	"bytes"
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"io/fs"
-	"math/big"
 	"net"
 	"os"
 	"os/exec"
@@ -64,23 +59,7 @@ func startRestServer(t *testing.T, work string, users ...string) restServer {
 	dir, data := filepath.Join(work, "rest-server"), filepath.Join(work, "rest-server-data")
 	os.Mkdir(dir, 0o700)
 	os.Mkdir(data, 0o700)
-	caKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	ca := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "kyquickstart e2e rest-server CA"}, IsCA: true, BasicConstraintsValid: true,
-		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour), KeyUsage: x509.KeyUsageCertSign}
-	caDER, err := x509.CreateCertificate(rand.Reader, ca, ca, &caKey.PublicKey, caKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ca, _ = x509.ParseCertificate(caDER)
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	leaf := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: gw}, IPAddresses: []net.IP{net.ParseIP(gw)},
-		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
-	leafDER, err := x509.CreateCertificate(rand.Reader, leaf, ca, &key.PublicKey, caKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	keyDER, _ := x509.MarshalECPrivateKey(key)
-	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
+	caPEM, certPEM, keyPEM := testCert(t, "kyquickstart e2e rest-server", net.ParseIP(gw))
 	r := restServer{caPEM: caPEM, passwords: map[string]string{}}
 	var htpasswd bytes.Buffer
 	for _, u := range users {
@@ -93,7 +72,7 @@ func startRestServer(t *testing.T, work string, users ...string) restServer {
 		}
 		fmt.Fprintf(&htpasswd, "%s:%s\n", u, h)
 	}
-	for name, b := range map[string][]byte{"cert.pem": pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER}), "key.pem": pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), "htpasswd": htpasswd.Bytes()} {
+	for name, b := range map[string][]byte{"cert.pem": certPEM, "key.pem": keyPEM, "htpasswd": htpasswd.Bytes()} {
 		if err := os.WriteFile(filepath.Join(dir, name), b, 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -111,7 +90,7 @@ func startRestServer(t *testing.T, work string, users ...string) restServer {
 		"rest-server", "--path", "/data", "--listen", ":8000", "--append-only", "--private-repos", "--htpasswd-file", "/conf/htpasswd",
 		"--tls", "--tls-cert", "/conf/cert.pem", "--tls-key", "/conf/key.pem")
 	pool := x509.NewCertPool()
-	pool.AddCert(ca)
+	pool.AppendCertsFromPEM(caPEM)
 	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(200 * time.Millisecond) {
 		c, err := tls.DialWithDialer(&net.Dialer{Timeout: 2 * time.Second}, "tcp", r.addr, &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12})
 		if err == nil {

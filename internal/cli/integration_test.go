@@ -168,9 +168,10 @@ func TestGuidedResumeKeepsHandEditedPreparation(t *testing.T) {
 	if err := os.WriteFile(file, edited, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// Change only the SSH login; Enter keeps every other answer, including identity-client.
+	// Change only the SSH login; Enter keeps every other answer, including identity-client and
+	// no mail relay.
 	out.Reset()
-	o.In = strings.NewReader("\n\n\n\n\nops\n" + strings.Repeat("\n", 28) + "yes\nfinish\n")
+	o.In = strings.NewReader("\n\n\n\n\nops\n" + strings.Repeat("\n", 29) + "yes\nfinish\n")
 	if err := Run(context.Background(), []string{"plan", "--state", dir}, o); err != nil {
 		t.Fatal(err, out.String())
 	}
