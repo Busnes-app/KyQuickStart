@@ -80,7 +80,9 @@ services:
     tmpfs: [/var/run/postgresql, /tmp]
     networks: [internal]
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "immich"]
+      # Over TCP: the first start's init server listens on the socket only, before it creates
+      # the immich database; restore loads the dump once this passes.
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "immich"]
       interval: 30s
       timeout: 5s
       retries: 3

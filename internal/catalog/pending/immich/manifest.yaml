@@ -45,8 +45,10 @@ oidc:
 backup:
   service: database
   command: [pg_dump, -U, postgres, --clean, --if-exists, immich]
-  # Upstream's restore: pg_dump clears search_path, which vectorchord's types need.
-  restore_command: [sh, -c, "sed \"s/SELECT pg_catalog.set_config('search_path', '', false);/SELECT pg_catalog.set_config('search_path', 'public, pg_catalog', true);/g\" | psql -U postgres -d immich --single-transaction -v ON_ERROR_STOP=1 -q"]
+  # Upstream's restore: pg_dump clears search_path, which vectorchord's types need. The skipped
+  # folders come back without the .immich files Immich's mount check requires, so the same
+  # transaction resets their checks; Immich then writes them again at startup.
+  restore_command: [sh, -c, "{ sed \"s/SELECT pg_catalog.set_config('search_path', '', false);/SELECT pg_catalog.set_config('search_path', 'public, pg_catalog', true);/g\"; echo \"UPDATE system_metadata SET value = jsonb_set(value, '{mountChecks}', COALESCE(value->'mountChecks', '{}') - 'thumbs' - 'encoded-video' - 'backups') WHERE key = 'system-flags';\"; } | psql -U postgres -d immich --single-transaction -v ON_ERROR_STOP=1 -q"]
   volumes: [library, setup, directory]
   skip: [library/thumbs, library/encoded-video, library/backups]
   capsule_secrets: [db_password, scim_token]

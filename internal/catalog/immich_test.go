@@ -60,6 +60,7 @@ func TestImmichEntry(t *testing.T) {
 		len(b.RestoreCommand) != 3 || b.RestoreCommand[0] != "sh" || b.RestoreCommand[1] != "-c" ||
 		!strings.Contains(b.RestoreCommand[2], "psql -U postgres -d immich --single-transaction -v ON_ERROR_STOP=1") ||
 		!strings.Contains(b.RestoreCommand[2], "set_config('search_path', 'public, pg_catalog', true)") ||
+		!strings.Contains(b.RestoreCommand[2], "COALESCE(value->'mountChecks', '{}') - 'thumbs' - 'encoded-video' - 'backups') WHERE key = 'system-flags';") ||
 		!slices.Equal(b.Volumes, []string{"library", "setup", "directory"}) ||
 		!slices.Equal(b.Skip, []string{"library/thumbs", "library/encoded-video", "library/backups"}) ||
 		!slices.Equal(b.CapsuleSecrets, []string{"db_password", "scim_token"}) ||
