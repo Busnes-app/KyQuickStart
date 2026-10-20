@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"path"
 	"slices"
 	"strings"
 
@@ -97,8 +98,12 @@ type unmanageStep struct{ a App }
 func (s unmanageStep) ID() string        { return s.a.Name + ".unmanage" }
 func (s unmanageStep) InputHash() string { return hashOf("unmanage") }
 
-// check returns what still carries the managed label, or "".
+// check returns what still carries the managed label, or an unfinished recreate, or "".
 func (s unmanageStep) check(ctx context.Context) (string, error) {
+	out, err := s.a.Runner.Run(ctx, "if test -e "+remote.Quote(s.record())+"; then echo yes; fi", nil)
+	if err != nil || strings.TrimSpace(string(out)) == "yes" {
+		return "an unfinished recreate (" + unmanageRecord + ")", err
+	}
 	d, err := Deployed(ctx, s.a)
 	if err != nil || d.Found && d.Managed {
 		return "compose.kyq.yaml", err
@@ -115,8 +120,15 @@ func (s unmanageStep) Inspect(ctx context.Context) (bool, error) {
 	return what == "", err
 }
 
-// Apply starts nothing that was not running: only a project with containers is recreated,
-// unstarted, and only the services that ran are started again.
+// unmanageRecord holds, while unmanage recreates the containers, the services to recreate
+// and those to start again, so a rerun after dying halfway finishes with the original sets.
+const unmanageRecord = ".unmanage-running"
+
+func (s unmanageStep) record() string { return path.Join(s.a.dir(), unmanageRecord) }
+
+// Apply starts nothing that was not running: the services that have containers are
+// recreated unstarted, and those that were running or restarting are started again. A
+// paused service stays stopped.
 func (s unmanageStep) Apply(ctx context.Context) error {
 	if err := refuseUnfinishedRestore(ctx, s.a); err != nil {
 		return err
@@ -139,31 +151,66 @@ func (s unmanageStep) Apply(ctx context.Context) error {
 			return err
 		}
 	}
-	ids, err := s.a.containers(ctx, "")
-	if err != nil || ids == "" {
+	recreate, start, err := s.plan(ctx)
+	if err != nil || len(recreate) == 0 {
 		return err
 	}
-	// Recreate every container unstarted, then start only the services that were running.
-	cs, err := s.a.ps(ctx)
-	if err != nil {
-		return err
-	}
-	var running []string
-	for _, c := range cs {
-		if c.State == "running" && !slices.Contains(running, c.Service) {
-			running = append(running, c.Service)
-		}
-	}
-	if _, err := s.a.Runner.Run(ctx, s.a.compose("up --no-start"), nil); err != nil {
+	if _, err := s.a.Runner.Run(ctx, s.a.compose("up --no-start --no-deps "+quoteAll(recreate)), nil); err != nil {
 		return fmt.Errorf("docker compose up: %w", err)
 	}
-	if len(running) == 0 {
-		return nil
+	if len(start) > 0 {
+		if _, err := s.a.Runner.Run(ctx, s.a.compose("start "+quoteAll(start)), nil); err != nil {
+			return fmt.Errorf("%s's %s are recreated but stopped; rerun unmanage, or start them with docker compose -p kyq-%s start %s: %w", s.a.Name, strings.Join(start, ", "), s.a.Name, strings.Join(start, " "), err)
+		}
 	}
-	if _, err := s.a.Runner.Run(ctx, s.a.compose("start "+quoteAll(running)), nil); err != nil {
-		return fmt.Errorf("docker compose start: %w", err)
+	_, err = s.a.Runner.Run(ctx, "rm -f "+remote.Quote(s.record()), nil)
+	return err
+}
+
+// plan returns the services to recreate and to start: from the record a dying run left, or
+// read from the project and recorded before anything is recreated.
+func (s unmanageStep) plan(ctx context.Context) (recreate, start []string, err error) {
+	f := remote.Quote(s.record())
+	out, err := s.a.Runner.Run(ctx, "if test -e "+f+"; then head -c 4096 "+f+"; fi", nil)
+	if err != nil {
+		return nil, nil, err
 	}
-	return nil
+	if len(out) == 0 {
+		ids, err := s.a.containers(ctx, "")
+		if err != nil || ids == "" {
+			return nil, nil, err
+		}
+		cs, err := s.a.ps(ctx)
+		if err != nil || len(cs) == 0 {
+			return nil, nil, err
+		}
+		for _, c := range cs {
+			if !slices.Contains(recreate, c.Service) {
+				recreate = append(recreate, c.Service)
+			}
+			if (c.State == "running" || c.State == "restarting") && !slices.Contains(start, c.Service) {
+				start = append(start, c.Service)
+			}
+		}
+		body := "recreate " + strings.Join(recreate, " ") + "\nstart " + strings.Join(start, " ") + "\n"
+		cmd := "umask 077; t=$(mktemp " + remote.Quote(s.record()+".XXXXXX") + ") && { cat > \"$t\" && mv -f \"$t\" " + f + "; r=$?; rm -f \"$t\"; exit $r; }"
+		if _, err := s.a.Runner.Run(ctx, cmd, []byte(body)); err != nil {
+			return nil, nil, fmt.Errorf("record the running services: %w", err)
+		}
+		return recreate, start, nil
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	valid := func(names []string) bool {
+		return !slices.ContainsFunc(names, func(n string) bool { return !slices.Contains(s.a.Catalog.Services, n) })
+	}
+	if len(lines) != 2 || !strings.HasPrefix(lines[0], "recreate") || !strings.HasPrefix(lines[1], "start") {
+		return nil, nil, fmt.Errorf("%s is not an unmanage record; inspect it by hand", s.record())
+	}
+	recreate, start = strings.Fields(lines[0])[1:], strings.Fields(lines[1])[1:]
+	if !valid(recreate) || !valid(start) {
+		return nil, nil, fmt.Errorf("%s names a service %s does not have; inspect it by hand", s.record(), s.a.Name)
+	}
+	return recreate, start, nil
 }
 
 func (s unmanageStep) Verify(ctx context.Context) error {

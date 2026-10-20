@@ -180,7 +180,7 @@ func compose(dir string, args []string, stdin io.Reader, stdout io.Writer) (int,
 		}
 	case "stop":
 		set(false)
-	case "start":
+	case "start": // no depends_on: only the named services start (no catalog app uses it)
 		set(true, args[1:]...)
 	case "pull":
 	case "up":
