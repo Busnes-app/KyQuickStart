@@ -125,7 +125,9 @@ the plan is saved only after every step passed.
   Service, and keeps the app directory, data volumes, claims and secrets on the target.
 - `unmanage` removes `ky.managed-by` and `ky.release-set` and records the hand-over in
   `<state>/handover.md`. Docker cannot relabel a container, so existing containers are
-  recreated once, unstarted, and only the services that were running are started again; on
+  recreated once, unstarted, and only the services that were running (or restarting) are
+  started again; `<root>/<app>/.unmanage-running` records both sets until then, so a rerun
+  after an interruption finishes with them; on
   Kubernetes the pod-template change replaces the pods once. The installer then refuses to
   install over the app.
 - `upgrade`, and `apply`/`install` over a kept deployment, compare the deployed version
@@ -250,7 +252,8 @@ Residuals:
 - A removed person's restored sessions stay valid from the app's start until the replayed
   deactivation arrives, a few seconds in the end-to-end test. A failed replay stops the app.
 - If restore itself is killed or loses SSH after the app starts, the app keeps running until
-  you rerun `kyquickstart restore <app>`.
+  you rerun `kyquickstart restore <app>`; until then a person removed after the snapshot can
+  still sign in.
 - The gate trusts the installer's deployment record, not the running binary.
 - Whoever controls a live target can read that app's backups.
 - Not tested: a rest-server behind another proxy, repositories above the end-to-end test's
