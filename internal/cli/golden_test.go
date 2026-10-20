@@ -14,7 +14,7 @@ var updateGolden = flag.Bool("update-golden", false, "rewrite testdata/steps.gol
 
 // Every step's input hash and KyIdentity's intent (its clients and connectors) for the Docker
 // and Kubernetes Ky app plans, byte for byte those of origin/master 8ace9f6 except
-// kyidentity.deploy and kyidentity.health, whose image is now the 0.4.4 pin, and
+// kyidentity.deploy and kyidentity.health, whose image is now the 0.4.5 pin, and
 // kydrive.deploy and kydrive.health, whose healthcheck gained start_interval: backup and
 // restore change no other deployment or setup input.
 func TestStepInputsGolden(t *testing.T) {

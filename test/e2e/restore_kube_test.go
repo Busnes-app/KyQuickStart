@@ -35,7 +35,7 @@ import (
 
 // TestKubernetesRestore is the KyDrive restore drill: NPM's lan edge and KyIdentity in kind,
 // KyDrive on a Docker target with an append-only rest-server. Restore is refused while
-// KyIdentity is 0.4.3 (AC5a); upgraded to 0.4.4, whose resync replays removals, it backs
+// KyIdentity is 0.4.3 (AC5a); upgraded to the catalog's (0.4.4 or later), whose resync replays removals, it backs
 // KyDrive up, destroys its directory and restores it (AC5), proves the refusals and
 // --replace (AC6), and that a person removed after the snapshot is not readmitted (AC15).
 func TestKubernetesRestore(t *testing.T) {
@@ -141,7 +141,7 @@ func TestKubernetesRestore(t *testing.T) {
 
 	// AC5a: on KyIdentity 0.4.3 restore is refused before any restic call, nothing changed.
 	outputs = append(outputs, refuseUntouched(t, ctx, state, catalogDir, trust, drive, id[:8], "restore needs KyIdentity v0.4.4 or later, which replays removals on resync; installed: 0.4.3. Upgrade KyIdentity first")...)
-	// The catalog's KyIdentity 0.4.4 replays removals; it needs only an acknowledgement.
+	// The catalog's KyIdentity (0.4.5) replays removals; it needs only an acknowledgement.
 	upgradeIdentity(t, ctx, cs, connected, name, state, catalogDir, trust, certPEM, &outputs)
 	snaps := snapshots(t, b.dest, "kydrive", b.pw)
 	if len(snaps) != 1 || snaps[0].ID != id || strings.Join(snaps[0].Paths, " ") != "/kyq/secrets/scim_token /kyq/secrets/session_secret /kyq/volumes/backups /kyq/volumes/data" {
@@ -349,8 +349,8 @@ func identity043(t *testing.T, cluster, catalogDir string) {
 	}
 	m, _ := os.ReadFile(filepath.Join(dir, "manifest.yaml"))
 	for _, r := range [][2]string{
-		{"\nversion: 0.4.4\n", "\nversion: 0.4.3\n"},
-		{"  kyidentity: ghcr.io/busnes-app/kyidentity-server:0.4.4@sha256:f866a7513988a7b5919363ee76182baa2727ee57407404104049f93c29253c5a\n", "  kyidentity: " + identity043Image + "\n"},
+		{"\nversion: 0.4.5\n", "\nversion: 0.4.3\n"},
+		{"  kyidentity: ghcr.io/busnes-app/kyidentity-server:0.4.5@sha256:7cfa76b1a6cd9f935acb9872d0919de2071ea5f7752ebeec94119ba5be744709\n", "  kyidentity: " + identity043Image + "\n"},
 	} {
 		if bytes.Count(m, []byte(r[0])) != 1 {
 			t.Fatalf("the catalog's KyIdentity manifest changed; update the 0.4.3 copy for %q", r[0])
@@ -380,10 +380,10 @@ func upgradeIdentity(t *testing.T, ctx context.Context, cs kubernetes.Interface,
 		t.Fatalf("upgrade kyidentity: %v", err)
 	}
 	ns, err := cs.CoreV1().Namespaces().Get(ctx, "kyq-kyidentity", metav1.GetOptions{})
-	if err != nil || ns.Labels[managed.VersionLabel] != "0.4.4" {
+	if err != nil || ns.Labels[managed.VersionLabel] != "0.4.5" {
 		t.Fatalf("KyIdentity's deployment record after the upgrade: %v %v", ns.Labels, err)
 	}
-	t.Logf("kyquickstart upgrade kyidentity 0.4.3 -> 0.4.4 took %s", time.Since(start).Round(time.Second))
+	t.Logf("kyquickstart upgrade kyidentity 0.4.3 -> 0.4.5 took %s", time.Since(start).Round(time.Second))
 	dep, err := cs.AppsV1().Deployments("kyq-kyidentity").Get(ctx, "app", metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)

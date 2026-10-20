@@ -533,7 +533,7 @@ tunnels/VPS provisioning and Kubernetes connector deployment remain unavailable.
 
 ## Catalog KyIdentity on Kubernetes
 
-The catalog's `kyidentity` app installs KyIdentity 0.4.4 on a Kubernetes target from its
+The catalog's `kyidentity` app installs KyIdentity 0.4.5 on a Kubernetes target from its
 attested release image (`internal/catalog/apps/kyidentity/manifest.yaml` records the digest).
 It needs an edge route: its issuer is `https://<route hostname>`, plus `:<client_port>` behind a
 `lan` edge whose `client_port` is not 443, and a plan without exactly one route for it is refused. Select its setup with an `integrations` entry that names no
@@ -1352,8 +1352,8 @@ Limits and residuals:
 The catalog's `kymessage` app installs the whole KyMessages product on one Docker host: the
 console (`app`), Postgres, Synapse, MAS (Matrix Authentication Service), Element and LiveKit,
 plus the `/.well-known/matrix/*` delegation. Either all of it installs or apply refuses before
-changing anything. **Unreleased:** the manifest still pins KyMessage v0.4.2's image, whose setup
-refuses `KY_SCIM_ENABLED=false`; it ships with v0.4.3's attested digest. Docker only: a plan
+changing anything. The console image is KyMessage v0.4.3's, attested by
+`Busnes-app/KyMessage-Server` `release-image.yml@refs/tags/v0.4.3` from commit `37e6d09a`. Docker only: a plan
 placing it on a cluster is refused (Kubernetes runs one container per app). The five Matrix
 images are the stock upstream builds KyMessage's `docker-compose.matrix.yml` pins by digest; no
 attestation was found for them.
