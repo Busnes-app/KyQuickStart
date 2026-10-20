@@ -142,6 +142,20 @@ chown kyq `+base)
 	return messageTarget{name: name, port: port, root: base + "/root", fp: fp, forward: gateway, ports: ports, relay: relay}
 }
 
+// wildcardListeners is the target's TCP and UDP sockets listening on every address, from
+// ss -ltnu on the target (the host's network namespace): "<netid> <address:port>".
+func wildcardListeners(t *testing.T, sshd string) map[string]bool {
+	t.Helper()
+	out := map[string]bool{}
+	for _, l := range strings.Split(docker(t, "exec", sshd, "ss", "-Hltnu"), "\n") {
+		f := strings.Fields(l)
+		if len(f) >= 5 && (strings.HasPrefix(f[4], "0.0.0.0:") || strings.HasPrefix(f[4], "*:") || strings.HasPrefix(f[4], "[::]:")) {
+			out[f[0]+" "+f[4]] = true
+		}
+	}
+	return out
+}
+
 func patch(t *testing.T, file string, edits [][2]string) {
 	t.Helper()
 	b, _ := os.ReadFile(file)
@@ -201,6 +215,7 @@ func TestKubernetesKyMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	cs := kubernetes.NewForConfigOrDie(cfg)
+	mail := startMailpit(t, work)
 	catalogDir := filepath.Join(work, "catalog")
 	for _, app := range []string{"npm", "kyidentity"} {
 		if err := os.CopyFS(filepath.Join(catalogDir, app), os.DirFS("../../internal/catalog/apps/"+app)); err != nil {
@@ -240,16 +255,20 @@ func TestKubernetesKyMessage(t *testing.T) {
 	st.Edges = []stack.Edge{{Target: "k8s", Provider: "lan", NPMURL: "kube://kyq-npm/app:81", ClientPort: 30443, EgressAddress: nodeIP,
 		AllowCIDRs: []string{mustNode(t, ctx, cs, node).Spec.PodCIDR, msg.forward + "/32", docker(t, "inspect", msg.relay, "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}") + "/32"}}}
 	addCatalogIdentity(st, certID)
+	// KyIdentity's mail relay is set by its first setup only: Mailpit, STARTTLS and AUTH.
+	st.Integrations[len(st.Integrations)-1].Identity.Mail = mail.relay(t, work)
 	savePlan(t, plan, st)
 	testClusterDNS(t, ctx, cs, nodeIP)
 	apply("identity")
-	trustTestCA(t, ctx, cs, connected, "kyidentity", certPEM)
+	trustTestCA(t, ctx, cs, connected, "kyidentity", append(slices.Clone(certPEM), mail.caPEM...))
+	mail.refusesInsecure(t)
 
 	// AC14: KyMessages joins later, by amendment.
 	st, _ = stack.Load(plan)
 	addCatalogMessage(st, certID, msg)
 	savePlan(t, plan, st)
 	trust = []string{"--trust-host-key", "nas=" + msg.fp}
+	listening := wildcardListeners(t, msg.name)
 	stackStart := time.Now()
 	out := apply("kymessage")
 	t.Logf("KyMessages apply took %s", time.Since(stackStart).Round(time.Second))
@@ -314,11 +333,21 @@ func TestKubernetesKyMessage(t *testing.T) {
 	if _, _, b := get("chat", "/config.json"); !bytes.Contains(b, []byte(messageHosts["server_name"])) || !bytes.Contains(b, []byte("https://"+messageHosts["matrix"])) {
 		t.Errorf("Element config: %.400s", b)
 	}
+	// Federation's closed level: no federation listener and an allow-list of none.
+	fed := docker(t, "exec", msg.name, "cat", msg.root+"/kymessage/matrix/federation/federation.yaml")
+	var level struct {
+		Listeners []struct{ Resources []struct{ Names []string } }
+		Allow     []string `json:"federation_domain_whitelist"`
+	}
+	if _, body, _ := strings.Cut(fed, "\n"); json.Unmarshal([]byte(body), &level) != nil || len(level.Listeners) != 1 || len(level.Listeners[0].Resources) != 1 ||
+		!slices.Equal(level.Listeners[0].Resources[0].Names, []string{"client", "openid"}) || level.Allow == nil || len(level.Allow) != 0 {
+		t.Errorf("federation.yaml is not at the closed level:\n%s", fed)
+	}
 
 	// AC16 and AC2: on the target.
 	root := msg.root + "/kymessage"
 	secrets := map[string]string{}
-	for _, f := range []string{"secrets/session_secret", "secrets/directory_secret", "data/installer/5b8c9d0e-1f2a-4b3c-8d4e-5f6a7b8c9d0e/client.secret"} {
+	for _, f := range []string{"secrets/session_secret", "data/installer/directory_secret", "data/installer/5b8c9d0e-1f2a-4b3c-8d4e-5f6a7b8c9d0e/client.secret"} {
 		secrets[f] = strings.TrimSpace(docker(t, "exec", msg.name, "cat", root+"/"+f))
 	}
 	for _, f := range strings.Fields(docker(t, "exec", msg.name, "ls", root+"/matrix/secrets")) {
@@ -327,7 +356,7 @@ func TestKubernetesKyMessage(t *testing.T) {
 	if bad := docker(t, "exec", msg.name, "find", root, "!", "-user", "kyq"); bad != "" {
 		t.Errorf("files not the SSH user's: %s", bad)
 	}
-	modes := docker(t, "exec", msg.name, "sh", "-c", "stat -c '%a %n' "+root+"/data/installer/*/ "+root+"/data/installer/*/* "+root+"/matrix/secrets/*")
+	modes := docker(t, "exec", msg.name, "sh", "-c", "stat -c '%a %n' "+root+"/data/installer/*/ "+root+"/data/installer/*/* "+root+"/data/installer/directory_secret "+root+"/matrix/secrets/*")
 	for _, l := range strings.Split(modes, "\n") {
 		if f := strings.Fields(l); len(f) == 2 && !(f[0] == "600" || f[0] == "700" && strings.HasSuffix(f[1], "/")) {
 			t.Errorf("mode %s", l)
@@ -374,15 +403,45 @@ func TestKubernetesKyMessage(t *testing.T) {
 			}
 		}
 	}
-	check := docker(t, "exec", "kyq-kymessage-app-1", "/bin/sh", "-c", `eval "$KYQ_SECRETS" && exec /app/kymessages apply-setup --file `+messageSetupDir+`/setup.json --check`)
-	var report struct{ Created, Pending, Present []map[string]string }
-	if json.Unmarshal([]byte(check), &report) != nil || len(report.Created) != 0 || len(report.Pending) != 0 {
-		t.Errorf("console --check: %s", check)
+	// Nothing new listens on every address of the target: each publication names its address.
+	stackPorts := []string{"5432", "7880", "7881", "7882", "8008", "8080", "8081"}
+	for _, p := range msg.ports {
+		stackPorts = append(stackPorts, strconv.Itoa(p))
 	}
-	t.Logf("console --check: %s", check)
+	for l := range wildcardListeners(t, msg.name) {
+		if !listening[l] {
+			_, port, _ := net.SplitHostPort(strings.Fields(l)[1])
+			if slices.Contains(stackPorts, port) {
+				t.Errorf("new wildcard listener on the target: %s", l)
+			} else {
+				t.Logf("new wildcard listener on this shared host, not a KyMessages port: %s", l)
+			}
+		}
+	}
+	checks := func() {
+		t.Helper()
+		check := docker(t, "exec", "kyq-kymessage-app-1", "/bin/sh", "-c", `eval "$KYQ_SECRETS" && exec /app/kymessages apply-setup --file `+messageSetupDir+`/setup.json --check`)
+		var report struct{ Created, Pending, Present []map[string]string }
+		if json.Unmarshal([]byte(check), &report) != nil || len(report.Created) != 0 || len(report.Pending) != 0 ||
+			len(slices.DeleteFunc(slices.Clone(report.Present), func(p map[string]string) bool { return p["kind"] != "identity" })) != 2 {
+			t.Errorf("console --check: %s", check)
+		}
+		t.Logf("console --check: %s", check)
+		ns, pod, container, err := connected.AppPod(ctx, "kyidentity")
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := connected.Exec(ctx, ns, pod, container, []string{"/usr/local/bin/kyidentity", "apply-setup", "--file", "/data/installer/" + identityFixturePreparation().SetupID + "/setup.json", "--check"})
+		var identity struct{ Created, Reused []map[string]string }
+		if err != nil || json.Unmarshal(b, &identity) != nil || identity.Created == nil || len(identity.Created) != 0 {
+			t.Errorf("KyIdentity --check: %v %s", err, b)
+		}
+		t.Logf("KyIdentity --check: %s", b)
+	}
+	checks()
 
 	// AC17: console sign-on for both owner accounts.
-	messageLogin(t, ctx, transport, "prepared-admin", ownerPassword(t, ctx, connected, "admin.password"), true)
+	console := messageLogin(t, ctx, transport, "prepared-admin", ownerPassword(t, ctx, connected, "admin.password"), true)
 	messageLogin(t, ctx, transport, "prepared-user", ownerPassword(t, ctx, connected, "everyday.password"), false)
 
 	// AC23: a rerun skips every KyMessages step and the routes, and touches no file.
@@ -418,25 +477,33 @@ func TestKubernetesKyMessage(t *testing.T) {
 	}
 	secrets["break-glass"] = pw
 
-	// AC27 (this slice): no secret in any output or state file.
-	for _, o := range outputs {
-		for k, v := range secrets {
-			if len(v) >= 16 && strings.Contains(o, v) {
-				t.Errorf("%s in apply output", k)
+	// AC18-AC22, AC25, AC26: chat, offboarding, backup and restore, the memory sampled throughout.
+	chat := &messageChat{t: t, ctx: ctx, transport: transport, connected: connected, msg: msg, mail: mail, console: console, secrets: secrets,
+		mas: newMAS(t, ctx, transport), admin: newIdentityAdmin(t, ctx, transport, "prepared-admin", ownerPassword(t, ctx, connected, "admin.password"))}
+	secrets["the SMTP password"] = mail.password
+	chat.signIns()
+	sampler := sampleMemory()
+	chatStart := time.Now()
+	chat.encryptedRoom()
+	chat.offboarding(chat.calls())
+	skipped := func(label, out string) {
+		t.Helper()
+		for _, id := range ids {
+			if s := status(out, id); s != "skipped" {
+				t.Errorf("%s: %s = %q", label, id, s)
 			}
 		}
 	}
-	filepath.Walk(state, func(p string, fi os.FileInfo, err error) error {
-		if err == nil && !fi.IsDir() {
-			b, _ := os.ReadFile(p)
-			for k, v := range secrets {
-				if len(v) >= 16 && bytes.Contains(b, []byte(v)) {
-					t.Errorf("%s in %s", k, p)
-				}
-			}
-		}
-		return nil
-	})
+	chat.backupRestore(messageOps{work: work, state: state, catalogDir: catalogDir, plan: plan, trust: trust, apply: apply, outputs: &outputs, checks: checks, skipped: skipped})
+	peak, at := sampler.end()
+	t.Logf("AC28: peak KyMessages memory %.0f MiB during AC20-AC26 (%s): %s", peak, time.Since(chatStart).Round(time.Second), at)
+	if peak > 3*1024 {
+		t.Errorf("KyMessages peaked at %.0f MiB, over 3 GiB", peak)
+	}
+
+	// AC27: no secret in any apply, backup or restore output, nor under the state directory.
+	noSecrets(t, state, outputs, sweepSecrets(secrets))
+	t.Logf("AC27: %d secrets swept over %d outputs and the state directory", len(sweepSecrets(secrets)), len(outputs))
 	stats := docker(t, "stats", "--no-stream", "--format", "{{.Name}} {{.MemUsage}}")
 	t.Logf("memory:\n%s", stats)
 	t.Logf("TestKubernetesKyMessage took %s", time.Since(start).Round(time.Second))

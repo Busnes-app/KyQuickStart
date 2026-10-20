@@ -43,8 +43,7 @@ func ownerPassword(t *testing.T, ctx context.Context, c *kube.Client, file strin
 
 func newIdentityAdmin(t *testing.T, ctx context.Context, transport http.RoundTripper, username string, password []byte) *identityAdmin {
 	t.Helper()
-	jar, _ := cookiejar.New(nil)
-	a := &identityAdmin{t: t, ctx: ctx, c: &http.Client{Transport: transport, Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, password: string(password)}
+	a := &identityAdmin{t: t, ctx: ctx, c: newJarClient(transport), password: string(password)}
 	code, b := a.send("GET", "/api/auth/csrf", nil, "")
 	if code != 200 {
 		t.Fatalf("KyIdentity CSRF: %d %s", code, b)
@@ -55,6 +54,12 @@ func newIdentityAdmin(t *testing.T, ctx context.Context, transport http.RoundTri
 		t.Fatalf("%s KyIdentity sign-in: %d", username, code)
 	}
 	return a
+}
+
+// newJarClient is a browser that keeps cookies and follows no redirect.
+func newJarClient(transport http.RoundTripper) *http.Client {
+	jar, _ := cookiejar.New(nil)
+	return &http.Client{Transport: transport, Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
 
 // send makes one request with the session's CSRF cookie as its header, and stepUp's grant.
@@ -130,11 +135,16 @@ func (a *identityAdmin) app(client string) string {
 
 // createUser creates an active person who signs in with password and returns their ID.
 func (a *identityAdmin) createUser(username, password string) string {
+	return a.createPerson(username, username+"@example.test", password)
+}
+
+// createPerson is createUser with the person's address, which KyIdentity leaves unverified.
+func (a *identityAdmin) createPerson(username, email, password string) string {
 	a.t.Helper()
 	var created struct {
 		User struct{ ID string }
 	}
-	b := a.change("POST", "/api/admin/users", map[string]string{"username": username, "displayName": strings.ToUpper(username[:1]) + username[1:], "email": username + "@example.test", "password": password, "role": "user", "status": "active"})
+	b := a.change("POST", "/api/admin/users", map[string]string{"username": username, "displayName": strings.ToUpper(username[:1]) + username[1:], "email": email, "password": password, "role": "user", "status": "active"})
 	if json.Unmarshal(b, &created) != nil || created.User.ID == "" {
 		a.t.Fatalf("KyIdentity created no user: %s", b)
 	}

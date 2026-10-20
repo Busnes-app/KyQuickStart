@@ -473,7 +473,7 @@ calls and kind nodes must carry their own explicit bounds.
 ## Verification
 
 - `make build`: builds workstation `kyquickstart` and resident `kyoffboard` binaries.
-- `make ci`: tidy check, gofmt, vet (including the `e2e` tag), race tests. Runner tests decode
+- `make ci`: tidy check, gofmt, vet (including the `e2e,goolm` tags), race tests. Runner tests decode
   every answer with KyYard's client types (`internal/runner/kyyard_test.go`).
   `cmd/kyquickstart/release_test.go` runs `scripts/release-binaries.sh` (the stamp in all four
   binaries, its refusals) and checks `release-image.yml`'s job graph, permissions and pins.
@@ -533,6 +533,13 @@ calls and kind nodes must carry their own explicit bounds.
   port, private setup files, live `--check`, health and an untrusted-proxy network status
   through the edge, admin and everyday sign-in (`/api/users` 200/403), the handover's
   break-glass read and session-ending restart run verbatim on the target, and a skipped rerun.
+  `TestKubernetesKyMessage` (`message_stack_test.go`, `message_chat_test.go`) installs the whole
+  KyMessages stack on a non-root sshd target in the host's network namespace by amendment, with
+  KyIdentity's first setup relaying mail through a test-only Mailpit (STARTTLS, AUTH, test CA).
+  A test-only Matrix client (`matrix_client_test.go`: mautrix with pure-Go goolm, build tag
+  `goolm`, MAS OAuth with PKCE and dynamic registration) signs in by both verified-email paths,
+  exchanges encrypted messages, gets a LiveKit grant, measures offboarding, and backs the stack
+  up and restores it through `backup`/`restore`, the original device decrypting the history.
   Backups (`test/e2e/backup_test.go`) go to a disposable append-only TLS rest-server on its own
   network, published on the default bridge's gateway. `TestApply` backs up and restores the
   test-only `dumpdemo` (Postgres dump, a file volume with a `skip` path, a capsule secret) from
