@@ -42,9 +42,9 @@ is installed; this spec decides how.
 | `preflight` | Read-only checks per target: SSH, Docker and Compose versions, Kubernetes RBAC, storage classes and Pod Security, DNS, ports, disk, image pulls. Reports every gap before any change |
 | `apply` | Runs the plan as a dependency graph (see Install sequence). Resumable and idempotent |
 | `integrate-stack` | Runs explicit secret-free `integrations` selections through the implemented native product setup adapters; KyIdentity first, then saved order. `--check` is read-only. Typed KyNotes and KyIdentity settings prepare private native bundles through product-owned stdin and read-only comparison; Identity generates target-held credentials with immutable receipts. Other bundles are supplied separately; automatic graph construction and cross-target credential distribution remain pending |
-| `verify` | Acceptance checks (see Verification) |
-| `handover` | Prints URLs, admin and everyday logins, activation links, NPM admin credentials, and outstanding human steps |
-| `offboard <user>` | Runs every app's `Deprovision` for one user; fallback for the bridge |
+| `verify` | Not built: acceptance checks (see Verification) |
+| `handover` | Not built as a command; apply prints the handover at the end. Prints URLs, admin and everyday logins, activation links, NPM admin credentials, and outstanding human steps |
+| `offboard <user>` | Not built: runs every app's `Deprovision` for one user; fallback for the bridge. The bridge itself is the separate `kyoffboard --config <file> [--check]` service binary (`docs/offboarding.md`), not a `kyquickstart` command |
 | `upgrade` | Upgrades installed apps to this release set under the upgrade rules |
 | `backup <app>` | Built for Docker apps: one restic snapshot of the app's dump (or, without a dump command, its stopped bind directories) and its `capsule_secrets` to its target's rest-server, tagged with app and installation; creates the repository and its target-held password once. No schedule (`docs/guided-setup.md`, "Backups and restore on Docker") |
 | `restore <app> [--snapshot <id>] [--replace] [--yes]` | Built for Docker apps from a restic snapshot alone: lists snapshots, or restores one after a typed confirmation, refusing a running app or existing data without `--replace`; for an app whose people come from KyIdentity, only with KyIdentity v0.4.4+ and after its `resync-system` delivered. The capsule path below is not built |
@@ -168,8 +168,12 @@ A resident Go service built from this repository, deployed by the installer.
 - **Targets:** every generated secret (database passwords, OIDC client secrets, the restic
   password, bridge credentials) is created once where it is used. On re-run the installer reads
   the existing secret instead of generating a new one.
-- **Recovery:** each app's secrets are sealed into its KyRecovery capsule.
-- **Handover:** printed once at the end; not written to the state directory.
+- **Recovery:** the installer seals nothing to KyRecovery. `backup` puts a Docker app's
+  `capsule_secrets` into its restic snapshot, encrypted by restic (`docs/guided-setup.md`,
+  "Backups and restore on Docker"). Products that make their own KyRecovery capsules do so
+  after the owner pairs them, an outstanding human step apply prints.
+- **Handover:** apply prints its handover at the end and does not save it. `unmanage` appends
+  a section without secrets to `<state>/handover.md` saying the app is no longer managed.
 - A lost workstation leaks no secret.
 
 ## Install sequence
@@ -185,11 +189,12 @@ Nothing changes on a target until `plan` and `preflight` pass. `apply` then runs
 4. **kyPulse, then KyYard.**
 5. **Each remaining app, in dependency order:** OIDC client and roles in KyIdentity → secrets on
    target → deploy → health → `apply-setup` or adapter `Apply` → `GrantAdmin` for the admin
-   identity, and a check that the everyday identity has none → NPM host → kyPulse target →
-   backup schedule (K8up or restic timer) → KyRecovery pairing.
+   identity, and a check that the everyday identity has none → NPM host → kyPulse target.
+   No backup schedule is built: `backup` runs only when the operator starts it. KyRecovery
+   pairing is an owner step that apply prints as outstanding.
 6. **Offboarding bridge:** deploy; register its SCIM connector in KyIdentity.
 7. **KyYard enrollment** of every target.
-8. **`verify`, then `handover`.**
+8. **Handover:** apply prints it at the end. Separate `verify` and `handover` commands are not built.
 
 ## Failure handling
 
@@ -211,9 +216,10 @@ drives ([suite runner](2026-10-16-suite-runner-design.md)). KyYard does not impo
 
 - **Start points:** `kyquickstart upgrade`, and an **Upgrade** action in KyYard showing the
   installed release set against the newest one, for one app or the whole suite.
-- **Procedure:** check each app's upgrade rules → take a KyRecovery capsule and a restic snapshot
-  and verify both (digest match, `restic check`) → upgrade one app at a time in dependency order
-  → health and acceptance checks → stop at the first failure.
+- **Procedure:** check each app's upgrade rules → upgrade one app at a time in dependency order
+  → stop at the first failure. No pre-upgrade backup is taken: an upgrade that migrates data is
+  refused (`backup_required`), and any other upgrade needs `--acknowledge-no-backup`
+  (`ack_required`). A verified KyRecovery capsule and restic snapshot before upgrading come later.
 - **No image rollback after a data migration.** Recovery is the product's restore workflow from
   the pre-upgrade backup. Apps that declare no migration may return to previous digests.
 - **KyYard's generic image edits and update policies refuse labelled workloads** and point to the
@@ -223,13 +229,16 @@ drives ([suite runner](2026-10-16-suite-runner-design.md)). KyYard does not impo
 
 ## Verification
 
-`verify` proves, per app:
+Not built: there is no `verify` command. Each apply step ends with its own Verify (Failure
+handling), and `verify-edge` checks forwarded headers through public HTTPS. A `verify` command
+is to prove, per app:
 
 - sign-in through KyIdentity as the admin and the everyday identity;
 - admin granted to the admin identity and refused to the everyday identity, in the UI and API;
 - offboarding: disabling a test user ends that user's sessions and tokens;
 - health reported in kyPulse;
-- a backup reaches KyRecovery and the restic repository, and a disposable restore drill passes.
+- a `backup` snapshot reaches the restic repository and a disposable restore drill passes; KyRecovery
+  capsules are the products' own, made once the owner pairs them.
 
 Running pods alone is not completion.
 
