@@ -57,7 +57,8 @@ func dockerAppContainer(app string) string {
 	return "c=$(docker ps -q --filter " + remote.Quote("label=com.docker.compose.project=kyq-"+app) +
 		" --filter " + remote.Quote("label=com.docker.compose.service="+service) +
 		" --filter " + remote.Quote("label="+managed.Label+"="+managed.Value) + " --filter status=running) && " +
-		"case $c in ''|*[!0-9a-f]*) echo " + remote.Quote("want one running "+app+" container") + " >&2; exit 1;; esac && "
+		// The pattern's leading ( lets bash 3.2, macOS's sh, parse this inside $(...).
+		"case $c in (''|*[!0-9a-f]*) echo " + remote.Quote("want one running "+app+" container") + " >&2; exit 1;; esac && "
 }
 
 // dockerExec runs binary in container, a shell word that prefix may set.
