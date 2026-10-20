@@ -1,6 +1,6 @@
 # Pilot cluster K80
 
-`k80.urlxl.us` (kubeadm 1.37, nodes k80 control plane and k81 worker). It also runs a hand-built
+`k80.example.com` (kubeadm 1.37, nodes k80 control plane and k81 worker). It also runs a hand-built
 `ky-stack`; KyQuickStart installs alongside it in its own `kyq-*` namespaces and never adopts
 `ky-stack` objects. Migrating `ky-stack` is a separate, later step.
 
@@ -39,30 +39,30 @@ edges:
     client_port: 30543
     certificates:
       - name: k80
-        domains: ['*.k80.urlxl.us']
+        domains: ['*.k80.example.com']
         email: <an address of its own, not NPM's admin login; a +acme alias works>
         dns_provider: cloudflare
-        credentials: {secret: cloudflare-dns, key: api_token}   # Zone:DNS:Edit on urlxl.us only
+        credentials: {secret: cloudflare-dns, key: api_token}   # Zone:DNS:Edit on example.com only
     lan_dns:
       provider: kydns
-      url: https://kydns.urlxl.us/
+      url: https://kydns.example.com/
       credentials: {secret: kydns-api, key: token}
       address: 192.168.1.81
     routes:
       - app: <app>
-        hostname: <app>.k80.urlxl.us
+        hostname: <app>.k80.example.com
         forward_host: app.kyq-<app>.svc.cluster.local
         forward_port: <its port>
         certificate: k80
 ```
 
-Clients open `https://<app>.k80.urlxl.us:30543/`. Run `verify-edge` from a workstation on
+Clients open `https://<app>.k80.example.com:30543/`. Run `verify-edge` from a workstation on
 `192.168.1.0/24` with `--expected-client-ip` set to its LAN address. Open before relying on it:
 
 - `192.168.1.81` is k81, the node running NPM; it answers only on the NodePorts 30180/30543.
   A product that builds absolute URLs without the forwarded port sends clients to 443, which
   answers only if k81 forwards 443 to 30543. Nothing in KyQuickStart sets that up.
-- KyDNS must hold `k80.urlxl.us` names inside its private zone; preflight reports the zone if not.
+- KyDNS must hold `k80.example.com` names inside its private zone; preflight reports the zone if not.
 
 **2026-10-17: runner pod hand-off (master 3c82cd6, runner image 1ac7972).** `k80-runner.yaml`
 runs the runner on k81 from an image imported into containerd by hand (`imagePullPolicy:
@@ -78,15 +78,15 @@ left the runner `Unauthorized`. The runner pod stays deployed with no cluster ac
 
 **2026-10-18: LAN edge and KyIdentity (master 8dc572c + cpu_request).** The plan gained a `lan`
 edge (`allow_cidrs: [192.168.1.0/24]`, `client_port: 30543`) with the `k80` certificate and
-KyDNS LAN DNS, and `kyidentity` routed at `identity.k80.urlxl.us`. The first apply stopped at
+KyDNS LAN DNS, and `kyidentity` routed at `identity.k80.example.com`. The first apply stopped at
 `kyidentity.health`: KyIdentity requested a whole CPU and k81 had about 230m unrequested
 (`ky-stack` requests 94% of it), so the pod stayed Pending. With `cpu_request: 100m` under its
-1-CPU limit it scheduled, and apply ran every step: NPM requested `*.k80.urlxl.us` from Let's
+1-CPU limit it scheduled, and apply ran every step: NPM requested `*.k80.example.com` from Let's
 Encrypt by DNS-01 through the Cloudflare token (issuer YE1, valid to 2027-01-15), KyDNS got an
-A record `identity.k80.urlxl.us → 192.168.1.81`, and NPM serves the route. From a LAN
+A record `identity.k80.example.com → 192.168.1.81`, and NPM serves the route. From a LAN
 workstation (192.168.1.156) the name resolves through the normal resolver and
-`https://identity.k80.urlxl.us:30543/.well-known/openid-configuration` answers 200 with full
-certificate verification and issuer `https://identity.k80.urlxl.us`. A rerun skipped every step.
+`https://identity.k80.example.com:30543/.well-known/openid-configuration` answers 200 with full
+certificate verification and issuer `https://identity.k80.example.com`. A rerun skipped every step.
 KyIdentity's installer setup has not run yet (it needs the owner's admin and everyday logins).
 
 **2026-10-18: KyIdentity installer setup (master cc59590).** The plan gained a `kyidentity`
@@ -102,9 +102,9 @@ KyIdentity-server#109 lands, and no mail relay is set.
 setup had no clients, and KyIdentity 0.4.2 cannot add one later (KyIdentity-server#110), so the
 pilot KyIdentity was reset: namespace `kyq-kyidentity` and its retained volume deleted (only the
 test accounts were lost; the volume's directory on k81 needs `sudo rm` by hand). The plan then
-gained `kyrecovery` at `recovery.k80.urlxl.us`, a new KyIdentity setup ID, and `10.0.0.0/8`
+gained `kyrecovery` at `recovery.k80.example.com`, a new KyIdentity setup ID, and `10.0.0.0/8`
 (Cilium's pod pool) in the lan edge's `allow_cidrs`, because KyRecovery's pod reaches the issuer
-through NPM. With `{{host}}` the issuer is `https://identity.k80.urlxl.us:30543`. `apply` ran
+through NPM. With `{{host}}` the issuer is `https://identity.k80.example.com:30543`. `apply` ran
 every step: KyIdentity setup with the derived `kyrecovery` client, KyRecovery deploy and setup,
 its route and KyDNS record, and printed the custodian ceremony as an outstanding human step.
 From the LAN, `k80-admin` signed in to KyIdentity, KyRecovery redirected to it with
@@ -126,7 +126,7 @@ skipped every step. Adding an app after KyIdentity's setup no longer needs a res
 **2026-10-18: KyDrive on a Docker host, joined by amendment (master 5035865).** The plan gained
 Docker target `hlwcdocker02` (192.168.1.91, root `/home/yoshi/kyq`; its ECDSA host key
 `SHA256:F33QGW…` matched `/etc/ssh` on the host and the operator's `known_hosts`) and `kydrive`
-there, routed through K80's lan edge at `drive.k80.urlxl.us` → `192.168.1.91:18443`. `apply`
+there, routed through K80's lan edge at `drive.k80.example.com` → `192.168.1.91:18443`. `apply`
 created KyIdentity setup amendment `kydrive`, deployed KyDrive (uid 1000, read-only root,
 `cap_drop ALL`, `no-new-privileges`; data and secrets 0700/0600), moved its client secret from
 the K80 pod to the container over SSH stdin, and set it up; NPM's egress now admits exactly that
