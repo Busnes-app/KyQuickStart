@@ -2,11 +2,15 @@
 
 ## Purpose
 
-Verify exact native OIDC ownership, administrator projection and content-preserving revocation.
+Verify exact native OIDC ownership, administrator projection and content-preserving revocation and reactivation.
 
 ## Ownership
 
-- `client.go`: bounded native HTTPS transport, version/provider/account inspection and verified grants.
+- `client.go`: bounded native HTTPS transport, version/provider/account inspection and verified
+  grants. `New` requires a verified HTTPS origin; `NewInternal` takes a Compose service origin
+  (`InternalOrigin`: one lowercase DNS label, optional port, no IP/localhost/path), plain HTTP
+  allowed, for the bridge in Immich's own project.
+- `reactivate.go`: `Reactivate`, the bridge's native reactivation of a retained account.
 - `provider.go`: preflight fingerprints, native OIDC configuration and verified readback; protected intent stays on target.
 - `access.go`: installation-bound module proof and permanent revocation with uncertain-outcome refusal.
 - `directory.go`: owned current profile/revision inspection and verified atomic native name/email/administrator projection.
@@ -49,15 +53,22 @@ Verify exact native OIDC ownership, administrator projection and content-preserv
   configure only a blank provider or repeat an exact match. Refuse migration and preflight
   drift; preserve every unrelated field and hold unknown writes/readback as uncertain.
   Upstream PUT has no conditional update: callers must serialize every configuration writer.
-  Fingerprints prove configuration state, not installation ownership. Target-local intent,
-  deployment composition remains unfinished; explicit initial setup dispatch uses the target lock.
+  Fingerprints prove configuration state, not installation ownership. Setup, from
+  `integrate-product` or apply's `immich.setup`, runs under the target lock.
+- `Reactivate` takes an even epoch (≥2) and the PUT's profile. It posts the module route only
+  over a fence; without one it accepts only this epoch's earlier receipt. Success needs no
+  fence, this epoch's receipt, zero sessions/keys after its own post and the directory profile
+  read back (a later PUT's profile is applied by directory update). A 409 is `ErrRefused`;
+  every other failure is `ErrUncertain`.
 - Native directory projection requires `ky.immich-directory/1`, exact initial setup/native UUID/provider/subject
   and explicit current profile, revision and revocation fields. Compare-and-set updates touch only
   name/email/administrator plus the owned receipt in one native transaction. Refuse missing receipts,
   foreign/stale writes, unreceipted edits and revoked accounts. Repeats preserve revisions;
   uncertain results require reconciliation. Stock and older unreceipted modules are refused.
-- Complete identity lifecycle, administrator
-  ordinary-workflow separation and deployment remain gates. This path does not admit Immich.
+- Admission gates (offboarding, account lifecycle, restore) close only in `make e2e`
+  (`TestKubernetesImmich`); these fixtures do not close them. Administrator separation is a
+  documented residual (H2): Immich lets its administrator keep photos, and the handover points
+  photos to the everyday account.
 - Installer-owned mode requires a provisioned account and directory receipt before native
   OAuth login; it refuses first-login creation, email adoption and OAuth link/unlink changes.
   Other native configuration/account writers still require deployment coordination.
@@ -82,6 +93,9 @@ the fixture separately caps container memory (server 2 GiB, database 768 MiB, pr
 ## Verification
 
 - `go test -race ./internal/adapters/immich`: verified TLS transport and identity/authority refusal before writes.
+  `reactivate_test.go`: fence/epoch/profile verification and `InternalOrigin`;
+  `workflow_test.go`: `source.patch.sha256`, the overlay `Dockerfile` base pin and
+  `immich-image.yml`'s trigger, permissions, pins, push and attestation identity.
 - HTTP fixtures qualify boundaries, not native Immich behavior or session/token denial.
 - `KYQ_TEST_IMMICH_NATIVE=1 go test -race -count=1 -run '^TestNativeProviderAccountAndAdministrator$' -v ./internal/adapters/immich`:
   pinned v3.2.0 amd64 service, official pinned PostgreSQL/Valkey dependencies, fresh storage,

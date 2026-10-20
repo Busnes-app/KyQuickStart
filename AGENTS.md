@@ -289,8 +289,9 @@ handover of admin and everyday logins.
   recorded existing products. An entry for an installed catalog app names no workload:
   `apply` runs it after the app's health step against the app's one ready pod, and
   `integrate-stack` skips it. Today only KyIdentity (from its `identity` settings) and the
-  installed Ky apps with a catalog `oidc` block and a product adapter: KyRecovery, kyPulse,
-  KyNotes, KyCalendar and KyYard on Docker or Kubernetes; KyDrive and KyPost on Docker, and KyDNS on Docker (its managed `app` service, through `docker exec` over SSH; KyDNS's shell-less image gets its setup files placed from the host). An installed KyNotes' entry is exactly `bundle: /data/installer/setup.json`
+  installed apps with a catalog `oidc` block and a product adapter: KyRecovery, kyPulse,
+  KyNotes, KyCalendar and KyYard on Docker or Kubernetes; KyDrive, KyPost, KyDNS and Immich on
+  Docker (its managed `app` service, Immich's `immich-server`, through `docker exec` over SSH; KyDNS's shell-less image gets its setup files placed from the host). An installed KyNotes' entry is exactly `bundle: /data/installer/setup.json`
   and its `identity_client` (no `notes` block): apply derives its native preparation, and its
   setup runs after the edge routes KyIdentity and before KyNotes' own route; a routed KyNotes
   without that entry is refused. Apply adds each such app's client, derived from its `oidc`
@@ -299,10 +300,12 @@ handover of admin and everyday logins.
   app's `identity_amendment` (UUID derived from parent setup and client) in the plan and
   `kyidentity.amend.<app>` applies that amendment; otherwise it names #110 and the client.
   `kyidentity.retire-bootstrap` disables `kyq-bootstrap` through `disable-user` when advertised,
-  else apply prints that it stays active. An app whose `oidc` names `scim_token_file` (KyDrive)
-  gets `kyidentity.scim.<app>`, after its setup and the edges: its target's token copied
+  else apply prints that it stays active. An app whose `oidc` names `scim_token_file` (KyDrive,
+  Immich) gets `kyidentity.scim.<app>`, after its setup and the edges: its target's token copied
   privately into KyIdentity's container, never replaced, and a pass of the setup that registered its
-  client with `scim` added (outside the immutable preparation directories, so no reset).
+  client with `scim` added (outside the immutable preparation directories, so no reset). The
+  connector URL is the route's origin plus `oidc.scim_path`: default `/scim/v2` (the app
+  itself), Immich's `/scim/immich` (its bridge).
   The catalog KyIdentity sets `KYIDENTITY_ALLOW_PRIVATE_CALLBACKS`, since routes resolve to
   LAN or pod addresses; loopback, link-local and metadata stay refused. Before any step, apply refuses
   (`issuer_changed`) a plan that moves the issuer KyIdentity's workload runs with, or the URLs
@@ -316,6 +319,9 @@ handover of admin and everyday logins.
   KyPost's bundle is its own native version-1 JSON (KyIdentity sign-in with `autoProvision`, the
   client secret in a file beside it), placed and applied as `kypost`; it has no directory, SCIM or
   generated secrets, and its container runs as `kypost` with no capabilities.
+  Immich's setup is `immich.setup` (the module's bundle: the owner's two accounts and a
+  service administrator whose key stays on the target) then `immich.directory` (its kyoffboard
+  bridge's tokens, runtime, TLS and start); `docs/guided-setup.md` "Catalog Immich on Docker".
   KyRecovery's custodian ceremony stays human and apply prints it as outstanding. kyPulse's
   bundle registers every other routed app's readiness path as a monitoring target; that bundle
   is replaced as targets change, since kyPulse keeps omitted targets and refuses edited ones.
@@ -330,7 +336,10 @@ handover of admin and everyday logins.
   qualifies native HTTP sign-on and owner/everyday Notes access; browser UI, MFA, Kubernetes
   sign-on and full lifecycle acceptance remain open.
 - A third-party app enters the catalog only if it passes every admission rule in the catalog
-  spec. Record each rejection and its reason there.
+  spec. Record each rejection and its reason there. Immich, the first, is built in
+  `internal/catalog/pending/immich` (tests load it through `catalog/catalogtest`) and on hold
+  until its two Busnes images are published (H1); it ships only once its admission gates
+  close in `make e2e`.
 - Third-party apps run on Docker hosts only. Kubernetes hosts Ky products and the edge
   components (cloudflared, Nginx Proxy Manager, frp client), deployed with `client-go` typed
   objects (no Helm); the edge components also deploy to Docker hosts. An app leaving the catalog stops taking new installs after
@@ -356,7 +365,8 @@ handover of admin and everyday logins.
   with a cluster-generated one (`docs/edge.md`).
 - One edge (NPM, and a tunnel or frp client) per target and one owner per hostname. A route's
   app is on the edge's target or on a Docker target, never in another cluster; a cluster edge's
-  egress admits such an upstream's `forward_host` (an IP) and port alone. The installer
+  egress admits such an upstream's `forward_host` (an IP) and port alone, plus port+1 for an
+  app with a bridge (`{{bridge_forward}}`). The installer
   sets each product's trusted-proxy value to exactly where its edge connects from (pinned /32 on
   Docker, NAT-free LAN /32 across hosts, pod network plus an edge-only NetworkPolicy in the
   cluster), never `0.0.0.0/0`, and `verify` checks the client address the product reports.
@@ -434,8 +444,13 @@ handover of admin and everyday logins.
   `{{host}}`, replaced by the URL host of the app's one edge route (hostname, plus `:client_port` when it is not 443); no other template syntax.
 - A Compose template may write `{{host}}`, `{{forward}}` (the route's
   `forward_host:forward_port`, an IP of the Docker target, where the app publishes its port),
-  `{{forward_addr}}` (that IP alone) and `{{edge_address}}` (the route's edge's
-  `egress_address`; a plan whose edge has none is refused before connecting).
+  `{{forward_addr}}` (that IP alone), `{{edge_address}}` (the route's edge's
+  `egress_address`; a plan whose edge has none is refused before connecting) and
+  `{{bridge_forward}}` (`forward_addr:forward_port+1`, where the app's bridge publishes its TLS
+  port; it needs `oidc.scim_token_file`, the port must be free of other routes, and NPM forwards
+  `oidc.scim_path` there). Docker's health step waits for every Compose service except the
+  manifest's `health.after_setup` ones, which the app's setup starts; restore and backup wait
+  for all. A multi-service manifest lists its `components`, which plan review prints.
   Compose runs with `KYQ_UID`/`KYQ_GID` set to the target user's; `./<name>` bind directories
   are created private by the driver before Compose, and no other relative bind source is
   accepted.

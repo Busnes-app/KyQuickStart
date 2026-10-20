@@ -139,10 +139,12 @@ A resident Go service built from this repository, deployed by the installer.
   target or native account from a directory event's username/email.
 - Persist intent, attempts and audits on the bridge target. A queued or partial revocation
   stays pending; only native inspection/revocation/verification proves completion. Lost wire
-  outcomes preserve KyIdentity's normal uncertainty fencing. No activation can clear an
-  accepted permanent revocation intent.
-- Current app-scoped receiver groundwork supports exact identity lookup and `active=false`
-  PATCH only; active profile provisioning is explicitly refused. Its five-second synchronous
+  outcomes preserve KyIdentity's normal uncertainty fencing. Revocation is not permanent: a
+  re-assignment starts a reactivation epoch, which products without native reactivation refuse
+  (`docs/offboarding.md` "Reactivation").
+- The app-scoped receiver supports exact identity lookup and `active=false` PATCH; explicit
+  directory and creation opt-ins add profile/role PUT and new-account POST for Forgejo, Immich
+  and BookStack (`docs/offboarding.md`). Its five-second synchronous
   attempt returns retryable 429 for pending work and 204 only for proved completion. Complete
   lifecycle composition, resident service orchestration, audit delivery, protected deployment
   and restore must pass before registering it as an operational generic SCIM connector.
@@ -153,8 +155,10 @@ A resident Go service built from this repository, deployed by the installer.
   and verified durable receipts. Native tests cover lost replies and restart through the
   actual executable without duplicate ingestion. Shutdown joins HTTP/native/audit calls
   before state closes. Failure-alert creation remains unimplemented.
-  `docs/offboarding.md` owns this runtime contract; installer deployment and complete connector
-  lifecycle/audit/recovery qualification remain required before admission.
+  `docs/offboarding.md` owns this runtime contract. The catalog Immich is the first deployed
+  bridge: a `directory` service in its own Compose project, on its internal network, published
+  on `forward_port+1` and reached by KyIdentity at `/scim/immich` through NPM
+  (`docs/guided-setup.md`). That port is LAN-reachable, not restricted to KyIdentity.
 - Holds one credential per app, the narrowest each app allows, stored on the bridge's own target.
 - Network policy: inbound only from KyIdentity; outbound only to the catalog apps' APIs and
   kyPulse. No other ingress.

@@ -54,7 +54,7 @@ Versions are the latest releases checked on 2026-10-06; the release set pins exa
 | Vaultwarden (selected password service; release unpinned) | Passwords and passkeys | AGPL-3.0 | **Gated:** instance administration uses `ADMIN_TOKEN`, not a verified KyIdentity grant | Native disable/deauth APIs exist; adapter session/token proof remains open | Sole password choice; dedicated administrator separation and native owner administration must pass before admission |
 | Forgejo (v16 / LTS v15; 16.0.5 fixture qualified) | Git hosting, Actions CI | GPL-3.0-or-later | Native OIDC app-scoped `roles`; required `aud` equals the KyIdentity client ID; explicit SCIM directory projection with new-account and group-policy opt-ins | **Gated:** native disable/token removal, actual KyIdentity worker creation/profile/role/revocation delivery, sign-in and actual KyIdentity group worker lifecycle verified; complete connector/deployment/restore pending | No back-channel logout; Git over HTTPS uses personal tokens; authenticated directory role replacement denies old-session administration before fresh OIDC; group receiver creates/renames/retires owned teams with retained repositories; production organization setup, group audit/restore and creation/write uncertainty reconciliation remain open |
 | BookStack (v26.09.1 checked) | Wiki | MIT | `OIDC_USER_TO_GROUPS`, `OIDC_GROUPS_CLAIM=roles`, Admin role External Authentication ID `admin` | **Gated:** community module 0.15.0 verifies native setup/OIDC and actual identity-worker birth/profile/role/revocation delivery; complete lifecycle/deployment/restore/release pending | Upstream disable flags are ignored; community module retains accounts/content and denies sessions/tokens; no official image: build or pin one |
-| Immich (v3.2.0 native fixture qualified) | Photos | AGPL-3.0 | `roleClaim` → `admin`/`user`; actual KyIdentity PKCE sign-in, assigned-only access and native administrator authorization verified | **Gated:** stock logout retains API keys; a pinned community module verifies retained-account session/key/socket denial and actual KyIdentity creation/profile/role/revocation delivery, with protected creation opt-in; complete lifecycle and deployment remain unfinished | Config via `IMMICH_CONFIG_FILE` or native API; account DELETE schedules content removal and must not implement offboarding. Mobile redirect `app.immich:///oauth-callback` or HTTPS override; native-writer coordination, complete identity lifecycle and release/deployment proof pending |
+| Immich (v3.2.0; built, on hold for H1) | Photos | AGPL-3.0 | `rolesClaim: roles` → `admin`/`user` (KyIdentity sends `roles`); a role change arrives as a directory update before the next sign-in | **Built, admitted once its gates close in `make e2e`:** the community module (in the catalog server image) ends sessions, API keys and sockets and keeps the account and photos; a re-assignment reactivates it | Catalog entry in `internal/catalog/pending/immich`: server, machine learning, Postgres, Valkey and its kyoffboard bridge on Docker; phone sign-in through the mobile redirect override; account DELETE schedules content removal and is never offboarding. Waits for `kyq-immich-server` and `kyoffboard` to be published (H1); H2 accepted (see below)
 | Home Assistant + hass-oidc-auth (2026.9 / v1.2.1) | Home automation | Apache-2.0 / MIT | `roles.admin` from claim | Revoke refresh and long-lived tokens via API | Add-on is community-maintained: label it |
 | Dolibarr (v24.0) | CRM, invoicing, ERP | GPL-3.0 | Installer sets admin flag via API | Disable user, revoke API key | Admin not claim-driven |
 | LibreChat (v0.8.8 checked) | AI chat | MIT | `OPENID_ADMIN_ROLE`, `OPENID_REQUIRED_ROLE` | **Gated:** native ban expires and is optional; no verified retained-disable/token-revocation interface | Community native inspection module 0.1.0 and Go SDK qualified against real native models/MongoDB; persistent revocation and full setup/login remain gates; keep `OPENID_REUSE_TOKENS` off |
@@ -79,7 +79,38 @@ checks the admin-panel entitlement before any grant. The
 administrator CLI and API require that entitlement. Rejection follows rule 1, not a
 change to the task-management requirement; no replacement is selected yet.
 
-Immich's partial adapter pins v3.2.0 commit `1b6098c9dbfffe978bec2d414606ed7a4c8e019a`.
+Immich catalog entry, 2026-10-19 (factory job 007). The entry is built and admitted subject to
+two conditions: its admission gates close in this job's `make e2e`, and its two Busnes images
+are published (H1). A gate that cannot close on the test host puts it on hold; it never ships
+with one open.
+
+- **Gates** (Yoshi's decision 1): offboarding through KyIdentity ends the person's Immich
+  sessions, API keys and sockets and retains account and photos; a person assigned after
+  setup signs in; a backup restores; the owner's admin gets Immich administrator rights (admin
+  API 200) and the everyday account does not, also on a second sign-in after a role change.
+- **Evidence pointers**, results not recorded here: `TestKubernetesImmich`
+  (`test/e2e/immich_kube_test.go`, under `make e2e`); the native module fixture
+  (`internal/adapters/immich`, `KYQ_TEST_IMMICH_*`, including `native_reactivation_test.go`);
+  unit tests `internal/catalog/immich_test.go` and `internal/cli/immich_catalog_test.go`.
+- **H1:** `ghcr.io/busnes-app/kyq-immich-server:3.2.0-ky.1` (`immich-image.yml`, tag
+  `immich-v3.2.0-ky.1`) and `ghcr.io/busnes-app/kyoffboard` are unpublished; the manifest pins
+  `sha256:pending` until Yoshi pushes the tags. Then the entry moves to `apps/`.
+- **Admin role root cause (decision 8).** KyIdentity 0.4.4 always sends the app roles in
+  `roles` and sends `role` only for legacy clients, which installer clients never are, though
+  its discovery document still lists `role` in `claims_supported`. Stock Immich configured with
+  `roleClaim: role` found no claim and created the owner's admin as a plain user. The fix is
+  configuration: the bundle sets `rolesClaim: roles` with exactly `admin`/`user`.
+- **H2, accepted residual.** Immich lets its administrator use photo workflows; there is no
+  ordinary-workflow denial for the dedicated admin. The handover tells the owner to use the
+  everyday account for photos.
+- **Residuals:** trusted proxies stay at upstream's default; the forward ports (app and bridge)
+  are LAN-reachable; Immich calls GitHub, Hugging Face and `tiles.immich.cloud`; no kyPulse
+  watch (Docker apps are unwatched); amd64 only. `docs/guided-setup.md` "Catalog Immich on
+  Docker" is the operator's description.
+
+The paragraphs below record how the adapter and module were qualified before the catalog entry.
+
+Immich's adapter pins v3.2.0 commit `1b6098c9dbfffe978bec2d414606ed7a4c8e019a`.
 [Native user administration](https://github.com/immich-app/immich/blob/1b6098c9dbfffe978bec2d414606ed7a4c8e019a/server/src/services/user-admin.service.ts)
 supports administrator updates, but DELETE marks accounts/content for removal. The
 [deletion worker](https://github.com/immich-app/immich/blob/1b6098c9dbfffe978bec2d414606ed7a4c8e019a/server/src/services/user.service.ts)
@@ -103,10 +134,8 @@ setup/client/role receipts, Assigned users only, signed S256 code exchange and n
 administrator API access while denying everyday administration. Unassigned users and global
 administrators receive no app code. The installer creates the exact native accounts over
 SSH/Docker and suppresses actual provider subjects; after module revocation a fresh genuine
-authorization code cannot restore app access. This does not admit Immich: complete identity
-lifecycle, restore, dedicated administrator ordinary-workflow separation
-and production release/deployment remain gated. The overlay is a local fixture, not an upstream
-feature or production provenance claim.
+authorization code cannot restore app access. The overlay is a community extension, not an
+upstream feature; its release provenance is `immich-image.yml`'s attestation.
 The resident bridge now pins UUID/client receipts, verifies registration and drives this module
 through authenticated SCIM intent and actual worker retry. The disposable native fixture proves
 unavailable-write backoff and retained completion/audit proofs across restart. The bridge
@@ -127,9 +156,8 @@ cluster groups, writes native OIDC configuration and pins installation/intent/na
 receipts. Check is read-only; repeats verify exact ownership/profile/role and refuse migration,
 foreign accounts/provider/installation and unsafe bundle paths. Signed native login uses the
 created UUIDs. Saved integrate-stack now dispatches initial setup over SSH/Docker under a target
-lock, verifies native readback and suppresses raw subjects/secrets. This is initial setup only:
-actual identity event delivery,
-ongoing lifecycle, administrator ordinary-workflow separation and release/deployment remain gated.
+lock, verifies native readback and suppresses raw subjects/secrets. Setup now also creates the
+service administrator whose key the bridge uses, and the catalog's `immich.setup` runs it.
 
 The module now provides native owned directory projection for its two initial accounts.
 Each has a revisioned `ky.immich-directory/1` receipt; exact initial setup/provider/subject
@@ -138,10 +166,11 @@ Native qualification proves repeat without revision growth, original setup inspe
 legitimate profile updates, stale/foreign/duplicate-email rollback and refusal to adopt an
 unreceipted edit. Role demotion denies existing-session administration, and a stale signed
 OIDC role cannot overwrite the current owned grant. Profile inspection remains possible after
-revocation, but updates cannot reactivate the account. The Go consumer verifies native readback
+revocation, but updates cannot reactivate the account; only the module's epoch-bound
+reactivation route does. The Go consumer verifies native readback
 and holds uncertain writes. Protected resident directory mode uses this consumer; controlled
 native SCIM qualification covers profile/repeat/role updates, immutable identity, durable
-proofs and permanent revocation. A separate actual KyIdentity worker fixture additionally
+proofs and revocation. A separate actual KyIdentity worker fixture additionally
 proves initial owned profiles, name/email changes, old-session administrator grant/removal
 and assignment-loss revocation, with durable identity acknowledgment and restarted runtime
 proofs. With a separate protected creation opt-in, actual new assignment creates an owned
@@ -159,8 +188,8 @@ operations already in flight at initial setup and database uniqueness still requ
 ## Installer-owned integration work
 
 1. **OIDC client per app** in KyIdentity: exact redirect and logout URLs, back-channel logout
-   URL where supported, app role names (`admin`, `user`, plus app-specific names such as
-   Immich's), *Assigned users only*, the admin identity mapped to `admin`, the everyday identity
+   URL where supported, app role names (`admin`, `user`, plus any app-specific names),
+   *Assigned users only*, the admin identity mapped to `admin`, the everyday identity
    to `user`.
 2. **Admin grant step** for Dolibarr, run once and verified after first login.
 3. **Deprovision adapter** per app, triggered when KyIdentity ends a user's access; verified by
@@ -224,7 +253,7 @@ its `resync-system`, so removals after the snapshot are replayed. `docs/guided-s
 
 | App | Backup command (streamed to restic) | Volumes | Skip |
 |---|---|---|---|
-| Immich | built-in daily dump in `UPLOAD_LOCATION/backups` (verified) | `library`, `upload`, `profile`, `backups` | `thumbs`, `encoded-video` |
+| Immich (catalog) | `pg_dump --clean --if-exists`; restore applies upstream's search_path fix | `library` (all of `/data`), `setup`, `directory` | `library/thumbs`, `library/encoded-video`, `library/backups` (Immich's own daily dumps) |
 | Forgejo | `pg_dump` | repositories, LFS | caches |
 | BookStack | `mariadb-dump` | uploads | |
 | Vikunja (existing owner-managed installations only) | `vikunja dump` | attachments | |

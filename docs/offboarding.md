@@ -3,8 +3,9 @@
 `make build` produces `kyoffboard` alongside the installer. This runtime groundwork supports
 BookStack, Forgejo and community-module Immich revocation. An explicit Forgejo or Immich directory configuration additionally
 updates profiles and app-scoped administrator grants on already registered native accounts.
-Production admission still requires complete native lifecycle, actual KyIdentity connector
-composition, audit/failure-alert deployment and restore proof.
+The catalog Immich is the first deployed composition: apply writes its bridge's configuration
+and connector ([guided setup](guided-setup.md#catalog-immich-on-docker)). Every other product
+still needs its deployment, audit/failure-alert delivery and restore proof.
 
 ## Private target configuration
 
@@ -51,6 +52,21 @@ API key with the required native user/config permissions. A registered Immich re
 BookStack/Forgejo receipts keep their existing shape; foreign or mixed shapes are refused.
 Registration inspects exact native identity/provider/module ownership before publishing state.
 Runtime configuration loading itself remains read-only.
+
+An Immich entry may also set:
+
+- `api_origin`: a Compose service origin (`http(s)://<one lowercase DNS label>[:port]`, no IP,
+  `localhost` or path) the bridge uses as transport only, so a bridge in Immich's own Compose
+  project reaches `http://immich-server:2283` on the internal network. `origin` stays the
+  public identity pinned in bindings.
+- `accounts`: 1–32 unique `{native_uuid, subject}` pairs, the accounts Immich's setup created.
+  Serving registers them before it listens: an identical retained binding is kept without a
+  native call, a new one is proved by registration, and a different retained binding stops the
+  runtime before any native call; it is never replaced. `--check` registers nothing.
+
+The catalog Immich's product token is the module's `kyquickstart-service` key (account
+read/create/update and configuration read), and its listener is `0.0.0.0:8443` inside the
+container.
 
 BookStack module 0.15.0 additionally has protected container-local revisioned profile and role
 interfaces with native audit proofs. `kyquickstart:directory` initializes, inspects or projects
@@ -154,16 +170,16 @@ both completed revocation/audit chains. This qualifies existing registered accou
 one BookStack connector; cross-product global lifecycle, new-account/group lifecycle,
 audit relay, restore and production deployment remain gates.
 
-Immich currently supports revocation of verified registered accounts, with durable intent,
-SCIM authentication, worker retry and audit proofs. A protected `directory` mapping now
+Immich supports revocation of verified registered accounts, with durable intent,
+SCIM authentication, worker retry and audit proofs. A protected `directory` mapping
 also enables profile/administrator updates for its initially owned accounts through their
-native revision receipts. Use `administrator_role: "admin"` and `everyday_role: "user"`,
+native revision receipts, and reactivation (see "Immich reactivation"). Use `administrator_role: "admin"` and `everyday_role: "user"`,
 matching the verified KyIdentity app mapping. No native username exists: incoming SCIM
 userName is bounded informational metadata; reads expose the immutable subject, and neither
 names nor email select or rebind an account. Creation requires the separate protected opt-in
 described below; groups remain unavailable.
 Controlled native qualification verifies profile/repeat/grant/demotion/readback, restarted
-directory audit proofs and refusal after permanent revocation, plus an unavailable
+directory audit proofs and refusal after revocation, plus an unavailable
 write followed by real worker retry after backoff, retained UUID ownership across restart,
 session/key/socket and fresh-login denial, and retained account/photo records and bytes.
 The separate `KYQ_TEST_IMMICH_PRODUCER=1` mode uses the actual identity worker for initial
@@ -236,7 +252,7 @@ updates across restart and returns 503 so KyIdentity retains its mutation fence.
 does not clear this hold from a read-back; native completion/reconciliation support remains
 an admission gate. Revocation still works during a directory hold, and pending revocation
 intent answers active updates with 429 before native I/O. A PUT after completed revocation is a
-reactivation request (see "Reactivation"); no product reactivates natively yet.
+reactivation request (see "Reactivation"); only directory-mode Immich reactivates natively.
 Directory audit files are currently local proofs; the kyPulse relay handles revocation audits.
 
 The pinned real-image fixture with `KYQ_TEST_FORGEJO_DIRECTORY=1` and an actual identity
@@ -317,7 +333,7 @@ are checked after shutdown. Audit relay, uncertain-outcome reconciliation, produ
 organization setup and restore remain gates.
 
 App names and product origins are unique; up to 32 entries are allowed. Config is at most 128 KiB.
-The listener uses an explicit local IP and nonzero port. Deployment must restrict ingress to
+The listener uses an explicit IP (`0.0.0.0` inside a container) and nonzero port. Deployment must restrict ingress to
 KyIdentity and outbound access to configured product APIs and kyPulse.
 
 The certificate/key are PEM files, at most 16 KiB each. They must match an unexpired leaf
@@ -326,18 +342,28 @@ outbound requests use verified standard TLS trust, no environment proxy and no r
 Certificate trust distribution remains part of deployment qualification.
 
 Token files contain raw visible ASCII, with at most one final newline. BookStack's product token
-and each SCIM token are 64 lowercase hex characters encoding 32 bytes. Forgejo uses its native
-API token. Product token files are at most 16 KiB; SCIM token files at most 128 bytes. Every file
+is 64 lowercase hex characters encoding 32 bytes. Each SCIM token encodes 32 bytes as 64
+lowercase hex characters or canonical unpadded base64url (the installer's generated secrets).
+Forgejo uses its native API token. Product token files are at most 16 KiB; SCIM token files at most 128 bytes. Every file
 and credential authority is distinct, including across apps. No secret is an inline JSON field,
 command-line value, diagnostic or report.
 
 ```sh
 ./kyoffboard --config /var/lib/kyoffboard/runtime/config.json --check
+./kyoffboard --config /var/lib/kyoffboard/runtime/config.json --init-tls
+./kyoffboard --config /var/lib/kyoffboard/runtime/config.json --healthcheck
 ./kyoffboard --config /var/lib/kyoffboard/runtime/config.json
 ```
 
 `--check` makes no product requests and writes nothing. Its JSON contains schema, `valid` status
-and application count; validity proves file/configuration checks, not native readiness. Help exits
+and application count; validity proves file/configuration checks, not native readiness.
+`--init-tls` creates the missing key and a self-signed P-256 server leaf (SAN `directory` plus
+a specified listen IP, 825 days), 0600 and never overwriting; a valid pair is kept, a single
+file or an invalid pair is refused. Renew by deleting both. `--healthcheck` sends an
+unauthenticated SCIM read to the configured listener (loopback for an unspecified IP) and is
+healthy only on 401/403; it skips certificate verification because it probes its own leaf and
+sends no credential. It exits 0 silently or 1 with one fixed line. The three modes are
+exclusive and write no state. Help exits
 0, usage errors 2 and configuration/service failures 1. SIGINT/SIGTERM cancels and joins HTTP
 handlers and native worker calls before releasing the state lease, then exits 0.
 
@@ -390,7 +416,8 @@ An app's connector URL ends in `/scim/<app>`. Default targets support exact exte
 on verified registered bindings and a single `replace active=false` PATCH. Missing bindings
 are conflicts and never prove absence. Explicit Forgejo/Immich directory mapping additionally enables
 profile/role PUT; Forgejo's separate creation opt-in enables new User POST after verified native
-absence. Retained disabled-account activation and content deletion remain refused. Groups,
+absence. Content deletion stays refused; a retained disabled account is reactivated only by a
+re-assignment's PUT, on products with native reactivation (see "Reactivation"). Groups,
 native rename and unresolved-write recovery are incomplete, so this protocol does not yet
 qualify a complete generic KyIdentity SCIM lifecycle connector.
 
@@ -407,6 +434,10 @@ together, preserving ownership and permissions.
 Suite recovery/sealed-backup composition and restore drills remain acceptance gates.
 
 ## Reactivation
+
+Revocation is not permanent (Yoshi, 2026-10-19): assigning a removed person to the app again in
+KyIdentity reactivates their retained account, with none of its old sessions or keys, on
+products with native reactivation (today Immich); the others refuse it.
 
 A KyIdentity re-assignment arrives as a full `PUT` with `active:true` (KyIdentity 0.4.3 never
 re-sends a POST). Each account's access history is a sequence of epochs: epoch 1 is the original

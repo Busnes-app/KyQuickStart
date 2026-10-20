@@ -1498,45 +1498,99 @@ upgrade orchestration, recovery enrollment and release provenance remain separat
 The optional `KYQ_TEST_YARD_BINARY` fixture exercises actual SSH create/check/resume.
 
 
-## Explicit community Immich setup
+## Catalog Immich on Docker
 
-`integrate-product --product immich` and saved `integrate-stack` selections support the
-pinned community Immich module's initial setup on Docker targets. Register the instance in
-`existing`, then explicitly select its container and protected `immich.setup/1` bundle path.
-Stock Immich is refused at capability inspection before setup. Kubernetes targets are refused
-before a batch changes any product. The production catalog remains gated; this path configures
-an explicitly selected module instance and does not install or adopt a stock service.
+The catalog's `immich` app installs the whole Immich 3.2.0 on a Docker target: the server with
+this repository's AGPL module, machine learning, Postgres, Valkey and the kyoffboard bridge
+that carries KyIdentity's changes into Immich. KyIdentity is the only way to sign in. Placing
+it on a cluster, or planning it without the catalog `kyidentity`, is refused before connecting,
+as is an owner email that is not lowercase (the module takes only lowercase addresses). amd64
+only; no hardware acceleration.
 
-The installer holds the target lock for apply, verifies native installation/account ownership
-through read-only checks, and prints fixed resource labels and native UUIDs. Product secrets,
-raw account subjects and arbitrary product output stay out of the report and workstation state.
-An inspection with planned resources is incomplete and fails; re-running apply resumes exact
-owned state. The module refuses foreign accounts/providers, migration and revoked accounts.
-See `../internal/adapters/immich/module/README.md` for the protected container-local bundle.
-Disposable qualification also uses an actual KyIdentity binary: owned client/role setup,
-Assigned users only, native PKCE sign-in and administrator API access are verified. The
-complete identity lifecycle, dedicated administrator ordinary-workflow
-separation, bulk backup/restore and production deployment remain acceptance gates.
+**On hold (H1).** The entry is in `internal/catalog/pending/immich` until
+`ghcr.io/busnes-app/kyq-immich-server:3.2.0-ky.1` (`.github/workflows/immich-image.yml`, tag
+`immich-v3.2.0-ky.1`) and `ghcr.io/busnes-app/kyoffboard` (tag `kyoffboard-vX.Y.Z`) are
+published and attested; then both digests are pinned and it moves to `apps/`.
 
+```yaml
+apps:
+  - name: immich
+    target: docker02
+edges:
+  - target: k80
+    routes:
+      - app: immich
+        hostname: photos.k80.example.com
+        forward_host: 192.168.1.91      # an IP of docker02
+        forward_port: 2283              # the bridge publishes 2284, the port after it
+        certificate: k80
+integrations:
+  - product: immich
+    target: docker02
+    bundle: /kyq-setup/installer/<a setup UUID>/setup.json
+    identity_client: immich
+```
 
-Owned Immich directory updates now retain a separate native profile/revision receipt.
-The original installation bundle can still be checked after legitimate name/email updates;
-it verifies the current owned state and preserves it. Role changes are reported honestly,
-and installer verification continues to require owner administration and everyday denial.
-Foreign or stale native changes require reconciliation. Protected resident directory mode
-uses these interfaces for registered owned accounts; controlled native SCIM qualification
-covers profile/repeat/role updates and irreversible revocation. A separate actual KyIdentity
-worker fixture proves registered-account profile/role and assignment-loss delivery with
-native access denial and retained photos. With a separate protected per-app creation opt-in,
-the fixture also proves new-assignment worker creation, ordinary subject-bound PKCE sign-in,
-global-disablement session/key denial and reopened creation/initialization/revocation proofs.
-Installer-managed OAuth requires a provisioned account with an ownership receipt; login
-does not create an account or adopt one by email. Native link/unlink changes are refused.
-Enable the protected per-app creation policy for ongoing new-account provisioning.
-The optional `KYQ_TEST_IMMICH_MULTI=1` producer/create fixture additionally verifies one
-actual global disablement across native Immich and Forgejo, retained content, independent
-app assignment loss and reopened per-product proofs. Full-suite connector coverage, native-writer coordination, full connector audit/restore
-and production admission remain open. Older unreceipted overlays are refused.
+Its client is named `Immich`, with redirect URIs `https://<route URL host>/auth/login` and
+`https://<route URL host>/api/oauth/mobile-redirect` (the phone app) and roles `admin` (the
+owner's admin account) and `user` (the everyday account). Immich reads them from the `roles`
+claim (`rolesClaim: roles`): KyIdentity 0.4.4 sends `roles` and, for installer clients, never
+`role`, although its discovery document still lists `role`; a stock Immich configured with
+`role` gives the owner's admin plain user rights. Installed after KyIdentity's first setup, it
+joins through `kyidentity.amend.immich`.
+
+- **Compose.** Every service runs as the target user with all capabilities dropped,
+  `no-new-privileges`, a memory limit and a healthcheck. Only `immich-server` publishes
+  `forward_host:forward_port`; the bridge publishes `forward_host:forward_port+1`. Postgres and
+  Valkey sit only on an `internal: true` network shared with the server and the bridge; machine
+  learning is not on it. Storage is bind directories only, no named volumes: `library` (Immich's
+  whole `/data`), `postgres`, `model-cache`, `setup` (the bundle and the service key) and
+  `directory` (the bridge's configuration, TLS and state). Secrets `db_password` and
+  `scim_token` are generated on the target and read from files.
+- **`immich.setup`** places the `immich.setup/1` bundle in the server's `./setup`, 0600, never
+  replacing one, then runs the module's `apply-setup`: KyIdentity as the only provider, the
+  phone redirect override, the owner's admin and everyday accounts, and a passwordless
+  administrator `kyquickstart-service` that cannot sign in, whose one API key (account
+  read/create/update and configuration read) is written to `./setup/service.key`, 0600, never
+  printed. Right after the first setup Immich must hold exactly those three accounts, with only
+  the owner's admin and the service account as administrators; anything else fails.
+- **`immich.directory`** copies the service key and the SCIM token into `./directory/config` on
+  the target (never through the workstation, never replacing a different file), writes the
+  bridge's runtime (registering the two setup accounts), creates its self-signed TLS leaf on
+  the target (`kyoffboard --init-tls`) and starts it. The bridge reaches Immich at
+  `http://immich-server:2283` on the internal network.
+- **Connector.** The NPM host for Immich forwards `/scim/immich/` to the bridge over TLS; the
+  bridge's leaf is self-signed and NPM does not verify it, while KyIdentity verifies the edge's
+  certificate. `kyidentity.scim.immich` adds KyIdentity's SCIM connector at
+  `https://<route URL host>/scim/immich` with the bridge's token. The edge→app hop is plain
+  HTTP, as for every app.
+- **People.** Anyone assigned to Immich in KyIdentity later gets an account through the bridge
+  and signs in. Removing someone ends their Immich sessions, API keys and sockets and keeps the
+  account and photos; assigning them again sets their administrator flag from their roles,
+  then lifts the block, on the same account, with none of the old sessions or keys. A role
+  change reaches Immich as a directory update before the next sign-in; a token whose role
+  differs from it refuses sign-in rather than granting.
+- **The owner's admin (H2).** Immich lets its administrator keep photos too; the handover says
+  to use the everyday account for photos.
+- **Backups.** `kyquickstart backup immich` snapshots a `pg_dump` of the database plus
+  `library`, `setup` and `directory`, without `library/thumbs`, `library/encoded-video` (both
+  regenerate) and `library/backups` (Immich's own daily dumps). `model-cache` re-downloads.
+  Restore loads the dump with upstream's search_path fix into the fresh database before the
+  server starts. A photo uploaded during a backup may be in the files but not the dump; after a
+  restore it is an orphan file, and nothing the restored database references is lost.
+- **Network.** Trusted proxies stay at upstream's default (loopback, link-local, unique local):
+  behind Docker NAT the edge arrives from the bridge gateway, and a narrower list would drop the
+  `Secure` cookie. A LAN peer reaching the forward port directly can spoof `X-Forwarded-*`,
+  which affects only logged addresses and its own responses. The forward ports are reachable
+  from the LAN (see KyDrive's firewall note). Immich connects out to GitHub (version check),
+  Hugging Face (models) and `tiles.immich.cloud` (map tiles); nothing restricts it.
+- **Source.** `/api/server/about` points at this repository and the image tag: the AGPL source
+  offer for the module.
+- An existing module instance outside the catalog: `integrate-product --product immich` runs the
+  same module setup on a selected container and bundle; stock Immich is refused at capability
+  inspection.
+- Not covered: Immich 3.3.x, uploads above NPM's body limit, scheduled backups, hosts without
+  the Docker userland proxy, kyPulse (Docker apps are unwatched).
 
 ## Catalog Ky products on Docker
 

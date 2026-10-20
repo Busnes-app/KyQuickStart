@@ -18,8 +18,10 @@ released with; source builds refuse it ([KyYard](docs/guided-setup.md#catalog-ky
 Docker apps back up to an off-host restic
 rest-server with `kyquickstart backup` and come back with `kyquickstart restore`
 ([guided setup](docs/guided-setup.md#backups-and-restore-on-docker)); restoring an app whose
-people come from KyIdentity needs KyIdentity v0.4.4, the catalog's. The offboarding bridge's image
-(`ghcr.io/busnes-app/kyoffboard`) has a release workflow but no published version yet.
+people come from KyIdentity needs KyIdentity v0.4.4, the catalog's. Immich, the first third-party
+app, is built and waits for its two images to be published: its patched server
+(`ghcr.io/busnes-app/kyq-immich-server`) and the offboarding bridge (`ghcr.io/busnes-app/kyoffboard`)
+have release workflows but no published version yet ([Immich](docs/guided-setup.md#catalog-immich-on-docker)).
 `integrate-product` connects already-running Ky products to KyIdentity. See
 [the deployment plan](docs/superpowers/plans/2026-10-10-deployment-plan.md) for what remains.
 

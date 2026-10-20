@@ -32,6 +32,10 @@ Reconcile owned NPM routes, deploy Docker edge connectors, and verify product pr
   change; refuse any name another record or service publishes. Show KyDNS error codes, never bodies.
 - Apply disables, never deletes, this target's owned hosts whose hostname left `routes`; verification
   fails while one is enabled. Deletion is the operator's choice.
+- An app in `NPM.Bridges` (app → path, e.g. Immich's `/scim/immich`) also gets `location
+  <path>/`, with the same headers, proxied over HTTPS to `forward_host:forward_port+1`, its
+  bridge. NPM does not verify the bridge's self-signed leaf: that hop's TLS only hides the
+  token on the LAN; KyIdentity verifies the edge's certificate.
 - Each route trusts exactly its connector IPv4 /32. frp uses a separate TLS listener accepting
   PROXY v2; Cloudflare uses its connecting-IP header. Sanitize forwarding headers before the product.
 - A `lan` edge has no connector and trusts no forwarding header: `set_real_ip_from unix:;`
@@ -50,7 +54,8 @@ Use disposable fixtures for infrastructure tests. Preserve existing operator res
 
 ## Verification
 
-- `make ci` covers unit tests, race checks and vet with the e2e tag.
+- `make ci` covers unit tests, race checks and vet with the e2e tag; `npm_test.go` checks the
+  bridge location.
 - `make e2e` runs actual pinned NPM API/configuration, frps/frpc routing with client-IP
   preservation and cloudflared ingress parsing. The kind NPM test also covers a `lan` route.
   The Cloudflare fixture does not prove a live account connection.

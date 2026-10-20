@@ -60,11 +60,21 @@ Plain terminal planning and command orchestration for the operator-run installer
   it runs again. `backupLines` adds
   the backup, restore and password-record lines to apply's handover.
 - Product adapter discovery, bounded reports and activation verification: `product.go`; only implemented product interfaces enter its registry.
-- `immich.go` owns initial setup dispatch for the pinned community Immich module on
-  Docker only: require native capabilities/version, validate bounded account/role reports,
-  compare installation/UUID/subject readback, and render fixed labels/native UUIDs only.
-  Pending initial setup is an error. This does not admit Immich or prove ongoing lifecycle,
-  actual KyIdentity delivery or administrator ordinary-workflow separation.
+- `immich.go` owns the Immich module's setup on Docker only: `immichCapabilities` (module
+  contract, 3.2.0, features), bounded reports with exactly the owner's admin, everyday and
+  service administrator, installation/UUID/subject readback, and fixed labels/native UUIDs
+  only in output; `integrate-product` uses `immichSetup`. For the catalog Immich,
+  `immichSteps` (from `setupSteps`) adds `immich.setup` (`immichSetupStep`: exports
+  KyIdentity's client, resolves the everyday subject, places the `immich.setup/1` bundle with
+  `rolesClaim: roles` under `/kyq-setup`, never replacing it, applies, re-exports to confirm)
+  and `immich.directory` (`immichDirectoryStep`: copies the service key and SCIM token into
+  `./directory/config` on the target with `placeScript`, never through the workstation, writes
+  `immichRuntime` with `api_origin` `http://immich-server:2283` and the two setup accounts,
+  runs `--init-tls`, recreates the bridge and waits for its health; Verify runs the bridge's
+  `--check`). `immichPlan` (plan, review, every command) refuses an Immich without its
+  integration, a bundle outside `/kyq-setup/installer/`, and non-lowercase owner emails.
+  `immichHandover` names both accounts (photos on the everyday one), the phone sign-in,
+  reassignment, the LAN-reachable ports and Immich's outbound hosts.
 - `integration.go` owns guided setup selections and unattended `integrate-stack` dispatch,
   which skips installed apps' entries (`apply` runs those).
   Validate every selection before connecting; run KyIdentity first and otherwise preserve
@@ -105,15 +115,17 @@ Plain terminal planning and command orchestration for the operator-run installer
   separate from Matrix chat/call access, whose assignment composition remains a gate.
 - KyRecovery setup runs explicitly as `kyrecovery`, activates live, commits exact administrator grants with its keyed SQL audit, and never performs the custodian ceremony.
   `appsetup.go` owns apply's catalog apps that sign in through KyIdentity (KyRecovery,
-  kyPulse, KyNotes, KyCalendar and KyYard on Docker or Kubernetes, KyDrive, KyPost and KyDNS on Docker): `composeClients` adds each one's catalog-derived client to the installed
+  kyPulse, KyNotes, KyCalendar and KyYard on Docker or Kubernetes, KyDrive, KyPost, KyDNS and Immich on Docker): `composeClients` adds each one's catalog-derived client to the installed
   KyIdentity's intent in the session only (the saved plan is unchanged; a hand-written client
   must match), `clientSetupStep` (`<app>.setup`) exports that client, places bundle and secrets
   with `placeScript` (secrets no-clobber, kyPulse's bundle replaced, compare-only on check)
   through the app's shell, on another target than KyIdentity's too, and runs the product
   adapter's setup; on Docker `nativeProductExec` finds the app's one running managed container
-  per call (`dockerAppContainer`). A client without a directory gets no directory secret; an
-  `oidc.scim_token_file` goes into the bundle, and `scimStep` (`kyidentity.scim.<app>`, which
-  `deploySteps` puts after the edges) reads that token through the app's driver (`appSecret`),
+  per call (`dockerAppContainer`, filtered to `appService`'s Compose service for a multi-service
+  app: Immich's `immich-server`). A client without a directory gets no directory secret; an
+  `oidc.scim_token_file` goes into the bundle (or the bridge), and `scimStep`
+  (`kyidentity.scim.<app>`, which `deploySteps` puts after the edges, at `https://<route
+  host><oidc.scim_path>`) reads that token through the app's driver (`appSecret`),
   places it in KyIdentity's pod with `placeScript` (never replaced) and applies `scimPass`, the
   registering setup's pass with `scim` added. KyCalendar admits only the identities its setup names: its step
   adds `everyday`, the owner's everyday account, whose subject `everydaySubject` takes from
@@ -123,7 +135,7 @@ Plain terminal planning and command orchestration for the operator-run installer
   `native` to `postBundle`, its version-1 bundle (sign-in with `autoProvision`, `clientSecretFile`
   beside it), placed and applied as `kypost` through `postSetup`; KyPost has no directory (it
   cannot verify KyIdentity's generated webhook secret), so no directory secret. `recoveryCeremony`,
-  `pulseHandover`, `calendarHandover`, `driveHandover`, `postHandover`, `dnsHandover` and `yardHandover` are what apply prints.
+  `pulseHandover`, `calendarHandover`, `driveHandover`, `postHandover`, `dnsHandover`, `immichHandover` and `yardHandover` are what apply prints.
   KyDNS's distroless image has no shell, so `hostPlace` runs `placeScript` on its Docker host
   over SSH as the target user, mapping the bundle's `/data/installer/<uuid>/` to
   `<root>/kydns/data/installer/<uuid>/` (anything else refused, symlinked directories refused),
@@ -135,8 +147,10 @@ Plain terminal planning and command orchestration for the operator-run installer
   the same URL from the catalog NPM's pod and passes only when KyDNS reports the edge's headers
   trusted over https; KyDNS's route on any other edge is refused.
   `withRoute` fills a Compose template's route references for both `newSession`
-  and `validateSelection`, so `{{edge_address}}` without the edge's `egress_address` is refused
-  by `plan` and `review` too.
+  and `validateSelection`, so `{{edge_address}}` without the edge's `egress_address`, or
+  `{{bridge_forward}}` on a port another route forwards to, is refused by `plan` and `review`
+  too. `session.bridges` (app → `oidc.scim_path`) feeds `edge.NPM.Bridges` and `upstreams`,
+  which adds port+1 to a cluster edge's egress.
   KyNotes' distroless image has no shell: `notesSetupStep` (`kynotes.setup`) reuses
   `transferNotesCredentials` and `notesSetup` with the preparation `notesPreparation` derives
   (catalog client, KyIdentity's issuer, secrets beside the fixed bundle, backup from its env);
@@ -163,6 +177,7 @@ Plain terminal planning and command orchestration for the operator-run installer
 - Persist validated answers after every question; publish `stack.yaml` atomically only after
   full validation and confirmation. An interruption preserves the published plan.
 - Keep credentials out of prompts and state. Read actual deployment credentials through target drivers.
+- Plan/review prints a manifest's `components` as a `Components:` line under its app.
 - Plan/review names the required digest-pinned temporary credential generator for every
   selected Kubernetes workload with declared secrets; its execution remains in the target
   driver and never runs during planning.
@@ -208,7 +223,10 @@ before deployment rather than reporting their absence as success.
 - `make ci`: guided resume, declined edits, existing references and credential rejection tests;
   `backup_test.go` drives backup and restore over a real sh with `dockerhost/fakedocker` as
   docker, including a kill at every command; `golden_test.go` pins every Ky app plan's step
-  inputs and KyIdentity intent (`-update-golden` rewrites it, only for an intended change).
+  inputs and KyIdentity intent (`-update-golden` rewrites it, only for an intended change);
+  `bundles_golden_test.go` pins each Ky app's placed setup files and SCIM pass byte for byte.
+  `immich_catalog_test.go` covers Immich's steps, connector, amendment, setup/directory
+  refusals, plan refusals and handover.
 - `make e2e`: a guided demo plan drives a real SSH/Docker deployment; Kubernetes container exec and edge regressions also run.
   With `KYQ_TEST_IDENTITY_BINARY`, real SSH and restricted kind fixtures check target-held
   preparation, creation/check/resume and changed-intent preservation; SSH also verifies
