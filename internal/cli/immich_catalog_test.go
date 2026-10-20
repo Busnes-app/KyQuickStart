@@ -218,7 +218,7 @@ func TestImmichClientStepsAndConnector(t *testing.T) {
 	if tok, err := scim.token(ctx); err != nil || string(tok) != immichSCIMToken {
 		t.Fatalf("connector token %q, %v", tok, err)
 	}
-	if !strings.Contains(s.handover, immichHandover("photos.example.com", "owner-admin", "owner", "192.0.2.1", 18443, s.cat["immich"].Images["server"])) {
+	if !strings.Contains(s.handover, immichHandover("photos.example.com", "owner-admin", "owner", "192.0.2.1", 18443, "", s.cat["immich"].Images["server"])) {
 		t.Fatalf("handover = %s", s.handover)
 	}
 }
@@ -606,6 +606,11 @@ func TestImmichPlanRefusals(t *testing.T) {
 			return strings.Replace(y, "    target: nas\n    bundle: "+immichBundlePath, "    target: k1\n    bundle: "+immichBundlePath, 1)
 		}, "no Kubernetes deployment"},
 		"without kyidentity": {withoutIdentity, "kyidentity"},
+		"kyidentity on docker": {func(y string) string {
+			y = strings.Replace(y, "  - name: kyidentity\n    target: k1\n", "  - name: kyidentity\n    target: nas\n", 1)
+			y = strings.Replace(y, "forward_host: app.kyq-kyidentity.svc.cluster.local", "forward_host: 192.0.2.1", 1)
+			return strings.Replace(y, "  - product: kyidentity\n    target: k1\n", "  - product: kyidentity\n    target: nas\n", 1)
+		}, "Immich is proven only with KyIdentity on Kubernetes, and this plan places kyidentity on Docker target nas. Place kyidentity on a Kubernetes target"},
 		"uppercase owner": {func(y string) string {
 			return strings.Replace(y, "email: owner@example.test", "email: Owner@example.test", 1)
 		}, `Immich takes only lowercase email addresses. Change identity.everyday.email "Owner@example.test" to "owner@example.test"`},
@@ -671,9 +676,9 @@ func TestImmichHandover(t *testing.T) {
 		"",
 		"  Notes:",
 		"  - Ports 192.0.2.1:18443 (Immich) and 192.0.2.1:18444 (its KyIdentity bridge) are open to your whole",
-		"    LAN: restrict both to the edge host at your firewall, with a rule tested on that host",
-		"    (docs/guided-setup.md, Catalog Immich on Docker). The edge reaches the bridge over TLS",
-		"    whose self-signed certificate it does not verify.",
+		"    LAN: at your firewall, restrict both to the edge's address as the Docker host sees it,",
+		"    with a rule tested on the Docker host (docs/guided-setup.md, Catalog Immich on Docker).",
+		"    The edge reaches the bridge over TLS whose self-signed certificate it does not verify.",
 		"  - Immich connects out to GitHub (version check), Hugging Face (machine learning models) and",
 		"    tiles.immich.cloud (map tiles).",
 		"  - Source of its KyQuickStart module (AGPL):",
@@ -681,17 +686,29 @@ func TestImmichHandover(t *testing.T) {
 		"",
 	}
 	server := "ghcr.io/busnes-app/kyq-immich-server:3.2.0-ky.1@" + catalogtest.Digest
-	if got := strings.Split(immichHandover("photos.example.com", "owner-admin", "owner", "192.0.2.1", 18443, server), "\n"); !slices.Equal(got, want) {
+	if got := strings.Split(immichHandover("photos.example.com", "owner-admin", "owner", "192.0.2.1", 18443, "", server), "\n"); !slices.Equal(got, want) {
 		t.Fatalf("handover:\n%s", strings.Join(got, "\n"))
+	}
+	// With the edge's egress_address, the firewall sentence names it.
+	egress := "    LAN: at your firewall, restrict both to 192.168.1.20 (the edge's egress_address),\n"
+	if got := immichHandover("photos.example.com", "owner-admin", "owner", "192.0.2.1", 18443, "192.168.1.20", server); !strings.Contains(got, egress) || strings.Count(got, "\n") != len(want)-1 {
+		t.Fatalf("handover with egress_address:\n%s", got)
+	}
+	f := immichFixture(t)
+	p := filepath.Join(f.state, "stack.yaml")
+	b, _ := os.ReadFile(p)
+	os.WriteFile(p, []byte(strings.Replace(string(b), "    allow_cidrs: [192.168.1.0/24]\n", "    allow_cidrs: [192.168.1.0/24]\n    egress_address: 192.168.1.20\n", 1)), 0o600)
+	if s, err := load(f.state, nil, f.o); err != nil || !strings.Contains(s.handover, egress) {
+		t.Fatalf("apply's handover lacks the edge's egress_address: %v", err)
 	}
 	// The source link names the tag the running image was built from.
 	if got := immichSourceTag("ghcr.io/busnes-app/kyq-immich-server:3.2.0-ky.2@" + catalogtest.Digest); got != "immich-v3.2.0-ky.2" {
 		t.Fatalf("source tag = %s", got)
 	}
 	// Apply prints it with 008's backup lines when the target has a destination.
-	f := immichFixture(t)
-	p := filepath.Join(f.state, "stack.yaml")
-	b, _ := os.ReadFile(p)
+	f = immichFixture(t)
+	p = filepath.Join(f.state, "stack.yaml")
+	b, _ = os.ReadFile(p)
 	os.WriteFile(p, []byte(strings.Replace(string(b), "    root: "+f.h.root+"\n", "    root: "+f.h.root+"\n    backup:\n      repository: rest:https://backup.example.com:8000/kyq\n      credential_file: /home/kyq/.rest-password\n", 1)), 0o600)
 	s, err := load(f.state, nil, f.o)
 	if err != nil {
@@ -718,5 +735,16 @@ func TestImmichUnreleased(t *testing.T) {
 		if err := f.run(cmd...); err == nil || !strings.Contains(err.Error(), "Immich is built but not released yet: its images are unpublished") {
 			t.Errorf("%s: %v", cmd[0], err)
 		}
+	}
+}
+
+// The bridge's last line is cut at 300 bytes on a rune boundary and stays valid UTF-8.
+func TestCutUTF8(t *testing.T) {
+	s := strings.Repeat("a", 299) + "é" + "tail" // é is 2 bytes, bytes 299-300
+	if got := cutUTF8(s, 300); got != strings.Repeat("a", 299) {
+		t.Fatalf("cut = %q", got)
+	}
+	if got := cutUTF8("ok\xff", 300); got != "ok\uFFFD" || cutUTF8("short", 300) != "short" {
+		t.Fatalf("invalid bytes: %q", got)
 	}
 }

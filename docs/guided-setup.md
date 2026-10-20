@@ -1504,7 +1504,8 @@ The catalog's `immich` app installs the whole Immich 3.2.0 on a Docker target: t
 this repository's AGPL module, machine learning, Postgres, Valkey and the kyoffboard bridge
 that carries KyIdentity's changes into Immich. KyIdentity is the only way to sign in. Placing
 it on a cluster, or planning it without the catalog `kyidentity`, is refused before connecting,
-as is an owner email that is not lowercase (the module takes only lowercase addresses). amd64
+as is an owner email that is not lowercase (the module takes only lowercase addresses) and a
+`kyidentity` placed on a Docker target: Immich is proven only with KyIdentity on Kubernetes. amd64
 only; no hardware acceleration.
 
 **Not yet installable: its images are unpublished.** A plan naming `immich` is refused with
@@ -1597,7 +1598,8 @@ joins through `kyidentity.amend.immich`.
   behind Docker NAT the edge arrives from the bridge gateway, and a narrower list would drop the
   `Secure` cookie. A LAN peer reaching the forward port directly can spoof `X-Forwarded-*`,
   which affects only logged addresses and its own responses. Both forward ports (Immich's and
-  the bridge's, the next one) are reachable from the whole LAN: restrict them to the edge host
+  the bridge's, the next one) are reachable from the whole LAN: restrict them to the edge's
+  address as the Docker host sees it (its `egress_address`, which the handover names when set)
   at your firewall, with a rule tested on that host from the edge and from another LAN host
   (see KyDrive's firewall note for why an untested `DOCKER-USER` rule is dangerous). Immich connects out to GitHub (version check),
   Hugging Face (models) and `tiles.immich.cloud` (map tiles); nothing restricts it.

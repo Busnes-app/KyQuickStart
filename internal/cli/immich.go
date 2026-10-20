@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Busnes-app/kyquickstart/internal/dockerhost"
 	"github.com/Busnes-app/kyquickstart/internal/remote"
@@ -451,6 +452,17 @@ func placeRefusal(ctx context.Context, probe func(context.Context) ([]byte, erro
 	return fmt.Errorf("%s %s on %s %s. Inspect %s; move it aside only if you are sure it is stale, then rerun apply", what, where, target, why, where)
 }
 
+// cutUTF8 is s cut to at most n bytes, never inside a rune, and valid UTF-8.
+func cutUTF8(s string, n int) string {
+	if len(s) > n {
+		for n > 0 && !utf8.RuneStart(s[n]) {
+			n--
+		}
+		s = s[:n]
+	}
+	return strings.ToValidUTF8(s, "\uFFFD")
+}
+
 // bridge runs the bridge once with args, beside the running one. A failure carries the
 // bridge's last output line, redacted, and where its logs are.
 func (s immichDirectoryStep) bridge(ctx context.Context, args, failed string) error {
@@ -463,10 +475,7 @@ func (s immichDirectoryStep) bridge(ctx context.Context, args, failed string) er
 		out = append(out, ee.Stderr...)
 	}
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	last := s.app.Redact.Redact(strings.TrimSpace(lines[len(lines)-1]))
-	if len(last) > 300 {
-		last = last[:300]
-	}
+	last := cutUTF8(s.app.Redact.Redact(strings.TrimSpace(lines[len(lines)-1])), 300)
 	if last == "" {
 		last = "no output"
 	}
@@ -508,6 +517,11 @@ func immichPlan(st *stack.Stack) error {
 		return nil
 	}
 	i := slices.IndexFunc(st.Integrations, func(i stack.Integration) bool { return i.Product == "immich" && i.Installed(st) })
+	if k := slices.IndexFunc(st.Apps, func(a stack.App) bool { return a.Name == "kyidentity" }); k >= 0 {
+		if t, _ := st.Target(st.Apps[k].Target); !t.Kubernetes() {
+			return fmt.Errorf("Immich is proven only with KyIdentity on Kubernetes, and this plan places kyidentity on Docker target %s. Place kyidentity on a Kubernetes target", t.Name)
+		}
+	}
 	if i < 0 {
 		return fmt.Errorf("Immich needs its setup in the plan, or its first visitor could make themselves its administrator. Add this to integrations (the UUID is fresh; any UUID will do): {product: immich, target: %s, bundle: %s, identity_client: immich}", st.Apps[at].Target, immichSetupBundle(""))
 	}
@@ -539,8 +553,13 @@ func immichSetupBundle(id string) string {
 const immichReassign = "  Assigning them again restores their sign-in to the same account, with none of their old\n  sessions or keys.\n"
 
 // immichHandover is printed after every apply that installs Immich at host, forwarded to
-// forward:port and its bridge to forward:port+1; server is the catalog's server image.
-func immichHandover(host, admin, everyday, forward string, port int, server string) string {
+// forward:port and its bridge to forward:port+1, from its edge's egress ("" when unset);
+// server is the catalog's server image.
+func immichHandover(host, admin, everyday, forward string, port int, egress, server string) string {
+	edge := "the edge's address as the Docker host sees it"
+	if egress != "" {
+		edge = egress + " (the edge's egress_address)"
+	}
 	return fmt.Sprintf(`
 Immich at https://%[1]s/: sign in through KyIdentity as %[2]s (administers Immich) or %[3]s
   (your photos). Use %[3]s for photos: Immich lets its administrator keep photos too, and
@@ -554,14 +573,14 @@ Immich at https://%[1]s/: sign in through KyIdentity as %[2]s (administers Immic
 
   Notes:
   - Ports %[1]s:%[2]d (Immich) and %[1]s:%[3]d (its KyIdentity bridge) are open to your whole
-    LAN: restrict both to the edge host at your firewall, with a rule tested on that host
-    (docs/guided-setup.md, Catalog Immich on Docker). The edge reaches the bridge over TLS
-    whose self-signed certificate it does not verify.
+    LAN: at your firewall, restrict both to %[5]s,
+    with a rule tested on the Docker host (docs/guided-setup.md, Catalog Immich on Docker).
+    The edge reaches the bridge over TLS whose self-signed certificate it does not verify.
   - Immich connects out to GitHub (version check), Hugging Face (machine learning models) and
     tiles.immich.cloud (map tiles).
   - Source of its KyQuickStart module (AGPL):
     https://github.com/Busnes-app/KyQuickStart/tree/%[4]s/internal/adapters/immich/module
-`, forward, port, port+1, immichSourceTag(server))
+`, forward, port, port+1, immichSourceTag(server), edge)
 }
 
 // immichSourceTag is the repository tag the server image was built from: image tag 3.2.0-ky.1

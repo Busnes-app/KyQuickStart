@@ -133,8 +133,8 @@ func (s *session) composeClients(st *stack.Stack) error {
 		case "kypost":
 			s.handover += fmt.Sprintf(postHandover, host, n.Admin.Username, n.Everyday.Username, postContainer, s.placed["kypost"].Name)
 		case "immich":
-			_, r := appRoute(st, "immich")
-			s.handover += immichHandover(host, n.Admin.Username, n.Everyday.Username, r.ForwardHost, r.ForwardPort, s.cat["immich"].Images["server"])
+			e, r := appRoute(st, "immich")
+			s.handover += immichHandover(host, n.Admin.Username, n.Everyday.Username, r.ForwardHost, r.ForwardPort, e.EgressAddress, s.cat["immich"].Images["server"])
 		case "kypulse":
 			var unwatched []string
 			s.pulseTargets, unwatched = pulseTargets(st, s.cat)
