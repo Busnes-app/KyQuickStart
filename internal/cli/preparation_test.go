@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -65,7 +66,7 @@ func TestIdentityPreparationPlanResumeAndDisclosure(t *testing.T) {
 	var out bytes.Buffer
 	st.Targets = []stack.Target{{Name: "nas", Host: "nas.example.test", User: "kyq"}}
 	next := &stack.Stack{Targets: st.Targets}
-	p := &prompts{ctx: context.Background(), in: bufio.NewReader(strings.NewReader("\n\n\n")), out: &out, answers: answers, draft: filepath.Join(t.TempDir(), "answers.json")}
+	p := &prompts{ctx: context.Background(), in: bufio.NewReader(strings.NewReader("\n\n\n\n")), out: &out, answers: answers, draft: filepath.Join(t.TempDir(), "answers.json")}
 	if err := guidedIntegration(p, next, stack.Existing{Product: "kyidentity", Target: "nas"}); err != nil {
 		t.Fatal(err)
 	}
@@ -75,5 +76,48 @@ func TestIdentityPreparationPlanResumeAndDisclosure(t *testing.T) {
 	showPlan(&out, next, nil)
 	if !strings.Contains(out.String(), "generate private owner/everyday/client credentials on target") {
 		t.Fatal("review hides target credential generation")
+	}
+}
+
+func TestGuidedIdentityMail(t *testing.T) {
+	n := &stack.IdentityPreparation{Schema: "kyidentity.setup/1", SetupID: "271333e2-c221-4601-b249-563b3d828530", Admin: stack.IdentityAccount{Username: "owner-admin"}, Everyday: stack.IdentityAccount{Username: "owner"}}
+	st := &stack.Stack{Targets: []stack.Target{{Name: "nas", Host: "nas.example.test", User: "kyq"}},
+		Integrations: []stack.Integration{{Product: "kyidentity", Target: "nas", Container: "identity", Bundle: "/data/installer/" + n.SetupID + "/setup.json", Identity: n}}}
+	dir := t.TempDir()
+	loose, file := filepath.Join(dir, "loose"), filepath.Join(dir, "smtp.password")
+	os.WriteFile(loose, []byte("pw\n"), 0o644)
+	os.WriteFile(file, []byte("pw\n"), 0o600)
+	guided := func(answers map[string]string, input string) (*stack.IdentityMail, string) {
+		t.Helper()
+		var out bytes.Buffer
+		next := &stack.Stack{Targets: st.Targets}
+		p := &prompts{ctx: context.Background(), in: bufio.NewReader(strings.NewReader(input)), out: &out, answers: answers, draft: filepath.Join(dir, "answers.json")}
+		if err := guidedIntegration(p, next, stack.Existing{Product: "kyidentity", Target: "nas"}); err != nil {
+			t.Fatal(err, out.String())
+		}
+		return next.Integrations[0].Identity.Mail, out.String()
+	}
+	answers := map[string]string{}
+	seedAnswers(answers, st)
+	// configure, container and bundle resumed; then the relay, its password file refused while
+	// it is not 0600.
+	m, out := guided(answers, "\n\n\nsmtp.example.test\n\nplain\n\nKyIdentity <identity@example.test>\nkyidentity\nrelative\n"+loose+"\n"+file+"\n")
+	want := &stack.IdentityMail{Host: "smtp.example.test", Port: 587, Security: "starttls", From: "KyIdentity <identity@example.test>", Username: "kyidentity", PasswordFile: file}
+	if !reflect.DeepEqual(m, want) || strings.Count(out, "Please enter a valid value") != 3 || strings.Contains(out, "pw") {
+		t.Fatalf("mail %+v\n%s", m, out)
+	}
+	// Resumed from the saved plan, every answer kept.
+	st.Integrations[0].Identity.Mail = want
+	answers = map[string]string{}
+	seedAnswers(answers, st)
+	if m, _ := guided(answers, strings.Repeat("\n", 9)); !reflect.DeepEqual(m, want) {
+		t.Fatalf("resumed mail %+v", m)
+	}
+	// none clears it; an unauthenticated relay has no password file.
+	if m, _ := guided(answers, "\n\n\nnone\n"); m != nil {
+		t.Fatalf("none kept %+v", m)
+	}
+	if m, _ := guided(map[string]string{"integration.kyidentity.nas.configure": "yes", "integration.kyidentity.nas.identity": answers["integration.kyidentity.nas.identity"]}, "\nidentity\n/data/installer/x/setup.json\nsmtp.example.test\n465\ntls\nidentity@example.test\nnone\n"); m == nil || m.Username != "" || m.PasswordFile != "" || m.Port != 465 || m.Security != "tls" {
+		t.Fatalf("unauthenticated relay %+v", m)
 	}
 }
