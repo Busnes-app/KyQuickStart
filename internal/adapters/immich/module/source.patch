@@ -213,6 +213,26 @@ index 0000000..122763e
 +    }
 +  }
 +}
+diff --git a/server/src/controllers/auth.controller.spec.ts b/server/src/controllers/auth.controller.spec.ts
+index 8325477..ec38b9f 100644
+--- a/server/src/controllers/auth.controller.spec.ts
++++ b/server/src/controllers/auth.controller.spec.ts
+@@ -22,6 +22,15 @@ describe(AuthController.name, () => {
+   });
+ 
+   describe('POST /auth/admin-sign-up', () => {
++    it('is refused while setup is unavailable', async () => {
++      ctx.requireSetupAvailable.mockRejectedValue(new BadRequestException('Admin setup is not available'));
++      const { status } = await request(ctx.getHttpServer())
++        .post('/auth/admin-sign-up')
++        .send({ name: 'admin', email: 'admin@immich.cloud', password: 'password' });
++      expect(status).toEqual(400);
++      expect(service.adminSignUp).not.toHaveBeenCalled();
++    });
++
+     const name = 'admin';
+     const email = 'admin@immich.cloud';
+     const password = 'password';
 diff --git a/server/src/controllers/user-admin.controller.ts b/server/src/controllers/user-admin.controller.ts
 index 18798c0..ba7ed2c 100644
 --- a/server/src/controllers/user-admin.controller.ts
@@ -399,10 +419,10 @@ index 0000000..28175b3
 +export type KyQuickStartSetupReceipt = z.infer<typeof KyQuickStartSetupReceiptSchema>;
 diff --git a/server/src/dtos/kyquickstart.dto.ts b/server/src/dtos/kyquickstart.dto.ts
 new file mode 100644
-index 0000000..0745148
+index 0000000..0b1b3d1
 --- /dev/null
 +++ b/server/src/dtos/kyquickstart.dto.ts
-@@ -0,0 +1,104 @@
+@@ -0,0 +1,106 @@
 +import { createZodDto } from 'nestjs-zod';
 +import z from 'zod';
 +
@@ -505,6 +525,8 @@ index 0000000..0745148
 +  epoch,
 +  reactivatedAt: z.iso.datetime(),
 +  revokedAt: z.iso.datetime(),
++  deletedSessions: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
++  deletedApiKeys: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
 +});
 +export type KyQuickStartReactivation = z.infer<typeof KyQuickStartReactivationSchema>;
 diff --git a/server/src/enum.ts b/server/src/enum.ts
@@ -619,7 +641,7 @@ index 0000000..7b29ffc
 +  });
 +});
 diff --git a/server/src/repositories/oauth.repository.ts b/server/src/repositories/oauth.repository.ts
-index bbf7ef0..cb58af8 100644
+index bbf7ef0..2fa19dc 100644
 --- a/server/src/repositories/oauth.repository.ts
 +++ b/server/src/repositories/oauth.repository.ts
 @@ -1,4 +1,4 @@
@@ -649,14 +671,14 @@ index bbf7ef0..cb58af8 100644
 +        error.status < 500 &&
 +        (error.error === 'invalid_grant' || error.error === 'access_denied')
 +      ) {
-+        throw new UnauthorizedException('OAuth authorization was refused');
++        throw new UnauthorizedException('Sign-in through KyIdentity was refused. Try again, or ask your administrator.');
 +      }
 +      if (error instanceof Error && error.message.includes('unexpected JWT alg received')) {
          this.logger.warn(
            [
              'Algorithm mismatch. Make sure the signing algorithm is set correctly in the OAuth settings.',
 diff --git a/server/src/repositories/system-metadata.repository.ts b/server/src/repositories/system-metadata.repository.ts
-index 755dc4c..06ca3ad 100644
+index 755dc4c..ba032a7 100644
 --- a/server/src/repositories/system-metadata.repository.ts
 +++ b/server/src/repositories/system-metadata.repository.ts
 @@ -1,14 +1,41 @@
@@ -703,7 +725,7 @@ index 755dc4c..06ca3ad 100644
  @Injectable()
  export class SystemMetadataRepository {
    constructor(@InjectKysely() private db: Kysely<DB>) {}
-@@ -40,6 +67,750 @@ export class SystemMetadataRepository {
+@@ -40,6 +67,791 @@ export class SystemMetadataRepository {
      await this.db.deleteFrom('system_metadata').where('key', '=', key).execute();
    }
  
@@ -714,6 +736,32 @@ index 755dc4c..06ca3ad 100644
 +      .where('key', '=', SystemMetadataKey.KyQuickStartSetup)
 +      .executeTakeFirst();
 +    return row !== undefined;
++  }
++
++  // Once set up, the service account and every owned account (setup or creation receipt) are protected.
++  async getKyQuickStartOwnership(userId: string): Promise<'service' | 'owned' | null> {
++    const row = await this.db
++      .selectFrom('system_metadata')
++      .select('value')
++      .where('key', '=', SystemMetadataKey.KyQuickStartSetup)
++      .executeTakeFirst();
++    if (!row) {
++      return null;
++    }
++    const receipt = KyQuickStartSetupReceiptSchema.safeParse(row.value);
++    if (!receipt.success || receipt.data.serviceId === userId) {
++      return 'service'; // A corrupt receipt protects everyone.
++    }
++    if (receipt.data.administratorId === userId || receipt.data.everydayId === userId) {
++      return 'owned';
++    }
++    const owned = await this.db
++      .selectFrom('user_metadata')
++      .select('key')
++      .where('userId', '=', userId)
++      .where('key', 'in', [UserMetadataKey.KyQuickStartCreation, UserMetadataKey.KyQuickStartDirectory])
++      .executeTakeFirst();
++    return owned ? 'owned' : null;
 +  }
 +
 +  async applyKyQuickStartSetup(
@@ -748,9 +796,19 @@ index 755dc4c..06ca3ad 100644
 +        if (receipt ? !serviceKey : !options.check && !serviceKey) {
 +          throw new Error('Service key file unavailable');
 +        }
-+        // Initial setup owns a blank installation: any existing account, even deleted, refuses.
-+        if (!receipt && (await tx.selectFrom('user').select('id').limit(1).executeTakeFirst())) {
-+          throw new Error('Native accounts already exist');
++        // Initial setup owns a blank installation: any existing account, even deleted, refuses,
++        // and so does any maintenance (restore) state.
++        if (
++          !receipt &&
++          ((await tx.selectFrom('user').select('id').limit(1).executeTakeFirst()) ||
++            (await tx
++              .selectFrom('system_metadata')
++              .select('key')
++              .where('key', '=', SystemMetadataKey.MaintenanceMode)
++              .where(sql<string>`value->>'isMaintenanceMode'`, '!=', 'false')
++              .executeTakeFirst()))
++        ) {
++          throw new Error('Installation is not blank');
 +        }
 +        const partial = z.record(z.string(), z.unknown()).parse(stored?.value ?? {});
 +        const partialOAuth = z.record(z.string(), z.unknown()).parse(partial.oauth ?? {});
@@ -1430,6 +1488,9 @@ index 755dc4c..06ca3ad 100644
 +            .where('key', '=', UserMetadataKey.KyQuickStartDirectory)
 +            .execute();
 +        }
++        // Any credential that exists while fenced is invalid (an in-flight race); it dies before the fence lifts.
++        const sessions = await tx.deleteFrom('session').where('userId', '=', userId).executeTakeFirst();
++        const apiKeys = await tx.deleteFrom('api_key').where('userId', '=', userId).executeTakeFirst();
 +        await tx
 +          .deleteFrom('user_metadata')
 +          .where('userId', '=', userId)
@@ -1441,6 +1502,8 @@ index 755dc4c..06ca3ad 100644
 +          epoch: dto.epoch,
 +          reactivatedAt: new Date().toISOString(),
 +          revokedAt: fence.data.revokedAt,
++          deletedSessions: Number(sessions.numDeletedRows),
++          deletedApiKeys: Number(apiKeys.numDeletedRows),
 +        });
 +        await tx
 +          .insertInto('user_metadata')
@@ -1642,7 +1705,7 @@ index 3b43285..ff692ec 100644
      this.server?.to(room).emit(event, ...data);
    }
 diff --git a/server/src/services/auth.service.spec.ts b/server/src/services/auth.service.spec.ts
-index 6a74693..3794225 100644
+index 6a74693..082fec2 100644
 --- a/server/src/services/auth.service.spec.ts
 +++ b/server/src/services/auth.service.spec.ts
 @@ -3,7 +3,7 @@ import { DateTime } from 'luxon';
@@ -1662,9 +1725,18 @@ index 6a74693..3794225 100644
      mocks.oauth.authorize.mockResolvedValue({ url: 'http://test', state: 'state', codeVerifier: 'codeVerifier' });
      mocks.oauth.getLogoutEndpoint.mockResolvedValue('http://end-session-endpoint');
    });
-@@ -694,6 +695,163 @@ describe(AuthService.name, () => {
+@@ -693,7 +694,172 @@ describe(AuthService.name, () => {
+     });
    });
  
++  describe('requireSetupAvailable', () => {
++    it('refuses first-run admin sign-up and pre-setup restore even on a fresh server', async () => {
++      mocks.user.hasAdmin.mockResolvedValue(false);
++      await expect(sut.requireSetupAvailable()).rejects.toBeInstanceOf(BadRequestException);
++      await expect(sut.isSetupAvailable()).resolves.toBe(false);
++    });
++  });
++
    describe('callback', () => {
 +    it('refuses managed first-login registration and email adoption before native writes', async () => {
 +      mocks.systemMetadata.get.mockResolvedValue(systemConfigStub.oauthEnabled);
@@ -1827,7 +1899,7 @@ index 6a74693..3794225 100644
        await expect(
          sut.callback({ url: '', state: 'xyz789', codeVerifier: 'foo' }, {}, loginDetails),
 diff --git a/server/src/services/auth.service.ts b/server/src/services/auth.service.ts
-index 3229ae2..2128444 100644
+index 3229ae2..b848d0c 100644
 --- a/server/src/services/auth.service.ts
 +++ b/server/src/services/auth.service.ts
 @@ -20,8 +20,9 @@ import {
@@ -1861,7 +1933,7 @@ index 3229ae2..2128444 100644
 +        subject: profile.sub,
 +      })
 +    ) {
-+      throw new UnauthorizedException('Account access is revoked');
++      throw new UnauthorizedException('Your access to Immich was removed. Ask your administrator.');
 +    }
      const normalizedEmail = profile.email ? profile.email.trim().toLowerCase() : undefined;
      const { autoRegister, defaultStorageQuota, storageLabelClaim, storageQuotaClaim, roleClaim } = oauth;
@@ -1874,7 +1946,7 @@ index 3229ae2..2128444 100644
 +
 +    const managed = await this.systemMetadataRepository.hasKyQuickStartSetup();
 +    if (managed && !user) {
-+      throw new UnauthorizedException('Owned directory provisioning is required');
++      throw new UnauthorizedException('Your account has not been set up in Immich yet. Ask your administrator to assign you to Immich in KyIdentity.');
 +    }
 +
      // link by email
@@ -1895,7 +1967,7 @@ index 3229ae2..2128444 100644
 +      const metadata = await this.userRepository.getMetadata(user.id);
 +      const owned = metadata.find((item) => item.key === UserMetadataKey.KyQuickStartDirectory);
 +      if (managed && !owned) {
-+        throw new UnauthorizedException('Owned directory authorization requires reconciliation');
++        throw new UnauthorizedException('Your account is being updated. Try again in a few minutes, or ask your administrator.');
 +      }
 +      if (owned) {
 +        const claim: unknown = Reflect.get(profile, roleClaim);
@@ -1913,7 +1985,7 @@ index 3229ae2..2128444 100644
 +          !knownRoles ||
 +          isAdmin !== user.isAdmin
 +        ) {
-+          throw new UnauthorizedException('Owned directory authorization requires reconciliation');
++          throw new UnauthorizedException('Your account is being updated. Try again in a few minutes, or ask your administrator.');
 +        }
 +      } else if (role && isAdmin !== user.isAdmin) {
 +        user = await this.userRepository.update(user.id, { isAdmin });
@@ -1947,7 +2019,7 @@ index 3229ae2..2128444 100644
  
 +  private async requireKyQuickStartAccess(userId: string) {
 +    if (await this.userRepository.hasKyQuickStartAccessFence(userId)) {
-+      throw new UnauthorizedException('Account access is revoked');
++      throw new UnauthorizedException('Your access to Immich was removed. Ask your administrator.');
 +    }
 +  }
 +
@@ -1961,8 +2033,38 @@ index 3229ae2..2128444 100644
      const token = this.cryptoRepository.randomBytesAsText(32);
      const hashed = this.cryptoRepository.hashSha256(token);
  
+diff --git a/server/src/services/base.service.ts b/server/src/services/base.service.ts
+index 3c5dab1..8bab775 100644
+--- a/server/src/services/base.service.ts
++++ b/server/src/services/base.service.ts
+@@ -289,9 +289,9 @@ export class BaseService {
+     return checkAccess(this.accessRepository, request);
+   }
+ 
+-  async isSetupAvailable(): Promise<boolean> {
+-    const { setup } = this.configRepository.getEnv();
+-    return setup.allow && !(await this.userRepository.hasAdmin());
++  // KyQuickStart: accounts come only from apply-setup, so first-run sign-up and pre-setup restore never open.
++  isSetupAvailable(): Promise<boolean> {
++    return Promise.resolve(false);
+   }
+ 
+   async requireSetupAvailable(): Promise<void> {
+diff --git a/server/src/services/server.service.spec.ts b/server/src/services/server.service.spec.ts
+index 82f53bc..469734a 100644
+--- a/server/src/services/server.service.spec.ts
++++ b/server/src/services/server.service.spec.ts
+@@ -163,7 +163,7 @@ describe(ServerService.name, () => {
+         oauthAccountManagementUrl: '',
+         trashDays: 30,
+         userDeleteDelay: 7,
+-        isInitialized: false,
++        isInitialized: true,
+         isOnboarded: false,
+         externalDomain: '',
+         publicUsers: true,
 diff --git a/server/src/services/user-admin.service.spec.ts b/server/src/services/user-admin.service.spec.ts
-index c52ae54..1b75949 100644
+index c52ae54..43131c8 100644
 --- a/server/src/services/user-admin.service.spec.ts
 +++ b/server/src/services/user-admin.service.spec.ts
 @@ -1,4 +1,9 @@
@@ -2137,8 +2239,40 @@ index c52ae54..1b75949 100644
    describe('create', () => {
      it('should not create a user if there is no local admin account', async () => {
        mocks.user.getAdmin.mockResolvedValueOnce(void 0);
+@@ -59,6 +209,31 @@ describe(UserAdminService.name, () => {
+   });
+ 
+   describe('update', () => {
++    it('refuses any update to the KyQuickStart service account', async () => {
++      mocks.systemMetadata.getKyQuickStartOwnership.mockResolvedValue('service');
++      await expect(sut.update(authStub.admin, userStub.user1.id, { name: 'renamed' })).rejects.toBeInstanceOf(
++        ForbiddenException,
++      );
++      expect(mocks.user.update).not.toHaveBeenCalled();
++    });
++
++    it.each([{ password: 'local-password' }, { pinCode: '123456' }, { pinCode: null }])(
++      'refuses a local secret for an owned account: %o',
++      async (dto) => {
++        mocks.systemMetadata.getKyQuickStartOwnership.mockResolvedValue('owned');
++        await expect(sut.update(authStub.admin, userStub.user1.id, dto)).rejects.toBeInstanceOf(ForbiddenException);
++        expect(mocks.crypto.hashBcrypt).not.toHaveBeenCalled();
++        expect(mocks.user.update).not.toHaveBeenCalled();
++      },
++    );
++
++    it('still projects administration on an owned account', async () => {
++      mocks.systemMetadata.getKyQuickStartOwnership.mockResolvedValue('owned');
++      mocks.user.update.mockResolvedValue(userStub.user1);
++      await sut.update(authStub.admin, userStub.user1.id, { isAdmin: true });
++      expect(mocks.user.update).toHaveBeenCalledWith(userStub.user1.id, { isAdmin: true, updatedAt: expect.any(Date) });
++    });
++
+     it('should update the user', async () => {
+       const update = {
+         shouldChangePassword: true,
 diff --git a/server/src/services/user-admin.service.ts b/server/src/services/user-admin.service.ts
-index f80a810..1d34d20 100644
+index f80a810..8eacfaa 100644
 --- a/server/src/services/user-admin.service.ts
 +++ b/server/src/services/user-admin.service.ts
 @@ -1,8 +1,21 @@
@@ -2172,7 +2306,18 @@ index f80a810..1d34d20 100644
  
  @Injectable()
  export class UserAdminService extends BaseService {
-@@ -96,6 +110,118 @@ export class UserAdminService extends BaseService {
+@@ -55,6 +69,10 @@ export class UserAdminService extends BaseService {
+ 
+   async update(auth: AuthDto, id: string, dto: UserAdminUpdateDto): Promise<UserAdminResponseDto> {
+     const user = await this.findOrFail(id, {});
++    const ownership = await this.systemMetadataRepository.getKyQuickStartOwnership(id);
++    if (ownership === 'service' || (ownership && (dto.password !== undefined || dto.pinCode !== undefined))) {
++      throw new ForbiddenException('KyQuickStart accounts sign in only through KyIdentity');
++    }
+ 
+     if (dto.isAdmin !== undefined && dto.isAdmin !== auth.user.isAdmin && auth.user.id === id) {
+       throw new BadRequestException('Admin status can only be changed by another admin');
+@@ -96,6 +114,123 @@ export class UserAdminService extends BaseService {
      return mapUserAdmin(updatedUser);
    }
  
@@ -2243,7 +2388,12 @@ index f80a810..1d34d20 100644
 +      revokedAt: state.fence?.revokedAt ?? null,
 +      revoked: state.fence !== null,
 +      reactivation: state.reactivation
-+        ? { epoch: state.reactivation.epoch, reactivatedAt: state.reactivation.reactivatedAt }
++        ? {
++            epoch: state.reactivation.epoch,
++            reactivatedAt: state.reactivation.reactivatedAt,
++            deletedSessions: state.reactivation.deletedSessions,
++            deletedApiKeys: state.reactivation.deletedApiKeys,
++          }
 +        : null,
 +      apiKeys: state.apiKeys,
 +      sessions: state.sessions,
@@ -2291,6 +2441,54 @@ index f80a810..1d34d20 100644
    async delete(auth: AuthDto, id: string, dto: UserAdminDeleteDto): Promise<UserAdminResponseDto> {
      const { force } = dto;
      await this.findOrFail(id, {});
+diff --git a/server/src/services/user.service.spec.ts b/server/src/services/user.service.spec.ts
+index a00efe8..c24dd3f 100644
+--- a/server/src/services/user.service.spec.ts
++++ b/server/src/services/user.service.spec.ts
+@@ -1,4 +1,4 @@
+-import { BadRequestException, InternalServerErrorException, NotFoundException } from '@nestjs/common';
++import { BadRequestException, ForbiddenException, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+ import { UserAdmin } from 'src/database';
+ import { CacheControl, JobName, UserMetadataKey } from 'src/enum';
+ import { UserService } from 'src/services/user.service';
+@@ -27,6 +27,17 @@ describe(UserService.name, () => {
+     );
+   });
+ 
++  describe('updateMe', () => {
++    it('refuses a local password for a KyQuickStart account before hashing or writing', async () => {
++      mocks.systemMetadata.getKyQuickStartOwnership.mockResolvedValue('owned');
++      await expect(sut.updateMe(authStub.user1, { password: 'local-password' })).rejects.toBeInstanceOf(
++        ForbiddenException,
++      );
++      expect(mocks.crypto.hashBcrypt).not.toHaveBeenCalled();
++      expect(mocks.user.update).not.toHaveBeenCalled();
++    });
++  });
++
+   describe('getAll', () => {
+     it('admin should get all users', async () => {
+       const user = UserFactory.create();
+diff --git a/server/src/services/user.service.ts b/server/src/services/user.service.ts
+index 1630fd9..dc60161 100644
+--- a/server/src/services/user.service.ts
++++ b/server/src/services/user.service.ts
+@@ -1,4 +1,4 @@
+-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
++import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+ import { Updateable } from 'kysely';
+ import { DateTime } from 'luxon';
+ import { SALT_ROUNDS } from 'src/constants';
+@@ -69,6 +69,9 @@ export class UserService extends BaseService {
+     };
+ 
+     if (dto.password) {
++      if (await this.systemMetadataRepository.getKyQuickStartOwnership(user.id)) {
++        throw new ForbiddenException('KyQuickStart accounts sign in only through KyIdentity');
++      }
+       const hashedPassword = await this.cryptoRepository.hashBcrypt(dto.password, SALT_ROUNDS);
+       update.password = hashedPassword;
+       update.shouldChangePassword = false;
 diff --git a/server/src/types.ts b/server/src/types.ts
 index 633ed9b..e7173f6 100644
 --- a/server/src/types.ts
@@ -2321,14 +2519,15 @@ index 633ed9b..e7173f6 100644
    [UserMetadataKey.License]: { licenseKey: string; activationKey: string; activatedAt: string };
    [UserMetadataKey.Onboarding]: { isOnboarded: boolean };
 diff --git a/server/test/repositories/system-metadata.repository.mock.ts b/server/test/repositories/system-metadata.repository.mock.ts
-index ab9e300..66bef2f 100644
+index ab9e300..7bae1ef 100644
 --- a/server/test/repositories/system-metadata.repository.mock.ts
 +++ b/server/test/repositories/system-metadata.repository.mock.ts
-@@ -10,5 +10,10 @@ export const newSystemMetadataRepositoryMock = (): Mocked<RepositoryInterface<Sy
+@@ -10,5 +10,11 @@ export const newSystemMetadataRepositoryMock = (): Mocked<RepositoryInterface<Sy
      set: vitest.fn(),
      delete: vitest.fn(),
      readFile: vitest.fn(),
 +    hasKyQuickStartSetup: vitest.fn().mockResolvedValue(false),
++    getKyQuickStartOwnership: vitest.fn().mockResolvedValue(null),
 +    applyKyQuickStartSetup: vitest.fn(),
 +    projectKyQuickStartDirectory: vitest.fn(),
 +    provisionKyQuickStartDirectory: vitest.fn(),

@@ -88,11 +88,14 @@ Owned installation setup, native directory projection and content-preserving acc
 - `POST /api/admin/users/:id/kyquickstart/reactivate` (admin API key with user-update, no
   session-only authority, no self) takes strict `{setupId, issuer, clientId, subject, epoch,
   profile}`, epoch even in [2, 2^31). Binding as for revocation. One serializable transaction:
-  profile and next directory revision first, then delete the fence and write
-  `ky.immich-reactivation/1` `{contract, setupId, epoch, reactivatedAt, revokedAt}`. Restore no
+  profile and next directory revision first, then delete all sessions/API keys, then the fence, and write
+  `ky.immich-reactivation/1` `{contract, setupId, epoch, reactivatedAt, revokedAt, deletedSessions, deletedApiKeys}`. Restore no
   session/key. Exact committed repeat is 200; lower/equal epoch over a fence, changed profile,
   no fence at a new epoch, never revoked and email collisions are 409; unknown failures 503.
-  Access inspection reports `reactivation: {epoch, reactivatedAt} | null`. Audit: fixed text, user ID and epoch.
+  Access inspection reports `reactivation: {epoch, reactivatedAt, deletedSessions, deletedApiKeys} | null`.
+- First-run admin sign-up and pre-setup restore are always refused (`isSetupAvailable` is false).
+  After setup the service account refuses every native admin update; owned accounts refuse
+  `password`/`pinCode` (admin API) and `password` (self). Initial setup refuses active maintenance state. Audit: fixed text, user ID and epoch.
 - Disconnect subscribed user sockets and recheck authentication after joining rooms.
 - Requests already authorized before the fence commits may finish; do not claim cancellation of in-flight work.
 

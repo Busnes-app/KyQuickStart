@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 type nativeSetupReport struct {
@@ -33,14 +34,30 @@ var nativeServiceKey = regexp.MustCompile(`^[A-Za-z0-9]{40,64}$`)
 
 // Every command targets the parent's label-verified disposable container. The
 // bundle is created inside that container; credentials never appear in argv.
-// The fixture's bootstrap administrator must exist on entry: it proves initial
-// setup refuses a non-blank installation, then is removed so setup can own it.
-// The returned service key is the setup-created service administrator's key.
-func qualifyNativeSetup(t *testing.T, ctx context.Context, c *Client, container string, provider ProviderSpec, subjects map[string]string) (nativeSetupReport, string) {
+// The module server must be fresh: no account exists and its first-run sign-up and
+// pre-setup restore are refused. A planted account proves initial setup refuses a
+// non-blank installation. The returned key is the service administrator's.
+func qualifyNativeSetup(t *testing.T, ctx context.Context, origin string, transport http.RoundTripper, container string, provider ProviderSpec, subjects map[string]string) (nativeSetupReport, string) {
 	t.Helper()
+	httpClient := &http.Client{Transport: transport, Timeout: 40 * time.Second}
+	status := func(method, path, token string, body any) int {
+		t.Helper()
+		raw, _ := json.Marshal(body)
+		r, _ := http.NewRequestWithContext(ctx, method, origin+"/api"+path, bytes.NewReader(raw))
+		r.Header.Set("Content-Type", "application/json")
+		if token != "" {
+			r.Header.Set("X-Api-Key", token)
+		}
+		response, err := httpClient.Do(r)
+		if err != nil {
+			t.Fatal("native fixture probe did not complete")
+		}
+		response.Body.Close()
+		return response.StatusCode
+	}
 	const path = "/usr/src/app/kyquickstart/setup.json"
 	const keyPath = "/usr/src/app/kyquickstart/service.key"
-	mobile := c.origin + "/api/oauth/mobile-redirect"
+	mobile := origin + "/api/oauth/mobile-redirect"
 	spec := map[string]any{
 		"schema": "immich.setup/1", "setupId": "271333e2-c221-4601-b249-563b3d828530",
 		"provider":       map[string]string{"issuer": provider.Issuer, "clientId": provider.ClientID, "clientSecret": provider.ClientSecret, "rolesClaim": provider.RolesClaim, "mobileRedirectUri": mobile},
@@ -92,40 +109,57 @@ func qualifyNativeSetup(t *testing.T, ctx context.Context, c *Client, container 
 		}
 		return strings.TrimSpace(string(raw))
 	}
-	// Raw stored configuration, read without an API key once the bootstrap is gone.
+	// Raw stored configuration and native accounts: no API key exists before setup.
 	stored := func() string {
-		return query(`SELECT coalesce((SELECT value::text FROM system_metadata WHERE key = 'system-config'), '') || '|' || (SELECT count(*) FROM system_metadata WHERE key = 'kyquickstart-setup')`)
+		return query(`SELECT coalesce((SELECT value::text FROM system_metadata WHERE key = 'system-config'), '') || '|' || (SELECT count(*) FROM system_metadata WHERE key = 'kyquickstart-setup') || '|' || (SELECT count(*) FROM "user")`)
 	}
-	before, err := c.InspectProviderConfiguration(ctx)
-	if err != nil {
-		t.Fatal("native initial provider proof missing")
+	before := stored()
+	if !strings.HasSuffix(before, "|0|0") {
+		t.Fatal("native module server is not fresh")
+	}
+	// No first-run takeover: with no administrator at all, sign-up and pre-setup restore stay refused.
+	for path, body := range map[string]any{
+		"/auth/admin-sign-up":                   map[string]string{"name": "Takeover", "email": "takeover@example.test", "password": "disposable-takeover-password"},
+		"/admin/database-backups/start-restore": map[string]any{},
+	} {
+		if code := status(http.MethodPost, path, "", body); code < 400 || code >= 500 {
+			t.Fatal("fresh module server did not refuse "+path, code)
+		}
+	}
+	if stored() != before {
+		t.Fatal("refused first-run route changed the installation")
 	}
 	write()
 	run(false, "--resume")
-	// The bootstrap administrator makes this a fourth native user and an extra administrator.
+	// A planted account makes this a fourth native user and an extra administrator.
+	query(`WITH g AS (INSERT INTO cluster_group DEFAULT VALUES RETURNING id) INSERT INTO "user" (email, name, "isAdmin", "clusterGroupId") SELECT 'planted@example.test', 'planted', true, id FROM g`)
+	planted := stored()
 	run(false, "--check")
 	if keyFile() != "" {
 		t.Fatal("native setup plan wrote a service key")
 	}
 	run(false)
-	if after, err := c.InspectProviderConfiguration(ctx); err != nil || after != before {
+	if stored() != planted {
 		t.Fatal("refused initial setup changed provider")
 	}
 	// The key file is written before the commit; a refused or crashed run leaves it for reuse.
 	pending := keyFile()
-	if !nativeServiceKey.MatchString(pending) || !strings.HasSuffix(stored(), "|0") {
+	if !nativeServiceKey.MatchString(pending) || !strings.HasSuffix(stored(), "|0|1") {
 		t.Fatal("refused initial setup committed or lost its pre-commit service key")
 	}
 	spec["setupId"] = "271333E2-C221-4601-B249-563B3D828530"
 	write()
 	run(false)
-	if after, err := c.InspectProviderConfiguration(ctx); err != nil || after != before {
+	if stored() != planted {
 		t.Fatal("unsupported installation UUID changed provider")
 	}
 	spec["setupId"] = "271333e2-c221-4601-b249-563b3d828530"
 	write()
-	query(`DELETE FROM "user" WHERE email = 'bootstrap@example.test'`)
+	query(`DELETE FROM "user" WHERE email = 'planted@example.test'`)
 	blank := stored()
+	if blank != before {
+		t.Fatal("native fixture did not restore the blank installation")
+	}
 	checked := run(true, "--check")
 	if !checked.Check || len(checked.Planned) != 4 || len(checked.Created) != 0 || len(checked.Accounts) != 0 || checked.Service != nil || len(checked.NativeUsers) != 0 {
 		t.Fatal("native initial check did not remain a plan")
@@ -133,7 +167,7 @@ func qualifyNativeSetup(t *testing.T, ctx context.Context, c *Client, container 
 	if stored() != blank || keyFile() != pending {
 		t.Fatal("native check mutated configuration or the service key")
 	}
-	for _, uri := range []string{c.origin + "/auth/login", strings.Replace(mobile, "https://", "http://", 1), mobile + "?next=1", mobile + "#fragment", strings.Replace(mobile, "https://", "https://user@", 1), mobile + "/"} {
+	for _, uri := range []string{origin + "/auth/login", strings.Replace(mobile, "https://", "http://", 1), mobile + "?next=1", mobile + "#fragment", strings.Replace(mobile, "https://", "https://user@", 1), mobile + "/"} {
 		providerSpec()["mobileRedirectUri"] = uri
 		write()
 		run(false, "--check")
@@ -152,7 +186,7 @@ func qualifyNativeSetup(t *testing.T, ctx context.Context, c *Client, container 
 	var created nativeSetupReport
 	viaInstaller := os.Getenv("KYQ_TEST_IMMICH_INSTALLER") == "1"
 	if viaInstaller {
-		qualifyNativeInstaller(t, ctx, container, c.origin, provider.ClientSecret, subjects)
+		qualifyNativeInstaller(t, ctx, container, origin, provider.ClientSecret, subjects)
 		created = run(true, "--check")
 	} else {
 		created = run(true)
@@ -180,11 +214,11 @@ func qualifyNativeSetup(t *testing.T, ctx context.Context, c *Client, container 
 	if query(`SELECT value->'oauth'->>'mobileOverrideEnabled' || '|' || (value->'oauth'->>'mobileRedirectUri') FROM system_metadata WHERE key = 'system-config'`) != "true|"+mobile {
 		t.Fatal("native setup did not write the phone redirect override")
 	}
-	svc, err := New(c.origin, serviceKey)
+	svc, err := New(origin, serviceKey)
 	if err != nil {
 		t.Fatal("native service key unusable")
 	}
-	svc.http = c.http
+	svc.http.Transport = transport
 	var listed []struct{ ID string }
 	var ignored json.RawMessage
 	if svc.call(ctx, http.MethodGet, "/admin/users", nil, &listed) != nil || len(listed) != 3 {
@@ -196,18 +230,28 @@ func qualifyNativeSetup(t *testing.T, ctx context.Context, c *Client, container 
 		svc.call(ctx, http.MethodPost, "/api-keys", map[string]any{"name": "escalation", "permissions": []string{"all"}}, &ignored) == nil {
 		t.Fatal("native service key exceeds the bridge's permissions")
 	}
-	for _, password := range []string{"", "disposable-bootstrap-password"} {
-		raw, _ := json.Marshal(map[string]string{"email": "kyquickstart-service@kyquickstart.invalid", "password": password})
-		login, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.origin+"/api/auth/login", bytes.NewReader(raw))
-		login.Header.Set("Content-Type", "application/json")
-		response, err := c.http.Do(login)
-		if err != nil {
-			t.Fatal("native service password probe failed")
+	for _, password := range []string{"", "disposable-takeover-password"} {
+		if code := status(http.MethodPost, "/auth/login", "", map[string]string{"email": "kyquickstart-service@kyquickstart.invalid", "password": password}); code != http.StatusUnauthorized && code != http.StatusBadRequest {
+			t.Fatal("native service administrator password login was not refused", code)
 		}
-		response.Body.Close()
-		if response.StatusCode != http.StatusUnauthorized && response.StatusCode != http.StatusBadRequest {
-			t.Fatal("native service administrator password login was not refused", response.StatusCode)
+	}
+	// No local secret on an owned account and no change at all to the service account.
+	owner := created.Accounts[0].ID
+	for _, probe := range []struct {
+		id   string
+		body map[string]any
+	}{
+		{created.Service.ID, map[string]any{"password": "disposable-takeover-password"}},
+		{created.Service.ID, map[string]any{"name": "renamed"}},
+		{owner, map[string]any{"password": "disposable-takeover-password"}},
+		{owner, map[string]any{"pinCode": "123456"}},
+	} {
+		if code := status(http.MethodPut, "/admin/users/"+probe.id, serviceKey, probe.body); code < 400 || code >= 500 {
+			t.Fatal("native owned account accepted a local secret or service change", code)
 		}
+	}
+	if code := status(http.MethodPost, "/auth/login", "", map[string]string{"email": "owner@example.test", "password": "disposable-takeover-password"}); code != http.StatusUnauthorized {
+		t.Fatal("native owner gained a local password", code)
 	}
 	for _, account := range created.Accounts {
 		if !uuid.MatchString(account.ID) || account.Administrator != (account.Subject == subjects["owner"]) {

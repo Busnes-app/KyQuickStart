@@ -35,15 +35,16 @@ receipt, exactly as for revocation. The account must be owned (setup IDs or crea
 receipt), active, undeleted and match its directory receipt.
 
 One serializable transaction first writes name/email/administrator and the next
-`ky.immich-directory/1` revision from `profile`, then deletes the `ky.immich-access/1`
-fence and writes `ky.immich-reactivation/1` user metadata (`contract`, `setupId`, `epoch`,
-`reactivatedAt`, `revokedAt` of the cleared fence). No session or API key is restored;
-revocation deleted them. Repeating the committed epoch with an equal profile returns 200
+`ky.immich-directory/1` revision from `profile`, then deletes every session and API key the
+account holds (any that exist while fenced came from an in-flight race), then deletes the
+`ky.immich-access/1` fence and writes `ky.immich-reactivation/1` user metadata (`contract`,
+`setupId`, `epoch`, `reactivatedAt`, `revokedAt` of the cleared fence, `deletedSessions`,
+`deletedApiKeys`). No session or API key is restored. Repeating the committed epoch with an equal profile returns 200
 with the same receipt. A lower or equal epoch over a new fence, a different profile, a
 higher epoch without a fence, an account never revoked and an email held by another
 account are 409. Unexpected failures are a fixed 503: the commit may have succeeded, so the
 caller reads `GET .../kyquickstart/access` back. Its `reactivation` (`epoch`,
-`reactivatedAt`, or `null`) appears beside the existing fields; credential counts are live.
+`reactivatedAt`, `deletedSessions`, `deletedApiKeys`, or `null`) appears beside the existing fields; credential counts are live.
 The server logs a fixed line with the user ID and epoch.
 
 Build in an isolated, disk-backed source checkout; `/tmp` on the development workstation
@@ -169,9 +170,12 @@ native user as `{"id", "administrator"}`, sorted by ID and refused above 1000. T
 workstation checks the three-account invariant from it right after initial setup;
 `immich-admin list-users` output is not parseable.
 
-Accepted risk (Yoshi, 2026-10-10): setup does not disable `passwordLogin`. Because initial
-setup now refuses any existing account, a first-run sign-up before setup blocks setup
-instead of keeping password access; run setup before Immich is reachable by anyone else.
+Accepted risk (Yoshi, 2026-10-10): setup does not disable `passwordLogin`. No account can
+hold a password, though: first-run admin sign-up and pre-setup database restore are always
+refused (accounts come only from apply-setup), initial setup refuses any existing account or
+active maintenance state, and once set up the service account accepts no native update while
+owned accounts (setup or creation receipts) refuse `password` and `pinCode` from the admin
+API and `password` from their own profile.
 
 Access inspection and revoke accept OIDC disabled, a rotated provider and inactive or
 soft-deleted accounts. The binding comes from the stored fence, else the account's directory

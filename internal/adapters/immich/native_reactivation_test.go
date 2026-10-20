@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -20,8 +21,8 @@ type nativeReactivationReply struct {
 	RevokedAt         *string
 	APIKeys, Sessions int64
 	Reactivation      *struct {
-		Epoch         int64
-		ReactivatedAt string
+		Epoch, DeletedSessions, DeletedAPIKeys int64
+		ReactivatedAt                          string
 	}
 }
 
@@ -30,7 +31,7 @@ type nativeReactivationReply struct {
 // sign-in on the same UUID and leaves revocation repeatable. c and service are distinct
 // administrator API keys (owner and service account); old holds the account's
 // pre-revocation session tokens and oldKey its personal API key.
-func qualifyNativeReactivation(t *testing.T, ctx context.Context, c, service *Client, daily, owner Binding, setupID, ownerSession string, old []string, oldKey string, administrator bool, signin func() (id string, admin bool, token string)) {
+func qualifyNativeReactivation(t *testing.T, ctx context.Context, c, service *Client, database string, daily, owner Binding, setupID, ownerSession string, old []string, oldKey string, administrator bool, signin func() (id string, admin bool, token string)) {
 	t.Helper()
 	send := func(token string, apiKey bool, method, path string, body any) (int, []byte) {
 		t.Helper()
@@ -116,10 +117,32 @@ func qualifyNativeReactivation(t *testing.T, ctx context.Context, c, service *Cl
 			t.Fatalf("native reactivation refusal %d changed the fence", i)
 		}
 	}
-	status, reply := reactivate(c.token, true, daily.ID, body(nil))
-	if status != http.StatusOK || reply.Revoked || reply.RevokedAt != nil || reply.Reactivation == nil || reply.Reactivation.Epoch != 2 || reply.APIKeys != 0 || reply.Sessions != 0 {
-		t.Fatal("native reactivation did not clear the fence with zero credentials", status)
+	// Simulate credentials an in-flight request created while fenced: they must die before the fence lifts.
+	const racedSession, racedKey = "disposable-raced-session-token", "disposableRacedApiKeySecret0123456789abcdef"
+	sql := `INSERT INTO session (token, "userId") VALUES (sha256(convert_to('` + racedSession + `', 'UTF8')), '` + daily.ID + `');` +
+		`INSERT INTO api_key (name, key, "userId", permissions) VALUES ('raced', sha256(convert_to('` + racedKey + `', 'UTF8')), '` + daily.ID + `', '{all}')`
+	if exec.CommandContext(ctx, "docker", "exec", database, "psql", "-U", "postgres", "-d", "immich", "-v", "ON_ERROR_STOP=1", "-qc", sql).Run() != nil {
+		t.Fatal("native raced credential fixture failed")
 	}
+	raced := func(stage string) {
+		t.Helper()
+		if code, _ := send(racedSession, false, http.MethodGet, "/users/me", nil); code != http.StatusUnauthorized {
+			t.Fatal("raced session works "+stage, code)
+		}
+		if code, _ := send(racedKey, true, http.MethodGet, "/users/me", nil); code != http.StatusUnauthorized {
+			t.Fatal("raced API key works "+stage, code)
+		}
+	}
+	if fenced, err := c.InspectAccess(ctx, daily, setupID); err != nil || !fenced.Revoked || fenced.Sessions != 1 || fenced.APIKeys != 1 {
+		t.Fatal("native raced credentials not visible while fenced", err)
+	}
+	raced("while fenced")
+	status, reply := reactivate(c.token, true, daily.ID, body(nil))
+	if status != http.StatusOK || reply.Revoked || reply.RevokedAt != nil || reply.Reactivation == nil || reply.Reactivation.Epoch != 2 || reply.APIKeys != 0 || reply.Sessions != 0 ||
+		reply.Reactivation.DeletedSessions != 1 || reply.Reactivation.DeletedAPIKeys != 1 {
+		t.Fatal("native reactivation did not delete raced credentials before clearing the fence", status)
+	}
+	raced("after reactivation")
 	if _, err := time.Parse(time.RFC3339Nano, reply.Reactivation.ReactivatedAt); err != nil {
 		t.Fatal("native reactivation time unavailable")
 	}

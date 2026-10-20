@@ -111,22 +111,23 @@ the fixture separately caps container memory (server 2 GiB, database 768 MiB, pr
   self-revocation and session-only authority. Wait for database/cache readiness before startup.
   The default provider is synthetic; this mode does not qualify actual KyIdentity or ordinary-admin workflow
   denial, restore or deployment. No account DELETE is called.
-  `KYQ_TEST_IMMICH_BRIDGE=1` requires the module image and drives the actual resident
+  `KYQ_TEST_IMMICH_BRIDGE=1` requires the module image (which itself requires `KYQ_TEST_IMMICH_SETUP=1`) and drives the actual resident
   target/SCIM/worker through one unavailable write and durable backoff using a test helper
   from `internal/offboard`, with bounded stdin credentials. Reopened UUID/client receipts
   and completion/audit proofs must survive restart. Maintain socket heartbeat during retry
   so observed disconnection cannot be an idle timeout. This controlled sender does not qualify actual KyIdentity event delivery.
 - `KYQ_TEST_IMMICH_SETUP=1` additionally requires the module image: invoke native apply-setup
-  with a target-local bundle; verify missing-resume refusal, refusal (plan included) while the
-  fixture's bootstrap administrator exists, then hard-delete it with `psql` so setup owns a
-  blank installation. Verify read-only check, invalid phone-URI/key-path refusal, the stored
+  with a target-local bundle on a fresh module server (no bootstrap: its first-run sign-up and
+  pre-setup restore must answer 4xx); verify missing-resume refusal, refusal (plan included)
+  while a `psql`-planted administrator exists, then delete it so setup owns a blank installation. Verify read-only check, invalid phone-URI/key-path refusal, the stored
   mobile override, owner/everyday/service creation with exactly three native users, reuse of
   the refused run's pre-commit 0600 key file, the service key's bounded permissions, service
-  password-login refusal, one key across repeats, missing/changed-file refusal, UUID/role
+  password-login refusal, refused service-account updates and owner password/PIN, one key across repeats, missing/changed-file refusal, UUID/role
   receipt stability, foreign installation/provider refusal and private-file/symlink/parent checks.
   The owner's own API key then drives the fixture and bridges get the service key.
   After revocation, setup resume must fail and retain the exact fence/time/zero credentials.
-  Without producer mode, reactivation then refuses bad epochs/fields/bindings, session-only
+  Without producer mode, reactivation then deletes a session and API key planted in the
+  database while fenced (both 401, counted in the receipt), refuses bad epochs/fields/bindings, session-only
   authority, self, a never-revoked account and email collisions; reactivates at epoch 2 with
   administrator from the profile (synthetic `daily-admin` code, or KyIdentity's roles); repeats
   idempotently; keeps the old session, key and socket subscription dead; admits a fresh

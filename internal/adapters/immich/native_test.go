@@ -73,6 +73,10 @@ func TestNativeProviderAccountAndAdministrator(t *testing.T) {
 	if (os.Getenv("KYQ_TEST_IMMICH_BRIDGE") == "1" || os.Getenv("KYQ_TEST_IMMICH_SETUP") == "1") && moduleImage == "" {
 		t.Fatal("native Immich bridge qualification requires a community module image")
 	}
+	// The module refuses first-run sign-up, so apply-setup is its only source of an administrator.
+	if moduleImage != "" && os.Getenv("KYQ_TEST_IMMICH_SETUP") != "1" {
+		t.Fatal("the community module image requires native setup qualification")
+	}
 	if moduleImage != "" {
 		if !regexp.MustCompile(`^sha256:[0-9a-f]{64}$`).MatchString(moduleImage) {
 			t.Fatal("module fixture requires an immutable local image digest")
@@ -270,26 +274,30 @@ func TestNativeProviderAccountAndAdministrator(t *testing.T) {
 			t.Fatal("native fixture response malformed")
 		}
 	}
-	var bootstrap struct{ ID string }
-	request(http.MethodPost, "/auth/admin-sign-up", "", map[string]string{"name": "Fixture bootstrap", "email": "bootstrap@example.test", "password": "disposable-bootstrap-password"}, &bootstrap)
+	// Stock servers get a bootstrap administrator; the module's comes from apply-setup below.
 	var login struct{ AccessToken string }
-	request(http.MethodPost, "/auth/login", "", map[string]string{"email": "bootstrap@example.test", "password": "disposable-bootstrap-password"}, &login)
-	if bootstrap.ID == "" || login.AccessToken == "" {
-		t.Fatal("native bootstrap receipt missing")
-	}
 	var key struct{ Secret string }
-	request(http.MethodPost, "/api-keys", login.AccessToken, map[string]any{"name": "fixture-adapter", "permissions": []string{"all"}}, &key)
-	if key.Secret == "" {
-		t.Fatal("native API credential missing")
-	}
-	c, err := New(front.URL, key.Secret)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c.http.Transport = client.Transport
-	preflight, err := c.InspectProviderConfiguration(ctx)
-	if err != nil {
-		t.Fatal("native provider preflight unavailable", err)
+	var c *Client
+	var preflight string
+	var err error
+	if moduleImage == "" {
+		var bootstrap struct{ ID string }
+		request(http.MethodPost, "/auth/admin-sign-up", "", map[string]string{"name": "Fixture bootstrap", "email": "bootstrap@example.test", "password": "disposable-bootstrap-password"}, &bootstrap)
+		request(http.MethodPost, "/auth/login", "", map[string]string{"email": "bootstrap@example.test", "password": "disposable-bootstrap-password"}, &login)
+		if bootstrap.ID == "" || login.AccessToken == "" {
+			t.Fatal("native bootstrap receipt missing")
+		}
+		request(http.MethodPost, "/api-keys", login.AccessToken, map[string]any{"name": "fixture-adapter", "permissions": []string{"all"}}, &key)
+		if key.Secret == "" {
+			t.Fatal("native API credential missing")
+		}
+		if c, err = New(front.URL, key.Secret); err != nil {
+			t.Fatal(err)
+		}
+		c.http.Transport = client.Transport
+		if preflight, err = c.InspectProviderConfiguration(ctx); err != nil {
+			t.Fatal("native provider preflight unavailable", err)
+		}
 	}
 	if os.Getenv("KYQ_TEST_IMMICH_MULTI") == "1" {
 		producer.Cross = newNativeCrossForgejo(t, ctx, nonce, ca, run, docker)
@@ -338,10 +346,9 @@ func TestNativeProviderAccountAndAdministrator(t *testing.T) {
 	var expectedProviderWrites int32 = 1
 	if os.Getenv("KYQ_TEST_IMMICH_SETUP") == "1" {
 		var serviceKey string
-		setup, serviceKey = qualifyNativeSetup(t, ctx, c, nonce+"-server", provider, subjects)
+		setup, serviceKey = qualifyNativeSetup(t, ctx, front.URL, client.Transport, nonce+"-server", provider, subjects)
 		providerWrites.Store(0) // Setup's refused service-key PUT probe is not a configuration write.
-		// Setup removed the bootstrap to own a blank installation. The owner's own
-		// administrator key drives the fixture; bridges use the service administrator's key.
+		// The owner's own administrator key drives the fixture; bridges use the service administrator's key.
 		signin("owner")
 		var ownerKey struct{ Secret string }
 		request(http.MethodPost, "/api-keys", sessions["owner"], map[string]any{"name": "fixture-owner", "permissions": []string{"all"}}, &ownerKey)
@@ -816,7 +823,7 @@ func TestNativeProviderAccountAndAdministrator(t *testing.T) {
 			if identity != nil {
 				actor = "daily"
 			}
-			qualifyNativeReactivation(t, ctx, c, service, daily, owner, setupID, sessions["owner"], []string{sessions["daily"]}, ordinaryKey.Secret, identity == nil, func() (string, bool, string) {
+			qualifyNativeReactivation(t, ctx, c, service, nonce+"-db", daily, owner, setupID, sessions["owner"], []string{sessions["daily"]}, ordinaryKey.Secret, identity == nil, func() (string, bool, string) {
 				var result struct {
 					UserID, AccessToken string
 					IsAdmin             bool
