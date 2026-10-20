@@ -1,6 +1,6 @@
 # KyQuickStart
 
-One command-line installer that stands up the Ky suite and selected third-party apps across
+A command-line installer for the supported catalog of Ky products and selected third-party apps across
 your own servers: choices, prerequisite checks, installation, preconfiguration and a printed
 handover of administrator and everyday logins.
 
@@ -29,8 +29,32 @@ people come from KyIdentity needs KyIdentity v0.4.4, the catalog's. The offboard
 - Kubernetes clusters through an existing kubeconfig. App volumes use the cluster's default
   StorageClass, or the one a target names with `storage_class`.
 
-Nothing is installed on your workstation beyond the binary. Secrets are generated on the
-target and never written to local state, logs or command output.
+The installer binary runs on your workstation and keeps its plan/state there. Target-side
+secrets are referenced rather than copied into ordinary plan/log output. Protect the
+operator account, target credentials and handover output; inspect the command-specific
+secret/handover contract before exporting results.
+
+## Independent installation and first run
+
+You do not need an existing Ky suite to run the installer. You do need prepared target
+infrastructure: Docker Engine/Compose and SSH agent access with a verified host key for
+Docker targets, or an existing Kubernetes cluster, working kubeconfig and persistent
+StorageClass for Kubernetes. KyQuickStart does **not** install Docker or Kubernetes.
+Supply DNS/HTTPS and edge configuration as described in the guided setup.
+
+No GitHub release is published as of 2026-10-20. The release-download recipe below becomes
+usable once a release exists; placeholders such as `vX.Y.Z` are not real download names.
+Until then, clone this repository and use `make build` with the Go version in `go.mod`.
+A source binary cannot install the KyYard runner because it has no released image pin.
+
+Run `./kyquickstart plan --demo --state ./demo` to explore without installing an app.
+Saving a plan does not deploy it. Follow [guided setup](docs/guided-setup.md) to select a
+real target/catalog, run preflight, review the plan, apply, and verify the handover.
+A demo pass is not a production catalog or disaster-recovery acceptance result.
+
+`make ci` is the core source check. `make e2e` additionally needs disposable Docker/SSH/kind
+infrastructure; it does not replace per-product live mail, phone MFA, custodian-card or
+offboarding acceptance. Test each configured integration before calling the suite ready.
 
 ## Install a release
 
