@@ -138,6 +138,7 @@ func TestNativeForgejoQueue(t *testing.T) {
 		Container, Image, Token string
 		CA                      []byte
 		Binding                 Binding
+		State                   string // Optional: the reactivation fixture reopens this store.
 	}
 	if len(input) > 32768 || json.Unmarshal([]byte(input), &fixture) != nil || !regexp.MustCompile(`^kyq-forgejo-api-[0-9]+$`).MatchString(fixture.Container) || !regexp.MustCompile(`^\S+@sha256:[0-9a-f]{64}$`).MatchString(fixture.Image) {
 		t.Fatal("unowned native fixture input")
@@ -169,7 +170,10 @@ func TestNativeForgejoQueue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir := stateDir(t)
+	dir := fixture.State
+	if dir == "" {
+		dir = stateDir(t)
+	}
 	s := openStore(t, dir)
 	defer func() { s.Close() }()
 	id, err := s.Register(ctx, target, b)

@@ -27,12 +27,17 @@ const (
 	AckRequired      Code = "ack_required"
 	IssuerChanged    Code = "issuer_changed" // the plan moves a URL a completed KyIdentity setup is bound to
 	RunnerHost       Code = "runner_host"    // the runner never changes the app whose pod it runs in
-	StepFailed       Code = "step_failed"
-	OwnedByRunner    Code = "owned_by_runner"     // the CLI may not change a plan the runner owns
-	OwnedByCLI       Code = "owned_by_cli"        // the runner acts only on a plan handed to it
-	OwnedByOtherPlan Code = "owned_by_other_plan" // the target's marker names another installation_id
-	NotFound         Code = "not_found"           // runner protocol: no such operation or route
-	Internal         Code = "internal"            // runner protocol: any failure without a code above
+	// Backup and restore (kyquickstart backup/restore, Docker apps).
+	BackupUnconfigured Code = "backup_unconfigured" // no backup block, or its target has no destination
+	BackupUnsupported  Code = "backup_unsupported"  // a backup volume is a named Docker volume
+	RestoreRefused     Code = "restore_refused"     // nothing was changed
+	RestoreIncomplete  Code = "restore_incomplete"  // restored and running, but the removal replay did not deliver
+	StepFailed         Code = "step_failed"
+	OwnedByRunner      Code = "owned_by_runner"     // the CLI may not change a plan the runner owns
+	OwnedByCLI         Code = "owned_by_cli"        // the runner acts only on a plan handed to it
+	OwnedByOtherPlan   Code = "owned_by_other_plan" // the target's marker names another installation_id
+	NotFound           Code = "not_found"           // runner protocol: no such operation or route
+	Internal           Code = "internal"            // runner protocol: any failure without a code above
 )
 
 type Error struct {

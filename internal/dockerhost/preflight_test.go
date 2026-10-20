@@ -29,8 +29,8 @@ func TestPreflightVersions(t *testing.T) {
 		ok              [2]bool
 	}{
 		"current":        {"29.8.2", "5.1.3", [2]bool{true, true}},
-		"floors":         {"24.0.0", "v2.21.0", [2]bool{true, true}},
-		"old engine":     {"23.0.6", "2.29.1", [2]bool{false, true}},
+		"floors":         {"25.0.0", "v2.21.0", [2]bool{true, true}},
+		"old engine":     {"24.0.9", "2.29.1", [2]bool{false, true}},
 		"old compose":    {"27.1.1", "2.20.3", [2]bool{true, false}},
 		"desktop suffix": {"27.1.1", "2.29.1-desktop.1", [2]bool{true, true}},
 		"garbage":        {"", "nope", [2]bool{false, false}},
@@ -94,5 +94,33 @@ func TestPreflightTargetSecretTools(t *testing.T) {
 	}}
 	if got := secretToolsCheck(context.Background(), r); got.OK || !strings.Contains(got.Detail, "base64") {
 		t.Fatal("missing target tools were not reported", got)
+	}
+}
+
+// A 0644 or symlinked credential, or a symlinked CA, is refused; real sh and find.
+func TestBackupFilesCheck(t *testing.T) {
+	dir := t.TempDir()
+	cred, ca, link := filepath.Join(dir, "cred"), filepath.Join(dir, "ca.pem"), filepath.Join(dir, "link")
+	os.WriteFile(cred, []byte("pw"), 0o600)
+	os.WriteFile(ca, []byte("ca"), 0o644)
+	os.Symlink(cred, link)
+	ctx := context.Background()
+	check := func(b stack.BackupDestination) bool { return BackupFilesCheck(ctx, remote.Local{}, b).OK }
+	if !check(stack.BackupDestination{CredentialFile: cred, CAFile: ca}) {
+		t.Fatal("valid files refused")
+	}
+	for name, b := range map[string]stack.BackupDestination{
+		"symlinked credential": {CredentialFile: link},
+		"symlinked CA":         {CredentialFile: cred, CAFile: link},
+		"missing CA":           {CredentialFile: cred, CAFile: filepath.Join(dir, "none")},
+		"directory":            {CredentialFile: dir},
+	} {
+		if check(b) {
+			t.Errorf("%s accepted", name)
+		}
+	}
+	os.Chmod(cred, 0o644)
+	if check(stack.BackupDestination{CredentialFile: cred}) {
+		t.Error("0644 credential accepted")
 	}
 }

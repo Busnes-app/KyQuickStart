@@ -39,6 +39,27 @@ Plain terminal planning and command orchestration for the operator-run installer
   transfer and native TLS setup are qualified. SSH also qualifies installer-composed native
   HTTP sign-on, reciprocal owner/everyday Notes access and post-login inspect/resume;
   browser UI, MFA, Kubernetes sign-on and full lifecycle acceptance remain open.
+- `backup.go` owns `backup` and `restore` (Docker apps only; `docs/guided-setup.md` "Backups
+  and restore on Docker"). Both refuse before connecting a Kubernetes app, an app without a
+  `backup` block or a target without a destination (`backup_unconfigured`), backup volumes in
+  named Docker volumes (`backup_unsupported`) and a plan without `installation_id`; both hold
+  the app's target lock (restore also KyIdentity's) and are refused under `owner: runner`.
+  `dockerhost.Store` does the target work. `removalGate` refuses restoring an app with an
+  `oidc` block unless the plan's KyIdentity deployment record is `replayVersion` (0.4.4) or
+  later (an `existing` or Docker-placed KyIdentity is refused); `replayRemovals` runs `resync-system --client
+  <identity_client> --wait 10m` in KyIdentity's pod (`kube.ExecReport`, which keeps the report
+  on failure) and accepts only `delivered`, else `restore_incomplete`. `restoreLocked` refuses a
+  running app and existing data without `--replace` before contacting the repository, then a
+  foreign snapshot; `--replace`/`--yes` without `--snapshot` are refused; it wants the typed name
+  or `--yes`, reads a lost password from `Options.Stdin` (no echo on a terminal) and records
+  its stage in `.restore-pending`, so a rerun resumes; while that file exists every other
+  Docker operation on the app refuses: deploy (`apply`, `install`, `upgrade`; `App.Restoring`
+  is set only by restore), `backup` and `unmanage` (`dockerhost.refuseUnfinishedRestore`). `finishRestore` deploys through
+  `dockerhost.RestoreSteps` and `Steps`, replays removals as soon as the app is healthy, then
+  runs the setup steps' `Verify`; for a gated app any failure before the replay is delivered
+  stops the app (decision 11). A cold `backup` says it stops the app and, on failure, whether
+  it runs again. `backupLines` adds
+  the backup, restore and password-record lines to apply's handover.
 - Product adapter discovery, bounded reports and activation verification: `product.go`; only implemented product interfaces enter its registry.
 - `immich.go` owns initial setup dispatch for the pinned community Immich module on
   Docker only: require native capabilities/version, validate bounded account/role reports,
@@ -174,6 +195,8 @@ Plain terminal planning and command orchestration for the operator-run installer
 - Accept computer DNS names at the initial target prompt, deriving a safe internal label.
   Use the entered computer name as the Docker SSH address default.
 - `review` and `plan --noninteractive` validate a saved plan without target connections.
+- `plan` asks a Docker target's backup destination (not in demo mode; blank for none) after
+  its directory; `review` lists it. It holds paths only, never the rest-server password.
 
 ## Work Guidance
 
@@ -182,7 +205,10 @@ before deployment rather than reporting their absence as success.
 
 ## Verification
 
-- `make ci`: guided resume, declined edits, existing references and credential rejection tests.
+- `make ci`: guided resume, declined edits, existing references and credential rejection tests;
+  `backup_test.go` drives backup and restore over a real sh with `dockerhost/fakedocker` as
+  docker, including a kill at every command; `golden_test.go` pins every Ky app plan's step
+  inputs and KyIdentity intent (`-update-golden` rewrites it, only for an intended change).
 - `make e2e`: a guided demo plan drives a real SSH/Docker deployment; Kubernetes container exec and edge regressions also run.
   With `KYQ_TEST_IDENTITY_BINARY`, real SSH and restricted kind fixtures check target-held
   preparation, creation/check/resume and changed-intent preservation; SSH also verifies

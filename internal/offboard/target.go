@@ -30,6 +30,7 @@ type Target struct {
 	spec          TargetSpec
 	inspect       func(context.Context, Binding) error
 	revoke        func(context.Context, Binding) error
+	reactivate    func(context.Context, Binding, *DirectoryProfile) error // nil: unsupported; no kind has one yet
 	directory     func(context.Context, Binding, DirectoryProfile) error
 	directoryRead func(context.Context, Binding) (DirectoryProfile, error)
 	create        func(context.Context, Binding, DirectoryProfile) (Binding, error)
@@ -168,6 +169,8 @@ func newTarget(spec TargetSpec, token, directoryToken, creationToken string) (*T
 		}
 		t.inspect = func(ctx context.Context, b Binding) error { _, err := c.Inspect(ctx, binding(b)); return err }
 		t.revoke = func(ctx context.Context, b Binding) error { return c.Deprovision(ctx, binding(b)) }
+		// No native reactivation: Forgejo 16.0.5 cannot revoke web sessions, so
+		// re-enabling sign-in would revive every pre-revocation session.
 		team := func(b GroupBinding) forgejo.TeamBinding {
 			return forgejo.TeamBinding{ID: b.TeamID, OrganizationID: b.OrganizationID, SourceID: b.SourceID, Name: b.TeamName, Organization: b.Organization, Permission: b.Permission, Permissions: b.Permissions}
 		}
@@ -296,11 +299,19 @@ func (s *Store) Register(ctx context.Context, t *Target, b Binding) (string, err
 }
 
 // Deliver uses the retained binding, not request data, and records success only
-// after the native adapter has inspected, revoked and verified retained access.
+// after the native adapter has verified the latest epoch's revocation or reactivation.
 func (s *Store) Deliver(ctx context.Context, t *Target, id string, now time.Time) error {
+	return s.deliver(ctx, t, id, now, 0)
+}
+
+func (s *Store) deliver(ctx context.Context, t *Target, id string, now time.Time, epoch uint32) error {
 	b, err := s.Binding(id)
 	if err != nil || !t.matches(b) {
 		return ErrState
 	}
-	return s.Run(ctx, id, now, t.revoke)
+	reactivate := t.reactivate
+	if reactivate == nil {
+		reactivate = func(context.Context, Binding, *DirectoryProfile) error { return ErrReactivationUnsupported }
+	}
+	return s.run(ctx, id, now, epoch, t.revoke, reactivate)
 }

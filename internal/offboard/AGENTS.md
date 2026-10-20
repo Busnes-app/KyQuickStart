@@ -6,6 +6,8 @@ bindings, durable directory intent, revocation work and audit delivery.
 ## Ownership
 
 - This directory owns bridge state and scheduling. Product adapters own native access proof.
+- `jobs.go` owns revocation/reactivation epochs, their attempts and immutable audits;
+  `reactivation.go` owns the re-assignment PUT that starts a reactivation epoch.
 - `directory.go` owns registered-account profile/role intent and immutable local audit proofs.
 - `creation.go` owns native creation intents, verified receipts, initialization proofs and
   the created-binding marker; `scim_creation.go` owns its authenticated transport.
@@ -21,8 +23,8 @@ bindings, durable directory intent, revocation work and audit delivery.
 
 ## Local Contracts
 
-- Persist one immutable binding and one revocation job per app/issuer/subject; names and
-  emails never select an account. Bind only after the caller verifies native provisioning.
+- Persist one immutable binding and one epoch sequence of revocation/reactivation jobs per
+  app/issuer/subject; names and emails never select an account. Bind only after the caller verifies native provisioning.
 - `Target` dispatches BookStack, Forgejo and community-module Immich HTTPS adapters. `Register`
   verifies exact native identity before binding; `Deliver` uses only the retained binding.
   Protected configuration pins app, kind, origin, issuer and Forgejo source ID. Native source
@@ -101,7 +103,25 @@ bindings, durable directory intent, revocation work and audit delivery.
   and response headers to 8 KiB. Runtime cancels/joins the relay before releasing state.
   Restore configuration and all relay/audit/receipt state together; missing or stale receipt
   proofs require explicit reconciliation. Never infer permanent archival from acceptance.
-- Successful revocation is permanent; active updates never reactivate retained accounts.
+- Revocation is not permanent. Epoch 1 is `<id>.job` with `<id>.audit-*` (an older store reads
+  unchanged as epoch 1); even epochs reactivate and odd epochs revoke, each in `<id>.epoch-<n>`
+  with immutable `-audit-<attempt>-started|result` files avoiding the relay's `.audit-` names.
+  Epochs are monotonic, at most 1001; a completed epoch is never rewritten and an earlier
+  revocation must be complete. An active PUT during pending/attempting revocation returns 429
+  and changes nothing. After completed revocation it starts a reactivation epoch (durable job,
+  started/result audits, native call through `Run`/the worker); its profile/roles are the
+  projection, and native administration must follow them before sign-in is re-enabled.
+  Revocation-only targets refuse a native administrator (409, `administrator_refused`).
+  A kind without native reactivation returns 409, audited `reactivation_unsupported`; another
+  PUT is another attempt, the worker never retries a refusal. A later PATCH starts the next
+  revocation epoch, also over an unfinished reactivation. A published result settles an
+  interrupted attempt without another native call. GET `active` follows the latest completed
+  epoch. Bindings, group retirement and the creation refusal for retained subjects stay
+  permanent; reactivated accounts stay out of group membership.
+- No kind reactivates natively yet. BookStack/Immich modules have no route (their app jobs add
+  one). Forgejo 16.0.5 cannot revoke web sessions (session auth loads only the user ID; no admin
+  API; codeberg forgejo#796), so re-enabling sign-in revives pre-revocation sessions; it stays
+  unsupported until a Forgejo release with session revocation.
 - Keep native errors, credentials and request bodies out of durable diagnostics.
 - SCIM endpoints are `/scim/<app>/Users` and explicitly enabled `/scim/<app>/Groups`, with one separate 32-byte bearer
   credential per app. Accept direct TLS 1.2+ and one exact Authorization header; forwarded
@@ -114,12 +134,14 @@ bindings, durable directory intent, revocation work and audit delivery.
 - Explicit Forgejo/Immich/BookStack directory mode accepts an 8 KiB full active User PUT on registered bindings.
   Require exact subject, one primary email, a bounded display name
   and explicit known roles. Empty roles remove administrator authority; unknown/duplicate
-  roles are refused. Forgejo requires its pinned native username; Immich has no native
-  username, so its bounded userName is informational and never selects or rebinds an account.
+  roles are refused. Revocation-only targets accept bounded roles that confer no authority,
+  and only for reactivation; otherwise their PUT stays 405. Forgejo requires its pinned native
+  username; Immich has no native username, so its bounded userName is informational and
+  never selects or rebinds an account.
   Immich reads retain the opaque subject as userName. Accept SCIM role `primary` selection metadata without
   granting authority from it. Project administrator access from the protected mapping;
-  ordinary-role aliases correspond to the product's non-administrator account state. No active
-  update clears a revocation intent or activates a disabled native account.
+  ordinary-role aliases correspond to the product's non-administrator account state. Only a
+  reactivation epoch activates a disabled native account; no directory update does.
 - BookStack userName is bounded informational metadata, like Immich; native identity comes
   only from the retained subject/ID and protected account receipt map. Reads use the subject.
 - Protected Forgejo/Immich/BookStack `directory.create_accounts:true` enables new active User POSTs only.
@@ -234,7 +256,7 @@ bindings, durable directory intent, revocation work and audit delivery.
 - Full connector/lifecycle composition, audit/failure-alert deployment and restore are required
   before claiming an operational bridge. Native user rename,
   creation/directory-hold reconciliation and creation/directory audit relay remain unfinished; the current
-  kyPulse relay transports revocation audits only.
+  kyPulse relay transports epoch-1 revocation audits only; later epochs' audits stay local.
 
 ## Work Guidance
 
@@ -287,7 +309,7 @@ those fences. Source `internal/sync/delivery.go` and `scim.go` own that protocol
   paths through verified TLS fixtures. These HTTP fixtures do not prove product access denial.
 - Directory tests additionally prove strict role/profile boundaries, intent/audit ordering,
   partial-publication refusal, uncertainty across restart, no replay/supersession from a held
-  write, known-refusal retry and native-account serialization with irreversible revocation.
+  write, known-refusal retry and native-account serialization with revocation.
   Runtime loading verifies explicit mappings without native I/O. Forgejo SDK tests distinguish
   known rejection from uncertain write/verification outcomes and refuse disabled grants.
 - UUID creation tests prove restart/partial-publication repair without another native create,
@@ -306,6 +328,16 @@ those fences. Source `internal/sync/delivery.go` and `scim.go` own that protocol
 - Add `KYQ_TEST_FORGEJO_QUEUE=1` to the Forgejo native fixture command in its owning DOX
   for real native binding registration, interrupted-result restart, inspected revocation
   completion and retained account/token/session/content checks through the same queue.
+- Reactivation tests (`reactivation_test.go`) use KyIdentity 0.4.3's exact PUT/PATCH bodies:
+  revoke/reactivate/revoke with every epoch's job and audits byte-identical afterwards, 429
+  during pending/attempting revocation, an origin/master store loading as epoch 1, retired
+  groups and user DELETE staying permanent, POST refusal for a retained subject,
+  `reactivation_unsupported` for BookStack/Immich/Forgejo with no native write, administrator
+  refusal and role projection on the generic path, restart without a repeated native call,
+  revocation superseding a failed reactivation and safe diagnostics.
+- With the Forgejo native fixture's `KYQ_TEST_FORGEJO_REACTIVATE=1` (beside the queue and SCIM
+  flags), `TestNativeForgejoReactivation` reopens the revoked store twice over TLS SCIM: the
+  re-assignment PUT is refused and audited twice, then a PATCH revokes again in epoch 3.
 - Worker race tests also cover single-worker exclusion, bounded native calls, joined
   cancellation, retained unattempted backlog, future backoff across restart, completed
   suppression, unsafe state/configuration and streaming beyond 1024 directory entries.

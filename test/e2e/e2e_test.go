@@ -240,6 +240,7 @@ func TestApply(t *testing.T) {
 	}
 	docker(t, "exec", name, "rm", "-r", root+"/.lock")
 	testSuiteCommands(t, ctx, state, hostFP, port, root, name)
+	testDumpBackup(t, ctx, state, port, base, name)
 	testRunner(t, ctx, state, port, base, name)
 }
 

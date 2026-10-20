@@ -125,12 +125,16 @@ the plan is saved only after every step passed.
   Service, and keeps the app directory, data volumes, claims and secrets on the target.
 - `unmanage` removes `ky.managed-by` and `ky.release-set` and records the hand-over in
   `<state>/handover.md`. Docker cannot relabel a container, so existing containers are
-  recreated once; on Kubernetes the pod-template change replaces the pods once. The installer
-  then refuses to install over the app.
+  recreated once, unstarted, and only the services that were running (or restarting) are
+  started again; `<root>/<app>/.unmanage-running` records both sets until then, so a rerun
+  after an interruption finishes with them; on
+  Kubernetes the pod-template change replaces the pods once. The installer then refuses to
+  install over the app.
 - `upgrade`, and `apply`/`install` over a kept deployment, compare the deployed version
   with the catalog: older than `min_from`, skipping a `no_skip` version, a downgrade or an
   unknown version is refused (`upgrade_refused`); a version that migrates data is refused
-  until verified pre-upgrade backups exist (`backup_required`); any other upgrade needs
+  until verified pre-upgrade backups exist (`backup_required`; `kyquickstart backup` does not
+  lift it yet); any other upgrade needs
   `--acknowledge-no-backup` (`ack_required`), recorded in `results/<app>.upgrade.json`.
   Apps upgrade one at a time in dependency order and stop at the first failure.
 
@@ -141,6 +145,130 @@ runner changed it, so copy its plan back with `kyquickstart pull-plan` first. Ma
 record the plan's `installation_id`; a target another plan manages is refused
 (`owned_by_other_plan`) until `kyquickstart apply --take-over-target T` claims it for this plan. Deployments record their catalog version (`kyquickstart/version`);
 Docker installs from earlier builds are recreated once by their next `apply` to record it.
+
+## Backups and restore on Docker
+
+`kyquickstart backup APP` takes an encrypted, append-only restic snapshot of a Docker app to
+an off-host rest-server; `kyquickstart restore APP` brings the app back from one, with the same
+accounts and data, after its whole target directory is lost. Nothing runs on a schedule and
+nothing is pruned. Kubernetes apps (KyIdentity, KyNotes, KyCalendar, the edge) are refused, and
+`upgrade` still gates data migrations on `backup_required`.
+
+**The rest-server is yours.** Run [rest-server](https://github.com/restic/rest-server) 0.14.0 on
+another machine than the app's target (the installer never deploys it), with TLS and
+`--append-only --private-repos`, and one htpasswd user per Docker target. Append-only means the
+target can add snapshots but not delete them; `forget` and `prune` need the server's own
+administrator credential, which stays off the target. The installer prescribes no firewall rule.
+
+**On the target**, as its SSH user, write the rest-server password for that user to a file,
+mode 0600, and, for a private CA, its certificate. `plan` asks for the destination after the
+target's directory (blank for none); `review` lists it:
+
+```yaml
+targets:
+  - name: nas
+    host: nas.example.lan
+    user: kyq
+    backup:
+      repository: rest:https://backup.example.lan:8000/nas   # <user> is the one path segment
+      credential_file: /home/kyq/.config/kyquickstart/rest-password
+      ca_file: /home/kyq/.config/kyquickstart/rest-ca.pem   # optional; system trust otherwise
+```
+
+`review`, `plan --noninteractive` and `apply` refuse, before connecting, any scheme but
+`rest:https`, credentials, a query or fragment in the URL, a missing user segment, relative
+paths, and a `backup` block on a Kubernetes target. Preflight refuses a credential or CA file
+that is a symlink, not a regular file or not owned by the SSH user, and a credential file that
+is not 0600. Each app's repository is `<repository>/<app>`.
+
+**What a snapshot holds.** The app's catalog `backup` block decides: its bind directories minus
+`skip`, its `capsule_secrets` (encrypted by restic, never sealed to KyRecovery here) and, for an
+app with a dump `command`, the dump, taken while the app runs (`docker compose exec -T`; an
+empty or failed dump takes no snapshot). An app without a dump command is backed up cold:
+`docker compose stop`, restic, then `docker compose start` and a health wait, also when the
+snapshot failed. KyDrive is backed up cold (its SQLite has no dump command): `data`, `backups`,
+`session_secret` and `scim_token`, a stop of seconds to minutes. Apps that keep backup data in
+named Docker volumes (KyPost) are refused with `backup_unsupported`.
+
+**How restic runs.** On the target, as the SSH user: `docker run --rm` of the pinned
+`restic/restic:0.19.1` (linux/amd64 digest; its only provenance is an unsigned BuildKit SLSA
+attestation) with a read-only root, no capabilities, `no-new-privileges`, the default bridge
+network, no cache, memory, CPU and PID bounds, and read-only binds of only what the step needs.
+The rest-server password is read from its file inside the container, so no password is in an
+argv, in the container's `Config.Env`, in a log, in output or in the state directory. The bridge
+must reach the rest-server; the installer does not open a firewall for it.
+
+**The repository password.** The first `backup` generates `restic_password` on the target, in
+the app's `secrets` directory (0600, never in a snapshot), runs `restic init` only when the
+repository does not exist, and prints the command that reads the password. Read it once into
+the owner's printed record: without it a lost target cannot be restored. The handover prints
+the same command for every Docker app whose target has a destination:
+
+```sh
+./kyquickstart backup kydrive --state ./morning-test
+ssh -p 22 kyq@nas.example.lan cat /opt/kyquickstart/kydrive/secrets/restic_password
+```
+
+**Restore.** `restore APP` lists the app's snapshots (ID, time, host) and changes nothing.
+`restore APP --snapshot ID` (8 or 64 lowercase hex) restores one; `--replace` and `--yes` are
+refused without `--snapshot`:
+
+1. It refuses (`restore_refused`, nothing changed) a running app and an app with any non-empty
+   bind directory or secret file unless `--replace`, which moves them to
+   `<root>/<app>/.replaced-<UTC time>/` and never deletes them; neither refusal contacts the
+   repository. It then refuses a snapshot not tagged for this app and installation. If
+   `restic_password` is gone, it reads the recorded one from stdin (without echo on a
+   terminal; piped, on its own line, followed by the app name, or alone with `--yes`) and saves
+   it only once the files are restored.
+2. It shows the snapshot's time, host and paths and wants the app name typed back, or `--yes`.
+3. It restores into a private staging directory in the app's directory and moves the volumes
+   and secrets into place (secrets 0600), refusing, before moving anything, any entry, dump or
+   directory above them (`kyq`, `volumes`, `secrets`) that the snapshot holds as a symlink or
+   not as a plain directory or file: a snapshot written from a compromised target cannot point
+   the app at another host path or another app's data.
+   It deploys through apply's own steps, starting `restore_order` in order (with a dump
+   command: only `service` first, then the dump into `restore_command`, then the rest), and
+   waits for the app's health.
+4. **People from KyIdentity.** For an app with an `oidc` block it first refuses unless the
+   plan's KyIdentity deployment record (`kyquickstart/version`) is v0.4.4 or later ("restore
+   needs KyIdentity v0.4.4 or later, which replays removals on resync"), and refuses an
+   `existing` KyIdentity, whose version is unknown, or one on a Docker target. As soon as the
+   app is healthy it runs `kyidentity resync-system --client <client> --wait 10m` in
+   KyIdentity's pod: KyIdentity re-sends the connector's state, deactivations included (a
+   deletion comes back as a retained, inactive account), and restore goes on only when the
+   connector's whole queue is `delivered`. Anything else, or any failure after the app started
+   and before that, is `restore_incomplete` (or the step's error) with the app **stopped**: fix
+   the connector and rerun `restore`, which starts the app and replays again.
+5. It runs the app's setup read-only check and reports the app restored.
+
+A rerun of `restore` after any step died resumes from `<root>/<app>/.restore-pending`, or
+refuses naming what to do (`--replace` when files were already moved into place, removing a
+stale lock by hand). While that file exists, every other command that touches the app
+(`apply`, `install`, `upgrade`, `backup`, `unmanage`) refuses: "a restore of <app> is
+unfinished and its removal replay not delivered; finish it with kyquickstart restore <app>".
+
+Residuals:
+
+- A removed person's restored sessions stay valid from the app's start until the replayed
+  deactivation arrives, a few seconds in the end-to-end test. A failed replay stops the app.
+- If restore itself is killed or loses SSH after the app starts, the app keeps running until
+  you rerun `kyquickstart restore <app>`; until then a person removed after the snapshot can
+  still sign in.
+- The gate trusts the installer's deployment record, not the running binary.
+- Whoever controls a live target can read that app's backups.
+- Not tested: a rest-server behind another proxy, repositories above the end-to-end test's
+  size, hosts without Docker's userland proxy.
+
+**After losing the target.** Keep the state directory (`stack.yaml`, `known_hosts`) and the
+recorded password. Prepare the new host as before (SSH user, the credential and CA files),
+then, for KyDrive:
+
+```sh
+./kyquickstart restore kydrive --state ./morning-test                 # list; paste the password when asked
+./kyquickstart restore kydrive --snapshot 1a2b3c4d --state ./morning-test   # password, then type kydrive
+```
+
+Piped instead: `printf '%s\nkydrive\n' "$PW" | ./kyquickstart restore kydrive --snapshot 1a2b3c4d`.
 
 ## Hand-off to KyYard
 
@@ -405,7 +533,7 @@ tunnels/VPS provisioning and Kubernetes connector deployment remain unavailable.
 
 ## Catalog KyIdentity on Kubernetes
 
-The catalog's `kyidentity` app installs KyIdentity 0.4.2 on a Kubernetes target from its
+The catalog's `kyidentity` app installs KyIdentity 0.4.4 on a Kubernetes target from its
 attested release image (`internal/catalog/apps/kyidentity/manifest.yaml` records the digest).
 It needs an edge route: its issuer is `https://<route hostname>`, plus `:<client_port>` behind a
 `lan` edge whose `client_port` is not 443, and a plan without exactly one route for it is refused. Select its setup with an `integrations` entry that names no
@@ -459,9 +587,9 @@ changed intent fails with the product's refusal. `integrate-stack` skips install
   that stops first reuses it. `kyidentity.amend.<app>` then stages, applies and checks the
   amendment at `/data/installer/<amendment UUID>/setup.json` after `kyidentity.setup`: the
   client alone, bound to the first setup's owner accounts. The app's credential export reads
-  the amendment. KyIdentity 0.4.2, the catalog image today, has no amendments: there
-  `kyidentity.setup` fails, names #110, the missing client and 0.4.3, and every app that signs
-  in must be in the plan before the first `apply`.
+  the amendment. An existing KyIdentity 0.4.2 has no amendments: there `kyidentity.setup`
+  fails, names #110, the missing client and 0.4.3, and every app that signs in must be in the
+  plan before the first `apply`.
 - The issuer cannot change once setup has run: every client and token names it. Before any
   step, `apply` compares the issuer KyIdentity's Deployment runs with to the plan's; when they
   differ and the pod's read-only `apply-setup --check` passes (or the pod cannot be asked), it
@@ -479,12 +607,15 @@ changed intent fails with the product's refusal. `integrate-stack` skips install
   --require-active-admin <owner admin>`, which revokes the account's sessions and deletes
   `first-run-password.txt`; KyIdentity refuses unless the owner's administrator is another
   active administrator with no end date. A rerun answers unchanged and skips.
-- Not yet on KyIdentity 0.4.2: it has no `disable-user`, so the step changes nothing and
+- On a KyIdentity 0.4.2, which has no `disable-user`, the step changes nothing and
   `apply` prints that `kyq-bootstrap` stays an active administrator. Disable it in the admin
   UI after the owner's first sign-in.
 - Not yet: `TRUSTED_PROXY_CIDRS` is unset, so KyIdentity sees the edge pod as every client;
   Docker placement (no Compose file); SCIM `active:false` proof (gate G2); backups (the
-  `data` volume is declared, nothing schedules it).
+  `data` volume is declared; `kyquickstart backup` covers Docker apps only).
+- 0.4.4's resync replays removals and it ships `resync-system`, which `kyquickstart restore`
+  runs after restoring an app whose people come from KyIdentity. An upgrade from 0.4.3 adds no
+  schema change and needs only `--acknowledge-no-backup`.
 
 ## Catalog KyRecovery on Kubernetes
 
@@ -967,9 +1098,11 @@ graceful restart and its live `--check`.
   and after the edges, so the first delivery finds the route; KyIdentity retries a failed one
   from 30 seconds, doubling. KyIdentity's pod must resolve the route's hostname and trust its
   certificate through the system roots.
-- Not yet: the Euro-Office editor (`KYDRIVE_EDITOR_URL` unset); document backups
-  (`KYDRIVE_BULK_BACKUP_REPOSITORY` unset: they need an independent restic repository, and the
-  `backups` directory, on the same disk as `data`, is not one); recovery pairing;
+- Backups: with a destination on its target, `kyquickstart backup kydrive` snapshots `data`,
+  `backups` and both secrets cold (see "Backups and restore on Docker"); restore needs KyIdentity
+  v0.4.4 or later. KyDrive's own `KYDRIVE_BULK_BACKUP_REPOSITORY` stays unset: the installer's
+  snapshot is the independent copy, and the `backups` directory, on the same disk as `data`, is not.
+- Not yet: the Euro-Office editor (`KYDRIVE_EDITOR_URL` unset); recovery pairing;
   `KY_TRUSTED_PROXIES` (unset, so KyDrive sees the edge as every client and `verify-edge`
   fails for its route); kyPulse does not watch it (no readiness path on Docker).
 

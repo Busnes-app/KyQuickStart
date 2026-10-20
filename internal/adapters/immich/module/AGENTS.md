@@ -67,7 +67,9 @@ Owned installation setup, native directory projection and content-preserving acc
 - Persist `ky.immich-access/1` in native user metadata, write-once to one installation binding.
 - Commit the fence and scoped session/key deletion together. Preserve native user/content fields.
 - Fence metadata presence denies all authenticated access; pin-based subject denial survives OAuth unlinking.
-- No reactivation or content-deletion route exists. Repeats retain the first revocation time.
+- No reactivation or content-deletion route exists yet. Repeats retain the first revocation time.
+  The bridge answers KyIdentity re-assignment with `reactivation_unsupported` until the Immich
+  app job adds a reactivation route.
 - Disconnect subscribed user sockets and recheck authentication after joining rooms.
 - Requests already authorized before the fence commits may finish; do not claim cancellation of in-flight work.
 

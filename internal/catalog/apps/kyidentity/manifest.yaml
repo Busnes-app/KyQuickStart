@@ -1,20 +1,22 @@
 name: kyidentity
 description: KyIdentity, the suite's identity provider (OIDC, MFA, SCIM); every other app signs in through it
 category: ky
-version: 0.4.3
-# Release image of v0.4.3, attested by release-image.yml@refs/tags/v0.4.3 (gh attestation verify;
-# source commit 65dcae6 = v0.4.3^{commit}). It advertises setup amendments and disable-user.
+version: 0.4.4
+# Release image of v0.4.4, attested by release-image.yml@refs/tags/v0.4.4 (gh attestation verify;
+# source commit 474a0c9 = v0.4.4^{commit}). It advertises setup amendments, disable-user and
+# resync-system, and its resync replays removals, which kyquickstart restore requires.
 images:
-  kyidentity: ghcr.io/busnes-app/kyidentity-server:0.4.3@sha256:dbf81b355d6307f23b3501c40ad368b06f9ea2fdfdd6e1d09f40d5de87bbc419
+  kyidentity: ghcr.io/busnes-app/kyidentity-server:0.4.4@sha256:f866a7513988a7b5919363ee76182baa2727ee57407404104049f93c29253c5a
 health:
   timeout_seconds: 300
 # Its signing, session and encryption keys are generated in the data directory on first start.
 backup:
   volumes: [data]
 upgrade:
-  # Migrations run at startup; the release notes cover upgrades from 0.4.x only.
+  # Migrations run at startup; the release notes cover upgrades from 0.4.x only. 0.4.4 adds no
+  # schema change (v0.4.3..v0.4.4), so an upgrade from 0.4.3 needs only an acknowledgement.
   min_from: 0.4.0
-  migrates_data: true
+  migrates_data: false
 kubernetes:
   image: kyidentity
   env:

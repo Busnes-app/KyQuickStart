@@ -15,6 +15,11 @@ Docker host routed through that edge ([KyDrive](docs/guided-setup.md#catalog-kyd
 otherwise only a disposable demo app installs. KyYard, with the suite runner in its pod, installs
 from a [release binary](#install-a-release), which carries the digest of the runner image it was
 released with; source builds refuse it ([KyYard](docs/guided-setup.md#catalog-kyyard-on-kubernetes)).
+Docker apps back up to an off-host restic
+rest-server with `kyquickstart backup` and come back with `kyquickstart restore`
+([guided setup](docs/guided-setup.md#backups-and-restore-on-docker)); restoring an app whose
+people come from KyIdentity needs KyIdentity v0.4.4, the catalog's. The offboarding bridge's image
+(`ghcr.io/busnes-app/kyoffboard`) has a release workflow but no published version yet.
 `integrate-product` connects already-running Ky products to KyIdentity. See
 [the deployment plan](docs/superpowers/plans/2026-10-10-deployment-plan.md) for what remains.
 
@@ -78,6 +83,7 @@ Choosing `finish` saves the plan without touching any server.
 | `apply` | Install and verify the planned apps |
 | `install`, `uninstall`, `unmanage`, `upgrade`, `status` | Manage one app at a time after the first install ([guided setup](docs/guided-setup.md#managing-apps)) |
 | `handoff`, `pull-plan` | Hand app management to KyYard's suite runner, or copy its plan back ([guided setup](docs/guided-setup.md#hand-off-to-kyyard)) |
+| `backup`, `restore` | Snapshot a Docker app to its target's rest-server, or restore one ([guided setup](docs/guided-setup.md#backups-and-restore-on-docker)) |
 | `verify-edge` | Check public routing and forwarded headers |
 | `integrate-identity`, `integrate-product`, `integrate-stack` | Configure existing Ky products against KyIdentity |
 | `review` | Show the saved plan |

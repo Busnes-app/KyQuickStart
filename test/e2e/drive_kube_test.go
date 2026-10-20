@@ -259,19 +259,8 @@ func driveSignOn(t *testing.T, ctx context.Context, kubeconfig string, certPEM [
 	if err != nil {
 		t.Fatal(err)
 	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(certPEM) {
-		t.Fatal("invalid edge certificate")
-	}
-	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}
-	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-		if address != catalogIdentityURLHost && address != catalogDriveURLHost {
-			return nil, errors.New("unselected destination " + address)
-		}
-		return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, network, net.JoinHostPort(nodeIP, "30443"))
-	}
-	t.Cleanup(transport.CloseIdleConnections)
-	identity, drive := "https://"+catalogIdentityURLHost, "https://"+catalogDriveURLHost
+	transport := driveTransport(t, certPEM, nodeIP)
+	drive := "https://" + catalogDriveURLHost
 	setupDir := "/data/installer/" + identityFixturePreparation().SetupID
 	waitForSCIMUsers(t, ctx, &http.Client{Transport: transport, Timeout: 30 * time.Second}, drive, scimToken)
 	for _, account := range []struct {
@@ -286,72 +275,102 @@ func driveSignOn(t *testing.T, ctx context.Context, kubeconfig string, certPEM [
 		if err != nil || len(password) == 0 {
 			t.Fatal("installer-created account credential missing", err)
 		}
-		jar, _ := cookiejar.New(nil)
-		client := &http.Client{Transport: transport, Jar: jar, Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-		send := func(method, endpoint string, body []byte, csrf string) (*http.Response, []byte) {
-			t.Helper()
-			req, _ := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
-			if body != nil {
-				req.Header.Set("Content-Type", "application/json")
-			}
-			if csrf != "" {
-				req.Header.Set("X-CSRF-Token", csrf)
-			}
-			r, err := client.Do(req)
-			if err != nil {
-				t.Fatalf("%s %s: %v", method, endpoint, err)
-			}
-			defer r.Body.Close()
-			b, _ := io.ReadAll(io.LimitReader(r.Body, 64<<10))
-			return r, b
-		}
-		_, b := send("GET", identity+"/api/auth/csrf", nil, "")
-		var csrf struct {
-			CSRFToken string `json:"csrfToken"`
-		}
-		if json.Unmarshal(b, &csrf) != nil || csrf.CSRFToken == "" {
-			t.Fatalf("KyIdentity CSRF: %s", b)
-		}
-		payload, _ := json.Marshal(map[string]string{"username": account.username, "password": strings.TrimSpace(string(password))})
-		clear(password)
-		r, _ := send("POST", identity+"/api/auth/login", payload, csrf.CSRFToken)
-		clear(payload)
-		if r.StatusCode != 200 {
-			t.Fatalf("%s password sign-in: %d", account.username, r.StatusCode)
-		}
-
-		r, b = send("GET", drive+"/api/sso/kysignon/login", nil, "")
-		authorize, err := r.Location()
-		if err != nil || r.StatusCode != 302 || authorize.Host != catalogIdentityURLHost {
-			t.Fatalf("KyDrive sign-in start: %d %s", r.StatusCode, b)
-		}
-		q := authorize.Query()
-		if q.Get("client_id") != "kydrive" || q.Get("redirect_uri") != drive+"/api/sso/kysignon/callback" || q.Get("code_challenge_method") != "S256" || q.Get("state") == "" {
-			t.Fatalf("authorization request: %s", authorize)
-		}
-		r, _ = send("GET", authorize.String(), nil, "")
-		callback, _ := r.Location()
-		if r.StatusCode != 302 || callback == nil || "https://"+callback.Host != drive || callback.Query().Get("code") == "" || callback.Query().Get("state") != q.Get("state") {
-			t.Fatalf("KyIdentity authorization of %s for kydrive: %d %v", account.username, r.StatusCode, callback)
-		}
-		r, b = send("GET", callback.String(), nil, "")
-		if r.StatusCode != 302 || r.Header.Get("Location") != "/" {
-			t.Fatalf("KyDrive callback: %d %s", r.StatusCode, b)
-		}
-		_, b = send("GET", drive+"/api/auth/me", nil, "")
-		var me struct {
-			Authenticated bool
-			User          map[string]any
-		}
-		if json.Unmarshal(b, &me) != nil || !me.Authenticated {
-			t.Fatalf("KyDrive session: %s", b)
-		}
-		role := map[bool]string{true: "admin", false: "user"}[account.admin]
-		t.Logf("%s signed in to KyDrive through KyIdentity: username %v, role %v", account.username, me.User["username"], me.User["role"])
-		if me.User["username"] != account.username || me.User["role"] != role {
-			t.Fatalf("KyDrive user: %s", b)
-		}
+		driveLogin(t, ctx, transport, account.username, password, account.admin)
 	}
+}
+
+// driveTransport dials KyIdentity and KyDrive at the lan edge's NodePort, verifying the
+// edge's certificate.
+func driveTransport(t *testing.T, certPEM []byte, nodeIP string) *http.Transport {
+	t.Helper()
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(certPEM) {
+		t.Fatal("invalid edge certificate")
+	}
+	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		if address != catalogIdentityURLHost && address != catalogDriveURLHost {
+			return nil, errors.New("unselected destination " + address)
+		}
+		return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, network, net.JoinHostPort(nodeIP, "30443"))
+	}
+	t.Cleanup(transport.CloseIdleConnections)
+	return transport
+}
+
+// driveLogin signs username in to KyIdentity with password, then to KyDrive through
+// KyIdentity as client kydrive, and returns the browser holding both sessions. KyDrive must
+// accept an admin as its administrator and anyone else as an ordinary user. password is
+// cleared.
+func driveLogin(t *testing.T, ctx context.Context, transport *http.Transport, username string, password []byte, admin bool) *http.Client {
+	t.Helper()
+	identity, drive := "https://"+catalogIdentityURLHost, "https://"+catalogDriveURLHost
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Transport: transport, Jar: jar, Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	send := func(method, endpoint string, body []byte, csrf string) (*http.Response, []byte) {
+		t.Helper()
+		req, _ := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		if csrf != "" {
+			req.Header.Set("X-CSRF-Token", csrf)
+		}
+		r, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("%s %s: %v", method, endpoint, err)
+		}
+		defer r.Body.Close()
+		b, _ := io.ReadAll(io.LimitReader(r.Body, 64<<10))
+		return r, b
+	}
+	_, b := send("GET", identity+"/api/auth/csrf", nil, "")
+	var csrf struct {
+		CSRFToken string `json:"csrfToken"`
+	}
+	if json.Unmarshal(b, &csrf) != nil || csrf.CSRFToken == "" {
+		t.Fatalf("KyIdentity CSRF: %s", b)
+	}
+	payload, _ := json.Marshal(map[string]string{"username": username, "password": strings.TrimSpace(string(password))})
+	clear(password)
+	r, _ := send("POST", identity+"/api/auth/login", payload, csrf.CSRFToken)
+	clear(payload)
+	if r.StatusCode != 200 {
+		t.Fatalf("%s password sign-in: %d", username, r.StatusCode)
+	}
+
+	r, b = send("GET", drive+"/api/sso/kysignon/login", nil, "")
+	authorize, err := r.Location()
+	if err != nil || r.StatusCode != 302 || authorize.Host != catalogIdentityURLHost {
+		t.Fatalf("KyDrive sign-in start: %d %s", r.StatusCode, b)
+	}
+	q := authorize.Query()
+	if q.Get("client_id") != "kydrive" || q.Get("redirect_uri") != drive+"/api/sso/kysignon/callback" || q.Get("code_challenge_method") != "S256" || q.Get("state") == "" {
+		t.Fatalf("authorization request: %s", authorize)
+	}
+	r, _ = send("GET", authorize.String(), nil, "")
+	callback, _ := r.Location()
+	if r.StatusCode != 302 || callback == nil || "https://"+callback.Host != drive || callback.Query().Get("code") == "" || callback.Query().Get("state") != q.Get("state") {
+		t.Fatalf("KyIdentity authorization of %s for kydrive: %d %v", username, r.StatusCode, callback)
+	}
+	r, b = send("GET", callback.String(), nil, "")
+	if r.StatusCode != 302 || r.Header.Get("Location") != "/" {
+		t.Fatalf("KyDrive callback: %d %s", r.StatusCode, b)
+	}
+	_, b = send("GET", drive+"/api/auth/me", nil, "")
+	var me struct {
+		Authenticated bool
+		User          map[string]any
+	}
+	if json.Unmarshal(b, &me) != nil || !me.Authenticated {
+		t.Fatalf("KyDrive session: %s", b)
+	}
+	role := map[bool]string{true: "admin", false: "user"}[admin]
+	t.Logf("%s signed in to KyDrive through KyIdentity: username %v, role %v", username, me.User["username"], me.User["role"])
+	if me.User["username"] != username || me.User["role"] != role {
+		t.Fatalf("KyDrive user: %s", b)
+	}
+	return client
 }
 
 // waitForSCIMUsers waits until KyDrive's SCIM endpoint lists both of the owner's accounts,

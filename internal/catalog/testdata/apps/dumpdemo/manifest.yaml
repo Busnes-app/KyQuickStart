@@ -1,0 +1,20 @@
+# Test only: the dump path of kyquickstart backup and restore (test/e2e TestApply).
+name: dumpdemo
+category: ky
+version: 1.0.0
+images:
+  # docker buildx imagetools inspect docker.io/library/postgres:17.6-alpine (linux/amd64), 2026-10-19.
+  postgres: docker.io/library/postgres:17.6-alpine@sha256:747d5ed1fdeeb124b880fbe3d7c6557d2c4064ae41d6b6297d417882effce4be
+  whoami: traefik/whoami:v1.11.0@sha256:200689790a0a0ea48ca45992e0450bc26ccab5307375b41c84dfc4f2475937ab
+secrets: [db_password]
+health:
+  timeout_seconds: 120
+# The database travels as a dump; its data directory, a named volume, does not.
+backup:
+  service: db
+  command: [pg_dump, -U, postgres, --clean, --if-exists, postgres]
+  restore_command: [psql, -U, postgres, -v, ON_ERROR_STOP=1, --single-transaction, -q, postgres]
+  volumes: [files]
+  skip: [files/cache]
+  capsule_secrets: [db_password]
+  restore_order: [db, web]

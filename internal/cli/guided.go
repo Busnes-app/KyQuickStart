@@ -313,6 +313,11 @@ func guided(ctx context.Context, args []string, o Options) error {
 			if err != nil {
 				return err
 			}
+			if !st.Demo {
+				if t.Backup, err = askBackup(p, key); err != nil {
+					return err
+				}
+			}
 		} else {
 			t.Kubeconfig, err = p.ask(key+"kubeconfig", "Absolute kubeconfig path outside installation state", "", filepath.IsAbs)
 			if err != nil {
@@ -584,6 +589,13 @@ func showPlan(out io.Writer, st *stack.Stack, cat catalog.Catalog) {
 			}
 		} else {
 			fmt.Fprintf(out, "Target %s: Docker over SSH %s@%s:%d, files %s\n", t.Name, t.User, t.Host, t.Port, t.Root)
+			if b := t.Backup; b != nil {
+				ca := "system trust"
+				if b.CAFile != "" {
+					ca = "CA " + b.CAFile
+				}
+				fmt.Fprintf(out, "  Backups: %s/<app> (rest-server password in %s, %s); run by kyquickstart backup, never on a schedule\n", b.Repository, b.CredentialFile, ca)
+			}
 		}
 	}
 	for _, a := range st.Apps {
@@ -688,6 +700,9 @@ func seedAnswers(a map[string]string, st *stack.Stack) {
 		k := fmt.Sprintf("target.%d.", i)
 		a[k+"name"], a[k+"host"], a[k+"user"], a[k+"port"], a[k+"root"], a[k+"kubeconfig"], a[k+"context"] = t.Name, t.Host, t.User, strconv.Itoa(t.Port), t.Root, t.Kubeconfig, t.Context
 		a[k+"storage_class"] = t.StorageClass
+		if b := t.Backup; b != nil {
+			a[k+"backup.repository"], a[k+"backup.credential_file"], a[k+"backup.ca_file"] = b.Repository, b.CredentialFile, b.CAFile
+		}
 		a[k+"kind"] = "docker"
 		if t.Kubernetes() {
 			a[k+"kind"] = "kubernetes"
@@ -714,6 +729,24 @@ func seedAnswers(a map[string]string, st *stack.Stack) {
 		}
 	}
 	seedEdges(a, st.Edges)
+}
+
+// askBackup asks for a Docker target's off-host rest-server; a blank repository means none.
+func askBackup(p *prompts, key string) (*stack.BackupDestination, error) {
+	repo, err := p.ask(key+"backup.repository", "Off-host restic rest-server for backups, rest:https://<host>[:port]/<user> (blank for none)", "", func(s string) bool {
+		return s == "" || stack.ValidBackupRepository(s)
+	})
+	if err != nil || repo == "" {
+		return nil, err
+	}
+	b := &stack.BackupDestination{Repository: repo}
+	if b.CredentialFile, err = p.ask(key+"backup.credential_file", "Absolute path on the target of the rest-server password file (mode 0600)", "", stack.ValidTargetPath); err != nil {
+		return nil, err
+	}
+	b.CAFile, err = p.ask(key+"backup.ca_file", "Absolute path on the target of the rest-server's CA certificate (blank uses system trust)", "", func(s string) bool {
+		return s == "" || stack.ValidTargetPath(s)
+	})
+	return b, err
 }
 
 func guidedEdges(p *prompts, st *stack.Stack) error {

@@ -18,9 +18,10 @@ with sessions, keys or shared links, or sign in again; subject denial survives O
 unlinking. Revocation disconnects the user's subscribed sockets. A second authentication
 check after joining rooms closes the connection/revocation race. Account, asset and
 album fields are retained. Repeats remove late unusable credentials and retain the first
-revocation timestamp. There is no clearing/reactivation route. Requests authorized before
-commit may finish; this is not cancellation of in-flight requests. Restore must retain
-the metadata fence with the account and content.
+revocation timestamp. There is no clearing/reactivation route yet: the bridge refuses a
+KyIdentity re-assignment as `reactivation_unsupported` until the Immich app job adds one.
+Requests authorized before commit may finish; this is not cancellation of in-flight
+requests. Restore must retain the metadata fence with the account and content.
 
 Build in an isolated, disk-backed source checkout; `/tmp` on the development workstation
 is RAM-backed. Use the pinned tag with a sparse checkout of `server` and `packages`,

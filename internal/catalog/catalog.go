@@ -55,15 +55,20 @@ type OIDC struct {
 
 // Backup is what restic takes from the app. Volumes name Compose volumes or ./<name> bind
 // directories and, when the app runs on Kubernetes, kubernetes.volumes; Skip entries are
-// volume/path.
+// volume/path. Without a Command the backup is cold: the app stops while restic reads.
 type Backup struct {
-	Service        string   `yaml:"service"` // Compose service the command runs in
-	Command        []string `yaml:"command"` // stdout is streamed into restic
+	Service        string   `yaml:"service"`         // Compose service both commands run in
+	Command        []string `yaml:"command"`         // its stdout is the dump
+	RestoreCommand []string `yaml:"restore_command"` // its stdin is the dump
 	Volumes        []string `yaml:"volumes"`
 	Skip           []string `yaml:"skip"`
-	CapsuleSecrets []string `yaml:"capsule_secrets"` // sealed to KyRecovery; a subset of secrets
-	RestoreOrder   []string `yaml:"restore_order"`   // Compose services
+	// CapsuleSecrets travel in the restic snapshot, encrypted by restic; a subset of secrets.
+	CapsuleSecrets []string `yaml:"capsule_secrets"`
+	RestoreOrder   []string `yaml:"restore_order"` // Compose services, service first
 }
+
+// ResticPassword is the installer's own secret beside an app's: no manifest may declare it.
+const ResticPassword = "restic_password"
 
 type Upgrade struct {
 	MinFrom      string   `yaml:"min_from"` // oldest installed version that may upgrade to this one
@@ -296,8 +301,8 @@ func (m Manifest) validate(dir string) error {
 	}
 	seen := map[string]bool{}
 	for _, s := range m.Secrets {
-		if !keyRE.MatchString(s) || seen[s] {
-			return fmt.Errorf("secret %q must be unique and match %s", s, keyRE)
+		if !keyRE.MatchString(s) || seen[s] || s == ResticPassword {
+			return fmt.Errorf("secret %q must be unique, match %s and not be the reserved %s", s, keyRE, ResticPassword)
 		}
 		seen[s] = true
 	}
@@ -509,8 +514,11 @@ func (m Manifest) validateBackup(c *composeFile) error {
 	if len(b.Command) == 0 && len(b.Volumes) == 0 {
 		return fmt.Errorf("needs a command or volumes")
 	}
-	if slices.Contains(b.Command, "") {
-		return fmt.Errorf("command has an empty argument")
+	if slices.Contains(b.Command, "") || slices.Contains(b.RestoreCommand, "") {
+		return fmt.Errorf("command or restore_command has an empty argument")
+	}
+	if (len(b.Command) == 0) != (len(b.RestoreCommand) == 0) {
+		return fmt.Errorf("command and restore_command come together")
 	}
 	isService := func(s string) bool { return c != nil && slices.Contains(c.services, s) }
 	switch {
@@ -542,6 +550,9 @@ func (m Manifest) validateBackup(c *composeFile) error {
 	if err := check(b.RestoreOrder, isService); err != nil {
 		return fmt.Errorf("restore_order: %w must be a unique Compose service", err)
 	}
+	if b.Service != "" && len(b.RestoreOrder) > 0 && b.RestoreOrder[0] != b.Service {
+		return fmt.Errorf("restore_order must start with service %q", b.Service)
+	}
 	return nil
 }
 
@@ -555,6 +566,11 @@ func check(list []string, ok func(string) bool) error {
 		seen[s] = true
 	}
 	return nil
+}
+
+// VersionAtLeast reports whether v is a MAJOR.MINOR.PATCH version no older than min.
+func VersionAtLeast(v, min string) bool {
+	return versionRE.MatchString(v) && compareVersions(v, min) >= 0
 }
 
 // compareVersions orders two strings that match versionRE.

@@ -23,10 +23,11 @@ oidc:
   user_role: kydrive.user
   scim_token_file: /run/secrets/scim_token
 # The database, its encryption.key and the stored files are all in data; backups holds
-# KyDrive's own sealed capsules. Document (bulk) backups are not configured: see
-# docs/guided-setup.md.
+# KyDrive's own sealed capsules. SQLite has no dump command here, so kyquickstart backup
+# stops KyDrive while restic reads (cold).
 backup:
   volumes: [data, backups]
+  capsule_secrets: [session_secret, scim_token]
 upgrade:
   # First catalog release; its SQLite schema migrates at startup.
   min_from: 0.4.2
