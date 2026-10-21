@@ -34,11 +34,16 @@ import (
 // 2026-10-20. Stock upstream; `gh attestation verify --repo axllent/mailpit` finds none.
 const mailpitImage = "docker.io/axllent/mailpit@sha256:059454962fbda891cfa621c86a251cfd9cfe645cb43e0dcd9351a35e7a8f3155"
 
-// mailDomain is the domain Mailpit's people have addresses in.
-const mailDomain = "mail.example.test"
+// mailDomain is the domain Mailpit's people have addresses in; mailHost is its SMTP host,
+// which the cluster's DNS resolves to its kind address.
+const (
+	mailDomain = "mail.example.test"
+	mailHost   = "smtp." + mailDomain
+)
 
-// testCert issues a throwaway CA and a server certificate for ip from it.
-func testCert(t *testing.T, cn string, ip net.IP) (caPEM, certPEM, keyPEM []byte) {
+// testCert issues a throwaway CA and a server certificate from it for ip, or for dns when ip
+// is nil.
+func testCert(t *testing.T, cn string, ip net.IP, dns ...string) (caPEM, certPEM, keyPEM []byte) {
 	t.Helper()
 	caKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	ca := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: cn + " CA"}, IsCA: true, BasicConstraintsValid: true,
@@ -49,8 +54,13 @@ func testCert(t *testing.T, cn string, ip net.IP) (caPEM, certPEM, keyPEM []byte
 	}
 	ca, _ = x509.ParseCertificate(caDER)
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	leaf := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: ip.String()}, IPAddresses: []net.IP{ip},
+	leaf := &x509.Certificate{SerialNumber: big.NewInt(2), DNSNames: dns,
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	if ip != nil {
+		leaf.Subject.CommonName, leaf.IPAddresses = ip.String(), []net.IP{ip}
+	} else {
+		leaf.Subject.CommonName = dns[0]
+	}
 	leafDER, err := x509.CreateCertificate(rand.Reader, leaf, ca, &key.PublicKey, caKey)
 	if err != nil {
 		t.Fatal(err)
@@ -61,9 +71,11 @@ func testCert(t *testing.T, cn string, ip net.IP) (caPEM, certPEM, keyPEM []byte
 }
 
 // mailpit is a test-only mail sink on the kind network: SMTP with STARTTLS required (a test-CA
-// certificate for its address) and SMTP AUTH required from a test credential file.
+// certificate for mailHost) and SMTP AUTH required from a test credential file. Docker picks
+// its address: a fixed --ip needs a network with a user-configured subnet, which CI's kind
+// network is not.
 type mailpit struct {
-	ip, api  string // its kind address; its API on this host
+	ip, api  string // its kind address, for mailHost; its API on this host
 	caPEM    []byte
 	password string // the relay credential, also in the plan's password_file
 }
@@ -75,19 +87,23 @@ func startMailpit(t *testing.T, work string) mailpit {
 	name := "kyq-e2e-mailpit-" + hex.EncodeToString(b)
 	dir := filepath.Join(work, "mailpit")
 	os.Mkdir(dir, 0o700)
-	m := mailpit{ip: freeKindAddress(t), password: randomPassword()}
+	m := mailpit{password: randomPassword()}
 	var cert, key []byte
-	m.caPEM, cert, key = testCert(t, "kyquickstart e2e Mailpit", net.ParseIP(m.ip))
+	m.caPEM, cert, key = testCert(t, "kyquickstart e2e Mailpit", nil, mailHost)
 	for f, b := range map[string][]byte{"smtp-auth": []byte("kyidentity:" + m.password + "\n"), "cert.pem": cert, "key.pem": key} {
 		os.WriteFile(filepath.Join(dir, f), b, 0o600)
 	}
 	t.Cleanup(func() { exec.Command("docker", "rm", "-f", name).Run() })
-	docker(t, "run", "-d", "--name", name, "--network", "kind", "--ip", m.ip, "--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()), "--read-only", "--tmpfs", "/tmp",
+	docker(t, "run", "-d", "--name", name, "--network", "kind", "--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()), "--read-only", "--tmpfs", "/tmp",
 		"--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--memory", "64m", "--memory-swap", "64m", "--cpus", "1", "--pids-limit", "64",
 		"-p", "127.0.0.1::8025", "-v", dir+":/conf:ro", mailpitImage,
 		"--smtp-tls-cert", "/conf/cert.pem", "--smtp-tls-key", "/conf/key.pem", "--smtp-require-starttls",
 		"--smtp-auth-file", "/conf/smtp-auth", "--tags-username", "--smtp-disable-rdns")
 	m.api = "http://" + docker(t, "port", name, "8025/tcp")
+	m.ip = docker(t, "inspect", name, "--format", `{{(index .NetworkSettings.Networks "kind").IPAddress}}`)
+	if net.ParseIP(m.ip).To4() == nil {
+		t.Fatalf("Mailpit's kind address %q", m.ip)
+	}
 	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(200 * time.Millisecond) {
 		if r, err := http.Get(m.api + "/api/v1/messages"); err == nil {
 			r.Body.Close()
@@ -101,30 +117,6 @@ func startMailpit(t *testing.T, work string) mailpit {
 	return m
 }
 
-// freeKindAddress is an IPv4 address in the kind network's subnet that no container holds.
-func freeKindAddress(t *testing.T) string {
-	t.Helper()
-	var subnet *net.IPNet
-	for _, s := range strings.Fields(docker(t, "network", "inspect", "kind", "--format", "{{range .IPAM.Config}}{{.Subnet}} {{end}}")) {
-		if _, n, err := net.ParseCIDR(s); err == nil && n.IP.To4() != nil {
-			subnet = n
-		}
-	}
-	used := docker(t, "network", "inspect", "kind", "--format", "{{range .Containers}}{{.IPv4Address}} {{end}}")
-	if subnet == nil {
-		t.Fatal("the kind network has no IPv4 subnet")
-	}
-	ip := subnet.IP.To4()
-	for host := 200; host < 250; host++ {
-		c := net.IPv4(ip[0], ip[1], ip[2], byte(host)).String()
-		if subnet.Contains(net.ParseIP(c)) && !strings.Contains(" "+used, " "+c+"/") {
-			return c
-		}
-	}
-	t.Fatal("no free kind address")
-	return ""
-}
-
 // relay is the plan's identity.mail for this sink, its password in a 0600 workstation file.
 func (m mailpit) relay(t *testing.T, work string) *stack.IdentityMail {
 	t.Helper()
@@ -132,11 +124,11 @@ func (m mailpit) relay(t *testing.T, work string) *stack.IdentityMail {
 	if err := os.WriteFile(file, []byte(m.password+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return &stack.IdentityMail{Host: m.ip, Port: 1025, Security: "starttls", From: "KyIdentity <identity@" + mailDomain + ">", Username: "kyidentity", PasswordFile: file}
+	return &stack.IdentityMail{Host: mailHost, Port: 1025, Security: "starttls", From: "KyIdentity <identity@" + mailDomain + ">", Username: "kyidentity", PasswordFile: file}
 }
 
 // refusesInsecure proves the sink takes no mail in the clear and none without AUTH, dialled
-// from this host at its kind address.
+// from this host at its kind address, its certificate checked for mailHost.
 func (m mailpit) refusesInsecure(t *testing.T) {
 	t.Helper()
 	pool := x509.NewCertPool()
@@ -151,7 +143,7 @@ func (m mailpit) refusesInsecure(t *testing.T) {
 	c.Close()
 	c, _ = smtp.Dial(net.JoinHostPort(m.ip, "1025"))
 	defer c.Close()
-	if err := c.StartTLS(&tls.Config{ServerName: m.ip, RootCAs: pool, MinVersion: tls.VersionTLS12}); err != nil {
+	if err := c.StartTLS(&tls.Config{ServerName: mailHost, RootCAs: pool, MinVersion: tls.VersionTLS12}); err != nil {
 		t.Fatalf("Mailpit STARTTLS with the test CA: %v", err)
 	}
 	if err := c.Mail("probe@" + mailDomain); err == nil || !strings.Contains(err.Error(), "Authentication required") {

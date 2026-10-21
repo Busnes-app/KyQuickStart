@@ -52,6 +52,7 @@ type messageChat struct {
 const (
 	memberAddress   = "member@" + mailDomain
 	chatOnlyAddress = "chatonly@" + mailDomain
+	leaverAddress   = "leaver@" + mailDomain
 )
 
 func mxid(localpart string) string { return "@" + localpart + ":" + messageHosts["server_name"] }
@@ -82,6 +83,25 @@ func (c *messageChat) chatUsers() map[string]string {
 		out[u.Username] = u.Status
 	}
 	return out
+}
+
+// directory is username's KyIdentity status in the console's directory, "" when MAS has no
+// such user.
+func (c *messageChat) directory(username string) string {
+	c.t.Helper()
+	var list struct {
+		Users []struct {
+			Username   string
+			KyIdentity string `json:"kyidentity"`
+		}
+	}
+	c.consoleGet("/api/admin/matrix/users?limit=100", &list)
+	for _, u := range list.Users {
+		if u.Username == username {
+			return u.KyIdentity
+		}
+	}
+	return ""
 }
 
 // audited waits until the console's audit has action for target and returns its newest
@@ -380,7 +400,7 @@ func (c *messageChat) calls() *mautrix.RespOpenIDToken {
 
 // cut measures, from t0, when Synapse refuses token (401 M_UNKNOWN_TOKEN) and MAS refuses
 // refresh; both must be within 60 s (AC22).
-func (c *messageChat) cut(who, userID string, t0 time.Time, token, refresh string) time.Duration {
+func (c *messageChat) cut(who, userID string, t0 time.Time, token, refresh, event string) time.Duration {
 	t := c.t
 	t.Helper()
 	var denied, refused time.Duration
@@ -402,11 +422,11 @@ func (c *messageChat) cut(who, userID string, t0 time.Time, token, refresh strin
 			logged = true
 		}
 		if time.Since(t0) > 3*time.Minute {
-			t.Fatalf("%s: 3 minutes after the disable, token refused %v, refresh refused %v", who, denied != 0, refused != 0)
+			t.Fatalf("%s: 3 minutes after %s, token refused %v, refresh refused %v", who, event, denied != 0, refused != 0)
 		}
 	}
-	t.Logf("AC22: %s's access token got 401 M_UNKNOWN_TOKEN %s after the disable; MAS refused its refresh token %s after", who,
-		denied.Round(100*time.Millisecond), refused.Round(100*time.Millisecond))
+	t.Logf("AC22: %s's access token got 401 M_UNKNOWN_TOKEN %s after %s; MAS refused its refresh token %s after", who,
+		denied.Round(100*time.Millisecond), event, refused.Round(100*time.Millisecond))
 	if denied > 60*time.Second || refused > 60*time.Second {
 		t.Errorf("AC22: %s's chat outlived the 60 s bound", who)
 	}
@@ -428,7 +448,7 @@ func (c *messageChat) offboarding(openID *mautrix.RespOpenIDToken) {
 	target := mxid("prepared-user")
 	t0 := time.Now()
 	c.admin.change("PUT", "/api/admin/users/"+ownerID, map[string]string{"status": "disabled"})
-	c.cut("prepared-user", ownerID, t0, token, c.owner.refresh)
+	c.cut("prepared-user", ownerID, t0, token, c.owner.refresh, "the disable")
 	if tok, stop := c.mas.signIn("prepared-user", c.everyday(), c.device()); tok != nil {
 		t.Fatal("the disabled owner signed in to chat")
 	} else {
@@ -471,6 +491,55 @@ func (c *messageChat) offboarding(openID *mautrix.RespOpenIDToken) {
 		}
 		time.Sleep(2 * time.Second)
 	}
+}
+
+// unassign measures what removing someone's assignments ends: "KyMessages chat" alone stops
+// only their new chat sign-ins, their open session keeps working; removing "KyMessages" too
+// reaches the console's sweep, which ends it.
+func (c *messageChat) unassign() {
+	t := c.t
+	pw := randomPassword()
+	uid := c.admin.createPerson("leaver", leaverAddress, pw)
+	c.secrets["leaver's first password"] = pw
+	for _, client := range []string{"kymessage", "kymessage-chat"} {
+		c.admin.assign(c.admin.app(client), uid)
+	}
+	pw = c.verify("leaver", uid, leaverAddress)
+	c.secrets["leaver's password"] = pw
+	tok, stop := c.mas.signIn("leaver", []byte(pw), c.device())
+	if tok == nil {
+		t.Fatalf("leaver's chat sign-in stopped at %.200s", stop)
+	}
+	// KyIdentity delivers an assignment about a second later; the console must know leaver
+	// before its removal can reach it.
+	for deadline := time.Now().Add(60 * time.Second); c.directory("leaver") != "active"; time.Sleep(time.Second) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the console's directory has leaver %q 60 s after its assignment", c.directory("leaver"))
+		}
+	}
+	unassign := func(client string) {
+		t.Helper()
+		c.admin.change("DELETE", "/api/admin/app-registry/"+c.admin.app(client)+"/assignments/users/"+uid, nil)
+	}
+	unassign("kymessage-chat")
+	at := time.Now()
+	if again, stop := c.mas.signIn("leaver", []byte(pw), c.device()); again != nil {
+		t.Fatal("leaver signed in to chat again after its chat assignment was removed")
+	} else {
+		t.Logf("unassign: leaver's new chat sign-in without its chat assignment stopped at %.120s", stop)
+	}
+	code, next, _ := c.mas.refresh(tok.Refresh)
+	if code != 200 {
+		t.Fatalf("unassign: MAS refused leaver's refresh %d after its chat assignment was removed", code)
+	}
+	if wc, _, user := whoami(t, c.transport, next.Access); wc != 200 || user != mxid("leaver") || c.chatUsers()["leaver"] != "active" {
+		t.Fatalf("unassign: leaver after its chat assignment was removed: whoami %d %s, MAS %q", wc, user, c.chatUsers()["leaver"])
+	}
+	t.Logf("unassign: %s after removing leaver's \"KyMessages chat\" assignment alone, its open session still refreshes and whoami answers 200; MAS has it active", time.Since(at).Round(time.Second))
+	t1 := time.Now()
+	unassign("kymessage")
+	took := c.cut("leaver", uid, t1, next.Access, next.Refresh, `its removal from "KyMessages"`)
+	t.Logf("unassign: removing leaver from \"KyMessages\" too ended its chat %s after", took.Round(100*time.Millisecond))
 }
 
 // memorySampler records the peak sum of the KyMessages containers' memory, every few seconds.
@@ -717,7 +786,7 @@ func (c *messageChat) backupRestore(o messageOps) {
 	// member, a person setup did not create, is offboarded after the snapshot (AC22).
 	t1 := time.Now()
 	c.admin.change("PUT", "/api/admin/users/"+c.memberID, map[string]string{"status": "disabled"})
-	c.cut("member", c.memberID, t1, c.member.c.AccessToken, memberRefresh)
+	c.cut("member", c.memberID, t1, c.member.c.AccessToken, memberRefresh, "the disable")
 	if s := c.chatUsers()["member"]; s != "locked" {
 		t.Fatalf("the disabled member in MAS is %q", s)
 	}
@@ -746,8 +815,12 @@ func (c *messageChat) backupRestore(o messageOps) {
 	if !ok.IsZero() {
 		window = "worked from " + ok.Format(time.RFC3339) + " (" + ok.Sub(synapse).Round(time.Second).String() + " after synapse started)"
 	}
-	t.Logf("AC26: member's pre-backup session (restore_order postgres, mas, app, synapse, element, livekit) %s; refused (%s) at %s, %s after synapse started (%s), %s after the restore returned",
+	t.Logf("AC26: member's pre-backup session (restore_order postgres, mas, app, synapse, element, livekit; replay after app) %s; refused (%s) at %s, %s after synapse started (%s), %s after the restore returned",
 		window, watch.last, denied.Format(time.RFC3339Nano), denied.Sub(synapse).Round(100*time.Millisecond), synapse.Format(time.RFC3339Nano), denied.Sub(restored).Round(100*time.Millisecond))
+	// The replay ran before Synapse started, so the restored session never reached a homeserver.
+	if !ok.IsZero() {
+		t.Errorf("AC26: member's pre-backup session worked after the restore (%s)", window)
+	}
 	if denied.Sub(synapse) > 60*time.Second {
 		t.Errorf("AC26: member's session outlived synapse's start by over 60 s")
 	}

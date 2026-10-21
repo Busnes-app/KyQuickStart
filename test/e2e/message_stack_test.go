@@ -258,7 +258,7 @@ func TestKubernetesKyMessage(t *testing.T) {
 	// KyIdentity's mail relay is set by its first setup only: Mailpit, STARTTLS and AUTH.
 	st.Integrations[len(st.Integrations)-1].Identity.Mail = mail.relay(t, work)
 	savePlan(t, plan, st)
-	testClusterDNS(t, ctx, cs, nodeIP)
+	testClusterDNS(t, ctx, cs, nodeIP, mail.ip+" "+mailHost)
 	apply("identity")
 	trustTestCA(t, ctx, cs, connected, "kyidentity", append(slices.Clone(certPEM), mail.caPEM...))
 	mail.refusesInsecure(t)
@@ -275,7 +275,7 @@ func TestKubernetesKyMessage(t *testing.T) {
 	if !strings.Contains(out, "setup amendment") {
 		t.Fatalf("no amendment line:\n%s", out)
 	}
-	ids := []string{"kyidentity.amend.kymessage", "kymessage.secrets", "kymessage.matrix-init", "kymessage.credentials", "kymessage.deploy", "kymessage.health", "kymessage.setup"}
+	ids := []string{"kyidentity.amend.kymessage", "kymessage.secrets", "kymessage.matrix-init", "kymessage.credentials", "kymessage.deploy", "kymessage.health", "kymessage.setup", "kymessage.directory"}
 	for _, id := range ids {
 		if status(out, id) != "ok" {
 			t.Fatalf("%s = %q\n%s", id, status(out, id), out)
@@ -458,7 +458,8 @@ func TestKubernetesKyMessage(t *testing.T) {
 
 	// AC24: the handover, and its init-admin line run as printed on the target.
 	for _, want := range []string{"chat at https://" + messageHosts["chat"] + ":30443/ (Element)", "Server name " + messageHosts["server_name"], "TCP 7881 and UDP 7882",
-		`both "KyMessages" and "KyMessages chat"`, "sign-out does not end chat sessions", "pair it with KyRecovery"} {
+		`both "KyMessages" and "KyMessages chat"`, "sign-out does not end chat sessions", "pair it with KyRecovery",
+		"KyIdentity sends that mail through " + mailHost + ":1025.", `Removing someone from "KyMessages chat" alone stops only their new chat sign-ins`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("handover lacks %q", want)
 		}
@@ -488,6 +489,7 @@ func TestKubernetesKyMessage(t *testing.T) {
 	chatStart := time.Now()
 	chat.encryptedRoom()
 	chat.offboarding(chat.calls())
+	chat.unassign()
 	skipped := func(label, out string) {
 		t.Helper()
 		for _, id := range ids {
