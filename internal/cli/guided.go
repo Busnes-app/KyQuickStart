@@ -220,10 +220,10 @@ func guided(ctx context.Context, args []string, o Options) error {
 		for _, e := range previous.Edges {
 			seen := map[string]bool{}
 			for _, r := range e.Routes {
-				if seen[r.App] {
+				if seen[r.App+":"+r.Role] {
 					return errors.New("this saved plan has multiple routes per app; edit stack.yaml directly to preserve them")
 				}
-				seen[r.App] = true
+				seen[r.App+":"+r.Role] = true
 			}
 		}
 	}
@@ -374,13 +374,21 @@ func guided(ctx context.Context, args []string, o Options) error {
 			return err
 		}
 		placement, _ = computerName(placement)
-		st.Apps = append(st.Apps, stack.App{Name: name, Target: placement})
+		a := stack.App{Name: name, Target: placement}
+		if app.Media != nil {
+			fmt.Fprintf(o.Out, "%s sends call media (%s) straight to callers, not through the edge, so they are open to your LAN.\n", name, strings.Join(app.Media.Ports, ", "))
+			if a.MediaAddress, err = p.ask("app."+name+".media_address", "Call media address: one LAN IPv4 address of "+placement+" (never a wildcard)", "", stack.MediaAddress); err != nil {
+				return err
+			}
+		}
+		st.Apps = append(st.Apps, a)
 	}
 	for _, app := range st.Apps {
 		if err := guidedIntegration(p, st, stack.Existing{Product: app.Name, Target: app.Target}); err != nil {
 			return err
 		}
 	}
+	withChatClients(st, cat)
 	count, err = p.ask("existing", "Number of existing Ky products to record", "0", integer(0, 64))
 	if err != nil {
 		return err
@@ -406,7 +414,7 @@ func guided(ctx context.Context, args []string, o Options) error {
 			return err
 		}
 	}
-	if err := guidedEdges(p, st); err != nil {
+	if err := guidedEdges(p, st, cat); err != nil {
 		return err
 	}
 	data, err := yaml.Marshal(st)
@@ -494,6 +502,9 @@ func validateSelection(st *stack.Stack, cat catalog.Catalog, o Options) error {
 		return err
 	}
 	if err := calendarAccounts(st); err != nil {
+		return err
+	}
+	if err := messagePlan(st, cat); err != nil {
 		return err
 	}
 	_, err := plan.Order(names, cat)
@@ -608,6 +619,9 @@ func showPlan(out io.Writer, st *stack.Stack, cat catalog.Catalog) {
 				fmt.Fprintf(out, "  Required volume init: %s (creates each claim's private directory)\n", kube.CredentialGeneratorImage)
 			}
 		}
+		if m := cat[a.Name].Media; m != nil && a.MediaAddress != "" {
+			fmt.Fprintf(out, "  Call media on %s: %s, open to the LAN, not through the edge; no TURN, federation closed\n", a.MediaAddress, strings.Join(m.Ports, ", "))
+		}
 	}
 	for _, e := range st.Existing {
 		fmt.Fprintf(out, "Existing %s on %s: %s — integration pending, no adoption or changes\n", e.Product, e.Target, e.URL)
@@ -644,7 +658,11 @@ func showPlan(out io.Writer, st *stack.Stack, cat catalog.Catalog) {
 			fmt.Fprintln(out, "  Deploy connector on existing Docker network", e.Connector.Network)
 		}
 		for _, r := range e.Routes {
-			fmt.Fprintf(out, "  https://%s -> %s:%d\n", r.Hostname, r.ForwardHost, r.ForwardPort)
+			role := ""
+			if r.Role != "" {
+				role = " (" + r.App + " " + r.Role + ")"
+			}
+			fmt.Fprintf(out, "  https://%s -> %s:%d%s\n", r.Hostname, r.ForwardHost, r.ForwardPort, role)
 		}
 	}
 	if len(st.Apps) == 0 {
@@ -710,6 +728,9 @@ func seedAnswers(a map[string]string, st *stack.Stack) {
 	}
 	for _, app := range st.Apps {
 		a["app."+app.Name+".install"], a["app."+app.Name+".target"] = "install", app.Target
+		if app.MediaAddress != "" {
+			a["app."+app.Name+".media_address"] = app.MediaAddress
+		}
 	}
 	for i, e := range st.Existing {
 		k := fmt.Sprintf("existing.%d.", i)
@@ -718,7 +739,10 @@ func seedAnswers(a map[string]string, st *stack.Stack) {
 	for _, i := range st.Integrations {
 		k := "integration." + i.Product + "." + i.Target + "."
 		a[k+"configure"], a[k+"container"], a[k+"bundle"], a[k+"namespace"], a[k+"pod"] = "yes", i.Container, i.Bundle, i.Namespace, i.Pod
-		a[k+"identity-client"] = i.IdentityClient
+		a[k+"identity-client"], a[k+"chat-client"] = i.IdentityClient, i.ChatClient
+		if i.Identity != nil && i.Identity.Mail != nil {
+			a[k+"mail-password-file"] = i.Identity.Mail.PasswordFile // not in the preparation's JSON
+		}
 		if i.Notes != nil {
 			raw, _ := json.Marshal(i.Notes)
 			a[k+"notes"] = string(raw)
@@ -749,7 +773,7 @@ func askBackup(p *prompts, key string) (*stack.BackupDestination, error) {
 	return b, err
 }
 
-func guidedEdges(p *prompts, st *stack.Stack) error {
+func guidedEdges(p *prompts, st *stack.Stack, cat catalog.Catalog) error {
 	for _, t := range st.Targets {
 		apps := []string{}
 		for _, a := range st.Apps {
@@ -791,6 +815,14 @@ func guidedEdges(p *prompts, st *stack.Stack) error {
 			if yes == "no" {
 				continue
 			}
+			if len(cat[name].Routes) > 0 {
+				routes, err := askRoutes(p, rk, st, name, cat[name])
+				if err != nil {
+					return err
+				}
+				e.Routes = append(e.Routes, routes...)
+				continue
+			}
 			r := stack.Route{App: name}
 			r.Hostname, err = p.ask(rk+"hostname", "Product's public hostname", "", stack.Hostname)
 			if err != nil {
@@ -830,6 +862,82 @@ func guidedEdges(p *prompts, st *stack.Stack) error {
 		st.Edges = append(st.Edges, e)
 	}
 	return nil
+}
+
+// askRoutes asks a multi-route app's hostnames, defaulting each role under one domain whose
+// apex is the role with paths (KyMessages' server name), its address and its ports.
+func askRoutes(p *prompts, rk string, st *stack.Stack, name string, app catalog.App) ([]stack.Route, error) {
+	domain, err := p.ask(rk+"domain", name+"'s domain. It becomes the permanent Matrix server name (accounts are @name:<domain>) and the other hostnames go under it", "", stack.Hostname)
+	if err != nil {
+		return nil, err
+	}
+	fallbacks := map[string]string{}
+	var list []string
+	for _, cr := range app.Routes {
+		switch {
+		case cr.Role == app.Primary():
+			fallbacks[cr.Role] = "message." + domain
+		case len(cr.Paths) > 0:
+			fallbacks[cr.Role] = domain
+		default:
+			fallbacks[cr.Role] = cr.Role + "." + domain
+		}
+		list = append(list, fallbacks[cr.Role]+" ("+cr.Role+")")
+	}
+	fmt.Fprintf(p.out, "%s's hostnames (each can be changed next): %s. Each needs a DNS record to the edge, and one certificate covering them all.\n", name, strings.Join(list, ", "))
+	target, media := "", ""
+	for _, a := range st.Apps {
+		if a.Name == name {
+			target, media = a.Target, a.MediaAddress
+		}
+	}
+	host, err := p.ask(rk+"host", name+"'s address on "+target+" that NPM reaches: one LAN IPv4 address, where every routed port is published", media, stack.MediaAddress)
+	if err != nil {
+		return nil, err
+	}
+	id, err := p.ask(rk+"certificate", "Existing NPM certificate ID covering "+domain+" and *."+domain+" (a wildcard alone misses the apex)", "", integer(1, 2147483647))
+	if err != nil {
+		return nil, err
+	}
+	cert, _ := strconv.Atoi(id)
+	var routes []stack.Route
+	ports, used := map[string]int{}, map[int]bool{} // service:port -> forward_port
+	for _, cr := range app.Routes {
+		r := stack.Route{App: name, ForwardHost: host, ForwardScheme: "http", CertificateID: cert}
+		k := rk + cr.Role + "."
+		switch {
+		case cr.Role == app.Primary():
+			k = rk
+		case len(cr.Paths) > 0:
+			fmt.Fprintf(p.out, "%s's %s hostname is permanent: every account's ID ends in it.\n", name, cr.Role)
+		}
+		if cr.Role != app.Primary() {
+			r.Role = cr.Role
+		}
+		if r.Hostname, err = p.ask(k+"hostname", name+" "+cr.Role+" hostname", fallbacks[cr.Role], stack.Hostname); err != nil {
+			return nil, err
+		}
+		key := fmt.Sprint(cr.Service, ":", cr.Port)
+		if port, ok := ports[key]; ok {
+			r.ForwardPort = port
+		} else {
+			fallback := cr.Port
+			for used[fallback] || fallback == 81 {
+				fallback++
+			}
+			port, err := p.ask(k+"port", name+" "+cr.Role+" port published on "+host, strconv.Itoa(fallback), func(s string) bool {
+				n, err := strconv.Atoi(s)
+				return integer(1, 65535)(s) && s != "81" && err == nil && !used[n]
+			})
+			if err != nil {
+				return nil, err
+			}
+			r.ForwardPort, _ = strconv.Atoi(port)
+			ports[key], used[r.ForwardPort] = r.ForwardPort, true
+		}
+		routes = append(routes, r)
+	}
+	return routes, nil
 }
 
 // askLAN asks which LAN clients NPM serves directly.
@@ -941,7 +1049,12 @@ func seedEdges(a map[string]string, edges []stack.Edge) {
 		for _, r := range e.Routes {
 			k := k + "route." + r.App + "."
 			a[k+"enabled"] = "yes"
+			if r.Role != "" {
+				a[k+r.Role+".hostname"], a[k+r.Role+".port"] = r.Hostname, strconv.Itoa(r.ForwardPort)
+				continue
+			}
 			a[k+"hostname"], a[k+"host"], a[k+"port"], a[k+"scheme"], a[k+"certificate"], a[k+"status"] = r.Hostname, r.ForwardHost, strconv.Itoa(r.ForwardPort), r.ForwardScheme, strconv.Itoa(r.CertificateID), r.StatusPath
+			a[k+"domain"] = ""
 		}
 	}
 }

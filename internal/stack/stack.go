@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"regexp"
@@ -48,6 +49,9 @@ type Integration struct {
 	// IdentityAmendment is the KyIdentity setup amendment that added an installed app's client
 	// after KyIdentity's first setup; apply records it once.
 	IdentityAmendment string `yaml:"identity_amendment,omitempty"`
+	// ChatClient is an installed app's second KyIdentity client (KyMessages' MAS), which comes
+	// with identity_client in the same first setup or amendment.
+	ChatClient string `yaml:"chat_client,omitempty" json:",omitempty"`
 }
 
 // Existing is a reference, never permission to adopt or change a workload.
@@ -131,6 +135,15 @@ type App struct {
 	Target string `yaml:"target"`
 	// NodePorts overrides an edge's published NodePorts: container port -> node port.
 	NodePorts map[int]int `yaml:"node_ports,omitempty"`
+	// MediaAddress is the one IPv4 address of a Docker target the app publishes call media on.
+	MediaAddress string `yaml:"media_address,omitempty" json:",omitempty"`
+}
+
+// MediaAddress accepts one unicast IPv4 address a LAN client can reach.
+func MediaAddress(s string) bool {
+	ip, err := netip.ParseAddr(s)
+	return err == nil && ip.Is4() && ip.String() == s && !ip.IsUnspecified() && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() &&
+		!ip.IsMulticast() && ip != netip.AddrFrom4([4]byte{255, 255, 255, 255})
 }
 
 var (
@@ -268,6 +281,9 @@ func (s *Stack) validate() error {
 			return fmt.Errorf("duplicate app %q", a.Name)
 		case !seen[a.Target]:
 			return fmt.Errorf("app %q: unknown target %q", a.Name, a.Target)
+		}
+		if a.MediaAddress != "" && !MediaAddress(a.MediaAddress) {
+			return fmt.Errorf("app %q: media_address %q must be one IPv4 address of its target: not a hostname, IPv6, unspecified, loopback, link-local, multicast or broadcast", a.Name, a.MediaAddress)
 		}
 		apps[a.Name] = true
 		for _, n := range a.NodePorts {

@@ -75,6 +75,9 @@ func (s *Stack) validateIntegrations() error {
 				return errors.New("an installed app's setup needs its identity_client and a bundle at <data>/installer/<setup UUID>/setup.json")
 			}
 		}
+		if i.ChatClient != "" && (!installed || i.IdentityClient == "" || !identitySetupName.MatchString(i.ChatClient) || strings.EqualFold(i.ChatClient, i.IdentityClient)) {
+			return errors.New("chat_client needs an installed app's integration with identity_client, and another valid client ID")
+		}
 		if i.IdentityAmendment != "" {
 			id, err := uuid.Parse(i.IdentityAmendment)
 			if !installed || i.Product == "kyidentity" || err != nil || id.String() != i.IdentityAmendment || i.IdentityAmendment == i.SetupID() || amendments[i.IdentityAmendment] {

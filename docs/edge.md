@@ -360,6 +360,28 @@ For an existing NPM reached over `https://` from a Kubernetes target, the token 
 key `npm_token` in Secret `kyq-edge/kyq-credentials`. Both namespace and Secret must already
 carry `ky.managed-by=kyquickstart`; the installer will not adopt foreign objects.
 
+## Apps with several hostnames
+
+An app whose catalog manifest declares `routes` (KyMessages) takes one route per role, all on
+one edge and one `forward_host`, with one `forward_port` per published service port (roles on the
+same service and port must share it). Docker publishes every routed port on `forward_host`, so it
+must be one LAN IPv4 address of the target: a wildcard, loopback, link-local, multicast or IPv6
+address, or a name, is refused before connecting. The primary route has no `role`; the others
+name theirs:
+
+```yaml
+routes:
+  - {app: kymessage, hostname: message.example.com, forward_host: 192.168.1.225, forward_port: 18080, certificate_id: 3}
+  - {app: kymessage, role: matrix, hostname: matrix.example.com, forward_host: 192.168.1.225, forward_port: 18008, certificate_id: 3}
+```
+
+The catalog, never the plan, sets a role's paths. `paths` are the only exact paths its host
+proxies (`location = <path>`); everything else answers 404. `deny_paths` are anchored regular
+expressions answered with 404 before `location /`. A role's host carries the role in its marker,
+`# kyquickstart:<installation>:<target>:<app>:<role>:<hostname>`; the primary's is unchanged. A
+foreign host holding any of the hostnames, the server-name apex included, is refused, never
+adopted.
+
 ## Host ownership
 
 `stack.yaml` holds an `installation_id`, a random UUID written once by `plan` or, for a plan

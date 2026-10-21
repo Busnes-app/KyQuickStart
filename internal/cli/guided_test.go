@@ -112,7 +112,7 @@ func TestExistingReferencesDoNotAuthorizeApply(t *testing.T) {
 func TestGuidedRejectsCredentialsBeforeSaving(t *testing.T) {
 	dir := t.TempDir()
 	var out bytes.Buffer
-	answers := "no\n1\nnas\ndocker\n192.0.2.1\nkyq\n22\n/opt/test\n\nskip\nskip\nskip\nskip\nskip\nskip\nskip\nskip\nskip\nskip\n1\nkyidentity\nnas\nhttps://user:private-password@id.example.test\nhttps://id.example.test\nno\nyes\nfinish\n"
+	answers := "no\n1\nnas\ndocker\n192.0.2.1\nkyq\n22\n/opt/test\n\nskip\nskip\nskip\nskip\nskip\nskip\nskip\nskip\nskip\nskip\nskip\n1\nkyidentity\nnas\nhttps://user:private-password@id.example.test\nhttps://id.example.test\nno\nyes\nfinish\n"
 	err := Run(context.Background(), []string{"plan", "--state", dir}, Options{Catalog: catalog.Embedded(), In: strings.NewReader(answers), Out: &out})
 	if err != nil {
 		t.Fatal(err, out.String())
@@ -141,7 +141,7 @@ func TestGuidedExistingEdgeChoicesRoundTrip(t *testing.T) {
 			}
 			var out bytes.Buffer
 			p := &prompts{ctx: context.Background(), in: bufio.NewReader(strings.NewReader(strings.Join(tc.answers, "\n") + "\n")), out: &out, answers: map[string]string{}, draft: filepath.Join(t.TempDir(), "answers.json")}
-			if err := guidedEdges(p, st); err != nil {
+			if err := guidedEdges(p, st, nil); err != nil {
 				t.Fatal(err, out.String())
 			}
 			data, _ := yaml.Marshal(st)
@@ -152,7 +152,7 @@ func TestGuidedExistingEdgeChoicesRoundTrip(t *testing.T) {
 			seedEdges(p.answers, st.Edges)
 			st.Edges = nil
 			p.in = bufio.NewReader(strings.NewReader(strings.Repeat("\n", len(tc.answers))))
-			if err := guidedEdges(p, st); err != nil {
+			if err := guidedEdges(p, st, nil); err != nil {
 				t.Fatal(err, out.String())
 			}
 			if !reflect.DeepEqual(first, st.Edges[0]) {

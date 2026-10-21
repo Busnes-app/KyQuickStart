@@ -88,3 +88,14 @@ for tool in ` + requirements + `; do command -v "$tool" >/dev/null 2>&1 || exit 
 	}
 	return Finding{"target secrets", true, "target random source and private-file tools available"}
 }
+
+// AddressCheck passes when addr, an IPv4 address the plan publishes media on, is one of the
+// host's own addresses: Docker refuses to publish on any other, and a wrong one is a dead port.
+func AddressCheck(ctx context.Context, r remote.Runner, app, addr string) Finding {
+	re := strings.ReplaceAll(addr, ".", `\.`)
+	cmd := "{ ip -o -4 addr show 2>/dev/null || ifconfig 2>/dev/null; } | grep -Eq " + remote.Quote(`[[:space:]]inet (addr:)?`+re+`([/[:space:]]|$)`)
+	if _, err := r.Run(ctx, cmd, nil); err != nil {
+		return Finding{"media address", false, app + ": media_address " + addr + " is not an address of this host; set media_address to one of its LAN IPv4 addresses (ip -4 addr)"}
+	}
+	return Finding{"media address", true, app + ": " + addr + " is this host's"}
+}

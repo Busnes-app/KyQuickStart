@@ -446,7 +446,11 @@ func gate(name string, app catalog.App, d managed.Deployed, releaseSet string, a
 	if !ack {
 		return "", suite.Errorf(suite.AckRequired, "upgrading %s %s to %s takes no pre-upgrade backup; pass --acknowledge-no-backup to proceed", name, from, app.Version)
 	}
-	return fmt.Sprintf("upgrade %s to %s; operator acknowledged no pre-upgrade backup", from, app.Version), nil
+	note := fmt.Sprintf("upgrade %s to %s; operator acknowledged no pre-upgrade backup", from, app.Version)
+	if app.Upgrade.Note != "" {
+		note += ". " + app.Upgrade.Note
+	}
+	return note, nil
 }
 
 // noteStep changes nothing; its ok result records the note.

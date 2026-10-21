@@ -8,10 +8,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
+	"net/mail"
 	"path"
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/Busnes-app/kyquickstart/internal/stack"
@@ -176,7 +179,61 @@ func guidedIntegration(p *prompts, st *stack.Stack, e stack.Existing) error {
 		if err := dec.Decode(&i.Identity); err != nil || dec.Decode(new(any)) != io.EOF {
 			return errors.New("invalid saved KyIdentity preparation metadata")
 		}
+		if e.Product == "kyidentity" {
+			if i.Identity.Mail, err = askMail(p, key, i.Identity.Mail); err != nil {
+				return err
+			}
+		}
 	}
+	i.ChatClient = p.answers[key+"chat-client"]
 	st.Integrations = append(st.Integrations, i)
 	return nil
+}
+
+// askMail asks for KyIdentity's optional mail relay, which only its first setup sets; blank or
+// none for the host or the username means none.
+func askMail(p *prompts, key string, m *stack.IdentityMail) (*stack.IdentityMail, error) {
+	cur := stack.IdentityMail{Port: 587, Security: "starttls"}
+	if m != nil {
+		cur = *m
+	}
+	none := func(s string) bool { return s == "" || s == "none" }
+	host, err := p.ask(key+"mail-host", "KyIdentity mail relay host for activation and reset mail (blank for none; only KyIdentity's first setup sets it)", cur.Host, func(s string) bool {
+		return none(s) || stack.Hostname(s) || net.ParseIP(s) != nil
+	})
+	if err != nil || none(host) {
+		return nil, err
+	}
+	out := &stack.IdentityMail{Host: host}
+	port, err := p.ask(key+"mail-port", "Mail relay port", strconv.Itoa(cur.Port), integer(1, 65535))
+	if err != nil {
+		return nil, err
+	}
+	out.Port, _ = strconv.Atoi(port)
+	if out.Security, err = p.ask(key+"mail-security", "Mail relay transport: starttls/tls (never plaintext)", cur.Security, oneOf("starttls", "tls")); err != nil {
+		return nil, err
+	}
+	if out.From, err = p.ask(key+"mail-from", "Sender address, optionally with a name, for example KyIdentity <identity@example.com>", cur.From, func(s string) bool {
+		_, err := mail.ParseAddress(s)
+		return err == nil
+	}); err != nil {
+		return nil, err
+	}
+	if out.Username, err = p.ask(key+"mail-username", "Mail relay username (blank for a relay without authentication)", cur.Username, nil); err != nil || none(out.Username) {
+		out.Username = ""
+		return out, err
+	}
+	out.PasswordFile, err = p.ask(key+"mail-password-file", "Absolute path on this workstation of the relay password file (one line, mode 0600, yours)", "", func(s string) bool {
+		if !filepath.IsAbs(s) {
+			fmt.Fprintln(p.out, "The relay password file needs an absolute path.")
+			return false
+		}
+		pw, err := readMailPassword(s)
+		clear(pw)
+		if err != nil {
+			fmt.Fprintln(p.out, err)
+		}
+		return err == nil
+	})
+	return out, err
 }

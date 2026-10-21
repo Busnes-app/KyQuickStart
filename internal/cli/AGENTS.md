@@ -54,8 +54,10 @@ Plain terminal planning and command orchestration for the operator-run installer
   its stage in `.restore-pending`, so a rerun resumes; while that file exists every other
   Docker operation on the app refuses: deploy (`apply`, `install`, `upgrade`; `App.Restoring`
   is set only by restore), `backup` and `unmanage` (`dockerhost.refuseUnfinishedRestore`). `finishRestore` deploys through
-  `dockerhost.RestoreSteps` and `Steps`, replays removals as soon as the app is healthy, then
-  runs the setup steps' `Verify`; for a gated app any failure before the replay is delivered
+  `dockerhost.RestoreSteps` and `Steps`, replays removals as soon as the app is healthy (or
+  right after the `restore_order` service `backup.replay_after` names, before the later ones
+  start: KyMessages replays after its console, before Synapse), then runs the setup steps'
+  `Verify` (KyMessages' through `messageSteps`, every other app's through `setupSteps`); for a gated app any failure before the replay is delivered
   stops the app (decision 11). A cold `backup` says it stops the app and, on failure, whether
   it runs again. `backupLines` adds
   the backup, restore and password-record lines to apply's handover.
@@ -69,6 +71,8 @@ Plain terminal planning and command orchestration for the operator-run installer
   which skips installed apps' entries (`apply` runs those).
   Validate every selection before connecting; run KyIdentity first and otherwise preserve
   saved order. Optional typed KyNotes and KyIdentity preparation settings are retained by guided resume,
+  where `askMail` also asks a resumed KyIdentity preparation's optional `identity.mail` (blank or
+  `none` for no relay or no username; the password file checked by `readMailPassword`),
   disclosed in plan/review and sent over bounded native CLI stdin. Verify the prepared
   bundle before applying; `--check` compares metadata without creating files. Reuse each
   product's target lock, native adapter and live verification. Identity requires native
@@ -102,7 +106,35 @@ Plain terminal planning and command orchestration for the operator-run installer
   It also holds the catalog KyPost's native bundle (`postBundle`) and handover (`postHandover`).
 - KyCalendar uses the common contract and graceful activation; owned issuer bindings and application grants remain separate from personal calendars and CalDAV, and sign-in settings are read-only in its administration screen.
 - KyMessages uses the common contract and graceful activation; exact console grants stay
-  separate from Matrix chat/call access, whose assignment composition remains a gate.
+  separate from Matrix chat. `message.go` owns the catalog KyMessages (Docker only):
+  `messagePlan` (plan, review, every command) refuses a plan without `installation_id`, a
+  `chat_client` other than `<app>-chat`, owner usernames its setup refuses and an unsafe
+  `identity.mail.password_file`; `withRoutes` checks its six roles (one edge, one forward_host
+  that `stack.MediaAddress` accepts, one forward_port per service port and one service port per
+  forward_port, so `server_name` shares the console's) and fills its role references;
+  `withChatClients` (plan) writes the one possible `chat_client`; `routePaths` gives the
+  edges' routes their catalog paths. `composeClients` derives the console client and
+  `chatClientFor`'s everyday-only MAS client (redirect at the auth host with `providerID`, a
+  ULID derived from installation_id), both in the first setup or one amendment.
+  `messageSteps` puts `<app>.matrix-init` (seed `matrix/secrets/upstream_provider_id`, refusing
+  another with `provider_id_mismatch`, then `dockerhost.RunInit`) and `<app>.credentials`
+  (both clients' export, `hostFile` writes on the host, never replacing, then the second pass)
+  before its deploy, and its `clientSetupStep` (everyday binding, chat client rechecked by
+  `after`) after its health; `deploySteps` adds `directoryStep` (`<app>.directory`) after the
+  routes, which waits for `resync` (KyIdentity's `resync-system --wait`, shared with
+  `replayRemovals`) to deliver the console's directory, so apply reports success only once the
+  console holds it (defence in depth: KyIdentity 0.4.5 and earlier dropped a removal made before
+  a person's first delivery; 0.4.6 sends it). `refuseMovedServerName` refuses `server_name_changed` from the
+  installed Synapse's `homeserver.yaml`. `readMailPassword` checks the opened file (fstat:
+  regular, 0600, this user's; `O_NOFOLLOW`, `O_NONBLOCK`) and names each refusal's reason, which
+  `askMail` prints. `identitySetupStep` copies `identity.mail`'s workstation
+  password file (`readMailPassword`) to KyIdentity's `<installer>/smtp.password` before staging,
+  and requires `mail-relay`; `identitySetup` accepts 0.4.5's one relay object
+  (`{mail, settings, mail}`) in its report. The console's HMAC copy of the directory secret is
+  `data/installer/directory_secret`, inside a backed-up volume. `messageHandover` (with the mail relay or its absence, and that removing "KyMessages chat" alone
+  ends no open session) and `initAdminLine` are what apply prints. `askRoutes` (guided) asks the
+  domain as the permanent server name, lists the six hostnames, defaults the address to
+  `media_address` and refuses one `stack.MediaAddress` refuses.
 - KyRecovery setup runs explicitly as `kyrecovery`, activates live, commits exact administrator grants with its keyed SQL audit, and never performs the custodian ceremony.
   `appsetup.go` owns apply's catalog apps that sign in through KyIdentity (KyRecovery,
   kyPulse, KyNotes, KyCalendar and KyYard on Docker or Kubernetes, KyDrive, KyPost and KyDNS on Docker): `composeClients` adds each one's catalog-derived client to the installed

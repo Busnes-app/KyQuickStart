@@ -27,6 +27,9 @@ const (
 	AckRequired      Code = "ack_required"
 	IssuerChanged    Code = "issuer_changed" // the plan moves a URL a completed KyIdentity setup is bound to
 	RunnerHost       Code = "runner_host"    // the runner never changes the app whose pod it runs in
+	// KyMessages: every Matrix ID names the server name; KyIdentity's chat redirect the provider ID.
+	ServerNameChanged  Code = "server_name_changed"
+	ProviderIDMismatch Code = "provider_id_mismatch"
 	// Backup and restore (kyquickstart backup/restore, Docker apps).
 	BackupUnconfigured Code = "backup_unconfigured" // no backup block, or its target has no destination
 	BackupUnsupported  Code = "backup_unsupported"  // a backup volume is a named Docker volume

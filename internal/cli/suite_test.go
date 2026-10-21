@@ -247,7 +247,7 @@ func TestUpgradeGate(t *testing.T) {
 		}
 	}
 	// apply is gated the same way.
-	writeApp(t, cat, "web", "version: 1.1.0\ndepends_on: [db]\n")
+	writeApp(t, cat, "web", "version: 1.1.0\nupgrade:\n  note: Check each account.\ndepends_on: [db]\n")
 	if err := f.run("apply"); code(err) != suite.AckRequired {
 		t.Errorf("apply: %v", err)
 	}
@@ -255,7 +255,7 @@ func TestUpgradeGate(t *testing.T) {
 		t.Fatal(err, f.out.String())
 	}
 	r, _ := engine.Read(filepath.Join(f.state, "results"), "web.upgrade")
-	if r.Status != "ok" || !strings.Contains(r.Diagnostics, "1.0.0 to 1.1.0") || !strings.Contains(r.Diagnostics, "acknowledged") {
+	if r.Status != "ok" || !strings.Contains(r.Diagnostics, "1.0.0 to 1.1.0") || !strings.Contains(r.Diagnostics, "acknowledged no pre-upgrade backup. Check each account.") || !strings.Contains(f.out.String(), "Check each account.") {
 		t.Errorf("acknowledgement record = %+v", r)
 	}
 	if !strings.Contains(f.h.up["kyq-web"], managed.VersionLabel+": 1.1.0") {

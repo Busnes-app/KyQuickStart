@@ -372,8 +372,9 @@ func TestReplayRemovals(t *testing.T) {
 // Decision 11: when KyIdentity does not deliver the replay, restore stops the restored app
 // (restore_incomplete); a rerun resumes, starts it and replays again.
 // failedReplay restores dumpdemo, made to sign in through KyIdentity (cold: without its
-// dump command), and KyIdentity does not deliver the replay. delivered makes it deliver.
-func failedReplay(t *testing.T, cold bool) (f *fixture, fake string, k *killRunner, id string, delivered func()) {
+// dump command; replayAfter: its backup's replay_after), and KyIdentity does not deliver the
+// replay. delivered makes it deliver; up lists, per replay, which services were running.
+func failedReplay(t *testing.T, cold bool, replayAfter string) (f *fixture, fake string, k *killRunner, id string, delivered func(), up *[]string) {
 	t.Helper()
 	ctx := context.Background()
 	f, fake, k = backupFixture(t)
@@ -385,7 +386,11 @@ func failedReplay(t *testing.T, cold bool) (f *fixture, fake string, k *killRunn
 		m := strings.Replace(string(dumpCatalog["dumpdemo/manifest.yaml"].Data), "  service: db\n  command: [dump]\n  restore_command: [load]\n", "", 1)
 		gated["dumpdemo/manifest.yaml"] = &fstest.MapFile{Data: []byte(strings.Replace(m, "  restore_order: [db, web]\n", "", 1))}
 	}
-	gated["dumpdemo/manifest.yaml"] = &fstest.MapFile{Data: append(append([]byte{}, gated["dumpdemo/manifest.yaml"].Data...), "oidc:\n  name: Dump\n  redirect_paths: [/cb]\n  admin_role: dump.admin\n"...)}
+	m := string(gated["dumpdemo/manifest.yaml"].Data)
+	if replayAfter != "" {
+		m = strings.Replace(m, "  restore_order: [db, web]\n", "  restore_order: [db, web]\n  replay_after: "+replayAfter+"\n", 1)
+	}
+	gated["dumpdemo/manifest.yaml"] = &fstest.MapFile{Data: []byte(m + "oidc:\n  name: Dump\n  redirect_paths: [/cb]\n  admin_role: dump.admin\n")}
 	for _, app := range []string{"kyidentity", "npm"} {
 		b, err := fs.ReadFile(catalog.Embedded(), app+"/manifest.yaml")
 		if err != nil {
@@ -408,7 +413,10 @@ func failedReplay(t *testing.T, cold bool) (f *fixture, fake string, k *killRunn
 		Status:     corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
 	}, metav1.CreateOptions{})
 	status := "failed"
+	up = &[]string{}
 	identity := kube.Fake(f.cs, "https://k1.test", func(_ context.Context, _, _, _ string, args []string, o remotecommand.StreamOptions) error {
+		running := fakedocker.Running(t, fake)
+		*up = append(*up, fmt.Sprintf("db=%v web=%v", running["db"], running["web"]))
 		io.WriteString(o.Stdout, `{"schema":"kyidentity.resync-system/1","clientId":"dumpdemo","systemId":"s1","status":"`+status+`","pending":0,"failed":1}`+"\n")
 		if status != "delivered" {
 			return errors.New("exit status 1")
@@ -436,12 +444,30 @@ func failedReplay(t *testing.T, cold bool) (f *fixture, fake string, k *killRunn
 	if up := fakedocker.Running(t, fake); up["db"] || up["web"] {
 		t.Fatalf("the app runs without the replay: %v", up)
 	}
-	return f, fake, k, id, func() { status = "delivered" }
+	return f, fake, k, id, func() { status = "delivered" }, up
+}
+
+// replay_after: the replay runs once that service is up, before the services after it start.
+func TestReplayAfter(t *testing.T) {
+	f, fake, _, id, delivered, up := failedReplay(t, false, "db")
+	delivered()
+	if err := f.runIn("", "restore", "dumpdemo", "--snapshot", id, "--yes"); err != nil {
+		t.Fatal(err, f.out.String())
+	}
+	if running := fakedocker.Running(t, fake); !running["db"] || !running["web"] || !slices.Equal(*up, []string{"db=true web=false", "db=true web=false"}) {
+		t.Fatalf("running at each replay %v, after %v\n%s", *up, running, f.out.String())
+	}
+	// Without it, the replay waits for the whole app.
+	f, fake, _, id, delivered, up = failedReplay(t, false, "")
+	delivered()
+	if err := f.runIn("", "restore", "dumpdemo", "--snapshot", id, "--yes"); err != nil || !slices.Equal(*up, []string{"db=true web=true", "db=true web=true"}) {
+		t.Fatalf("running at each replay %v: %v", *up, err)
+	}
 }
 
 func TestFailedReplayStopsTheApp(t *testing.T) {
 	ctx := context.Background()
-	f, fake, k, id, delivered := failedReplay(t, false)
+	f, fake, k, id, delivered, _ := failedReplay(t, false, "")
 	// Apply's own steps for the app (the plan's edges need a live NPM here) refuse to start it.
 	s, err := load(f.state, nil, f.o)
 	if err != nil {
@@ -485,7 +511,7 @@ func TestColdBackupSaysItStops(t *testing.T) {
 // hand over anything (a cold backup would otherwise start the unreplayed app); restore then
 // still resumes.
 func TestUnfinishedRestoreRefusesBackupAndUnmanage(t *testing.T) {
-	f, fake, _, id, delivered := failedReplay(t, true)
+	f, fake, _, id, delivered, _ := failedReplay(t, true, "")
 	for _, cmd := range []string{"backup", "unmanage"} {
 		if err := f.run(cmd, "dumpdemo"); err == nil || !strings.Contains(err.Error(), "a restore of dumpdemo is unfinished and its removal replay not delivered; finish it with kyquickstart restore dumpdemo") {
 			t.Fatalf("%s over the unfinished restore: %v\n%s", cmd, err, f.out.String())

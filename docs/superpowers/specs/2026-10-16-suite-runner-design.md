@@ -270,7 +270,8 @@ timeout). `GET /v1/status` reads every target and answers within 8 seconds.
 `invalid_request`, `id_conflict`, `busy`, `unknown_app`, `unknown_target`, `already_installed`,
 `not_installed`, `dependency` (uninstall while depended on), `plan_stale`, `target_locked`
 (message names holder and age), `upgrade_refused` (`min_from`, `no_skip`), `backup_required`,
-`ack_required`, `issuer_changed`, `runner_host` (the app runs this runner, which never changes
+`ack_required`, `issuer_changed`, `server_name_changed` (KyMessages' server name), `provider_id_mismatch`
+(its MAS provider ID on the target differs), `runner_host` (the app runs this runner, which never changes
 its own pod), `step_failed`, `owned_by_runner` (the CLI may not change a runner-owned plan;
 the runner refuses another runner's target), `owned_by_cli` (the runner refuses a target not
 handed to it, or has no plan yet), `owned_by_other_plan` (the target's marker names another
@@ -288,7 +289,7 @@ operation's `error`. A code's HTTP status, when the runner answers with it direc
 | 400 | `invalid_request` (413 when the body exceeds 64 KiB; 405 for a wrong method) |
 | 404 | `not_found` only: KyYard reads any 404 as an operation the runner does not know |
 | 409 | `id_conflict`, `busy`, `plan_stale`, `target_locked`, `owned_by_runner`, `owned_by_cli`, `owned_by_other_plan` |
-| 422 | `unknown_app`, `unknown_target`, `already_installed`, `not_installed`, `dependency`, `upgrade_refused`, `backup_required`, `ack_required`, `issuer_changed`, `runner_host`, `backup_unconfigured`, `backup_unsupported`, `restore_refused` |
+| 422 | `unknown_app`, `unknown_target`, `already_installed`, `not_installed`, `dependency`, `upgrade_refused`, `backup_required`, `ack_required`, `issuer_changed`, `server_name_changed`, `provider_id_mismatch`, `runner_host`, `backup_unconfigured`, `backup_unsupported`, `restore_refused` |
 | 500 | `step_failed`, `restore_incomplete`, `internal` |
 
 ## KyYard
