@@ -1429,7 +1429,7 @@ integrations:
 - **Offboarding.** Disabling or deleting a person in KyIdentity reaches the console's directory
   webhook, whose sweep locks them in MAS and ends every MAS session they have
   (`matrix.lock`, `matrix.session_end` in the console's audit): their open session, its refresh
-  token, new chat sign-in and call grants are all refused, measured 0.6-2.4 s after the
+  token, new chat sign-in and call grants are all refused, measured 0.6-2.6 s after the
   disable, for the owner's everyday account and for a person added later. Re-enabling unlocks
   them; ended sessions stay ended, so they sign in again. A KyIdentity sign-out ends nothing:
   KyIdentity registers no back-channel logout.
