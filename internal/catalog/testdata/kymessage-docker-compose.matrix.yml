@@ -36,6 +36,8 @@ services:
       - KY_MATRIX_RTC_HOST=${KY_MATRIX_RTC_HOST:?Set KY_MATRIX_RTC_HOST}
       - KY_MATRIX_RTC_KEY_FILE=/matrix/secrets/livekit_api_key
       - KY_MATRIX_RTC_SECRET_FILE=/matrix/secrets/livekit_api_secret
+      # The meeting-notes bot (docker-compose.notes.yml) authenticates with it; off until Settings.
+      - KY_MATRIX_NOTES_SECRET_FILE=/matrix/secrets/notes_api_secret
       # Signs KyIdentity's directory webhook; without it offboarding never reaches MAS.
       - KY_KYIDENTITY_HMAC_SECRET=${KY_KYIDENTITY_HMAC_SECRET:?Set KY_KYIDENTITY_HMAC_SECRET (the KyIdentity suite_webhook secret)}
       # Offboarding sync: MAS's admin API, reachable only on matrix-admin.
@@ -74,6 +76,7 @@ services:
       - {<<: *matrix-ro, source: ./matrix/livekit, target: /matrix/livekit}
       - {<<: *matrix-ro, source: ./matrix/secrets/livekit_api_key, target: /matrix/secrets/livekit_api_key}
       - {<<: *matrix-ro, source: ./matrix/secrets/livekit_api_secret, target: /matrix/secrets/livekit_api_secret}
+      - {<<: *matrix-ro, source: ./matrix/secrets/notes_api_secret, target: /matrix/secrets/notes_api_secret}
       - {<<: *matrix-ro, source: ./matrix/secrets/synapse_db_password, target: /matrix/secrets/synapse_db_password}
       - {<<: *matrix-ro, source: ./matrix/secrets/mas_db_password, target: /matrix/secrets/mas_db_password}
       - {<<: *matrix-ro, source: ./matrix/secrets/synapse_macaroon_secret_key, target: /matrix/secrets/synapse_macaroon_secret_key}

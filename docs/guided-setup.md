@@ -1352,8 +1352,8 @@ Limits and residuals:
 The catalog's `kymessage` app installs the whole KyMessages product on one Docker host: the
 console (`app`), Postgres, Synapse, MAS (Matrix Authentication Service), Element and LiveKit,
 plus the `/.well-known/matrix/*` delegation. Either all of it installs or apply refuses before
-changing anything. The console image is KyMessage v0.4.3's, attested by
-`Busnes-app/KyMessage-Server` `release-image.yml@refs/tags/v0.4.3` from commit `37e6d09a`. Docker only: a plan
+changing anything. The console image is KyMessage v0.4.4's, attested by
+`Busnes-app/KyMessage-Server` `release-image.yml@refs/tags/v0.4.4` from commit `b0f2001e`. Docker only: a plan
 placing it on a cluster is refused (Kubernetes runs one container per app). The five Matrix
 images are the stock upstream builds KyMessage's `docker-compose.matrix.yml` pins by digest; no
 attestation was found for them.
@@ -1397,7 +1397,12 @@ integrations:
   everyday only, role `kymessage.chat`): the dedicated admin has no chat. Both come in
   KyIdentity's first setup, or together in one setup amendment when KyMessages joins later. MAS's
   provider ID is derived from `installation_id` (a plan without one is refused) and seeded before
-  `matrix-init`. To let someone else chat, assign them to both "KyMessages" and "KyMessages chat".
+  `matrix-init`. To let someone else chat, assign them to both "KyMessages" and "KyMessages chat":
+  the console's directory webhook, which keeps a person's chat, follows "KyMessages". A person
+  the console adds this way is an ordinary member (role `user`, no console sign-in). Someone
+  assigned to "KyMessages chat" alone can sign in once, and the console's next sweep (on a
+  directory event, or its 5-minute run) locks them in MAS as not known to KyMessages and ends
+  their session (in the e2e, 0-1 s after their sign-in).
 - **Verified email.** MAS takes the Matrix localpart from a verified email's local part. The
   owner's accounts are verified by KyIdentity's setup (v0.4.5); anyone else needs the address
   verified by KyIdentity's mailed link, which needs KyIdentity's relay:
@@ -1422,22 +1427,20 @@ integrations:
   `kymessage.deploy`, `kymessage.health`, `kymessage.setup` (the console's setup with the owner's
   admin and everyday accounts, then both clients rechecked), then the six routes.
 - **Offboarding.** Disabling or deleting a person in KyIdentity reaches the console's directory
-  webhook, whose sweep locks them in MAS at once: new chat sign-in and call grants are refused
-  at once, but an open session keeps working for up to 2 minutes (Synapse's cache of MAS's token
-  checks; measured 2m0s), and no session is ended, so MAS still refreshes their tokens (which
-  then do not work). A KyIdentity sign-out ends nothing: KyIdentity registers no back-channel
-  logout.
-- **Only the owner's everyday account keeps chat (KyMessage v0.4.3).** The console's directory
-  takes only the identities its setup created and refuses anyone else's (KyIdentity shows the
-  KyMessages system failing for them); its sweep then locks them in MAS as not known to
-  KyMessages, at its next run. Someone else assigned to both clients can sign in to chat until
-  that sweep. Fixing it is KyMessage's (an upstream request).
+  webhook, whose sweep locks them in MAS and ends every MAS session they have
+  (`matrix.lock`, `matrix.session_end` in the console's audit): their open session, its refresh
+  token, new chat sign-in and call grants are all refused, measured 0.6-2.4 s after the
+  disable, for the owner's everyday account and for a person added later. Re-enabling unlocks
+  them; ended sessions stay ended, so they sign in again. A KyIdentity sign-out ends nothing:
+  KyIdentity registers no back-channel logout.
 - **Backup and restore** follow [Backups and restore on Docker](#backups-and-restore-on-docker):
   a `pg_dumpall` of the stack's Postgres plus `data` (with the console's copy of its directory
   secret), `backups`, `matrix` (configuration, secrets, signing key), `media` and the session
   secret, taken while the stack runs. Restore starts Postgres, loads the dump (without the dump's
   `DROP ROLE`/`CREATE ROLE postgres`, which Postgres refuses for the role restoring it), then MAS
-  and the console before Synapse, and replays KyIdentity's removals.
+  and the console before Synapse, and replays KyIdentity's removals: a person disabled after the
+  snapshot had a working session again from the restored data for about 9 s, until the replay's
+  sweep ended it, 13 s after Synapse started.
 - **Residuals.** Routed ports are published on `forward_host` and reachable on the LAN without
   the edge, so the edge's path blocks are defence in depth; Synapse's admin API, MAS and LiveKit's
   API still need their own tokens. Secret files are readable by anyone with Docker access on the

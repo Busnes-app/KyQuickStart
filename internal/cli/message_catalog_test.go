@@ -667,7 +667,7 @@ func TestKyMessageHandover(t *testing.T) {
 	}
 	for _, want := range []string{"chat at https://chat.example.com/ (Element)", "console at https://message.example.com/", "Server name example.com", "@<the local part of a verified email>:example.com",
 		"everyday accounts only (owner)", "owner-admin signs in to the console alone and has no chat", `both "KyMessages" and "KyMessages chat"`, "email is verified",
-		"192.0.2.1, TCP 7881 and UDP 7882, which are open to your LAN; no\n  TURN", "Federation is closed", "sign-out does not end chat sessions", "Offboarding", "up to two minutes", "only owner keeps chat",
+		"192.0.2.1, TCP 7881 and UDP 7882, which are open to your LAN; no\n  TURN", "Federation is closed", "sign-out does not end chat sessions", "Offboarding", "ends their open chat sessions\n  within seconds", `"KyMessages chat" alone is locked out`,
 		"docker logs kyq-kymessage-app-1 on nas", "cd '" + f.h.root + "/kymessage' && docker compose -p kyq-kymessage -f compose.yaml -f compose.kyq.yaml exec -T app /bin/sh -c 'eval \"$KYQ_SECRETS\" && exec /app/kymessages init-admin'",
 		"pair it with KyRecovery"} {
 		if !strings.Contains(s.handover, want) {
