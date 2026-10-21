@@ -233,7 +233,9 @@ refused without `--snapshot`:
    plan's KyIdentity deployment record (`kyquickstart/version`) is v0.4.4 or later ("restore
    needs KyIdentity v0.4.4 or later, which replays removals on resync"), and refuses an
    `existing` KyIdentity, whose version is unknown, or one on a Docker target. As soon as the
-   app is healthy it runs `kyidentity resync-system --client <client> --wait 10m` in
+   app is healthy (or, when its `backup` names `replay_after`, as soon as that `restore_order`
+   service is: the services after it start only once the replay is delivered) it runs
+   `kyidentity resync-system --client <client> --wait 10m` in
    KyIdentity's pod: KyIdentity re-sends the connector's state, deactivations included (a
    deletion comes back as a retained, inactive account), and restore goes on only when the
    connector's whole queue is `delivered`. Anything else, or any failure after the app started
@@ -250,7 +252,9 @@ unfinished and its removal replay not delivered; finish it with kyquickstart res
 Residuals:
 
 - A removed person's restored sessions stay valid from the app's start until the replayed
-  deactivation arrives, a few seconds in the end-to-end test. A failed replay stops the app.
+  deactivation arrives, a few seconds in the end-to-end test. The bound is the health wait
+  (`health.timeout_seconds`) plus the replay's delivery (up to 10 minutes), and "delivered"
+  means the app accepted the replay, not that it acted on it. A failed replay stops the app.
 - If restore itself is killed or loses SSH after the app starts, the app keeps running until
   you rerun `kyquickstart restore <app>`; until then a person removed after the snapshot can
   still sign in.
@@ -1352,11 +1356,8 @@ Limits and residuals:
 The catalog's `kymessage` app installs the whole KyMessages product on one Docker host: the
 console (`app`), Postgres, Synapse, MAS (Matrix Authentication Service), Element and LiveKit,
 plus the `/.well-known/matrix/*` delegation. Either all of it installs or apply refuses before
-changing anything. The console image is KyMessage v0.4.4's, attested by
-`Busnes-app/KyMessage-Server` `release-image.yml@refs/tags/v0.4.4` from commit `b0f2001e`. Docker only: a plan
-placing it on a cluster is refused (Kubernetes runs one container per app). The five Matrix
-images are the stock upstream builds KyMessage's `docker-compose.matrix.yml` pins by digest; no
-attestation was found for them.
+changing anything. Docker only: a plan placing it on a cluster is refused (Kubernetes runs one
+container per app).
 
 ```yaml
 apps:
@@ -1377,35 +1378,39 @@ integrations:
     target: docker02
     bundle: /app/data/installer/<setup UUID>/setup.json
     identity_client: kymessage
-    chat_client: kymessage-chat
+    chat_client: kymessage-chat       # exactly <app>-chat; plan writes it
 ```
 
-- **Six hostnames.** The primary route (no `role`) is the console. `server_name` serves only
-  `/.well-known/matrix/client` and `/.well-known/matrix/server` (the latter answers only while
-  federation is open); everything else on it is 404. `matrix` is Synapse with
-  `/_synapse/admin/` and `/_synapse/mas/` closed at the edge, `auth` is MAS, `chat` is Element and
-  `rtc` is LiveKit's signalling with `/twirp/` closed. `plan` asks them under one domain.
-- **The server name is permanent.** Matrix IDs are `@<name>:<server name>` forever: once Synapse
-  is set up, a plan changing the `server_name` hostname is refused (`server_name_changed`). The
-  other hostnames follow `issuer_changed`.
+- **The server name is permanent.** `plan` asks one domain first: it becomes the Matrix server
+  name (every account is `@<name>:<domain>` forever) and the other five hostnames default
+  under it. Once Synapse is set up, a plan changing the `server_name` hostname is refused
+  (`server_name_changed`); the other hostnames follow `issuer_changed`.
+- **Six hostnames, one certificate.** Each needs a DNS record to the edge, and the NPM
+  certificate must cover the apex and the subdomains: a wildcard `*.example.com` alone misses
+  `example.com`, the server name. The primary route (no `role`) is the console. `server_name`
+  serves only `/.well-known/matrix/client` and `/.well-known/matrix/server` (the latter only
+  while federation is open), everything else on it is 404, and it shares the console's
+  `forward_port` (a different one is refused). `matrix` is Synapse with `/_synapse/admin/` and
+  `/_synapse/mas/` closed at the edge, `auth` is MAS, `chat` is Element and `rtc` is LiveKit's
+  signalling with `/twirp/` closed.
+- **One address.** Every routed port is published on `forward_host`, which must be one LAN
+  IPv4 address of the host: a wildcard, loopback, link-local, multicast or IPv6 address, or a
+  name, is refused before connecting. `plan` offers `media_address` for it.
 - **Calls.** LiveKit publishes TCP 7881 and UDP 7882 on `media_address` only, straight to callers,
   not through the edge, so both are open to your LAN; no TURN is installed, so callers must reach
-  that address. Preflight refuses an address the host does not have; wildcard, loopback,
-  link-local, multicast and IPv6 addresses are refused before connecting. Federation stays closed.
+  that address. Preflight refuses an address the host does not have (`ip -4 addr` lists them);
+  the same address classes as `forward_host` are refused before connecting. Federation stays
+  closed.
 - **Two KyIdentity clients.** `kymessage` (the console: admin `kymessage.admin`, everyday
   `kymessage.user`, the signed directory webhook) and `kymessage-chat` (MAS's upstream provider,
   everyday only, role `kymessage.chat`): the dedicated admin has no chat. Both come in
   KyIdentity's first setup, or together in one setup amendment when KyMessages joins later. MAS's
   provider ID is derived from `installation_id` (a plan without one is refused) and seeded before
-  `matrix-init`. To let someone else chat, assign them to both "KyMessages" and "KyMessages chat":
-  the console's directory webhook, which keeps a person's chat, follows "KyMessages". A person
-  the console adds this way is an ordinary member (role `user`, no console sign-in). Someone
-  assigned to "KyMessages chat" alone can sign in once, and the console's next sweep (on a
-  directory event, or its 5-minute run) locks them in MAS as not known to KyMessages and ends
-  their session (in the e2e, 0-1 s after their sign-in).
+  `matrix-init`.
 - **Verified email.** MAS takes the Matrix localpart from a verified email's local part. The
   owner's accounts are verified by KyIdentity's setup (v0.4.5); anyone else needs the address
-  verified by KyIdentity's mailed link, which needs KyIdentity's relay:
+  verified by KyIdentity's mailed link, so **without `identity.mail` only the owner can chat**
+  until you set a relay in KyIdentity's admin UI (Settings > Mail). The handover says which:
 
   ```yaml
   integrations:
@@ -1416,38 +1421,71 @@ integrations:
   ```
 
   `security` is `tls` or `starttls`; plaintext SMTP is never used. `password_file` is a 0600
-  file of yours on this workstation (not a symlink); apply copies it on stdin to
-  `<data>/installer/smtp.password` in KyIdentity's container. The relay is set by KyIdentity's
-  first setup only: changing or adding it later is refused, pointing at KyIdentity's admin UI.
-  `plan` asks for it when it resumes a KyIdentity preparation: blank (or `none`) for no relay,
-  and for a relay without authentication, a blank username.
+  regular file of yours on this workstation, not a symlink, one line (checked on the opened
+  file; each refusal names its reason, for example `chmod 600 <file>`); apply copies it on stdin
+  to `<data>/installer/smtp.password` in KyIdentity's container. The relay is set by
+  KyIdentity's first setup only: changing or adding it later is refused, pointing at
+  KyIdentity's admin UI. `plan` asks for it when it resumes a KyIdentity preparation: blank (or
+  `none`) for no relay, and for a relay without authentication, a blank username.
 - **Steps.** `kymessage.secrets`, `kymessage.matrix-init` (seed, then matrix-init's first pass from
   the pinned image), `kymessage.credentials` (both clients' secrets from KyIdentity's export to
   0600 files on the host, never replaced, then the second pass that writes MAS's configuration),
   `kymessage.deploy`, `kymessage.health`, `kymessage.setup` (the console's setup with the owner's
-  admin and everyday accounts, then both clients rechecked), then the six routes.
+  admin and everyday accounts, then both clients rechecked), then the six routes, then
+  `kymessage.directory`: apply waits (`resync-system --wait 10m`) until KyIdentity's connector
+  has delivered the console's directory. Before that, KyIdentity drops the removal of a person
+  whose creation it has not delivered yet (the console's first deliveries retry while it
+  starts), so an offboarding right after install would never reach chat.
+- **Adding and removing people.** To let someone chat, assign them to both "KyMessages" and
+  "KyMessages chat": the console's directory webhook, which keeps a person's chat, follows
+  "KyMessages". A person the console adds this way is an ordinary member (role `user`, no
+  console sign-in). Someone assigned to "KyMessages chat" alone can sign in once, and the
+  console's next sweep (on a directory event, or its 5-minute run) locks them in MAS as not
+  known to KyMessages and ends their session. **Removing someone from "KyMessages chat" alone
+  stops only their new chat sign-ins**: MAS does not ask KyIdentity again when it refreshes a
+  token, so their open sessions keep working. To end their chat, remove them from "KyMessages"
+  too, or offboard them.
 - **Offboarding.** Disabling or deleting a person in KyIdentity reaches the console's directory
   webhook, whose sweep locks them in MAS and ends every MAS session they have
   (`matrix.lock`, `matrix.session_end` in the console's audit): their open session, its refresh
-  token, new chat sign-in and call grants are all refused, measured 0.6-2.6 s after the
-  disable, for the owner's everyday account and for a person added later. Re-enabling unlocks
-  them; ended sessions stay ended, so they sign in again. A KyIdentity sign-out ends nothing:
-  KyIdentity registers no back-channel logout.
+  token, new chat sign-in and call grants are all refused. Re-enabling unlocks them; ended
+  sessions stay ended, so they sign in again. A KyIdentity sign-out ends nothing: KyIdentity
+  registers no back-channel logout.
 - **Backup and restore** follow [Backups and restore on Docker](#backups-and-restore-on-docker):
   a `pg_dumpall` of the stack's Postgres plus `data` (with the console's copy of its directory
   secret), `backups`, `matrix` (configuration, secrets, signing key), `media` and the session
   secret, taken while the stack runs. Restore starts Postgres, loads the dump (without the dump's
-  `DROP ROLE`/`CREATE ROLE postgres`, which Postgres refuses for the role restoring it), then MAS
-  and the console before Synapse, and replays KyIdentity's removals: a person disabled after the
-  snapshot had a working session again from the restored data for about 9 s, until the replay's
-  sweep ended it, 13 s after Synapse started.
+  `DROP ROLE`/`CREATE ROLE postgres`, which Postgres refuses for the role restoring it), starts
+  MAS and the console, replays KyIdentity's removals (`replay_after: app`), and only then starts
+  Synapse, Element and LiveKit.
+
+### KyMessages: provenance, measurements and residuals
+
+- **Images.** The console image is KyMessage v0.4.4's, attested by `Busnes-app/KyMessage-Server`
+  `release-image.yml@refs/tags/v0.4.4` from commit `b0f2001e`. The five Matrix images are the
+  stock upstream builds KyMessage's `docker-compose.matrix.yml` pins by digest; no attestation
+  was found for them.
+- **Measured in the end-to-end test.** A chat-only person was locked 0-3 s after their sign-in.
+  Offboarding refused the open session and its refresh token 0.6-2.6 s after the disable, for
+  the owner's everyday account and for a person added later. Removing "KyMessages chat" alone
+  left the open session working; removing "KyMessages" too ended it 2.4-2.7 s later.
+  After a restore, the replay's sweep ended the restored session of a person disabled after the
+  snapshot 1-3 s before Synapse started, so it never worked again (with the replay after the whole
+  stack was healthy, it had worked for about 9 s).
+- **Restore window.** While the replay runs, MAS still accepts a removed person's restored
+  refresh token, but Synapse is not started until the replay is delivered, so there is no chat
+  to use it on. "Delivered" means the console accepted the replay; its sweep then ends the
+  sessions in MAS asynchronously, so if the sweep is slower than Synapse's start (or cannot
+  reach MAS and waits for its next 5-minute run), the session works until it does. The wait
+  before Synapse starts is bounded by MAS's and the console's health wait plus the replay's
+  delivery (up to 10 minutes). A failed replay leaves the stack stopped.
 - **Residuals.** Routed ports are published on `forward_host` and reachable on the LAN without
-  the edge, so the edge's path blocks are defence in depth; Synapse's admin API, MAS and LiveKit's
-  API still need their own tokens. Secret files are readable by anyone with Docker access on the
-  host. Three console values without a file form are read from files by its entrypoint
-  (`KYQ_SECRETS`), never set in Compose. The break-glass password sits in the console's first log
-  until `init-admin` replaces it (the handover prints the command). A restore window exists
-  between Synapse's start and the replay. Client-IP accuracy behind Docker NAT is unproven.
+  the edge, so the edge's path blocks are defence in depth; Synapse's admin API, MAS and
+  LiveKit's API still need their own tokens. Secret files are readable by anyone with Docker
+  access on the host. Three console values without a file form are read from files by its
+  entrypoint (`KYQ_SECRETS`), never set in Compose. The break-glass password sits in the
+  console's first log until `init-admin` replaces it (the handover prints the command).
+  Client-IP accuracy behind Docker NAT is unproven.
 
 ## Existing KyIdentity setup
 

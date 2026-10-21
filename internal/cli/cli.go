@@ -732,6 +732,7 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 				// Before its deploy: Compose refuses MAS without the configuration they write.
 				k := slices.IndexFunc(app, func(st engine.Step) bool { return st.ID() == name+".deploy" })
 				app = append(append(append(append([]engine.Step{}, app[:k]...), before...), app[k:]...), setup)
+				connectors = append(connectors, directoryStep{app: name, sync: func(ctx context.Context) (string, string) { return s.resync(ctx, name) }})
 			}
 		}
 		steps = append(steps, app...)
@@ -770,7 +771,7 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 		}
 	}
 	steps = append(append(steps, held...), routes...)
-	// SCIM connectors last: their first delivery goes through the routes the edges just made.
+	// Connectors last: their first delivery goes through the routes the edges just made.
 	return append(steps, connectors...), nil
 }
 

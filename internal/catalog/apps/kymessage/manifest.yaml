@@ -68,6 +68,9 @@ backup:
   # The console's session secret; the hot copy of data carries the directory secret.
   capsule_secrets: [session_secret]
   restore_order: [postgres, mas, app, synapse, element, livekit]
+  # KyIdentity's removals reach the console, whose sweep ends sessions in MAS, before Synapse
+  # starts: a restored session of someone removed later has no homeserver to use until then.
+  replay_after: app
 upgrade:
   # 0.4.3 to 0.4.4 changes no schema: no console migration, the same five stock images, and
   # matrix-init's inputs are unchanged, so it does not rerun.

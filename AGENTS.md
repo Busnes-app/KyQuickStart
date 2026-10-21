@@ -373,7 +373,8 @@ handover of admin and everyday logins.
   of a running app and, without `--replace` (which moves data aside, never deletes), of any
   existing data. An app whose people come from KyIdentity restores only when the plan's
   KyIdentity is v0.4.4 or later, replays removals with `resync-system` as soon as the app is
-  healthy and keeps the app stopped until that is delivered (`restore_incomplete` otherwise), so
+  healthy (or after its `backup.replay_after` service, before the later `restore_order`
+  services start) and keeps the app stopped until that is delivered (`restore_incomplete` otherwise), so
   a removed person is readmitted only for the measured seconds between the app's start and the
   replay; until that replay is delivered (`.restore-pending`), every command but `restore` that
   touches the app (`apply`, `install`, `upgrade`, `backup`, `unmanage`) refuses.
@@ -438,7 +439,9 @@ handover of admin and everyday logins.
   `{{forward_addr}}` (that IP alone), `{{hostname}}` (the route's hostname without a client
   port) and `{{edge_address}}` (the route's edge's `egress_address`; a plan whose edge has none
   is refused before connecting). An app whose manifest declares `routes` (KyMessages, Docker only)
-  takes one plan route per role, the primary without `role`, and writes `{{host "<role>"}}`,
+  takes one plan route per role, the primary without `role`, all on one `forward_host` (one LAN
+  IPv4 of the target: no wildcard, loopback, link-local, multicast, IPv6 or name) and one
+  `forward_port` per service port, and writes `{{host "<role>"}}`,
   `{{forward "<role>"}}` and `{{hostname "<role>"}}`; `media` ports publish on the app's
   `media_address` (`{{media_address}}`, one LAN IPv4 of the target, checked at preflight). Every
   `ports:` entry starts with `{{forward…}}`, `{{forward_addr}}`, `{{media_address}}` or
@@ -535,14 +538,17 @@ calls and kind nodes must carry their own explicit bounds.
   break-glass read and session-ending restart run verbatim on the target, and a skipped rerun.
   `TestKubernetesKyMessage` (`message_stack_test.go`, `message_chat_test.go`) installs the whole
   KyMessages stack on a non-root sshd target in the host's network namespace by amendment, with
-  KyIdentity's first setup relaying mail through a test-only Mailpit (STARTTLS, AUTH, test CA).
+  KyIdentity's first setup relaying mail through a test-only Mailpit (STARTTLS, AUTH, test CA)
+  at `smtp.mail.example.test`: Docker picks its kind address (CI's kind network refuses a fixed
+  `--ip`) and the cluster DNS's hosts block names it.
   A test-only Matrix client (`matrix_client_test.go`: mautrix with pure-Go goolm, build tag
   `goolm`, MAS OAuth with PKCE and dynamic registration) signs in by both verified-email paths,
   exchanges encrypted messages, gets a LiveKit grant, measures offboarding (the owner's everyday
   account and a person added later, each bounded at 60 s), proves a person assigned to the chat
-  client alone is locked by the sweep, and backs the stack up and restores it through
-  `backup`/`restore`, the original device decrypting the history and the replay ending a session
-  the snapshot still held.
+  client alone is locked by the sweep, that removing "KyMessages chat" alone leaves an open
+  session and removing "KyMessages" too ends it, and backs the stack up and restores it through
+  `backup`/`restore`, the original device decrypting the history and the replay (before Synapse
+  starts) ending a session the snapshot still held before it ever reaches Synapse.
   Backups (`test/e2e/backup_test.go`) go to a disposable append-only TLS rest-server on its own
   network, published on the default bridge's gateway. `TestApply` backs up and restores the
   test-only `dumpdemo` (Postgres dump, a file volume with a `skip` path, a capsule secret) from

@@ -388,6 +388,7 @@ func guided(ctx context.Context, args []string, o Options) error {
 			return err
 		}
 	}
+	withChatClients(st, cat)
 	count, err = p.ask("existing", "Number of existing Ky products to record", "0", integer(0, 64))
 	if err != nil {
 		return err
@@ -864,23 +865,37 @@ func guidedEdges(p *prompts, st *stack.Stack, cat catalog.Catalog) error {
 }
 
 // askRoutes asks a multi-route app's hostnames, defaulting each role under one domain whose
-// apex is the first non-primary role (KyMessages' server name), its address and its ports.
+// apex is the role with paths (KyMessages' server name), its address and its ports.
 func askRoutes(p *prompts, rk string, st *stack.Stack, name string, app catalog.App) ([]stack.Route, error) {
-	domain, err := p.ask(rk+"domain", name+"'s domain: its hostnames go under it", "", stack.Hostname)
+	domain, err := p.ask(rk+"domain", name+"'s domain. It becomes the permanent Matrix server name (accounts are @name:<domain>) and the other hostnames go under it", "", stack.Hostname)
 	if err != nil {
 		return nil, err
 	}
-	target := ""
+	fallbacks := map[string]string{}
+	var list []string
+	for _, cr := range app.Routes {
+		switch {
+		case cr.Role == app.Primary():
+			fallbacks[cr.Role] = "message." + domain
+		case len(cr.Paths) > 0:
+			fallbacks[cr.Role] = domain
+		default:
+			fallbacks[cr.Role] = cr.Role + "." + domain
+		}
+		list = append(list, fallbacks[cr.Role]+" ("+cr.Role+")")
+	}
+	fmt.Fprintf(p.out, "%s's hostnames (each can be changed next): %s. Each needs a DNS record to the edge, and one certificate covering them all.\n", name, strings.Join(list, ", "))
+	target, media := "", ""
 	for _, a := range st.Apps {
 		if a.Name == name {
-			target = a.Target
+			target, media = a.Target, a.MediaAddress
 		}
 	}
-	host, err := p.ask(rk+"host", name+"'s address on "+target+": an IP address NPM reaches", "", func(s string) bool { _, err := netip.ParseAddr(s); return err == nil })
+	host, err := p.ask(rk+"host", name+"'s address on "+target+" that NPM reaches: one LAN IPv4 address, where every routed port is published", media, stack.MediaAddress)
 	if err != nil {
 		return nil, err
 	}
-	id, err := p.ask(rk+"certificate", "Existing NPM certificate ID covering all of its hostnames", "", integer(1, 2147483647))
+	id, err := p.ask(rk+"certificate", "Existing NPM certificate ID covering "+domain+" and *."+domain+" (a wildcard alone misses the apex)", "", integer(1, 2147483647))
 	if err != nil {
 		return nil, err
 	}
@@ -889,18 +904,17 @@ func askRoutes(p *prompts, rk string, st *stack.Stack, name string, app catalog.
 	ports, used := map[string]int{}, map[int]bool{} // service:port -> forward_port
 	for _, cr := range app.Routes {
 		r := stack.Route{App: name, ForwardHost: host, ForwardScheme: "http", CertificateID: cert}
-		k, fallback := rk+cr.Role+".", cr.Role+"."+domain
+		k := rk + cr.Role + "."
 		switch {
 		case cr.Role == app.Primary():
-			k, fallback = rk, "message."+domain
+			k = rk
 		case len(cr.Paths) > 0:
-			fallback = domain
 			fmt.Fprintf(p.out, "%s's %s hostname is permanent: every account's ID ends in it.\n", name, cr.Role)
 		}
 		if cr.Role != app.Primary() {
 			r.Role = cr.Role
 		}
-		if r.Hostname, err = p.ask(k+"hostname", name+" "+cr.Role+" hostname", fallback, stack.Hostname); err != nil {
+		if r.Hostname, err = p.ask(k+"hostname", name+" "+cr.Role+" hostname", fallbacks[cr.Role], stack.Hostname); err != nil {
 			return nil, err
 		}
 		key := fmt.Sprint(cr.Service, ":", cr.Port)
