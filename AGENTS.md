@@ -538,8 +538,11 @@ calls and kind nodes must carry their own explicit bounds.
   KyIdentity's first setup relaying mail through a test-only Mailpit (STARTTLS, AUTH, test CA).
   A test-only Matrix client (`matrix_client_test.go`: mautrix with pure-Go goolm, build tag
   `goolm`, MAS OAuth with PKCE and dynamic registration) signs in by both verified-email paths,
-  exchanges encrypted messages, gets a LiveKit grant, measures offboarding, and backs the stack
-  up and restores it through `backup`/`restore`, the original device decrypting the history.
+  exchanges encrypted messages, gets a LiveKit grant, measures offboarding (the owner's everyday
+  account and a person added later, each bounded at 60 s), proves a person assigned to the chat
+  client alone is locked by the sweep, and backs the stack up and restores it through
+  `backup`/`restore`, the original device decrypting the history and the replay ending a session
+  the snapshot still held.
   Backups (`test/e2e/backup_test.go`) go to a disposable append-only TLS rest-server on its own
   network, published on the default bridge's gateway. `TestApply` backs up and restores the
   test-only `dumpdemo` (Postgres dump, a file volume with a `skip` path, a capsule secret) from

@@ -197,6 +197,9 @@ func (m *mas) signIn(username string, password []byte, deviceID string) (*masTok
 				if u := usernameIn.FindStringSubmatch(page); u != nil {
 					form.Set("username", html.UnescapeString(u[1]))
 				}
+			} else if strings.HasPrefix(next.Path, "/upstream/link/") {
+				// A link page with no registration form is where MAS stops.
+				return nil, next.Path + " " + pageText(page)
 			}
 			method = "POST"
 		default:
