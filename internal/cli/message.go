@@ -450,14 +450,13 @@ KyMessages chat at https://%[1]s/ (Element), its console at https://%[2]s/.
   Chat: everyday accounts only (%[5]s). %[4]s signs in to the console alone and has no chat.
   To add a person: in KyIdentity assign them to both "KyMessages" and "KyMessages chat", and
   make sure their email is verified (the installer's owner accounts are; anyone else redeems
-  KyIdentity's verification mail). An unverified address gets no Matrix account. KyMessages
-  0.4.3 still locks anyone its setup did not create at its next directory sweep, so for now
-  only %[5]s keeps chat.
+  KyIdentity's verification mail). An unverified address gets no Matrix account. Someone
+  assigned to "KyMessages chat" alone is locked out of chat at the next sweep.
   Calls: media goes straight to %[6]s, TCP 7881 and UDP 7882, which are open to your LAN; no
   TURN is installed, so callers must reach that address. Federation is closed.
   A KyIdentity sign-out does not end chat sessions. Offboarding (disabling or deleting the
-  person in KyIdentity) locks them out of chat and calls at once, but a session already open
-  keeps working for up to two minutes.
+  person in KyIdentity) locks them out of chat and calls and ends their open chat sessions
+  within seconds.
   Outstanding human steps:
   1. Its local "admin" break-glass account. Its one-time password is in the console's first
      log (docker logs kyq-%[7]s-app-1 on %[8]s). Replace it: on %[8]s, pipe a new password of

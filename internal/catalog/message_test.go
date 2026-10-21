@@ -73,6 +73,9 @@ func messageCompose(t *testing.T) (App, map[string]composeService, map[string]ma
 // AC4: six roles, the console primary, the media ports and both clients.
 func TestKyMessageEntry(t *testing.T) {
 	a, _, _ := messageCompose(t)
+	if a.Version != "0.4.4" || a.Images["kymessage"] != "ghcr.io/busnes-app/kymessage-server:0.4.4@sha256:3ecb7a412877bbdd782bc1a3ef0f0af7fbab859cd8a77abb7f787d67122d35b0" {
+		t.Fatalf("version %s, image %s", a.Version, a.Images["kymessage"])
+	}
 	var roles []string
 	for _, r := range a.Routes {
 		roles = append(roles, r.Role)
@@ -109,7 +112,7 @@ func TestKyMessageEntry(t *testing.T) {
 		t.Errorf("binds %v nested %v", a.Binds, a.Nested)
 	}
 	b := a.Backup
-	if b.Service != "postgres" || !slices.Equal(b.Volumes, []string{"data", "backups", "matrix", "media"}) || b.RestoreOrder[0] != "postgres" || !a.Upgrade.MigratesData || a.Upgrade.MinFrom != a.Version {
+	if b.Service != "postgres" || !slices.Equal(b.Volumes, []string{"data", "backups", "matrix", "media"}) || b.RestoreOrder[0] != "postgres" || a.Upgrade.MigratesData || a.Upgrade.MinFrom != "0.4.3" || a.Upgrade.Allows("0.4.3", a.Version) != nil {
 		t.Errorf("backup %+v upgrade %+v", b, a.Upgrade)
 	}
 }
@@ -327,8 +330,7 @@ func TestRoutesRejects(t *testing.T) {
 }
 
 // AC1: the five stock images are exactly the digests KyMessage's docker-compose.matrix.yml
-// pins. The fixture is that file byte for byte (KyMessage-Server 3b1f6c1; refreshed from
-// v0.4.3 at the pin).
+// pins. The fixture is that file byte for byte (KyMessage-Server v0.4.4).
 func TestKyMessageStockImages(t *testing.T) {
 	b, err := os.ReadFile("testdata/kymessage-docker-compose.matrix.yml")
 	if err != nil {
