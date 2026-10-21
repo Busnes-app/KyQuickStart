@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"path"
 	"regexp"
 	"slices"
@@ -24,13 +25,19 @@ type Manifest struct {
 	Category    string            `yaml:"category"` // ky, edge or third-party
 	Version     string            `yaml:"version"`  // release the images pin, MAJOR.MINOR.PATCH
 	Images      map[string]string `yaml:"images"`
-	Secrets     []string          `yaml:"secrets"`
-	DependsOn   []string          `yaml:"depends_on"`
-	Health      Health            `yaml:"health"`
-	OIDC        *OIDC             `yaml:"oidc"`
-	Backup      *Backup           `yaml:"backup"`
-	Upgrade     Upgrade           `yaml:"upgrade"`
-	Kubernetes  *Kubernetes       `yaml:"kubernetes"`
+	// PendingImages are images the app needs that are not published yet: its Compose file
+	// renders, but no plan may install it.
+	PendingImages []string `yaml:"pending_images"`
+	Secrets       []string `yaml:"secrets"`
+	// SecretFormats names a secret's format other than 32 random bytes in base64url:
+	// laravel is "base64:" and 32 random bytes in standard base64, Laravel's APP_KEY.
+	SecretFormats map[string]string `yaml:"secret_formats"`
+	DependsOn     []string          `yaml:"depends_on"`
+	Health        Health            `yaml:"health"`
+	OIDC          *OIDC             `yaml:"oidc"`
+	Backup        *Backup           `yaml:"backup"`
+	Upgrade       Upgrade           `yaml:"upgrade"`
+	Kubernetes    *Kubernetes       `yaml:"kubernetes"`
 	// Routes are the edge routes of an app reached at several hostnames; the first is the
 	// primary. None means one route to the app.
 	Routes []RouteRole `yaml:"routes"`
@@ -52,8 +59,10 @@ type OIDC struct {
 	// user_role makes the client admin-only; third-party apps need both.
 	AdminRole string `yaml:"admin_role"`
 	UserRole  string `yaml:"user_role"`
-	// DirectoryPath receives KyIdentity's signed suite directory events.
+	// DirectoryPath receives KyIdentity's signed suite directory events, at the host of route
+	// DirectoryRole (the primary when empty), which must serve it.
 	DirectoryPath string `yaml:"directory_path"`
+	DirectoryRole string `yaml:"directory_role"`
 	Public        bool   `yaml:"public"` // PKCE without a client secret
 	// SCIMTokenFile is /run/secrets/<secret>: the app's inbound SCIM bearer token, which its
 	// setup bundle names.
@@ -316,6 +325,9 @@ func loadApp(fsys fs.FS, dir string) (App, error) {
 		if m.Routes != nil || m.Media != nil || m.ChatOIDC != nil {
 			return App{}, fmt.Errorf("routes, media and chat_oidc need compose.yaml.tmpl")
 		}
+		if m.OIDC != nil && m.OIDC.DirectoryRole != "" {
+			return App{}, fmt.Errorf("oidc.directory_role needs routes, which need compose.yaml.tmpl")
+		}
 		if err := m.validateBackup(nil); err != nil {
 			return App{}, fmt.Errorf("manifest.yaml: backup: %w", err)
 		}
@@ -327,11 +339,17 @@ func loadApp(fsys fs.FS, dir string) (App, error) {
 	if err != nil {
 		return App{}, fmt.Errorf("compose.yaml.tmpl: %w", err)
 	}
+	// A pending image renders as a reference no registry serves; the plan refuses the app.
+	render := m
+	render.Images = maps.Clone(m.Images)
+	for _, k := range m.PendingImages {
+		render.Images[k] = "unpublished/" + k
+	}
 	var buf bytes.Buffer
-	if err := t.Execute(&buf, m); err != nil {
+	if err := t.Execute(&buf, render); err != nil {
 		return App{}, fmt.Errorf("compose.yaml.tmpl: %w", err)
 	}
-	c, err := checkCompose(buf.Bytes(), m.Images)
+	c, err := checkCompose(buf.Bytes(), render.Images)
 	if err != nil {
 		return App{}, fmt.Errorf("compose.yaml.tmpl: %w", err)
 	}
@@ -390,12 +408,22 @@ func (m Manifest) validate(dir string) error {
 			return fmt.Errorf("image %s = %q is not pinned by digest", k, ref)
 		}
 	}
+	for _, k := range m.PendingImages {
+		if _, ok := m.Images[k]; ok || !keyRE.MatchString(k) {
+			return fmt.Errorf("pending_images: %q must match %s and not be pinned in images", k, keyRE)
+		}
+	}
 	seen := map[string]bool{}
 	for _, s := range m.Secrets {
 		if !keyRE.MatchString(s) || seen[s] || s == ResticPassword {
 			return fmt.Errorf("secret %q must be unique, match %s and not be the reserved %s", s, keyRE, ResticPassword)
 		}
 		seen[s] = true
+	}
+	for s, f := range m.SecretFormats {
+		if !seen[s] || f != "laravel" || m.Kubernetes != nil {
+			return fmt.Errorf("secret_formats: %s must be one of secrets, laravel, on an app without kubernetes", s)
+		}
 	}
 	for _, d := range m.DependsOn {
 		if !stack.ValidName(d) || d == m.Name {
@@ -653,7 +681,7 @@ func (m Manifest) validateBackup(c *composeFile) error {
 var (
 	// exactPathRE is an exact request path nginx can match: no space, quote, brace or ;.
 	exactPathRE = regexp.MustCompile(`^(/[A-Za-z0-9_.~-]+)+$`)
-	denyRE      = regexp.MustCompile(`^\^/[A-Za-z0-9_./()|?*+\[\]-]*$`)
+	denyRE      = regexp.MustCompile(`^\^/[A-Za-z0-9_./()|?*+\[\]-]*\$?$`) // a $ only at the end
 	mediaRE     = regexp.MustCompile(`^[1-9][0-9]{0,4}/(tcp|udp)$`)
 )
 
@@ -680,6 +708,11 @@ func (m Manifest) validateRoutes(compose []byte, c composeFile) error {
 			return fmt.Errorf("routes: role %s: deny_paths %w must be a unique regular expression anchored at ^/", r.Role, err)
 		}
 		roles[r.Role] = r
+	}
+	if o := m.OIDC; o != nil && o.DirectoryRole != "" {
+		if r, ok := roles[o.DirectoryRole]; !ok || !slices.Contains(r.Paths, o.DirectoryPath) {
+			return fmt.Errorf("oidc.directory_role %q must be a role of routes whose paths include directory_path %q", o.DirectoryRole, o.DirectoryPath)
+		}
 	}
 	for _, ref := range roleRefRE.FindAllSubmatch(compose, -1) {
 		if _, ok := roles[string(ref[1])]; !ok || len(m.Routes) > 0 && string(ref[1]) == m.Primary() {

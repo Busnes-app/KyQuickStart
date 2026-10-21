@@ -14,6 +14,9 @@ import (
 // secretLen is 32 random bytes in unpadded base64url.
 const secretLen = 43
 
+// laravelPrefix starts a laravel-format secret: 32 random bytes in padded standard base64.
+const laravelPrefix = "base64:"
+
 // secretsStep creates each declared secret once, on the target, and never overwrites it.
 type secretsStep struct{ a App }
 
@@ -50,7 +53,7 @@ func (s secretsStep) Apply(ctx context.Context) error {
 		if ok {
 			continue
 		}
-		if err := generateSecret(ctx, s.a.Runner, s.file(n)); err != nil {
+		if err := generateSecret(ctx, s.a.Runner, s.file(n), s.a.Catalog.SecretFormats[n]); err != nil {
 			return fmt.Errorf("generate target secret %s: %w", n, err)
 		}
 	}
@@ -58,10 +61,18 @@ func (s secretsStep) Apply(ctx context.Context) error {
 }
 
 // generateSecret writes 32 random bytes from the target's /dev/urandom to file as unpadded
-// base64url, once: it publishes only a complete private file, and ln refuses replacement.
-// The trap removes both random and encoded scratch files.
-func generateSecret(ctx context.Context, r remote.Runner, f string) error {
+// base64url (or in format laravel), once: it publishes only a complete private file, and ln
+// refuses replacement. The trap removes both random and encoded scratch files.
+func generateSecret(ctx context.Context, r remote.Runner, f, format string) error {
 	dir := path.Dir(f)
+	encode := `tr '+/' '-_' < "$t" > "$raw" || exit 1
+tr -d '=\n' < "$raw" > "$t" || exit 1
+[ "$(wc -c < "$t")" -eq 43 ] || exit 1`
+	if format == "laravel" {
+		encode = `{ printf %s ` + laravelPrefix + `; tr -d '\n' < "$t"; } > "$raw" || exit 1
+cat "$raw" > "$t" || exit 1
+[ "$(wc -c < "$t")" -eq 51 ] || exit 1`
+	}
 	cmd := fmt.Sprintf(`umask 077
 f=%s
 t=$(mktemp %s) || exit 1
@@ -72,10 +83,8 @@ raw=$(mktemp %s) || exit 1
 dd if=/dev/urandom of="$raw" bs=32 count=1 2>/dev/null || exit 1
 [ "$(wc -c < "$raw")" -eq 32 ] || exit 1
 base64 < "$raw" > "$t" || exit 1
-tr '+/' '-_' < "$t" > "$raw" || exit 1
-tr -d '=\n' < "$raw" > "$t" || exit 1
-[ "$(wc -c < "$t")" -eq 43 ] || exit 1
-ln "$t" "$f"`, remote.Quote(f), remote.Quote(path.Join(dir, ".tmp.XXXXXX")), remote.Quote(path.Join(dir, ".random.XXXXXX")))
+%s
+ln "$t" "$f"`, remote.Quote(f), remote.Quote(path.Join(dir, ".tmp.XXXXXX")), remote.Quote(path.Join(dir, ".random.XXXXXX")), encode)
 	if _, err := r.Run(ctx, cmd, nil); err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -93,6 +102,13 @@ func (s secretsStep) Verify(ctx context.Context) error {
 			return fmt.Errorf("secret %s is missing or not mode 600: %w", n, err)
 		}
 		s.a.Redact.Add(string(out))
+		if s.a.Catalog.SecretFormats[n] == "laravel" {
+			key, ok := strings.CutPrefix(string(out), laravelPrefix)
+			if b, err := base64.StdEncoding.Strict().DecodeString(key); !ok || err != nil || len(b) != 32 {
+				return fmt.Errorf("secret %s is not %s and 32 bytes in standard base64", n, laravelPrefix)
+			}
+			continue
+		}
 		if len(out) != secretLen {
 			return fmt.Errorf("secret %s is %d bytes, want %d", n, len(out), secretLen)
 		}

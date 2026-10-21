@@ -1,0 +1,172 @@
+# Every service runs as the target user, who owns every bind directory and secret file.
+# LinuxServer.io's image runs its s6 supervisor unprivileged that way (its non-root mode): /run
+# must be the user's and executable, and its startup chown of /config only warns. MariaDB is on
+# an internal network only. BookStack and the receiver publish on their routes' forward address;
+# nothing else is published. bookstack.bootstrap runs the bootstrap profile: a standard-auth
+# BookStack with no published port beside the receiver image's sign-in client, on a network of
+# their own, while the bookstack service is stopped.
+x-bookstack-env: &bookstack-env
+  DB_HOST: mariadb
+  DB_PORT: "3306"
+  DB_DATABASE: bookstack
+  DB_USERNAME: bookstack
+  FILE__DB_PASSWORD: /run/secrets/db_password
+  FILE__APP_KEY: /run/secrets/app_key
+  # Uploads are served through BookStack's permission checks, never as public files.
+  STORAGE_TYPE: local_secure_restricted
+  # Idle minutes before a session ends: what bounds an offboarded person's open session.
+  SESSION_LIFETIME: "60"
+  APP_PROXIES: "{{edge_address}}"
+services:
+  bookstack:
+    image: {{ .Images.bookstack }}
+    platform: linux/amd64
+    user: "${KYQ_UID:?}:${KYQ_GID:?}"
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: [/tmp, "/run:uid=${KYQ_UID},gid=${KYQ_GID},mode=0755,exec"]
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 1
+    pids_limit: 256
+    ports: ["{{forward}}:80"]
+    secrets: [db_password, app_key]
+    environment:
+      <<: *bookstack-env
+      APP_URL: "https://{{host}}"
+      # Sign-in is KyIdentity's only: POST /login is refused. Roles follow the roles claim at
+      # every sign-in, plus the registration default (Editor).
+      AUTH_METHOD: oidc
+      OIDC_NAME: KyIdentity
+      FILE__OIDC_ISSUER: /kyq/oidc_issuer
+      OIDC_ISSUER_DISCOVER: "true"
+      FILE__OIDC_CLIENT_ID: /kyq/oidc_client_id
+      FILE__OIDC_CLIENT_SECRET: /kyq/oidc_client_secret
+      OIDC_USER_TO_GROUPS: "true"
+      OIDC_GROUPS_CLAIM: roles
+      OIDC_REMOVE_FROM_GROUPS: "true"
+      OIDC_FETCH_AVATAR: "false"
+      OIDC_DUMP_USER_DETAILS: "false"
+    networks: [default, db]
+    # data: bookstack.setup's files from the plan and KyIdentity's export, never replaced.
+    volumes: [./config:/config, "./data:/kyq:ro"]
+    depends_on:
+      mariadb: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 300s
+      start_interval: 3s
+
+  mariadb:
+    image: {{ .Images.mariadb }}
+    user: "${KYQ_UID:?}:${KYQ_GID:?}"
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: [/tmp, /run/mysqld]
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 1
+    pids_limit: 256
+    stop_grace_period: 2m
+    secrets: [db_password, db_root_password]
+    environment:
+      MARIADB_DATABASE: bookstack
+      MARIADB_USER: bookstack
+      MARIADB_PASSWORD_FILE: /run/secrets/db_password
+      MARIADB_ROOT_PASSWORD_FILE: /run/secrets/db_root_password
+    networks: [db]
+    volumes: [./mariadb:/var/lib/mysql]
+    # Its own check, with the credentials its first start wrote into the data directory.
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+      start_interval: 2s
+
+  # The offboarding receiver: KyIdentity's signed directory events, through the edge's
+  # directory route, strip roles over BookStack's API with the service account's token.
+  directory:
+    image: {{ .Images.kyoffboard }}
+    user: "${KYQ_UID:?}:${KYQ_GID:?}"
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    mem_limit: 64m
+    memswap_limit: 64m
+    cpus: 0.5
+    pids_limit: 64
+    command: [bookstack-directory]
+    ports: ["{{forward "directory"}}:8080"]
+    secrets: [directory_secret]
+    volumes: [./token:/token:ro]
+    healthcheck:
+      test: ["CMD", "kyoffboard", "bookstack-directory", "--probe"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+      start_interval: 2s
+
+  # One-shot, bookstack.bootstrap: docker compose run --name kyq-bookstack-standard standard.
+  standard:
+    profiles: [bootstrap]
+    image: {{ .Images.bookstack }}
+    platform: linux/amd64
+    user: "${KYQ_UID:?}:${KYQ_GID:?}"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: [/tmp, "/run:uid=${KYQ_UID},gid=${KYQ_GID},mode=0755,exec"]
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 1
+    pids_limit: 256
+    secrets: [db_password, app_key]
+    environment:
+      <<: *bookstack-env
+      APP_URL: http://kyq-bookstack-standard
+      AUTH_METHOD: standard
+    networks: [db, bootstrap]
+    volumes: [./config:/config]
+
+  # One-shot: create-admin's password on stdin, the new token into ./token.
+  bootstrap:
+    profiles: [bootstrap]
+    image: {{ .Images.kyoffboard }}
+    user: "${KYQ_UID:?}:${KYQ_GID:?}"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    mem_limit: 64m
+    memswap_limit: 64m
+    cpus: 0.5
+    pids_limit: 64
+    command: [bookstack-bootstrap, --bookstack, http://kyq-bookstack-standard, --token-file, /token/bookstack_token]
+    networks: [bootstrap]
+    volumes: [./token:/token]
+
+secrets:
+  db_password:
+    file: ./secrets/db_password
+  db_root_password:
+    file: ./secrets/db_root_password
+  app_key:
+    file: ./secrets/app_key
+  directory_secret:
+    file: ./data/directory_secret
+
+networks:
+  db:
+    internal: true
+  bootstrap:
+    internal: true

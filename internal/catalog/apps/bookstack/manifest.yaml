@@ -1,0 +1,59 @@
+name: bookstack
+description: BookStack, a wiki of shelves, books and pages; signs in through KyIdentity
+category: third-party
+# BookStack v26.09.2 (upstream writes the month with a zero).
+version: 26.9.2
+# bookstack: BookStack publishes no image. LinuxServer.io's community image, which upstream's
+# docs point to, build v26.09.2-ls292 (linux/amd64 manifest of index
+# sha256:f9de4213499f892570a93368aded13836c421b0f166f9d85be4d7b223071f7fd). Unsigned: a BuildKit
+# SLSA provenance and an SPDX SBOM only. docker buildx imagetools inspect
+# lscr.io/linuxserver/bookstack:version-v26.09.2 --format '{{json .Provenance}}' names source
+# https://github.com/linuxserver/docker-bookstack.git at 45704cc9c0ac490706ed047a46ae8a1dce4014f3.
+# mariadb: the Docker Official Image mariadb:11.4 (11.4.13, LTS), linux/amd64; no attestation.
+images:
+  bookstack: lscr.io/linuxserver/bookstack:version-v26.09.2@sha256:610ccd25f95859535ed907936484718fc8cc75d2139e7a4fe938e11ab2a2ab6f
+  mariadb: mariadb:11.4@sha256:33a6653ab666774f48818120045f9367a81cd4c54c027412fe294a7d1274e2dc
+# The receiver (kyoffboard bookstack-directory) ships in this repo's kyoffboard image, pinned
+# here by its attested digest once a kyoffboard-vX.Y.Z tag publishes it.
+pending_images: [kyoffboard]
+secrets: [db_password, db_root_password, app_key]
+secret_formats: {app_key: laravel}
+depends_on: [kyidentity]
+health:
+  # BookStack migrates its database at every start.
+  timeout_seconds: 600
+# Everyone KyIdentity assigns signs in; the admin role comes only from the bookstack.admin claim,
+# everyone else gets the registration default, Editor, which bookstack.bootstrap sets. The
+# directory webhook reaches the receiver, which strips roles from offboarded people.
+oidc:
+  name: BookStack
+  redirect_paths: [/oidc/callback]
+  admin_role: bookstack.admin
+  user_role: bookstack.user
+  directory_path: /kyq/directory
+  directory_role: directory
+# The edge closes self-delete: an offboarded person's open session could otherwise delete their
+# own account and blank the authorship of their pages. Laravel also routes /index.php/<path>
+# and ignores a trailing slash.
+routes:
+  - {role: app, service: bookstack, port: 80, deny_paths: ["^/(index.php/)?my-account/?$", "^/(index.php/)?my-account/delete/?$"]}
+  - {role: directory, service: directory, port: 8080, paths: [/kyq/directory]}
+# MariaDB as a dump (its data directory is not backed up raw); BookStack's /config without
+# logs, caches and sessions (a restore signs everyone out); the installer's files in data and
+# the receiver's token, which the restored database still accepts.
+backup:
+  service: mariadb
+  command: [sh, -c, 'umask 077 && f=$(mktemp) && printf "[client]\nuser=bookstack\npassword=%s\n" "$(cat /run/secrets/db_password)" > "$f" && mariadb-dump --defaults-extra-file="$f" --single-transaction --skip-lock-tables bookstack; s=$?; rm -f "$f"; exit $s']
+  restore_command: [sh, -c, 'umask 077 && f=$(mktemp) && printf "[client]\nuser=bookstack\npassword=%s\n" "$(cat /run/secrets/db_password)" > "$f" && mariadb --defaults-extra-file="$f" bookstack; s=$?; rm -f "$f"; exit $s']
+  volumes: [config, data, token]
+  skip: [config/log, config/www/framework/cache, config/www/framework/sessions, config/www/framework/views]
+  capsule_secrets: [db_password, db_root_password, app_key]
+  restore_order: [mariadb, bookstack, directory]
+  # BookStack starts first: the receiver strips through its API the roles of people removed
+  # after the snapshot. Until then such a person's API token works again; KyIdentity refuses
+  # their sign-in and no session is restored.
+  replay_after: directory
+upgrade:
+  min_from: 26.9.2
+  migrates_data: true
+  note: BookStack migrates its database when it starts; back it up (kyquickstart backup bookstack) before applying a new version.

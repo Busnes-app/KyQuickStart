@@ -254,10 +254,11 @@ func TestNoTagOnlyImage(t *testing.T) {
 
 // AC4: every other app renders byte for byte as on origin/master (testdata/rendered.golden.yaml
 // was written by origin/master 890b571's catalog.go; KyIdentity's image line since follows its 0.4.6 pin).
+// BookStack's own tests pin its rendering.
 func TestRenderedGolden(t *testing.T) {
 	sub := fstest.MapFS{}
 	fs.WalkDir(Embedded(), ".", func(p string, d fs.DirEntry, err error) error {
-		if !d.IsDir() && !strings.HasPrefix(p, "kymessage/") {
+		if !d.IsDir() && !strings.HasPrefix(p, "kymessage/") && !strings.HasPrefix(p, "bookstack/") {
 			b, _ := fs.ReadFile(Embedded(), p)
 			sub[p] = &fstest.MapFile{Data: b}
 		}

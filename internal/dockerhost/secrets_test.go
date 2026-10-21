@@ -288,3 +288,40 @@ func TestStepsSecretsOnlyWhenDeclared(t *testing.T) {
 		}
 	}
 }
+
+// BookStack's APP_KEY: Laravel's "base64:" and 32 random bytes in standard base64, once.
+func TestLaravelSecretFormat(t *testing.T) {
+	ctx := context.Background()
+	a := localApp(t, "app_key", "db_password")
+	a.Catalog.SecretFormats = map[string]string{"app_key": "laravel"}
+	s := secretsStep{a}
+	if err := s.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	f := filepath.Join(a.Root, "hello", "secrets", "app_key")
+	key, _ := os.ReadFile(f)
+	raw, err := base64.StdEncoding.Strict().DecodeString(strings.TrimPrefix(string(key), "base64:"))
+	if !strings.HasPrefix(string(key), "base64:") || err != nil || len(raw) != 32 {
+		t.Fatalf("app_key %q", key)
+	}
+	if other, _ := os.ReadFile(filepath.Join(a.Root, "hello", "secrets", "db_password")); len(other) != 43 {
+		t.Fatalf("db_password is %d bytes", len(other))
+	}
+	if err := s.Verify(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := os.ReadFile(f); string(again) != string(key) {
+		t.Fatal("app_key was replaced")
+	}
+	// A base64url key, or one of another length, fails Verify.
+	for _, bad := range []string{strings.NewReplacer("+", "-", "/", "_").Replace(string(key)) + "-_", "base64:" + base64.StdEncoding.EncodeToString(make([]byte, 16))} {
+		os.Chmod(f, 0o600)
+		os.WriteFile(f, []byte(bad), 0o600)
+		if s.Verify(ctx) == nil {
+			t.Errorf("Verify accepted %q", bad)
+		}
+	}
+}

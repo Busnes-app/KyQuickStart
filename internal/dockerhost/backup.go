@@ -136,7 +136,7 @@ func (s Store) ensureRepository(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	if !has {
-		if err := generateSecret(ctx, s.App.Runner, s.PasswordFile()); err != nil {
+		if err := generateSecret(ctx, s.App.Runner, s.PasswordFile(), ""); err != nil {
 			return false, fmt.Errorf("generate %s: %w", catalog.ResticPassword, err)
 		}
 	}
