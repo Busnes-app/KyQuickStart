@@ -413,7 +413,7 @@ handover of admin and everyday logins.
   the app namespace), which outlives uninstall. `apply`, `install` and `upgrade` gate a version
   change on the manifest's upgrade rules: `migrates_data` is always `backup_required` (a
   `kyquickstart backup` does not lift it yet); any other upgrade needs an explicit, recorded
-  acknowledgement.
+  acknowledgement. The manifest's `upgrade.note` is printed and recorded with it.
   Uninstall keeps data and secrets; unmanage drops the managed labels and the installer then
   refuses to install over the app. Error codes are `internal/suite` codes.
 - Remote commands are POSIX `sh`, quoted with `remote.Quote`. The SSH runner sends each one
@@ -546,7 +546,11 @@ calls and kind nodes must carry their own explicit bounds.
   exchanges encrypted messages, gets a LiveKit grant, measures offboarding (the owner's everyday
   account and a person added later, each bounded at 60 s), proves a person assigned to the chat
   client alone is locked by the sweep, that removing "KyMessages chat" alone leaves an open
-  session and removing "KyMessages" too ends it, and backs the stack up and restores it through
+  session and removing "KyMessages" too ends it, that a person disabled while KyIdentity's
+  create to the console fails cleanly (the setup's directory secret unreadable: a 503, which
+  KyIdentity does not fence as uncertain) reaches the console's directory as inactive and
+  `resync-system` delivers (this fails on KyIdentity 0.4.5, which dropped that removal), and
+  backs the stack up and restores it through
   `backup`/`restore`, the original device decrypting the history and the replay (before Synapse
   starts) ending a session the snapshot still held before it ever reaches Synapse.
   Backups (`test/e2e/backup_test.go`) go to a disposable append-only TLS rest-server on its own
@@ -556,7 +560,7 @@ calls and kind nodes must carry their own explicit bounds.
   handover lines, backs KyDrive up cold and proves a restore of the running app is refused.
   `TestKubernetesRestore` runs the KyDrive drill on its own kind cluster: with KyIdentity at the
   attested 0.4.3 release (a catalog copy), restore is refused before any restic call; after
-  `upgrade kyidentity` to the catalog's 0.4.5 it proves a disaster restore with the handover's
+  `upgrade kyidentity` to the catalog's 0.4.6 it proves a disaster restore with the handover's
   password, the refusals, `--replace`, a refused `forget`, and no readmission of a person
   unassigned or deleted after the snapshot.
   Set `KYQ_TEST_IDENTITY_BINARY` to a local static KyIdentity build to additionally test real

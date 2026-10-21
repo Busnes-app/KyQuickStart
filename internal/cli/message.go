@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/dockerhost"
@@ -429,10 +430,13 @@ func (s *session) messageSteps(d driver, i stack.Integration) (before []engine.S
 	return []engine.Step{matrixInitStep{app: i.Product, target: host.t.Name, seed: seed, env: env, hash: hash, file: file, run: run}, creds}, step, nil
 }
 
+// directoryRetry spaces directoryStep's resyncs after a failed delivery.
+var directoryRetry = 10 * time.Second
+
 // directoryStep (<app>.directory), after the routes, waits until KyIdentity's connector has
-// delivered the console's directory. Until then an offboarding can be lost: KyIdentity drops
-// the removal of a person whose creation it has not delivered, and the console keeps the
-// owner's accounts its setup made.
+// delivered the console's directory, so apply reports the app set up only once the console
+// holds it. Defence in depth: KyIdentity 0.4.5 and earlier dropped a removal made before
+// that first delivery, and the console keeps the owner's accounts its setup made.
 type directoryStep struct {
 	app  string
 	sync func(ctx context.Context) (client, detail string)
@@ -443,7 +447,18 @@ func (s directoryStep) InputHash() string                     { return "resync" 
 func (s directoryStep) Inspect(context.Context) (bool, error) { return false, nil }
 func (s directoryStep) Verify(context.Context) error          { return nil }
 func (s directoryStep) Apply(ctx context.Context) error {
-	if client, detail := s.sync(ctx); detail != "" {
+	client, detail := s.sync(ctx)
+	// KyIdentity's resync reports a refused delivery (the console or its route not ready yet)
+	// as failed at once; resyncing again re-sends it.
+	for deadline := time.Now().Add(resyncWait); strings.HasPrefix(detail, "failed") && time.Now().Before(deadline); {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(directoryRetry):
+		}
+		client, detail = s.sync(ctx)
+	}
+	if detail != "" {
 		return fmt.Errorf("KyIdentity's %s connector has not delivered its directory to %s (%s); until it does, offboarding someone may not reach chat. Fix the connector, then rerun apply", client, s.app, detail)
 	}
 	return nil

@@ -113,6 +113,7 @@ type Upgrade struct {
 	MinFrom      string   `yaml:"min_from"` // oldest installed version that may upgrade to this one
 	NoSkip       []string `yaml:"no_skip"`  // versions an upgrade must stop at on the way
 	MigratesData bool     `yaml:"migrates_data"`
+	Note         string   `yaml:"note"` // what the owner must check after upgrading to this version
 }
 
 type Health struct {

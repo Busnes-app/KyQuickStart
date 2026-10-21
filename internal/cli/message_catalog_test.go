@@ -752,6 +752,15 @@ func TestKyMessageDirectoryStep(t *testing.T) {
 	if err := s.Apply(ctx); err != nil || s.Verify(ctx) != nil || s.ID() != "kymessage.directory" {
 		t.Fatalf("delivered: %v", err)
 	}
+	// A refused delivery is resynced until it is delivered.
+	retry := directoryRetry
+	directoryRetry = 0
+	t.Cleanup(func() { directoryRetry = retry })
+	details := []string{"failed, 3 pending, 1 failed", "failed, 1 pending, 1 failed", ""}
+	s.sync = func(context.Context) (string, string) { d := details[0]; details = details[1:]; return "kymessage", d }
+	if err := s.Apply(ctx); err != nil || len(details) != 0 {
+		t.Fatalf("failed, then delivered: %v, %d left", err, len(details))
+	}
 }
 
 // AC24: the handover names what a human must know and do.

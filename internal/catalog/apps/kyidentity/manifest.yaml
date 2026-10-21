@@ -1,23 +1,29 @@
 name: kyidentity
 description: KyIdentity, the suite's identity provider (OIDC, MFA, SCIM); every other app signs in through it
 category: ky
-version: 0.4.5
-# Release image of v0.4.5, attested by release-image.yml@refs/tags/v0.4.5 (gh attestation verify;
-# source commit 6e344eb = v0.4.5^{commit}). It advertises setup amendments, disable-user,
+version: 0.4.6
+# Release image of v0.4.6, attested by release-image.yml@refs/tags/v0.4.6 (gh attestation verify;
+# source commit f647faf = v0.4.6^{commit}). It advertises setup amendments, disable-user,
 # resync-system (its resync replays removals, which kyquickstart restore requires),
-# installer-verified-email (MAS's chat sign-in needs it) and mail-relay.
+# installer-verified-email (MAS's chat sign-in needs it) and mail-relay. 0.4.6 sends a removal
+# made before the person's first delivery instead of dropping it.
 images:
-  kyidentity: ghcr.io/busnes-app/kyidentity-server:0.4.5@sha256:7cfa76b1a6cd9f935acb9872d0919de2071ea5f7752ebeec94119ba5be744709
+  kyidentity: ghcr.io/busnes-app/kyidentity-server:0.4.6@sha256:2136581c85c66c354c5cfbe84a209832f020410d1835890f0ec3382256e1ed67
 health:
   timeout_seconds: 300
 # Its signing, session and encryption keys are generated in the data directory on first start.
 backup:
   volumes: [data]
 upgrade:
-  # Migrations run at startup; the release notes cover upgrades from 0.4.x only. Neither 0.4.4
-  # nor 0.4.5 changes the schema (v0.4.3..v0.4.5), so an upgrade needs only an acknowledgement.
+  # Migrations run at startup; the release notes cover upgrades from 0.4.x only. 0.4.4 and 0.4.5
+  # change no schema; 0.4.6 adds one defaulted column and flags an unchanged bootstrap password
+  # (once), rewriting no existing data, so an upgrade needs only an acknowledgement.
   min_from: 0.4.0
   migrates_data: false
+  note: >-
+    KyIdentity 0.4.5 and earlier dropped a removal made before a person's first delivery to an
+    app, with no record a resync can replay: check each app's accounts for people disabled or
+    unassigned right after being given access.
 kubernetes:
   image: kyidentity
   env:

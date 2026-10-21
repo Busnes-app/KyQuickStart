@@ -135,7 +135,8 @@ the plan is saved only after every step passed.
   unknown version is refused (`upgrade_refused`); a version that migrates data is refused
   until verified pre-upgrade backups exist (`backup_required`; `kyquickstart backup` does not
   lift it yet); any other upgrade needs
-  `--acknowledge-no-backup` (`ack_required`), recorded in `results/<app>.upgrade.json`.
+  `--acknowledge-no-backup` (`ack_required`), recorded in `results/<app>.upgrade.json` with
+  anything the release asks you to check afterwards (the manifest's `upgrade.note`).
   Apps upgrade one at a time in dependency order and stop at the first failure.
 
 `stack.yaml` carries a `revision`, raised on every plan write. Every locked run records it
@@ -537,7 +538,7 @@ tunnels/VPS provisioning and Kubernetes connector deployment remain unavailable.
 
 ## Catalog KyIdentity on Kubernetes
 
-The catalog's `kyidentity` app installs KyIdentity 0.4.5 on a Kubernetes target from its
+The catalog's `kyidentity` app installs KyIdentity 0.4.6 on a Kubernetes target from its
 attested release image (`internal/catalog/apps/kyidentity/manifest.yaml` records the digest).
 It needs an edge route: its issuer is `https://<route hostname>`, plus `:<client_port>` behind a
 `lan` edge whose `client_port` is not 443, and a plan without exactly one route for it is refused. Select its setup with an `integrations` entry that names no
@@ -618,8 +619,16 @@ changed intent fails with the product's refusal. `integrate-stack` skips install
   Docker placement (no Compose file); SCIM `active:false` proof (gate G2); backups (the
   `data` volume is declared; `kyquickstart backup` covers Docker apps only).
 - 0.4.4's resync replays removals and it ships `resync-system`, which `kyquickstart restore`
-  runs after restoring an app whose people come from KyIdentity. An upgrade from 0.4.3 adds no
-  schema change and needs only `--acknowledge-no-backup`.
+  runs after restoring an app whose people come from KyIdentity. An upgrade from 0.4.3 needs
+  only `--acknowledge-no-backup`: 0.4.6 adds one defaulted column and rewrites no data.
+- 0.4.6 sends a removal (disable, unassignment, deletion) made before KyIdentity first
+  delivered the person to an app; 0.4.5 and earlier dropped it and kept no record, so no
+  resync can replay it. **After upgrading from 0.4.5 or earlier**, check each app's accounts
+  for people you disabled or unassigned right after giving them access, and disable them there.
+- 0.4.6 makes anyone whose password an administrator set (in the admin UI or API) choose a new
+  one at their next KyIdentity sign-in; until then no app signs them in. The owner's accounts
+  from setup are not affected. The bootstrap administrator is flagged too, but `apply` has
+  already disabled `kyq-bootstrap` (above), so nobody signs in with it.
 
 ## Catalog KyRecovery on Kubernetes
 
@@ -1408,7 +1417,7 @@ integrations:
   provider ID is derived from `installation_id` (a plan without one is refused) and seeded before
   `matrix-init`.
 - **Verified email.** MAS takes the Matrix localpart from a verified email's local part. The
-  owner's accounts are verified by KyIdentity's setup (v0.4.5); anyone else needs the address
+  owner's accounts are verified by KyIdentity's setup (v0.4.5 or later); anyone else needs the address
   verified by KyIdentity's mailed link, so **without `identity.mail` only the owner can chat**
   until you set a relay in KyIdentity's admin UI (Settings > Mail). The handover says which:
 
@@ -1433,9 +1442,9 @@ integrations:
   `kymessage.deploy`, `kymessage.health`, `kymessage.setup` (the console's setup with the owner's
   admin and everyday accounts, then both clients rechecked), then the six routes, then
   `kymessage.directory`: apply waits (`resync-system --wait 10m`) until KyIdentity's connector
-  has delivered the console's directory. Before that, KyIdentity drops the removal of a person
-  whose creation it has not delivered yet (the console's first deliveries retry while it
-  starts), so an offboarding right after install would never reach chat.
+  has delivered the console's directory, so it reports KyMessages set up only once the console
+  holds it (the console's first deliveries retry while it starts). KyIdentity 0.4.6 sends a
+  removal made before that delivery; 0.4.5 and earlier dropped it, which this step also covered.
 - **Adding and removing people.** To let someone chat, assign them to both "KyMessages" and
   "KyMessages chat": the console's directory webhook, which keeps a person's chat, follows
   "KyMessages". A person the console adds this way is an ordinary member (role `user`, no
@@ -1468,7 +1477,10 @@ integrations:
 - **Measured in the end-to-end test.** A chat-only person was locked 0-3 s after their sign-in.
   Offboarding refused the open session and its refresh token 0.6-2.6 s after the disable, for
   the owner's everyday account and for a person added later. Removing "KyMessages chat" alone
-  left the open session working; removing "KyMessages" too ended it 2.4-2.7 s later.
+  left the open session working; removing "KyMessages" too ended it 2.4-2.7 s later. A person
+  who signed in to chat while the console was stopped was locked 2.1 s after it started (the
+  console fails closed for people it does not know); disabled while KyIdentity's create to the
+  console was failing, they reached its directory as inactive.
   After a restore, the replay's sweep ended the restored session of a person disabled after the
   snapshot 1-3 s before Synapse started, so it never worked again (with the replay after the whole
   stack was healthy, it had worked for about 9 s).
@@ -1485,7 +1497,11 @@ integrations:
   access on the host. Three console values without a file form are read from files by its
   entrypoint (`KYQ_SECRETS`), never set in Compose. The break-glass password sits in the
   console's first log until `init-admin` replaces it (the handover prints the command).
-  Client-IP accuracy behind Docker NAT is unproven.
+  Client-IP accuracy behind Docker NAT is unproven. If the console is down while KyIdentity
+  delivers a change for someone, the edge answers 502 and KyIdentity holds that person's later
+  changes, a removal included, as an uncertain write until an administrator resumes the
+  delivery in KyIdentity (the person's offboarding view shows it blocked); a person the console
+  never heard of is still locked by its sweep.
 
 ## Existing KyIdentity setup
 
