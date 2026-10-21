@@ -49,16 +49,19 @@ func TestKyIdentityEntry(t *testing.T) {
 	}
 	a := cat["kyidentity"]
 	k := a.Kubernetes
-	if a.Category != "ky" || a.Version != "0.4.4" || a.PodSecurity != "restricted" || a.OIDC != nil || len(a.Compose) == 0 || len(a.Secrets) != 0 {
+	if a.Category != "ky" || a.Version != "0.4.6" || a.PodSecurity != "restricted" || a.OIDC != nil || len(a.Compose) == 0 || len(a.Secrets) != 0 {
 		t.Fatalf("manifest = %+v", a.Manifest)
 	}
-	if !strings.HasPrefix(a.Images[k.Image], "ghcr.io/busnes-app/kyidentity-server:0.4.4@sha256:f866a7513988a7b5919363ee76182baa2727ee57407404104049f93c29253c5a") || k.RunAs != 100 || k.WritableRoot || len(k.Capabilities) != 0 {
+	if !strings.HasPrefix(a.Images[k.Image], "ghcr.io/busnes-app/kyidentity-server:0.4.6@sha256:2136581c85c66c354c5cfbe84a209832f020410d1835890f0ec3382256e1ed67") || k.RunAs != 100 || k.WritableRoot || len(k.Capabilities) != 0 {
 		t.Fatalf("kubernetes = %+v", k)
 	}
 	if k.Env["KYIDENTITY_ISSUER_URL"] != "https://"+HostRef || k.ReadinessPath != "/readyz" || k.Ports[0] != 5867 || k.Volumes[0].Mount != k.Env["KYIDENTITY_DATA_DIR"] {
 		t.Fatalf("env %v, probe %s, volumes %+v", k.Env, k.ReadinessPath, k.Volumes)
 	}
-	// 0.4.4 adds no schema change: an upgrade from 0.4.3 needs only an acknowledgement.
+	// 0.4.4..0.4.6 rewrite no data: an upgrade from 0.4.3 needs only an acknowledgement.
+	if a.Upgrade.Allows("0.4.5", "0.4.6") != nil || a.Upgrade.Allows("0.4.3", "0.4.6") != nil {
+		t.Fatal("0.4.3 or 0.4.5 cannot upgrade to 0.4.6")
+	}
 	if a.Upgrade.MigratesData || a.Upgrade.MinFrom != "0.4.0" || a.Backup.Volumes[0] != "data" {
 		t.Fatalf("upgrade %+v, backup %+v", a.Upgrade, a.Backup)
 	}
@@ -460,6 +463,8 @@ func TestLoadRejects(t *testing.T) {
 		"restore without dump":  {manifest + strings.Replace(backup, "  command: [pg_dump, -Fc]\n", "", 1), composeVol, "come together"},
 		"restore empty arg":     {manifest + strings.Replace(backup, "[pg_restore]", `[pg_restore, ""]`, 1), composeVol, "empty argument"},
 		"restore order first":   {manifest + strings.Replace(backup, "restore_order: [web]", "restore_order: [db, web]", 1), composeTwo, "must start with service"},
+		"replay after unknown":  {manifest + oidc + backup + "  replay_after: db\n", composeVol, "replay_after"},
+		"replay without oidc":   {manifest + backup + "  replay_after: web\n", composeVol, "replay_after"},
 		"restic_password":       {manifest + "secrets: [restic_password]\n", compose, "reserved"},
 
 		"pod_security unknown":    {manifest + "pod_security: privileged\n", compose, "pod_security"},
@@ -474,13 +479,15 @@ func TestLoadRejects(t *testing.T) {
 		"node_port out of range":  {edgeKube("ports: [81, 80]", "{80: 8080}"), compose, "30000-32767"},
 		"node_port repeated":      {edgeKube("ports: [81, 80, 443]", "{80: 30080, 443: 30080}"), compose, "unique"},
 
-		"nested bind":         {manifest, compose + "    volumes: [./a/b:/b]\n", "must be ./<name>"},
-		"parent bind":         {manifest, compose + "    volumes: [../x:/x]\n", "must be ./<name>"},
-		"long volume form":    {manifest, compose + "    volumes:\n      - {type: bind, source: ./x, target: /x}\n", "short source:target"},
-		"bind is volume":      {manifest, compose + "    volumes: [./data:/data]\nvolumes:\n  data:\n", "also a named volume"},
-		"other compose func":  {manifest, compose + "    environment: {A: '{{ print 1 }}{{ nope }}'}\n", "nope"},
-		"scim not secret":     {manifest + oidc + "  scim_token_file: /run/secrets/scim\n", compose, "scim_token_file"},
-		"scim outside secret": {manifest + "secrets: [scim]\n" + oidc + "  scim_token_file: /data/scim\n", compose, "scim_token_file"},
+		"dot-dot bind":         {manifest, compose + "    volumes: [./a/../b:/b]\n", "must be ./<name>"},
+		"wildcard publication": {manifest, compose + "    ports: [\"0.0.0.0:80:80\"]\n", "must publish on"},
+		"bare publication":     {manifest, compose + "    ports: [\"7881:7881\"]\n", "must publish on"},
+		"parent bind":          {manifest, compose + "    volumes: [../x:/x]\n", "must be ./<name>"},
+		"long volume form":     {manifest, compose + "    volumes:\n      - {type: bind, source: ./x, target: /x}\n", "short source:target"},
+		"bind is volume":       {manifest, compose + "    volumes: [./data:/data]\nvolumes:\n  data:\n", "also a named volume"},
+		"other compose func":   {manifest, compose + "    environment: {A: '{{ print 1 }}{{ nope }}'}\n", "nope"},
+		"scim not secret":      {manifest + oidc + "  scim_token_file: /run/secrets/scim\n", compose, "scim_token_file"},
+		"scim outside secret":  {manifest + "secrets: [scim]\n" + oidc + "  scim_token_file: /data/scim\n", compose, "scim_token_file"},
 
 		"runner other uid":     {manifest + kube + runnerKube, compose, "suite_runner needs run_as 10001"},
 		"runner no socket":     {manifest + strings.Replace(kube, "65532", "10001", 1) + "  suite_runner: true\n", compose, "KY_SUITE_RUNNER_SOCKET"},

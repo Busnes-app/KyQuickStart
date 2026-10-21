@@ -290,7 +290,8 @@ handover of admin and everyday logins.
   `apply` runs it after the app's health step against the app's one ready pod, and
   `integrate-stack` skips it. Today only KyIdentity (from its `identity` settings) and the
   installed Ky apps with a catalog `oidc` block and a product adapter: KyRecovery, kyPulse,
-  KyNotes, KyCalendar and KyYard on Docker or Kubernetes; KyDrive and KyPost on Docker, and KyDNS on Docker (its managed `app` service, through `docker exec` over SSH; KyDNS's shell-less image gets its setup files placed from the host). An installed KyNotes' entry is exactly `bundle: /data/installer/setup.json`
+  KyNotes, KyCalendar and KyYard on Docker or Kubernetes; KyDrive, KyPost and KyMessages (its
+  whole chat stack, with a second, everyday-only `chat_client` for MAS) on Docker, and KyDNS on Docker (its managed `app` service, through `docker exec` over SSH; KyDNS's shell-less image gets its setup files placed from the host). An installed KyNotes' entry is exactly `bundle: /data/installer/setup.json`
   and its `identity_client` (no `notes` block): apply derives its native preparation, and its
   setup runs after the edge routes KyIdentity and before KyNotes' own route; a routed KyNotes
   without that entry is refused. Apply adds each such app's client, derived from its `oidc`
@@ -372,7 +373,8 @@ handover of admin and everyday logins.
   of a running app and, without `--replace` (which moves data aside, never deletes), of any
   existing data. An app whose people come from KyIdentity restores only when the plan's
   KyIdentity is v0.4.4 or later, replays removals with `resync-system` as soon as the app is
-  healthy and keeps the app stopped until that is delivered (`restore_incomplete` otherwise), so
+  healthy (or after its `backup.replay_after` service, before the later `restore_order`
+  services start) and keeps the app stopped until that is delivered (`restore_incomplete` otherwise), so
   a removed person is readmitted only for the measured seconds between the app's start and the
   replay; until that replay is delivered (`.restore-pending`), every command but `restore` that
   touches the app (`apply`, `install`, `upgrade`, `backup`, `unmanage`) refuses.
@@ -411,7 +413,7 @@ handover of admin and everyday logins.
   the app namespace), which outlives uninstall. `apply`, `install` and `upgrade` gate a version
   change on the manifest's upgrade rules: `migrates_data` is always `backup_required` (a
   `kyquickstart backup` does not lift it yet); any other upgrade needs an explicit, recorded
-  acknowledgement.
+  acknowledgement. The manifest's `upgrade.note` is printed and recorded with it.
   Uninstall keeps data and secrets; unmanage drops the managed labels and the installer then
   refuses to install over the app. Error codes are `internal/suite` codes.
 - Remote commands are POSIX `sh`, quoted with `remote.Quote`. The SSH runner sends each one
@@ -434,8 +436,18 @@ handover of admin and everyday logins.
   `{{host}}`, replaced by the URL host of the app's one edge route (hostname, plus `:client_port` when it is not 443); no other template syntax.
 - A Compose template may write `{{host}}`, `{{forward}}` (the route's
   `forward_host:forward_port`, an IP of the Docker target, where the app publishes its port),
-  `{{forward_addr}}` (that IP alone) and `{{edge_address}}` (the route's edge's
-  `egress_address`; a plan whose edge has none is refused before connecting).
+  `{{forward_addr}}` (that IP alone), `{{hostname}}` (the route's hostname without a client
+  port) and `{{edge_address}}` (the route's edge's `egress_address`; a plan whose edge has none
+  is refused before connecting). An app whose manifest declares `routes` (KyMessages, Docker only)
+  takes one plan route per role, the primary without `role`, all on one `forward_host` (one LAN
+  IPv4 of the target: no wildcard, loopback, link-local, multicast, IPv6 or name) and one
+  `forward_port` per service port, and writes `{{host "<role>"}}`,
+  `{{forward "<role>"}}` and `{{hostname "<role>"}}`; `media` ports publish on the app's
+  `media_address` (`{{media_address}}`, one LAN IPv4 of the target, checked at preflight). Every
+  `ports:` entry starts with `{{forward…}}`, `{{forward_addr}}`, `{{media_address}}` or
+  `127.0.0.1`: no bare or wildcard publication. A service in a Compose profile is a one-shot run
+  (`compose run --rm`), never part of `up` or health; a bind source inside a bind directory
+  must exist before deploy starts the app.
   Compose runs with `KYQ_UID`/`KYQ_GID` set to the target user's; `./<name>` bind directories
   are created private by the driver before Compose, and no other relative bind source is
   accepted.
@@ -464,7 +476,7 @@ calls and kind nodes must carry their own explicit bounds.
 ## Verification
 
 - `make build`: builds workstation `kyquickstart` and resident `kyoffboard` binaries.
-- `make ci`: tidy check, gofmt, vet (including the `e2e` tag), race tests. Runner tests decode
+- `make ci`: tidy check, gofmt, vet (including the `e2e,goolm` tags), race tests. Runner tests decode
   every answer with KyYard's client types (`internal/runner/kyyard_test.go`).
   `cmd/kyquickstart/release_test.go` runs `scripts/release-binaries.sh` (the stamp in all four
   binaries, its refusals) and checks `release-image.yml`'s job graph, permissions and pins.
@@ -524,6 +536,23 @@ calls and kind nodes must carry their own explicit bounds.
   port, private setup files, live `--check`, health and an untrusted-proxy network status
   through the edge, admin and everyday sign-in (`/api/users` 200/403), the handover's
   break-glass read and session-ending restart run verbatim on the target, and a skipped rerun.
+  `TestKubernetesKyMessage` (`message_stack_test.go`, `message_chat_test.go`) installs the whole
+  KyMessages stack on a non-root sshd target in the host's network namespace by amendment, with
+  KyIdentity's first setup relaying mail through a test-only Mailpit (STARTTLS, AUTH, test CA)
+  at `smtp.mail.example.test`: Docker picks its kind address (CI's kind network refuses a fixed
+  `--ip`) and the cluster DNS's hosts block names it.
+  A test-only Matrix client (`matrix_client_test.go`: mautrix with pure-Go goolm, build tag
+  `goolm`, MAS OAuth with PKCE and dynamic registration) signs in by both verified-email paths,
+  exchanges encrypted messages, gets a LiveKit grant, measures offboarding (the owner's everyday
+  account and a person added later, each bounded at 60 s), proves a person assigned to the chat
+  client alone is locked by the sweep, that removing "KyMessages chat" alone leaves an open
+  session and removing "KyMessages" too ends it, that a person disabled while KyIdentity's
+  create to the console fails cleanly (the setup's directory secret unreadable: a 503, which
+  KyIdentity does not fence as uncertain) reaches the console's directory as inactive and
+  `resync-system` delivers (this fails on KyIdentity 0.4.5, which dropped that removal), and
+  backs the stack up and restores it through
+  `backup`/`restore`, the original device decrypting the history and the replay (before Synapse
+  starts) ending a session the snapshot still held before it ever reaches Synapse.
   Backups (`test/e2e/backup_test.go`) go to a disposable append-only TLS rest-server on its own
   network, published on the default bridge's gateway. `TestApply` backs up and restores the
   test-only `dumpdemo` (Postgres dump, a file volume with a `skip` path, a capsule secret) from
@@ -531,7 +560,7 @@ calls and kind nodes must carry their own explicit bounds.
   handover lines, backs KyDrive up cold and proves a restore of the running app is refused.
   `TestKubernetesRestore` runs the KyDrive drill on its own kind cluster: with KyIdentity at the
   attested 0.4.3 release (a catalog copy), restore is refused before any restic call; after
-  `upgrade kyidentity` to the catalog's 0.4.4 it proves a disaster restore with the handover's
+  `upgrade kyidentity` to the catalog's 0.4.6 it proves a disaster restore with the handover's
   password, the refusals, `--replace`, a refused `forget`, and no readmission of a person
   unassigned or deleted after the snapshot.
   Set `KYQ_TEST_IDENTITY_BINARY` to a local static KyIdentity build to additionally test real

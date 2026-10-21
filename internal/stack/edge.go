@@ -66,7 +66,9 @@ type Connector struct {
 }
 
 type Route struct {
-	App           string `yaml:"app"`
+	App string `yaml:"app"`
+	// Role names one of the app's catalog routes; empty is its primary (or only) route.
+	Role          string `yaml:"role,omitempty" json:",omitempty"`
 	Hostname      string `yaml:"hostname"`
 	ForwardHost   string `yaml:"forward_host"`
 	ForwardPort   int    `yaml:"forward_port"`
@@ -74,6 +76,9 @@ type Route struct {
 	CertificateID int    `yaml:"certificate_id,omitempty"`
 	Certificate   string `yaml:"certificate,omitempty"` // an edge certificate's name, instead of an ID
 	StatusPath    string `yaml:"status_path,omitempty"`
+	// Paths and DenyPaths come from the app's catalog route, never the plan.
+	Paths     []string `yaml:"-" json:"-"`
+	DenyPaths []string `yaml:"-" json:"-"`
 }
 
 // URLHost is the host an app's route is reached at: its hostname, plus the port when clients
@@ -176,6 +181,9 @@ func (s *Stack) validateEdges() error {
 			// NPM reaches a Docker host over the LAN; nothing reaches into another cluster.
 			if at, ok := s.Target(apps[r.App]); !ok || at.Name != e.Target && at.Kubernetes() {
 				return fmt.Errorf("edge %s: route app %q must be installed on this target or on a Docker target", e.Target, r.App)
+			}
+			if r.Role != "" && !roleRE.MatchString(r.Role) {
+				return fmt.Errorf("edge %s: route %s: role %q must match %s", e.Target, r.Hostname, r.Role, roleRE)
 			}
 			if !Hostname(r.Hostname) || hosts[r.Hostname] {
 				return fmt.Errorf("edge %s: hostname %q must be a unique lowercase DNS name", e.Target, r.Hostname)
@@ -363,6 +371,7 @@ func (r SecretRef) validate() error {
 }
 
 var (
+	roleRE   = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
 	tunnelRE = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	kubeRE   = regexp.MustCompile(`^kube://([^/]+)/([^:]+):([1-9][0-9]{0,4})$`)
 )

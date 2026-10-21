@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Busnes-app/kyquickstart/internal/kube"
 )
@@ -43,8 +44,7 @@ func ownerPassword(t *testing.T, ctx context.Context, c *kube.Client, file strin
 
 func newIdentityAdmin(t *testing.T, ctx context.Context, transport http.RoundTripper, username string, password []byte) *identityAdmin {
 	t.Helper()
-	jar, _ := cookiejar.New(nil)
-	a := &identityAdmin{t: t, ctx: ctx, c: &http.Client{Transport: transport, Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, password: string(password)}
+	a := &identityAdmin{t: t, ctx: ctx, c: newJarClient(transport), password: string(password)}
 	code, b := a.send("GET", "/api/auth/csrf", nil, "")
 	if code != 200 {
 		t.Fatalf("KyIdentity CSRF: %d %s", code, b)
@@ -55,6 +55,12 @@ func newIdentityAdmin(t *testing.T, ctx context.Context, transport http.RoundTri
 		t.Fatalf("%s KyIdentity sign-in: %d", username, code)
 	}
 	return a
+}
+
+// newJarClient is a browser that keeps cookies and follows no redirect.
+func newJarClient(transport http.RoundTripper) *http.Client {
+	jar, _ := cookiejar.New(nil)
+	return &http.Client{Transport: transport, Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
 
 // send makes one request with the session's CSRF cookie as its header, and stepUp's grant.
@@ -82,22 +88,35 @@ func (a *identityAdmin) send(method, path string, body []byte, stepUp string) (i
 	return r.StatusCode, b
 }
 
-// change makes a change that needs a step-up grant and wants a 2xx answer.
-func (a *identityAdmin) change(method, path string, body any) []byte {
+// stepUp takes a one-use grant for method and path from the password. Every e2e request
+// comes from the edge's address, so it waits out KyIdentity's per-address step-up limit.
+func (a *identityAdmin) stepUp(method, path string) string {
 	a.t.Helper()
 	op, _ := json.Marshal(map[string]string{"password": a.password, "method": "", "operation": method + " " + path})
 	var grant struct {
 		Kind        string `json:"kind"`
 		StepUpToken string `json:"stepUpToken"`
 	}
-	if code, b := a.send("POST", "/api/auth/step-up", op, ""); code != 200 || json.Unmarshal(b, &grant) != nil || grant.Kind != "grant" || grant.StepUpToken == "" {
-		a.t.Fatalf("KyIdentity step-up for %s %s: %d %s", method, path, code, b)
+	for deadline := time.Now().Add(time.Minute); ; time.Sleep(5 * time.Second) {
+		code, b := a.send("POST", "/api/auth/step-up", op, "")
+		if code == http.StatusTooManyRequests && time.Now().Before(deadline) {
+			continue
+		}
+		if code != 200 || json.Unmarshal(b, &grant) != nil || grant.Kind != "grant" || grant.StepUpToken == "" {
+			a.t.Fatalf("KyIdentity step-up for %s %s: %d %s", method, path, code, b)
+		}
+		return grant.StepUpToken
 	}
+}
+
+// change makes a change that needs a step-up grant and wants a 2xx answer.
+func (a *identityAdmin) change(method, path string, body any) []byte {
+	a.t.Helper()
 	var raw []byte
 	if body != nil {
 		raw, _ = json.Marshal(body)
 	}
-	code, b := a.send(method, path, raw, grant.StepUpToken)
+	code, b := a.send(method, path, raw, a.stepUp(method, path))
 	if code/100 != 2 {
 		a.t.Fatalf("KyIdentity %s %s: %d %s", method, path, code, b)
 	}
@@ -130,13 +149,26 @@ func (a *identityAdmin) app(client string) string {
 
 // createUser creates an active person who signs in with password and returns their ID.
 func (a *identityAdmin) createUser(username, password string) string {
+	return a.createPerson(username, username+"@example.test", password)
+}
+
+// createPerson is createUser with the person's address, which KyIdentity leaves unverified.
+// KyIdentity 0.4.6 makes a person replace a password an administrator gave them before any
+// app sign-in, so the person signs in with a given one and chooses password.
+func (a *identityAdmin) createPerson(username, email, password string) string {
 	a.t.Helper()
 	var created struct {
 		User struct{ ID string }
 	}
-	b := a.change("POST", "/api/admin/users", map[string]string{"username": username, "displayName": strings.ToUpper(username[:1]) + username[1:], "email": username + "@example.test", "password": password, "role": "user", "status": "active"})
+	given := randomPassword()
+	b := a.change("POST", "/api/admin/users", map[string]string{"username": username, "displayName": strings.ToUpper(username[:1]) + username[1:], "email": email, "password": given, "role": "user", "status": "active"})
 	if json.Unmarshal(b, &created) != nil || created.User.ID == "" {
 		a.t.Fatalf("KyIdentity created no user: %s", b)
+	}
+	p := newIdentityAdmin(a.t, a.ctx, a.c.Transport, username, []byte(given))
+	body, _ := json.Marshal(map[string]string{"currentPassword": given, "newPassword": password})
+	if code, b := p.send("POST", "/api/user/password", body, p.stepUp("POST", "/api/user/password")); code != 200 {
+		a.t.Fatalf("%s choosing a password: %d %s", username, code, b)
 	}
 	return created.User.ID
 }

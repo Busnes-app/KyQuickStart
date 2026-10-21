@@ -88,7 +88,11 @@ func (e *Engine) Run(ctx context.Context, steps []Step) error {
 				return err
 			}
 		}
-		fmt.Fprintf(e.Out, "%-20s %s\n", s.ID(), status)
+		if status == "ok" && res.Diagnostics != "" {
+			fmt.Fprintf(e.Out, "%-20s ok: %s\n", s.ID(), res.Diagnostics)
+		} else {
+			fmt.Fprintf(e.Out, "%-20s %s\n", s.ID(), status)
+		}
 		e.report(Event{s.ID(), status, res.Time, res.Diagnostics})
 	}
 	return nil

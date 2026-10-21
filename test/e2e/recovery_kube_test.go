@@ -102,14 +102,16 @@ func checkCatalogRecovery(t *testing.T, ctx context.Context, cs kubernetes.Inter
 
 // testClusterDNS makes cluster DNS name every routed host after the node, whose NodePort is
 // the lan edge. Test-only plumbing.
-func testClusterDNS(t *testing.T, ctx context.Context, cs kubernetes.Interface, nodeIP string) {
+// extra are more hosts lines: "<ip> <name>".
+func testClusterDNS(t *testing.T, ctx context.Context, cs kubernetes.Interface, nodeIP string, extra ...string) {
 	t.Helper()
 	dns, err := cs.CoreV1().ConfigMaps("kube-system").Get(ctx, "coredns", metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	hosts := strings.Join([]string{catalogIdentityHost, catalogRecoveryHost, catalogPulseHost, catalogDriveHost, catalogNotesHost, catalogCalendarHost, catalogDNSHost, catalogYardHost, "hello.example.test"}, " ")
-	corefile := strings.Replace(dns.Data["Corefile"], "    kubernetes cluster.local", "    hosts {\n       "+nodeIP+" "+hosts+"\n       fallthrough\n    }\n    kubernetes cluster.local", 1)
+	hosts := strings.Join([]string{catalogIdentityHost, catalogRecoveryHost, catalogPulseHost, catalogDriveHost, catalogNotesHost, catalogCalendarHost, catalogDNSHost, catalogYardHost, "hello.example.test", "message.example.test", "home.example.test", "matrix.example.test", "auth.example.test", "chat.example.test", "rtc.example.test"}, " ")
+	lines := strings.Join(append([]string{nodeIP + " " + hosts}, extra...), "\n       ")
+	corefile := strings.Replace(dns.Data["Corefile"], "    kubernetes cluster.local", "    hosts {\n       "+lines+"\n       fallthrough\n    }\n    kubernetes cluster.local", 1)
 	if corefile == dns.Data["Corefile"] {
 		t.Fatalf("unexpected Corefile:\n%s", corefile)
 	}

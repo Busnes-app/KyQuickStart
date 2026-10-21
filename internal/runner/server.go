@@ -261,7 +261,7 @@ func httpStatus(c suite.Code) int {
 	case suite.IDConflict, suite.Busy, suite.PlanStale, suite.TargetLocked, suite.OwnedByRunner, suite.OwnedByCLI, suite.OwnedByOtherPlan:
 		return http.StatusConflict
 	case suite.UnknownApp, suite.UnknownTarget, suite.AlreadyInstalled, suite.NotInstalled, suite.Dependency,
-		suite.UpgradeRefused, suite.BackupRequired, suite.AckRequired, suite.IssuerChanged, suite.RunnerHost,
+		suite.UpgradeRefused, suite.BackupRequired, suite.AckRequired, suite.IssuerChanged, suite.RunnerHost, suite.ServerNameChanged, suite.ProviderIDMismatch,
 		suite.BackupUnconfigured, suite.BackupUnsupported, suite.RestoreRefused:
 		return http.StatusUnprocessableEntity
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/Busnes-app/kyquickstart/internal/engine"
@@ -70,31 +71,18 @@ func (d deployStep) Inspect(ctx context.Context) (bool, error) {
 }
 
 func (d deployStep) Apply(ctx context.Context) error {
-	dir := d.a.dir()
 	if !d.a.Restoring {
 		if err := refuseUnfinishedRestore(ctx, d.a); err != nil {
 			return err
 		}
 	}
-	hash := remote.Quote(dir + "/.input-hash")
-	// Bind directories too: Docker would create a missing one as root.
-	for _, p := range append([]string{dir}, d.a.binds()...) {
-		if err := trustedDir(ctx, d.a.Runner, p); err != nil {
-			return err
-		}
+	if err := d.a.writeCompose(ctx, d.override); err != nil {
+		return err
 	}
-	// Removed first and written last: a deploy that dies halfway is a hash mismatch next
-	// run, so check() never reaches `docker compose ps` on a half-written compose.yaml.
-	if _, err := d.a.Runner.Run(ctx, "rm -f "+hash, nil); err != nil {
-		return fmt.Errorf("remove input hash: %w", err)
-	}
-	for _, f := range []struct {
-		name string
-		body []byte
-	}{{"compose.yaml", d.a.Catalog.Compose}, {"compose.kyq.yaml", d.override}} {
-		cmd := "umask 077; mkdir -p " + remote.Quote(dir) + " && cat > " + remote.Quote(dir+"/"+f.name)
-		if _, err := d.a.Runner.Run(ctx, cmd, f.body); err != nil {
-			return fmt.Errorf("write %s: %w", f.name, err)
+	// A missing bind source inside a bind directory would be created as root.
+	for _, n := range d.a.Catalog.Nested {
+		if _, err := d.a.Runner.Run(ctx, "test -e "+remote.Quote(path.Join(d.a.dir(), n)), nil); err != nil {
+			return fmt.Errorf("bind source %s is missing; Docker would create it as root", n)
 		}
 	}
 	if _, err := d.a.Runner.Run(ctx, d.a.compose("pull --quiet"), nil); err != nil {
@@ -110,8 +98,54 @@ func (d deployStep) Apply(ctx context.Context) error {
 	if _, err := d.a.Runner.Run(ctx, d.a.compose(up), nil); err != nil {
 		return fmt.Errorf("docker compose up: %w", err)
 	}
-	_, err := d.a.Runner.Run(ctx, "umask 077; printf %s "+remote.Quote(d.hash)+" > "+hash, nil)
+	_, err := d.a.Runner.Run(ctx, "umask 077; printf %s "+remote.Quote(d.hash)+" > "+remote.Quote(d.a.dir()+"/.input-hash"), nil)
 	return err
+}
+
+// writeCompose writes compose.yaml and its override in the app's private directory, whose
+// bind directories it creates private first: Docker would create a missing one as root.
+// The input hash goes first, so a write that dies halfway is a mismatch next run and deploy
+// never reaches docker compose ps on a half-written compose.yaml.
+func (a App) writeCompose(ctx context.Context, override []byte) error {
+	dir := a.dir()
+	for _, p := range append([]string{dir}, a.binds()...) {
+		if err := trustedDir(ctx, a.Runner, p); err != nil {
+			return err
+		}
+	}
+	if _, err := a.Runner.Run(ctx, "rm -f "+remote.Quote(dir+"/.input-hash"), nil); err != nil {
+		return fmt.Errorf("remove input hash: %w", err)
+	}
+	for _, f := range []struct {
+		name string
+		body []byte
+	}{{"compose.yaml", a.Catalog.Compose}, {"compose.kyq.yaml", override}} {
+		cmd := "umask 077; mkdir -p " + remote.Quote(dir) + " && cat > " + remote.Quote(dir+"/"+f.name)
+		if _, err := a.Runner.Run(ctx, cmd, f.body); err != nil {
+			return fmt.Errorf("write %s: %w", f.name, err)
+		}
+	}
+	return nil
+}
+
+// RunInit runs the app's one-shot Compose service svc (a profile service) with env and stdin,
+// removing its container afterwards. It writes the app's Compose files first.
+func RunInit(ctx context.Context, a App, svc string, env []string, stdin []byte) ([]byte, error) {
+	if !slices.Contains(a.Catalog.Init, svc) {
+		return nil, fmt.Errorf("%s is not a one-shot service of %s", svc, a.Name)
+	}
+	if err := a.writeCompose(ctx, override(a.Catalog.Services, labels(a.ReleaseSet, a.Catalog.Version))); err != nil {
+		return nil, err
+	}
+	args := "run --rm -T"
+	for _, e := range env {
+		args += " -e " + remote.Quote(e)
+	}
+	out, err := a.Runner.Run(ctx, a.compose(args+" "+remote.Quote(svc)), stdin)
+	if err != nil {
+		return out, fmt.Errorf("docker compose run %s: %w", svc, err)
+	}
+	return out, nil
 }
 
 // WriteConfig atomically publishes target-only configuration in an owned directory.
