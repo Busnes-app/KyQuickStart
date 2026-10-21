@@ -490,6 +490,7 @@ func TestKubernetesKyMessage(t *testing.T) {
 	chat.encryptedRoom()
 	chat.offboarding(chat.calls())
 	chat.unassign()
+	chat.earlyRemoval()
 	skipped := func(label, out string) {
 		t.Helper()
 		for _, id := range ids {

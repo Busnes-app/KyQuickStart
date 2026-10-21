@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os/exec"
+	"path"
 	"regexp"
 	"slices"
 	"strconv"
@@ -53,6 +54,7 @@ const (
 	memberAddress   = "member@" + mailDomain
 	chatOnlyAddress = "chatonly@" + mailDomain
 	leaverAddress   = "leaver@" + mailDomain
+	earlyAddress    = "early@" + mailDomain
 )
 
 func mxid(localpart string) string { return "@" + localpart + ":" + messageHosts["server_name"] }
@@ -540,6 +542,128 @@ func (c *messageChat) unassign() {
 	unassign("kymessage")
 	took := c.cut("leaver", uid, t1, next.Access, next.Refresh, `its removal from "KyMessages"`)
 	t.Logf("unassign: removing leaver from \"KyMessages\" too ended its chat %s after", took.Round(100*time.Millisecond))
+}
+
+// earlyRemoval removes a person before KyIdentity has delivered them to the console (AC22,
+// KyIdentity 0.4.6). early signs in to chat while the console is stopped, so MAS knows early
+// and the console does not; the console's start locks early, failing closed. Then, with the
+// setup's directory secret unreadable so the console refuses deliveries cleanly (503, never
+// an uncertain write, which KyIdentity would fence), early is assigned to "KyMessages", that
+// create fails, and early is disabled. KyIdentity 0.4.5 dropped such a removal with the undelivered create
+// and its resync could not replay it; 0.4.6 sends it, so the console records early inactive.
+func (c *messageChat) earlyRemoval() {
+	t := c.t
+	pw := randomPassword()
+	uid := c.admin.createPerson("early", earlyAddress, pw)
+	c.secrets["early's first password"] = pw
+	pw = c.verify("early", uid, earlyAddress)
+	c.secrets["early's password"] = pw
+	docker(t, "stop", "kyq-kymessage-app-1")
+	c.admin.assign(c.admin.app("kymessage-chat"), uid)
+	tok, stop := c.mas.signIn("early", []byte(pw), c.device())
+	if tok == nil {
+		t.Fatalf("early's chat sign-in with the console stopped: %.200s", stop)
+	}
+	if code, _, user := whoami(t, c.transport, tok.Access); code != 200 || user != mxid("early") {
+		t.Fatalf("early's chat with the console stopped: whoami %d %s", code, user)
+	}
+	docker(t, "start", "kyq-kymessage-app-1")
+	t0 := time.Now()
+	stackHealthy(t)
+	c.cut("early", uid, t0, tok.Access, tok.Refresh, "the console's start")
+
+	secret := c.msg.root + "/kymessage/data/installer/" + path.Base(messageSetupDir) + "/directory.secret"
+	docker(t, "exec", c.msg.name, "chmod", "000", secret)
+	c.admin.assign(c.admin.app("kymessage"), uid)
+	sys := c.connector("KyMessages")
+	// KyIdentity's view: Acknowledged is a delivered create, Blocked an attempt in flight.
+	var state struct {
+		Acknowledged, Blocked bool
+		LastEvent             struct {
+			Type, Status string
+			Attempts     int
+		}
+	}
+	for deadline := time.Now().Add(time.Minute); ; time.Sleep(time.Second) {
+		var page struct {
+			Users []json.RawMessage
+		}
+		c.admin.get("/api/admin/systems/"+sys+"/provisioning?limit=100", &page)
+		for _, raw := range page.Users {
+			var u struct{ UserID string }
+			if json.Unmarshal(raw, &u) == nil && u.UserID == uid {
+				json.Unmarshal(raw, &state)
+			}
+		}
+		if state.LastEvent.Type == "user.created" && state.LastEvent.Attempts > 0 && !state.Blocked {
+			break
+		}
+		if time.Now().After(deadline) {
+			c.diagnose(uid)
+			t.Fatalf("early removal: KyIdentity's create of early did not fail cleanly with the console's directory secret unreadable: %+v", state)
+		}
+	}
+	if state.Acknowledged {
+		c.diagnose(uid)
+		t.Fatalf("early removal: the console acknowledged early's create with its directory secret unreadable: %+v", state)
+	}
+	t.Logf("early removal: early's create to the console failed (%s after %d attempts) and is not acknowledged; disabling early", state.LastEvent.Status, state.LastEvent.Attempts)
+	c.admin.change("PUT", "/api/admin/users/"+uid, map[string]string{"status": "disabled"})
+	docker(t, "exec", c.msg.name, "chmod", "600", secret)
+
+	ns, pod, container, err := c.connected.AppPod(c.ctx, "kyidentity")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := c.connected.Exec(c.ctx, ns, pod, container, []string{"/usr/local/bin/kyidentity", "resync-system", "--client", "kymessage", "--wait", "2m"})
+	var rep struct{ Status string }
+	if err != nil || json.Unmarshal(bytes.TrimSpace(out), &rep) != nil || rep.Status != "delivered" {
+		c.diagnose(uid)
+		t.Fatalf("early removal: resync-system: %v %s", err, out)
+	}
+	if s, d := c.chatUsers()["early"], c.directory("early"); s != "locked" || d != "inactive" || c.audited("matrix.lock", mxid("early"), 0).IsZero() {
+		c.diagnose(uid)
+		t.Fatalf("early removal: after resync-system delivered, MAS has early %q and the console's directory %q (want locked, inactive)", s, d)
+	}
+	if again, _ := c.mas.signIn("early", []byte(pw), c.device()); again != nil {
+		t.Fatal("the disabled early signed in to chat")
+	}
+	t.Log("early removal: resync-system delivered; the console's directory has early inactive and MAS keeps early locked")
+}
+
+// connector is the ID of KyIdentity's paired system name.
+func (c *messageChat) connector(name string) string {
+	c.t.Helper()
+	var systems struct{ Systems []struct{ ID, Name string } }
+	c.admin.get("/api/admin/systems", &systems)
+	for _, s := range systems.Systems {
+		if s.Name == name {
+			return s.ID
+		}
+	}
+	c.t.Fatalf("KyIdentity has no connector %s", name)
+	return ""
+}
+
+// stackHealthy waits until every KyMessages container is running and, with a healthcheck,
+// healthy.
+func stackHealthy(t *testing.T) {
+	t.Helper()
+	for deadline := time.Now().Add(3 * time.Minute); ; time.Sleep(2 * time.Second) {
+		out := docker(t, "ps", "-a", "--filter", "label=com.docker.compose.project=kyq-kymessage", "--format", "{{.Names}} {{.State}} {{.Status}}")
+		ready := strings.Count(out, "\n")+1 == 6
+		for _, line := range strings.Split(out, "\n") {
+			if f := strings.Fields(line); len(f) < 2 || f[1] != "running" || strings.Contains(line, "(health: starting)") || strings.Contains(line, "(unhealthy)") {
+				ready = false
+			}
+		}
+		if ready {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the KyMessages stack is not healthy:\n%s", out)
+		}
+	}
 }
 
 // memorySampler records the peak sum of the KyMessages containers' memory, every few seconds.
