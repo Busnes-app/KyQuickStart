@@ -477,11 +477,13 @@ func TestKubernetesKyMessage(t *testing.T) {
 	}
 	secrets["break-glass"] = pw
 
-	// AC18-AC22, AC25, AC26: chat, offboarding, backup and restore, the memory sampled throughout.
+	// AC18-AC22, AC25, AC26 and the chat-only check: chat, offboarding, backup and restore, the
+	// memory sampled throughout.
 	chat := &messageChat{t: t, ctx: ctx, transport: transport, connected: connected, msg: msg, mail: mail, console: console, secrets: secrets,
 		mas: newMAS(t, ctx, transport), admin: newIdentityAdmin(t, ctx, transport, "prepared-admin", ownerPassword(t, ctx, connected, "admin.password"))}
 	secrets["the SMTP password"] = mail.password
 	chat.signIns()
+	chat.chatOnlySignIn()
 	sampler := sampleMemory()
 	chatStart := time.Now()
 	chat.encryptedRoom()

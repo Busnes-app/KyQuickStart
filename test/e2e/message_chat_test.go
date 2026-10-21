@@ -41,13 +41,18 @@ type messageChat struct {
 	member    *matrixUser
 	memberID  string
 	memberPW  string
+	chatOnly  *masTokens // a person assigned to the chat client alone, while signed in
+	chatSince time.Time
 	room      id.RoomID
 	nonce     string // the owner's, sent before the backup
 	event     id.EventID
 	secrets   map[string]string
 }
 
-const memberAddress = "member@" + mailDomain
+const (
+	memberAddress   = "member@" + mailDomain
+	chatOnlyAddress = "chatonly@" + mailDomain
+)
 
 func mxid(localpart string) string { return "@" + localpart + ":" + messageHosts["server_name"] }
 
@@ -79,22 +84,26 @@ func (c *messageChat) chatUsers() map[string]string {
 	return out
 }
 
-// audited waits until the console's audit has action for target and returns its rows.
-func (c *messageChat) audited(action, target string, within time.Duration) bool {
+// audited waits until the console's audit has action for target and returns its newest
+// row's time, zero when there is none.
+func (c *messageChat) audited(action, target string, within time.Duration) time.Time {
 	c.t.Helper()
 	for deadline := time.Now().Add(within); ; time.Sleep(2 * time.Second) {
 		var page struct {
-			Records []struct{ Action, Target, Details string }
+			Records []struct {
+				At                      time.Time
+				Action, Target, Details string
+			}
 		}
 		c.consoleGet("/api/admin/audit?kind=matrix&limit=100", &page)
 		for _, r := range page.Records {
 			if r.Action == action && r.Target == target {
-				c.t.Logf("console audit: %s %s %s", r.Action, r.Target, r.Details)
-				return true
+				c.t.Logf("console audit: %s %s %s %s", r.At.Format(time.RFC3339), r.Action, r.Target, r.Details)
+				return r.At
 			}
 		}
 		if time.Now().After(deadline) {
-			return false
+			return time.Time{}
 		}
 	}
 }
@@ -121,19 +130,6 @@ func (c *messageChat) diagnose(user string) {
 			b, _ := io.ReadAll(io.LimitReader(r.Body, 8<<10))
 			r.Body.Close()
 			c.t.Logf("console %s: %d %.3000s", path, r.StatusCode, b)
-		}
-	}
-}
-
-// waitChatStatus waits until MAS has username in status, as the console reports it.
-func (c *messageChat) waitChatStatus(username, status string) time.Duration {
-	c.t.Helper()
-	start := time.Now()
-	for deadline := start.Add(90 * time.Second); ; time.Sleep(time.Second) {
-		if got := c.chatUsers()[username]; got == status {
-			return time.Since(start)
-		} else if time.Now().After(deadline) {
-			c.t.Fatalf("%s in MAS is %q, want %s", username, got, status)
 		}
 	}
 }
@@ -173,25 +169,94 @@ func (c *messageChat) signIns() {
 	if s, ok := c.chatUsers()["member"]; ok || c.verifiedAt("member") != "" {
 		t.Fatalf("member before verification: MAS user %q, KyIdentity verified %q", s, c.verifiedAt("member"))
 	}
-	var link struct{ Delivery string }
-	if json.Unmarshal(c.admin.change("POST", "/api/admin/users/"+c.memberID+"/reset-link", map[string]bool{"send": true}), &link) != nil || link.Delivery != "email" {
-		t.Fatalf("reset link delivery %q", link.Delivery)
-	}
-	token := c.mail.resetLink(t, memberAddress)
-	c.memberPW = randomPassword()
+	c.memberPW = c.verify("member", c.memberID, memberAddress)
 	c.secrets["member's password"] = c.memberPW
-	if code, b := c.identityPost("/api/auth/password/reset", map[string]string{"token": token, "password": c.memberPW}); code != 200 {
-		t.Fatalf("redeem the mailed link: %d %s", code, b)
-	}
-	v := c.verifiedAt("member")
-	if v == "" {
-		t.Fatal("KyIdentity did not verify member's address from the mailed link")
-	}
 	c.member = signInMatrix(t, c.ctx, c.mas, "member", []byte(c.memberPW))
 	if c.member.c.UserID.String() != mxid("member") {
 		t.Fatalf("member's Matrix ID %s", c.member.c.UserID)
 	}
-	t.Logf("AC19: member's address verified at %s by the mailed link; chat ID %s", v, c.member.c.UserID)
+	t.Logf("AC19: member's address verified at %s by the mailed link; chat ID %s", c.verifiedAt("member"), c.member.c.UserID)
+	// member is not the setup's; the sweeps after this one (AC22, AC25) find it still active.
+	if s := c.chatUsers()["member"]; s != "active" {
+		t.Fatalf("member in MAS is %q after its sign-in", s)
+	}
+}
+
+// verify mails username a KyIdentity link through Mailpit and redeems it with a new password,
+// which verifies its address.
+func (c *messageChat) verify(username, userID, address string) string {
+	t := c.t
+	t.Helper()
+	var link struct{ Delivery string }
+	if json.Unmarshal(c.admin.change("POST", "/api/admin/users/"+userID+"/reset-link", map[string]bool{"send": true}), &link) != nil || link.Delivery != "email" {
+		t.Fatalf("reset link delivery %q", link.Delivery)
+	}
+	token := c.mail.resetLink(t, address)
+	pw := randomPassword()
+	if code, b := c.identityPost("/api/auth/password/reset", map[string]string{"token": token, "password": pw}); code != 200 {
+		t.Fatalf("redeem the mailed link: %d %s", code, b)
+	}
+	if c.verifiedAt(username) == "" {
+		t.Fatalf("KyIdentity did not verify %s's address from the mailed link", username)
+	}
+	return pw
+}
+
+// chatOnlySignIn: a person assigned to "KyMessages chat" alone, of whom the console's directory
+// never hears, signs in to chat. chatOnlyReached later proves the sweep reaches them.
+func (c *messageChat) chatOnlySignIn() {
+	t := c.t
+	pw := randomPassword()
+	uid := c.admin.createPerson("chatonly", chatOnlyAddress, pw)
+	c.secrets["chatonly's first password"] = pw
+	c.admin.assign(c.admin.app("kymessage-chat"), uid)
+	pw = c.verify("chatonly", uid, chatOnlyAddress)
+	c.secrets["chatonly's password"] = pw
+	tok, stop := c.mas.signIn("chatonly", []byte(pw), c.device())
+	if tok == nil {
+		t.Logf("chat-only: chatonly, assigned to KyMessages chat alone, was refused chat: %.200s", stop)
+		return
+	}
+	c.chatOnly, c.chatSince = tok, time.Now()
+	code, _, user := whoami(t, c.transport, tok.Access)
+	t.Logf("chat-only: chatonly, assigned to KyMessages chat alone and verified, signed in to chat: whoami %d %s, MAS status %q", code, user, c.chatUsers()["chatonly"])
+}
+
+// chatOnlyReached proves the console's sweep locks chatonly, whom it does not know, and ends
+// its session: at its 5-minute run, or at the first accepted directory event (the owner's
+// disable, t0, wakes one).
+func (c *messageChat) chatOnlyReached(t0 time.Time) {
+	t := c.t
+	if c.chatOnly == nil {
+		return
+	}
+	target := mxid("chatonly")
+	for deadline := c.chatSince.Add(6 * time.Minute); ; time.Sleep(time.Second) {
+		code, errcode, _ := whoami(t, c.transport, c.chatOnly.Access)
+		if code == 401 && errcode == "M_UNKNOWN_TOKEN" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Errorf("chat-only upstream: chatonly's token still answers %d %s %s after its sign-in, past the sweep's 5-minute run", code, errcode, time.Since(c.chatSince).Round(time.Second))
+			return
+		}
+	}
+	if code, _, b := c.mas.refresh(c.chatOnly.Refresh); code == 200 {
+		t.Error("MAS refreshed chatonly's ended session")
+	} else {
+		t.Logf("chat-only: MAS refuses chatonly's refresh token: %d %.120s", code, b)
+	}
+	locked := c.audited("matrix.lock", target, 30*time.Second)
+	if locked.IsZero() || c.audited("matrix.session_end", target, 0).IsZero() {
+		t.Fatal("no matrix.lock and matrix.session_end for chatonly")
+	}
+	if tok, stop := c.mas.signIn("chatonly", []byte(c.secrets["chatonly's password"]), c.device()); tok != nil {
+		t.Error("the locked chatonly signed in to chat again")
+	} else {
+		t.Logf("chat-only: chatonly's new sign-in stopped at %.120s", stop)
+	}
+	t.Logf("chat-only: the sweep locked chatonly and ended its session %s after its sign-in (%s relative to the owner's disable, t0); its token is 401",
+		locked.Sub(c.chatSince).Round(time.Second), locked.Sub(t0).Round(time.Second))
 }
 
 // verifiedAt is KyIdentity's emailVerifiedAt for username, "" when unverified.
@@ -313,57 +378,57 @@ func (c *messageChat) calls() *mautrix.RespOpenIDToken {
 	return openID
 }
 
+// cut measures, from t0, when Synapse refuses token (401 M_UNKNOWN_TOKEN) and MAS refuses
+// refresh; both must be within 60 s (AC22).
+func (c *messageChat) cut(who, userID string, t0 time.Time, token, refresh string) time.Duration {
+	t := c.t
+	t.Helper()
+	var denied, refused time.Duration
+	for logged := false; denied == 0 || refused == 0; time.Sleep(250 * time.Millisecond) {
+		if denied == 0 {
+			if code, errcode, _ := whoami(t, c.transport, token); code == 401 && errcode == "M_UNKNOWN_TOKEN" {
+				denied = time.Since(t0)
+			}
+		}
+		if refused == 0 {
+			if code, tok, _ := c.mas.refresh(refresh); code == 200 {
+				refresh = tok.Refresh
+			} else if code >= 400 && code < 500 {
+				refused = time.Since(t0)
+			}
+		}
+		if !logged && time.Since(t0) > 60*time.Second {
+			c.diagnose(userID)
+			logged = true
+		}
+		if time.Since(t0) > 3*time.Minute {
+			t.Fatalf("%s: 3 minutes after the disable, token refused %v, refresh refused %v", who, denied != 0, refused != 0)
+		}
+	}
+	t.Logf("AC22: %s's access token got 401 M_UNKNOWN_TOKEN %s after the disable; MAS refused its refresh token %s after", who,
+		denied.Round(100*time.Millisecond), refused.Round(100*time.Millisecond))
+	if denied > 60*time.Second || refused > 60*time.Second {
+		t.Errorf("AC22: %s's chat outlived the 60 s bound", who)
+	}
+	target := mxid(who)
+	if c.audited("matrix.lock", target, 30*time.Second).IsZero() || c.audited("matrix.session_end", target, 0).IsZero() {
+		t.Errorf("AC22: no matrix.lock and matrix.session_end in the console's audit for %s", who)
+	}
+	return max(denied, refused)
+}
+
 // offboarding disables the owner's everyday account in KyIdentity and measures what ends its
 // chat (AC22), then re-enables it.
 func (c *messageChat) offboarding(openID *mautrix.RespOpenIDToken) {
 	t := c.t
 	c.owner.renew()
-	token, refresh := c.owner.c.AccessToken, c.owner.refresh
+	token := c.owner.c.AccessToken
 	renewed := time.Now()
 	ownerID := c.admin.findUser("prepared-user")
+	target := mxid("prepared-user")
 	t0 := time.Now()
 	c.admin.change("PUT", "/api/admin/users/"+ownerID, map[string]string{"status": "disabled"})
-	for logged := false; ; time.Sleep(500 * time.Millisecond) {
-		code, errcode, _ := whoami(t, c.transport, token)
-		if code == 401 && errcode == "M_UNKNOWN_TOKEN" {
-			break
-		}
-		if !logged && time.Since(t0) > 60*time.Second {
-			c.diagnose(ownerID)
-			logged = true
-		}
-		if time.Since(t0) > 6*time.Minute {
-			t.Fatalf("the disabled owner's Matrix token still answers %d %s", code, errcode)
-		}
-	}
-	denied := time.Since(t0)
-	t.Logf("AC22: the owner's access token got 401 M_UNKNOWN_TOKEN %s after the disable", denied.Round(100*time.Millisecond))
-	// The sweep locks at once; Synapse keeps MAS's introspection of a token for 2 minutes.
-	if denied > 60*time.Second {
-		t.Logf("AC22 upstream: over 60 s: the sweep locked the owner in MAS at once and ended no session, and Synapse answers from its cached introspection until it expires")
-	}
-	if denied > 150*time.Second {
-		t.Errorf("AC22: token revoked after %s, past Synapse's 2-minute introspection cache", denied)
-	}
-	code, tok, b := c.mas.refresh(refresh)
-	if code == 200 {
-		wc, we, _ := whoami(t, c.transport, tok.Access)
-		t.Logf("AC22 upstream: MAS 1.26 still refreshes the locked owner's session %s after the disable (200); the new access token gets %d %s", time.Since(t0).Round(time.Second), wc, we)
-		if wc != 401 {
-			t.Errorf("the locked owner's refreshed token answers %d", wc)
-		}
-	} else {
-		t.Logf("AC22: MAS refused the owner's refresh token %s after the disable: %d %.200s", time.Since(t0).Round(time.Second), code, b)
-	}
-	target := mxid("prepared-user")
-	if !c.audited("matrix.lock", target, 60*time.Second) {
-		t.Error("no matrix.lock in the console's audit for the owner")
-	}
-	if c.audited("matrix.session_end", target, 0) {
-		t.Log("AC22: matrix.session_end audited for the owner")
-	} else {
-		t.Log("AC22 upstream: no matrix.session_end for the owner: KyMessages' sweep locks a person in MAS and ends no session")
-	}
+	c.cut("prepared-user", ownerID, t0, token, c.owner.refresh)
 	if tok, stop := c.mas.signIn("prepared-user", c.everyday(), c.device()); tok != nil {
 		t.Fatal("the disabled owner signed in to chat")
 	} else {
@@ -374,35 +439,33 @@ func (c *messageChat) offboarding(openID *mautrix.RespOpenIDToken) {
 	} else {
 		t.Logf("AC22: sfu/get with the owner's last OpenID token: %d %s %s", code, out["errcode"], out["error"])
 	}
+	// member, whom setup did not create, kept chat through the sweep the disable woke.
 	c.member.renew()
-	if code, _, user := whoami(t, c.transport, c.member.c.AccessToken); code == 200 && user == mxid("member") {
-		t.Log("AC22: member's token still works")
-	} else if s := c.chatUsers()["member"]; s == "locked" {
-		// The console's managed directory takes only its setup's identities (422 for member), so
-		// its sweep locks member as "not known to KyMessages" at its first run after member's
-		// sign-in: here the one the owner's offboarding woke.
-		t.Logf("AC22 upstream: member's token gets %d: the sweep locked member, unknown to the console, whose directory refuses people its setup did not create", code)
-	} else {
-		t.Fatalf("member's token after the owner's disable: %d %s, MAS status %q", code, user, s)
+	if code, _, user := whoami(t, c.transport, c.member.c.AccessToken); code != 200 || user != mxid("member") {
+		t.Fatalf("member's token after the owner's disable: %d %s, MAS status %q", code, user, c.chatUsers()["member"])
 	}
+	if s := c.chatUsers()["member"]; s != "active" {
+		t.Fatalf("member in MAS is %q after the owner's offboarding", s)
+	}
+	t.Log("AC22: member's token still works and member is active in MAS")
+	c.chatOnlyReached(t0)
 
 	c.admin.change("PUT", "/api/admin/users/"+ownerID, map[string]string{"status": "active"})
-	if !c.audited("matrix.unlock", target, 90*time.Second) {
+	if c.audited("matrix.unlock", target, 90*time.Second).IsZero() {
 		t.Fatal("no matrix.unlock for the re-enabled owner")
 	}
 	c.owner.resume("prepared-user", c.everyday())
 	if code, _, user := whoami(t, c.transport, c.owner.c.AccessToken); code != 200 || user != target {
 		t.Fatalf("the re-enabled owner's fresh sign-in: %d %s", code, user)
 	}
-	// Past Synapse's 2-minute introspection cache, inside the token's 5-minute life.
+	// Past Synapse's 2-minute introspection cache, inside the token's 5-minute life, though the
+	// fresh sign-in reuses the old device ID.
 	reenabled := time.Now()
 	for {
-		code, errcode, _ := whoami(t, c.transport, token)
-		if code != 401 {
-			t.Logf("AC22 upstream: the owner's old access token answers %d again %s after the re-enable (issued %s before): locking ended no session", code, time.Since(reenabled).Round(time.Second), time.Since(renewed).Round(time.Second))
+		if code, errcode, _ := whoami(t, c.transport, token); code != 401 {
+			t.Errorf("AC22: the owner's old access token answers %d %s %s after the re-enable", code, errcode, time.Since(reenabled).Round(time.Second))
 			break
-		}
-		if time.Since(reenabled) > 130*time.Second || time.Since(renewed) > 290*time.Second {
+		} else if time.Since(reenabled) > 130*time.Second || time.Since(renewed) > 290*time.Second {
 			t.Logf("AC22: the owner's old access token stayed 401 %s for %s after the re-enable (issued %s before)", errcode, time.Since(reenabled).Round(time.Second), time.Since(renewed).Round(time.Second))
 			break
 		}
@@ -503,7 +566,7 @@ func (u *matrixUser) history(room id.RoomID, eventID id.EventID) bool {
 
 // sessionWatch follows a person's pre-backup session while a restore runs: each second it
 // refreshes it at MAS and asks Synapse whoami with the new access token. It records the first
-// time that answers 200 and the first 401.
+// time that answers 200 and the first refusal, by MAS (a 4xx to the refresh) or Synapse (401).
 type sessionWatch struct {
 	stop, finished chan struct{}
 	ok, denied     time.Time
@@ -523,8 +586,9 @@ func watchMatrixSession(t *testing.T, m *mas, refresh string) *sessionWatch {
 			code, b := m.grant(url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refresh}})
 			var tok masTokens
 			if code != 200 || json.Unmarshal(b, &tok) != nil || tok.Refresh == "" {
-				if code != 0 && code < 500 {
-					w.last = strconv.Itoa(code) + " " + string(bytes.TrimSpace(b))
+				if code >= 400 && code < 500 {
+					w.denied, w.last = time.Now(), "MAS refused the refresh: "+strconv.Itoa(code)+" "+string(bytes.TrimSpace(b))
+					return
 				}
 				continue
 			}
@@ -535,7 +599,7 @@ func watchMatrixSession(t *testing.T, m *mas, refresh string) *sessionWatch {
 					w.ok = time.Now()
 				}
 			case 401:
-				w.denied = time.Now()
+				w.denied, w.last = time.Now(), "Synapse answered 401"
 				return
 			}
 		}
@@ -590,9 +654,12 @@ func (c *messageChat) backupRestore(o messageOps) {
 	o.skipped("backup destination", handover)
 	c.secrets["the rest-server password"] = srv.passwords["nas"]
 
-	// member's session as the snapshot holds it.
+	// member's session as the snapshot holds it: active, never locked.
 	c.member.renew()
 	memberRefresh := c.member.refresh
+	if code, _, _ := whoami(t, c.transport, c.member.c.AccessToken); code != 200 || c.chatUsers()["member"] != "active" || !c.audited("matrix.lock", mxid("member"), 0).IsZero() {
+		t.Fatalf("member before the backup: whoami %d, MAS %q, or a matrix.lock in the audit", code, c.chatUsers()["member"])
+	}
 
 	// AC25: hot, with the dump streamed from postgres; the same containers, healthy.
 	before := stackContainers(t)
@@ -647,9 +714,13 @@ func (c *messageChat) backupRestore(o messageOps) {
 	}
 	keys := hashes()
 
-	// member is offboarded after the snapshot.
+	// member, a person setup did not create, is offboarded after the snapshot (AC22).
+	t1 := time.Now()
 	c.admin.change("PUT", "/api/admin/users/"+c.memberID, map[string]string{"status": "disabled"})
-	c.waitChatStatus("member", "locked")
+	c.cut("member", c.memberID, t1, c.member.c.AccessToken, memberRefresh)
+	if s := c.chatUsers()["member"]; s != "locked" {
+		t.Fatalf("the disabled member in MAS is %q", s)
+	}
 	docker(t, "compose", "-p", "kyq-kymessage", "down")
 	docker(t, "exec", c.msg.name, "rm", "-rf", c.msg.root+"/kymessage")
 	watch := watchMatrixSession(t, c.mas, memberRefresh)
@@ -669,14 +740,25 @@ func (c *messageChat) backupRestore(o messageOps) {
 	ok, denied := watch.end()
 	synapse, _ := time.Parse(time.RFC3339Nano, docker(t, "inspect", "kyq-kymessage-synapse-1", "--format", "{{.State.StartedAt}}"))
 	if denied.IsZero() {
-		t.Fatalf("member's pre-backup session still works 60 s after the restore (last refusal %s)", watch.last)
+		t.Fatal("member's pre-backup session still works 60 s after the restore")
 	}
 	window := "never seen working"
 	if !ok.IsZero() {
 		window = "worked from " + ok.Format(time.RFC3339) + " (" + ok.Sub(synapse).Round(time.Second).String() + " after synapse started)"
 	}
-	t.Logf("AC26: member's pre-backup session (restore_order postgres, mas, app, synapse, element, livekit) %s; 401 at %s, %s after synapse started (%s), %s after the restore returned",
-		window, denied.Format(time.RFC3339), denied.Sub(synapse).Round(time.Second), synapse.Format(time.RFC3339), denied.Sub(restored).Round(time.Second))
+	t.Logf("AC26: member's pre-backup session (restore_order postgres, mas, app, synapse, element, livekit) %s; refused (%s) at %s, %s after synapse started (%s), %s after the restore returned",
+		window, watch.last, denied.Format(time.RFC3339Nano), denied.Sub(synapse).Round(100*time.Millisecond), synapse.Format(time.RFC3339Nano), denied.Sub(restored).Round(100*time.Millisecond))
+	if denied.Sub(synapse) > 60*time.Second {
+		t.Errorf("AC26: member's session outlived synapse's start by over 60 s")
+	}
+	// The snapshot had member active with no lock, so these rows are the replay's sweep.
+	for _, action := range []string{"matrix.lock", "matrix.session_end"} {
+		if at := c.audited(action, mxid("member"), 30*time.Second); at.IsZero() {
+			t.Errorf("AC26: no %s for member after the restore", action)
+		} else {
+			t.Logf("AC26: %s for member %s after synapse started", action, at.Sub(synapse).Round(time.Second))
+		}
+	}
 	if tok, stop := c.mas.signIn("member", []byte(c.memberPW), c.device()); tok != nil {
 		t.Fatal("the offboarded member signed in to chat after the restore")
 	} else {
