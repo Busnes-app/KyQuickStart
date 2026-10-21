@@ -78,6 +78,9 @@ func (a App) compose(args string) string {
 		" -f compose.yaml -f compose.kyq.yaml " + args
 }
 
+// Compose is the docker compose command line for args, run from the app's directory.
+func (a App) Compose(args string) string { return a.compose(args) }
+
 func (a App) ps(ctx context.Context) ([]container, error) {
 	out, err := a.Runner.Run(ctx, a.compose("ps --all --format json"), nil)
 	if err != nil {

@@ -438,8 +438,9 @@ var directoryRetry = 10 * time.Second
 // holds it. Defence in depth: KyIdentity 0.4.5 and earlier dropped a removal made before
 // that first delivery, and the console keeps the owner's accounts its setup made.
 type directoryStep struct {
-	app  string
-	sync func(ctx context.Context) (client, detail string)
+	app   string
+	reach string // what offboarding may not reach until it is delivered
+	sync  func(ctx context.Context) (client, detail string)
 }
 
 func (s directoryStep) ID() string                            { return s.app + ".directory" }
@@ -459,7 +460,7 @@ func (s directoryStep) Apply(ctx context.Context) error {
 		client, detail = s.sync(ctx)
 	}
 	if detail != "" {
-		return fmt.Errorf("KyIdentity's %s connector has not delivered its directory to %s (%s); until it does, offboarding someone may not reach chat. Fix the connector, then rerun apply", client, s.app, detail)
+		return fmt.Errorf("KyIdentity's %s connector has not delivered its directory to %s (%s); until it does, offboarding someone may not reach %s. Fix the connector, then rerun apply", client, s.app, detail, s.reach)
 	}
 	return nil
 }

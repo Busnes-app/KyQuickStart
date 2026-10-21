@@ -25,7 +25,8 @@ func integrationOrder(st *stack.Stack) ([]stack.Integration, error) {
 		return nil, errors.New("no product integrations selected in stack.yaml")
 	}
 	for _, i := range st.Integrations {
-		if _, ok := productAdapters[i.Product]; !ok {
+		// The catalog BookStack has no apply-setup: apply sets it up through bookstackSteps.
+		if _, ok := productAdapters[i.Product]; !ok && (i.Product != "bookstack" || !i.Installed(st)) {
 			return nil, fmt.Errorf("product %s has no supported setup adapter", i.Product)
 		}
 		if target, ok := st.Target(i.Target); ok {

@@ -483,6 +483,12 @@ func (s *session) finishRestore(ctx context.Context, st dockerhost.Store, id, st
 				return err
 			}
 			setup = append(setup, last)
+		} else if name == "bookstack" {
+			var after []engine.Step
+			if setup, after, err = s.bookstackSteps(s.drivers[st.Host], i); err != nil {
+				return err
+			}
+			setup = append(setup, after...)
 		} else if setup, connector, err = s.setupSteps(s.drivers[st.Host], i); err != nil {
 			return err
 		}

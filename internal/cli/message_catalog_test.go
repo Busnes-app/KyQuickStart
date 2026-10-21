@@ -744,7 +744,7 @@ func TestWithChatClients(t *testing.T) {
 func TestKyMessageDirectoryStep(t *testing.T) {
 	ctx := context.Background()
 	detail := "pending, 2 pending, 0 failed"
-	s := directoryStep{app: "kymessage", sync: func(context.Context) (string, string) { return "kymessage", detail }}
+	s := directoryStep{app: "kymessage", reach: "chat", sync: func(context.Context) (string, string) { return "kymessage", detail }}
 	if err := s.Apply(ctx); err == nil || err.Error() != "KyIdentity's kymessage connector has not delivered its directory to kymessage (pending, 2 pending, 0 failed); until it does, offboarding someone may not reach chat. Fix the connector, then rerun apply" {
 		t.Fatalf("undelivered: %v", err)
 	}

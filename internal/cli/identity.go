@@ -46,10 +46,17 @@ func dockerProductInputExec(r remote.Runner, container, binary string, runtimeUs
 
 // dockerAppContainer is a shell prefix that sets $c to the ID of installed app's one running
 // installer-managed container, or fails.
-func dockerAppContainer(app string) string {
+func dockerAppContainer(app string) string { return dockerServiceContainer(app, "app") }
+
+// dockerServiceContainer is dockerAppContainer for the app's Compose service.
+func dockerServiceContainer(app, service string) string {
+	name := app
+	if service != "app" {
+		name += " " + service
+	}
 	return "c=$(docker ps -q --filter " + remote.Quote("label=com.docker.compose.project=kyq-"+app) +
-		" --filter " + remote.Quote("label=com.docker.compose.service=app") + " --filter " + remote.Quote("label="+managed.Label+"="+managed.Value) + " --filter status=running) && " +
-		"case $c in ''|*[!0-9a-f]*) echo " + remote.Quote("want one running "+app+" container") + " >&2; exit 1;; esac && "
+		" --filter " + remote.Quote("label=com.docker.compose.service="+service) + " --filter " + remote.Quote("label="+managed.Label+"="+managed.Value) + " --filter status=running) && " +
+		"case $c in ''|*[!0-9a-f]*) echo " + remote.Quote("want one running "+name+" container") + " >&2; exit 1;; esac && "
 }
 
 // dockerExec runs binary in container, a shell word that prefix may set.

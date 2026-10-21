@@ -343,6 +343,9 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 		}
 	}
 	sort.Slice(s.targets, func(i, j int) bool { return s.targets[i].Name < s.targets[j].Name })
+	if err := bookstackPlan(st, cat); err != nil {
+		return nil, err
+	}
 	if s.order, err = plan.Order(names, cat); err != nil {
 		return nil, err
 	}
@@ -399,7 +402,7 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 		}
 	}
 	for _, i := range st.Integrations {
-		supported := i.Product == "kyidentity" && i.Identity != nil || cat[i.Product].OIDC != nil && productAdapters[i.Product].setup != nil
+		supported := i.Product == "kyidentity" && i.Identity != nil || cat[i.Product].OIDC != nil && (productAdapters[i.Product].setup != nil || i.Product == "bookstack")
 		if i.Installed(st) && !supported {
 			return nil, fmt.Errorf("integration %s: apply configures only an installed KyIdentity (from its identity settings) and the installed Ky apps that sign in through it", i.Product)
 		}
@@ -703,6 +706,9 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 	if err := s.refuseMovedServerName(ctx); err != nil {
 		return nil, err
 	}
+	if err := s.refuseOldIdentity(ctx); err != nil {
+		return nil, err
+	}
 	var steps, held, connectors []engine.Step
 	for _, name := range s.order {
 		if s.o.RunnerID != "" && hostsRunner(s.cat[name]) {
@@ -732,12 +738,24 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 				// Before its deploy: Compose refuses MAS without the configuration they write.
 				k := slices.IndexFunc(app, func(st engine.Step) bool { return st.ID() == name+".deploy" })
 				app = append(append(append(append([]engine.Step{}, app[:k]...), before...), app[k:]...), setup)
-				connectors = append(connectors, directoryStep{app: name, sync: func(ctx context.Context) (string, string) { return s.resync(ctx, name) }})
+				connectors = append(connectors, directoryStep{app: name, reach: "chat", sync: func(ctx context.Context) (string, string) { return s.resync(ctx, name) }})
 			}
+			if i.Product == name && i.Target == s.placed[name].Name && name == "bookstack" {
+				before, after, err := s.bookstackSteps(d, i)
+				if err != nil {
+					return nil, err
+				}
+				// Its files before its deploy: BookStack reads them at start.
+				k := slices.IndexFunc(app, func(st engine.Step) bool { return st.ID() == name+".deploy" })
+				app = append(append(append(append([]engine.Step{}, app[:k]...), before...), app[k:]...), after...)
+			}
+		}
+		if a := s.cat[name]; a.Category == "third-party" && a.OIDC.DirectoryPath != "" {
+			connectors = append(connectors, directoryStep{app: name, reach: a.OIDC.Name, sync: func(ctx context.Context) (string, string) { return s.resync(ctx, name) }})
 		}
 		steps = append(steps, app...)
 		for _, i := range s.integrations {
-			if i.Product == name && i.Target == s.placed[name].Name && i.ChatClient == "" {
+			if i.Product == name && i.Target == s.placed[name].Name && i.ChatClient == "" && name != "bookstack" {
 				setup, connector, err := s.setupSteps(d, i)
 				if err != nil {
 					return nil, err

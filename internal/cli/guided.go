@@ -507,6 +507,9 @@ func validateSelection(st *stack.Stack, cat catalog.Catalog, o Options) error {
 	if err := messagePlan(st, cat); err != nil {
 		return err
 	}
+	if err := bookstackPlan(st, cat); err != nil {
+		return err
+	}
 	_, err := plan.Order(names, cat)
 	return err
 }
@@ -864,10 +867,15 @@ func guidedEdges(p *prompts, st *stack.Stack, cat catalog.Catalog) error {
 	return nil
 }
 
-// askRoutes asks a multi-route app's hostnames, defaulting each role under one domain whose
-// apex is the role with paths (KyMessages' server name), its address and its ports.
+// askRoutes asks a multi-route app's hostnames, defaulting each role under one domain, its
+// address and its ports. KyMessages' role with paths, its server name, is the domain's apex.
 func askRoutes(p *prompts, rk string, st *stack.Stack, name string, app catalog.App) ([]stack.Route, error) {
-	domain, err := p.ask(rk+"domain", name+"'s domain. It becomes the permanent Matrix server name (accounts are @name:<domain>) and the other hostnames go under it", "", stack.Hostname)
+	matrix := app.ChatOIDC != nil
+	question, cover := name+"'s domain. Its hostnames go under it", "*.%[1]s"
+	if matrix {
+		question, cover = name+"'s domain. It becomes the permanent Matrix server name (accounts are @name:<domain>) and the other hostnames go under it", "%[1]s and *.%[1]s (a wildcard alone misses the apex)"
+	}
+	domain, err := p.ask(rk+"domain", question, "", stack.Hostname)
 	if err != nil {
 		return nil, err
 	}
@@ -875,12 +883,16 @@ func askRoutes(p *prompts, rk string, st *stack.Stack, name string, app catalog.
 	var list []string
 	for _, cr := range app.Routes {
 		switch {
-		case cr.Role == app.Primary():
+		case cr.Role == app.Primary() && matrix:
 			fallbacks[cr.Role] = "message." + domain
-		case len(cr.Paths) > 0:
+		case cr.Role == app.Primary():
+			fallbacks[cr.Role] = name + "." + domain
+		case len(cr.Paths) > 0 && matrix:
 			fallbacks[cr.Role] = domain
-		default:
+		case matrix:
 			fallbacks[cr.Role] = cr.Role + "." + domain
+		default:
+			fallbacks[cr.Role] = name + "-" + cr.Role + "." + domain
 		}
 		list = append(list, fallbacks[cr.Role]+" ("+cr.Role+")")
 	}
@@ -895,7 +907,7 @@ func askRoutes(p *prompts, rk string, st *stack.Stack, name string, app catalog.
 	if err != nil {
 		return nil, err
 	}
-	id, err := p.ask(rk+"certificate", "Existing NPM certificate ID covering "+domain+" and *."+domain+" (a wildcard alone misses the apex)", "", integer(1, 2147483647))
+	id, err := p.ask(rk+"certificate", "Existing NPM certificate ID covering "+fmt.Sprintf(cover, domain), "", integer(1, 2147483647))
 	if err != nil {
 		return nil, err
 	}
@@ -908,7 +920,7 @@ func askRoutes(p *prompts, rk string, st *stack.Stack, name string, app catalog.
 		switch {
 		case cr.Role == app.Primary():
 			k = rk
-		case len(cr.Paths) > 0:
+		case len(cr.Paths) > 0 && matrix:
 			fmt.Fprintf(p.out, "%s's %s hostname is permanent: every account's ID ends in it.\n", name, cr.Role)
 		}
 		if cr.Role != app.Primary() {

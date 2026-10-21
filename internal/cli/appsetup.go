@@ -91,6 +91,9 @@ func (s *session) composeClients(st *stack.Stack) error {
 		if err != nil {
 			return err
 		}
+		if o := s.cat[i.Product].OIDC; o.DirectoryRole != "" && console.SuiteWebhook != nil {
+			console.SuiteWebhook.URL = "https://" + roleHost(st, i.Product, o.DirectoryRole) + o.DirectoryPath
+		}
 		wanted := []stack.IdentityClient{console}
 		if o := s.cat[i.Product].ChatOIDC; o != nil && i.ChatClient != "" {
 			wanted = append(wanted, chatClientFor(i.ChatClient, roleHost(st, i.Product, o.Role), providerID(st.InstallationID, i.Product), o))
@@ -141,6 +144,8 @@ func (s *session) composeClients(st *stack.Stack) error {
 			s.handover += fmt.Sprintf(postHandover, host, n.Admin.Username, n.Everyday.Username, postContainer, s.placed["kypost"].Name)
 		case "kymessage":
 			s.handover += messageHandover(st, i.Product, s.placed[i.Product], n.Admin.Username, n.Everyday.Username)
+		case "bookstack":
+			s.handover += bookstackHandover(host, n.Admin.Username, n.Everyday.Username)
 		case "kypulse":
 			var unwatched []string
 			s.pulseTargets, unwatched = pulseTargets(st, s.cat)
