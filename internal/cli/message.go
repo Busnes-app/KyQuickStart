@@ -7,7 +7,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"math/big"
+	"net"
 	"os"
 	"path"
 	"slices"
@@ -91,7 +94,9 @@ func messagePlan(st *stack.Stack, cat catalog.Catalog) error {
 	}
 	for _, i := range st.Integrations {
 		if i.Identity != nil && i.Identity.Mail != nil && i.Identity.Mail.PasswordFile != "" {
-			if _, err := readMailPassword(i.Identity.Mail.PasswordFile); err != nil {
+			pw, err := readMailPassword(i.Identity.Mail.PasswordFile)
+			clear(pw)
+			if err != nil {
 				return err
 			}
 		}
@@ -99,29 +104,62 @@ func messagePlan(st *stack.Stack, cat catalog.Catalog) error {
 	return nil
 }
 
+// withChatClients names each installed chat app's chat client, which has one possible name.
+func withChatClients(st *stack.Stack, cat catalog.Catalog) {
+	for k, i := range st.Integrations {
+		if o := cat[i.Product].ChatOIDC; o != nil && i.IdentityClient != "" && i.Installed(st) {
+			st.Integrations[k].ChatClient = i.Product + "-" + o.ClientSuffix
+		}
+	}
+}
+
 // readMailPassword reads the workstation's SMTP password file: a regular 0600 file of this
 // user, not a symlink, one line of at most 1024 bytes. The caller clears the result.
 func readMailPassword(file string) ([]byte, error) {
-	bad := fmt.Errorf("identity.mail.password_file %s must be a regular file of this user with mode 0600 (not a symlink), holding one line of at most 1024 bytes", file)
-	fi, err := os.Lstat(file)
-	if err != nil || !fi.Mode().IsRegular() || fi.Mode().Perm() != 0o600 {
-		return nil, bad
+	bad := func(why string) error {
+		return fmt.Errorf("identity.mail.password_file %s %s. It must be a regular file of yours with mode 0600, not a symlink, holding one line of at most 1024 bytes", file, why)
 	}
-	if st, ok := fi.Sys().(*syscall.Stat_t); !ok || int(st.Uid) != os.Getuid() {
-		return nil, bad
-	}
-	f, err := os.OpenFile(file, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
-	if err != nil {
-		return nil, bad
+	// The checks are on the opened file. O_NONBLOCK: a FIFO is refused below, not waited on.
+	f, err := os.OpenFile(file, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil, bad("does not exist")
+	case errors.Is(err, syscall.ELOOP):
+		return nil, bad("is a symlink")
+	case err != nil:
+		return nil, bad(fmt.Sprintf("cannot be opened (%v)", errors.Unwrap(err)))
 	}
 	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, bad("cannot be read")
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	switch {
+	case !fi.Mode().IsRegular():
+		return nil, bad("is not a regular file")
+	case !ok || int(st.Uid) != os.Getuid():
+		return nil, bad("belongs to another user")
+	case fi.Mode().Perm() != 0o600:
+		return nil, bad(fmt.Sprintf("has mode %04o, not 0600 (chmod 600 %s)", fi.Mode().Perm(), file))
+	}
 	b := make([]byte, 1026)
-	n, _ := f.Read(b)
-	b = b[:n]
-	p := bytes.TrimSuffix(b, []byte("\n"))
-	if len(p) == 0 || len(p) > 1024 || bytes.ContainsAny(p, "\r\n\x00") {
+	n, err := io.ReadFull(f, b)
+	p := bytes.TrimSuffix(b[:n], []byte("\n"))
+	why := ""
+	switch {
+	case err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF):
+		why = "cannot be read"
+	case len(p) == 0:
+		why = "is empty"
+	case len(p) > 1024:
+		why = "is longer than 1024 bytes"
+	case bytes.ContainsAny(p, "\r\n\x00"):
+		why = "holds more than one line (or a CR or NUL byte)"
+	}
+	if why != "" {
 		clear(b)
-		return nil, bad
+		return nil, bad(why)
 	}
 	return p, nil
 }
@@ -138,7 +176,7 @@ func withRoutes(st *stack.Stack, name string, t stack.Target, app catalog.App) (
 				continue
 			}
 			if r.Role == app.Primary() {
-				return app, fmt.Errorf("app %q: its %s route takes no role: the primary route's role is empty", name, r.Role)
+				return app, fmt.Errorf("app %q: route %s has role %q; remove the role: the %s is the route with no role", name, r.Hostname, r.Role, r.Role)
 			}
 			role := r.Role
 			if role == "" {
@@ -153,18 +191,26 @@ func withRoutes(st *stack.Stack, name string, t stack.Target, app catalog.App) (
 			edge, byRole[role] = &st.Edges[i], r
 		}
 	}
-	ports := map[int]string{}
+	ports, byKey := map[int]string{}, map[string]string{} // forward_port -> service:port -> role
 	var c catalog.Route
 	for _, cr := range app.Routes {
 		r, ok := byRole[cr.Role]
-		if !ok {
-			return app, fmt.Errorf("app %q needs a route with role %s (%s port %d); the primary route has no role", name, cr.Role, cr.Service, cr.Port)
+		switch {
+		case !ok && cr.Role == app.Primary():
+			return app, fmt.Errorf("app %q needs a route with no role: its %s (service %s, port %d)", name, cr.Role, cr.Service, cr.Port)
+		case !ok:
+			return app, fmt.Errorf("app %q needs a route with role %s (service %s, port %d)", name, cr.Role, cr.Service, cr.Port)
+		case !stack.MediaAddress(r.ForwardHost):
+			return app, fmt.Errorf("app %q: route %s: forward_host %s must be one LAN IPv4 address of %s that the edge reaches, not a wildcard, loopback, link-local, multicast, IPv6 address or a name: Docker publishes every routed port on it", name, r.Hostname, r.ForwardHost, t.Name)
 		}
 		key := fmt.Sprint(cr.Service, ":", cr.Port)
 		if other, used := ports[r.ForwardPort]; used && other != key {
 			return app, fmt.Errorf("app %q: forward_port %d is given to two services; each published service port needs its own", name, r.ForwardPort)
 		}
-		ports[r.ForwardPort] = key
+		if role, seen := byKey[key]; seen && byRole[role].ForwardPort != r.ForwardPort {
+			return app, fmt.Errorf("app %q: routes %s and %s are the same service port (%s) and need one forward_port: set both to %d", name, byRole[role].Hostname, r.Hostname, key, byRole[role].ForwardPort)
+		}
+		ports[r.ForwardPort], byKey[key] = key, cr.Role
 		if r.ForwardHost != byRole[app.Primary()].ForwardHost {
 			return app, fmt.Errorf("app %q: its routes forward to one forward_host, an address of %s", name, t.Name)
 		}
@@ -383,6 +429,26 @@ func (s *session) messageSteps(d driver, i stack.Integration) (before []engine.S
 	return []engine.Step{matrixInitStep{app: i.Product, target: host.t.Name, seed: seed, env: env, hash: hash, file: file, run: run}, creds}, step, nil
 }
 
+// directoryStep (<app>.directory), after the routes, waits until KyIdentity's connector has
+// delivered the console's directory. Until then an offboarding can be lost: KyIdentity drops
+// the removal of a person whose creation it has not delivered, and the console keeps the
+// owner's accounts its setup made.
+type directoryStep struct {
+	app  string
+	sync func(ctx context.Context) (client, detail string)
+}
+
+func (s directoryStep) ID() string                            { return s.app + ".directory" }
+func (s directoryStep) InputHash() string                     { return "resync" }
+func (s directoryStep) Inspect(context.Context) (bool, error) { return false, nil }
+func (s directoryStep) Verify(context.Context) error          { return nil }
+func (s directoryStep) Apply(ctx context.Context) error {
+	if client, detail := s.sync(ctx); detail != "" {
+		return fmt.Errorf("KyIdentity's %s connector has not delivered its directory to %s (%s); until it does, offboarding someone may not reach chat. Fix the connector, then rerun apply", client, s.app, detail)
+	}
+	return nil
+}
+
 // firstIdentity is the installed KyIdentity's integration, which composeClients found.
 func (s *session) firstIdentity() stack.Integration {
 	return s.integrations[slices.IndexFunc(s.integrations, func(x stack.Integration) bool { return x.Product == "kyidentity" && x.Identity != nil })]
@@ -441,6 +507,14 @@ func messageHandover(st *stack.Stack, app string, t stack.Target, admin, everyda
 			media = a.MediaAddress
 		}
 	}
+	// Only KyIdentity's mailed link verifies an address the installer did not set.
+	relay := `No mail relay is set, so only the owner's accounts are verified and nobody else
+  can get a chat account: set a relay in KyIdentity's admin UI (Settings > Mail).`
+	for _, i := range st.Integrations {
+		if i.Product == "kyidentity" && i.Identity != nil && i.Identity.Mail != nil {
+			relay = "KyIdentity sends that mail through " + net.JoinHostPort(i.Identity.Mail.Host, fmt.Sprint(i.Identity.Mail.Port)) + "."
+		}
+	}
 	server := strings.Split(roleHost(st, app, "server_name"), ":")[0]
 	compose := initAdminLine(t, app)
 	return fmt.Sprintf(`
@@ -450,19 +524,23 @@ KyMessages chat at https://%[1]s/ (Element), its console at https://%[2]s/.
   Chat: everyday accounts only (%[5]s). %[4]s signs in to the console alone and has no chat.
   To add a person: in KyIdentity assign them to both "KyMessages" and "KyMessages chat", and
   make sure their email is verified (the installer's owner accounts are; anyone else redeems
-  KyIdentity's verification mail). An unverified address gets no Matrix account. Someone
-  assigned to "KyMessages chat" alone is locked out of chat at the next sweep.
+  KyIdentity's verification mail). An unverified address gets no Matrix account.
+  %[10]s
+  Someone assigned to "KyMessages chat" alone is locked out of chat at the next sweep.
+  Removing someone from "KyMessages chat" alone stops only their new chat sign-ins: their
+  open sessions keep working. To end their chat, remove them from "KyMessages" too, or
+  offboard them.
   Calls: media goes straight to %[6]s, TCP 7881 and UDP 7882, which are open to your LAN; no
   TURN is installed, so callers must reach that address. Federation is closed.
   A KyIdentity sign-out does not end chat sessions. Offboarding (disabling or deleting the
   person in KyIdentity) locks them out of chat and calls and ends their open chat sessions
   within seconds.
   Outstanding human steps:
-  1. Its local "admin" break-glass account. Its one-time password is in the console's first
-     log (docker logs kyq-%[7]s-app-1 on %[8]s). Replace it: on %[8]s, pipe a new password of
-     at least 12 characters (read from stdin, never from the command line) into:
+  1. Replace the console's local "admin" break-glass password. Its one-time password is in
+     the first lines of docker logs kyq-%[7]s-app-1 on %[8]s. On %[8]s, pipe a new one of at
+     least 12 characters (stdin only, never on the command line) into:
        %[9]s
   2. On its Backups screen, as %[4]s, pair it with KyRecovery using a one-time code from
      KyRecovery's administrator, or pin the suite public key by hand.
-`, roleHost(st, app, "chat"), roleHost(st, app, ""), server, admin, everyday, media, app, t.Name, compose)
+`, roleHost(st, app, "chat"), roleHost(st, app, ""), server, admin, everyday, media, app, t.Name, compose, relay)
 }

@@ -101,6 +101,9 @@ type Backup struct {
 	// CapsuleSecrets travel in the restic snapshot, encrypted by restic; a subset of secrets.
 	CapsuleSecrets []string `yaml:"capsule_secrets"`
 	RestoreOrder   []string `yaml:"restore_order"` // Compose services, service first
+	// ReplayAfter is the restore_order service after which a restore replays KyIdentity's
+	// removals; the services after it start only once the replay is delivered.
+	ReplayAfter string `yaml:"replay_after"`
 }
 
 // ResticPassword is the installer's own secret beside an app's: no manifest may declare it.
@@ -639,6 +642,9 @@ func (m Manifest) validateBackup(c *composeFile) error {
 	}
 	if b.Service != "" && len(b.RestoreOrder) > 0 && b.RestoreOrder[0] != b.Service {
 		return fmt.Errorf("restore_order must start with service %q", b.Service)
+	}
+	if b.ReplayAfter != "" && (m.OIDC == nil || !slices.Contains(b.RestoreOrder, b.ReplayAfter)) {
+		return fmt.Errorf("replay_after must be a restore_order service of an app with oidc")
 	}
 	return nil
 }

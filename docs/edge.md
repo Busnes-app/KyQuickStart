@@ -364,7 +364,10 @@ carry `ky.managed-by=kyquickstart`; the installer will not adopt foreign objects
 
 An app whose catalog manifest declares `routes` (KyMessages) takes one route per role, all on
 one edge and one `forward_host`, with one `forward_port` per published service port (roles on the
-same service and port share it). The primary route has no `role`; the others name theirs:
+same service and port must share it). Docker publishes every routed port on `forward_host`, so it
+must be one LAN IPv4 address of the target: a wildcard, loopback, link-local, multicast or IPv6
+address, or a name, is refused before connecting. The primary route has no `role`; the others
+name theirs:
 
 ```yaml
 routes:

@@ -103,7 +103,8 @@ func TestGuidedIdentityMail(t *testing.T) {
 	// it is not 0600.
 	m, out := guided(answers, "\n\n\nsmtp.example.test\n\nplain\n\nKyIdentity <identity@example.test>\nkyidentity\nrelative\n"+loose+"\n"+file+"\n")
 	want := &stack.IdentityMail{Host: "smtp.example.test", Port: 587, Security: "starttls", From: "KyIdentity <identity@example.test>", Username: "kyidentity", PasswordFile: file}
-	if !reflect.DeepEqual(m, want) || strings.Count(out, "Please enter a valid value") != 3 || strings.Contains(out, "pw") {
+	if !reflect.DeepEqual(m, want) || strings.Count(out, "Please enter a valid value") != 3 || strings.Contains(out, "pw") ||
+		!strings.Contains(out, "needs an absolute path") || !strings.Contains(out, "has mode 0644, not 0600 (chmod 600 "+loose+")") {
 		t.Fatalf("mail %+v\n%s", m, out)
 	}
 	// Resumed from the saved plan, every answer kept.

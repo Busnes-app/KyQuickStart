@@ -406,7 +406,8 @@ func readPassword(in *bufio.Reader, out io.Writer, stdin io.Reader, app string) 
 }
 
 // finishRestore deploys the restored app through apply's own steps, restore_order first and
-// the dump between, checks its health and setup, and replays KyIdentity's removals.
+// the dump between, replays KyIdentity's removals (after replay_after, or once all of it is
+// healthy) and checks its setup.
 func (s *session) finishRestore(ctx context.Context, st dockerhost.Store, id, stage string) (err error) {
 	name, b := st.App.Name, st.App.Catalog.Backup
 	// Until KyIdentity's replay is delivered, the restored app may readmit someone removed
@@ -417,6 +418,13 @@ func (s *session) finishRestore(ctx context.Context, st dockerhost.Store, id, st
 			err = errors.Join(err, finish(ctx, st.Stop))
 		}
 	}()
+	replay := func() error {
+		if err := s.replayRemovals(ctx, name); err != nil {
+			return err
+		}
+		replayed = true
+		return nil
+	}
 	e := &engine.Engine{Dir: s.state + "/results", Out: s.o.Out, Redact: s.redact, Progress: s.o.Progress}
 	order := b.RestoreOrder
 	if len(b.Command) > 0 && len(order) == 0 {
@@ -438,9 +446,16 @@ func (s *session) finishRestore(ctx context.Context, st dockerhost.Store, id, st
 			}
 			fmt.Fprintf(s.o.Out, "%s: dump restored into %s.\n", name, b.Service)
 		}
-		for _, svc := range order[1:] {
-			if err := st.Start(ctx, svc); err != nil {
-				return err
+		for i, svc := range order {
+			if i > 0 {
+				if err := st.Start(ctx, svc); err != nil {
+					return err
+				}
+			}
+			if gated && svc == b.ReplayAfter {
+				if err := replay(); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -451,23 +466,24 @@ func (s *session) finishRestore(ctx context.Context, st dockerhost.Store, id, st
 		return &suite.Error{Code: suite.StepFailed, Message: err.Error(), Err: err}
 	}
 	// As soon as the app answers: its health is all the replay needs.
-	if gated {
-		if err := s.replayRemovals(ctx, name); err != nil {
+	if gated && !replayed {
+		if err := replay(); err != nil {
 			return err
 		}
-		replayed = true
 	}
 	for _, i := range s.integrations {
 		if i.Product != name || i.Target != st.Host {
 			continue
 		}
-		setup, connector, err := s.setupSteps(s.drivers[st.Host], i)
+		var setup []engine.Step
+		var connector engine.Step
 		if i.ChatClient != "" {
 			var last engine.Step
-			setup, last, err = s.messageSteps(s.drivers[st.Host], i)
+			if setup, last, err = s.messageSteps(s.drivers[st.Host], i); err != nil {
+				return err
+			}
 			setup = append(setup, last)
-		}
-		if err != nil {
+		} else if setup, connector, err = s.setupSteps(s.drivers[st.Host], i); err != nil {
 			return err
 		}
 		if connector != nil {
@@ -497,18 +513,25 @@ type resyncReport struct {
 	Blocked  string `json:"blocked"`
 }
 
-// replayRemovals has KyIdentity re-send the app's connector state, deactivations included,
-// and waits until the connector's whole queue is delivered. Anything else is
-// restore_incomplete: finishRestore stops the app until a rerun delivers it.
+// replayRemovals has KyIdentity replay the app's connector state (resync). Anything but
+// delivered is restore_incomplete: finishRestore stops the app until a rerun delivers it.
 func (s *session) replayRemovals(ctx context.Context, name string) error {
-	client := name
+	start := time.Now()
+	client, detail := s.resync(ctx, name)
+	if detail != "" {
+		return suite.Errorf(suite.RestoreIncomplete, "%s is restored but stopped: KyIdentity's %s connector did not deliver the replay of removals (%s), and until it does someone removed after the snapshot could sign in. Fix the connector, then rerun kyquickstart restore %s, which starts the app and replays again", name, client, detail, name)
+	}
+	fmt.Fprintf(s.o.Out, "%s: KyIdentity replayed its %s connector's state, removals included, and delivered it (%s).\n", name, client, time.Since(start).Round(time.Second))
+	return nil
+}
+
+// resync has KyIdentity re-send the app's connector state, deactivations included, and waits
+// until the connector's whole queue is delivered; detail says what was not.
+func (s *session) resync(ctx context.Context, name string) (client, detail string) {
+	client = name
 	if i := slices.IndexFunc(s.integrations, func(i stack.Integration) bool { return i.Product == name && i.IdentityClient != "" }); i >= 0 {
 		client = s.integrations[i].IdentityClient
 	}
-	incomplete := func(detail string) error {
-		return suite.Errorf(suite.RestoreIncomplete, "%s is restored but stopped: KyIdentity's %s connector did not deliver the replay of removals (%s), and until it does someone removed after the snapshot could sign in. Fix the connector, then rerun kyquickstart restore %s, which starts the app and replays again", name, client, detail, name)
-	}
-	start := time.Now()
 	var out []byte
 	var err error
 	args := []string{"resync-system", "--client", client, "--wait", resyncWait.String()}
@@ -516,7 +539,7 @@ func (s *session) replayRemovals(ctx context.Context, name string) error {
 	case kubeDriver:
 		ns, pod, container, podErr := d.c.AppPod(ctx, "kyidentity")
 		if podErr != nil {
-			return incomplete(podErr.Error())
+			return client, podErr.Error()
 		}
 		out, err = d.c.ExecReport(ctx, ns, pod, container, append([]string{productAdapters["kyidentity"].binary}, args...))
 	case sshDriver:
@@ -529,7 +552,7 @@ func (s *session) replayRemovals(ctx context.Context, name string) error {
 			err = errors.New("native KyIdentity resync-system command failed")
 		}
 	default:
-		return incomplete("KyIdentity's target is not connected")
+		return client, "KyIdentity's target is not connected"
 	}
 	var rep resyncReport
 	line := strings.TrimSpace(string(out))
@@ -538,15 +561,14 @@ func (s *session) replayRemovals(ctx context.Context, name string) error {
 		if err != nil {
 			detail += ": " + s.redact.Redact(err.Error())
 		}
-		return incomplete(detail)
+		return client, detail
 	}
 	if rep.Status != "delivered" {
 		detail := fmt.Sprintf("%s, %d pending, %d failed", rep.Status, rep.Pending, rep.Failed)
 		if rep.Blocked != "" {
 			detail += ", blocked: " + rep.Blocked
 		}
-		return incomplete(detail)
+		return client, detail
 	}
-	fmt.Fprintf(s.o.Out, "%s: KyIdentity replayed its %s connector's state, removals included, and delivered it (%s).\n", name, client, time.Since(start).Round(time.Second))
-	return nil
+	return client, ""
 }

@@ -224,9 +224,16 @@ func askMail(p *prompts, key string, m *stack.IdentityMail) (*stack.IdentityMail
 		return out, err
 	}
 	out.PasswordFile, err = p.ask(key+"mail-password-file", "Absolute path on this workstation of the relay password file (one line, mode 0600, yours)", "", func(s string) bool {
+		if !filepath.IsAbs(s) {
+			fmt.Fprintln(p.out, "The relay password file needs an absolute path.")
+			return false
+		}
 		pw, err := readMailPassword(s)
 		clear(pw)
-		return filepath.IsAbs(s) && err == nil
+		if err != nil {
+			fmt.Fprintln(p.out, err)
+		}
+		return err == nil
 	})
 	return out, err
 }

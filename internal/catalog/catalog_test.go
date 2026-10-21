@@ -463,6 +463,8 @@ func TestLoadRejects(t *testing.T) {
 		"restore without dump":  {manifest + strings.Replace(backup, "  command: [pg_dump, -Fc]\n", "", 1), composeVol, "come together"},
 		"restore empty arg":     {manifest + strings.Replace(backup, "[pg_restore]", `[pg_restore, ""]`, 1), composeVol, "empty argument"},
 		"restore order first":   {manifest + strings.Replace(backup, "restore_order: [web]", "restore_order: [db, web]", 1), composeTwo, "must start with service"},
+		"replay after unknown":  {manifest + oidc + backup + "  replay_after: db\n", composeVol, "replay_after"},
+		"replay without oidc":   {manifest + backup + "  replay_after: web\n", composeVol, "replay_after"},
 		"restic_password":       {manifest + "secrets: [restic_password]\n", compose, "reserved"},
 
 		"pod_security unknown":    {manifest + "pod_security: privileged\n", compose, "pod_security"},

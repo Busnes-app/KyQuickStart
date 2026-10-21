@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
@@ -260,6 +261,9 @@ func TestKyMessagePlanRefusals(t *testing.T) {
 	route := func(from, to string) func(string) string {
 		return func(y string) string { return strings.Replace(y, from, to, 1) }
 	}
+	all := func(from, to string) func(string) string {
+		return func(y string) string { return strings.ReplaceAll(y, from, to) }
+	}
 	for name, c := range map[string]struct {
 		edit func(string) string
 		want string
@@ -270,7 +274,13 @@ func TestKyMessagePlanRefusals(t *testing.T) {
 		}, "place it on a Docker host"},
 		"missing role":          {route("      - app: kymessage\n        role: rtc\n", "      - app: kymessage\n        role: chat\n"), "role \"chat\" must be one of its roles, once"},
 		"unknown role":          {route("        role: rtc\n", "        role: turn\n"), "role \"turn\" must be one of its roles"},
-		"primary named":         {route("      - app: kymessage\n        hostname: message.example.com\n", "      - app: kymessage\n        role: console\n        hostname: message.example.com\n"), "takes no role"},
+		"primary named":         {route("      - app: kymessage\n        hostname: message.example.com\n", "      - app: kymessage\n        role: console\n        hostname: message.example.com\n"), `route message.example.com has role "console"; remove the role`},
+		"no primary route":      {route("      - app: kymessage\n        hostname: message.example.com\n        forward_host: 192.0.2.1\n        forward_port: 18080\n        certificate_id: 1\n", ""), "needs a route with no role: its console"},
+		"wildcard forward_host": {all("forward_host: 192.0.2.1", "forward_host: 0.0.0.0"), "forward_host 0.0.0.0 must be one LAN IPv4 address of nas"},
+		"loopback forward_host": {all("forward_host: 192.0.2.1", "forward_host: 127.0.0.1"), "forward_host 127.0.0.1 must be one LAN IPv4 address of nas"},
+		"link-local forward":    {all("forward_host: 192.0.2.1", "forward_host: 169.254.1.1"), "forward_host 169.254.1.1 must be one LAN IPv4 address of nas"},
+		"named forward_host":    {all("forward_host: 192.0.2.1", "forward_host: nas.example.test"), "forward_host nas.example.test must be one LAN IPv4 address of nas"},
+		"server_name own port":  {route("hostname: example.com\n        forward_host: 192.0.2.1\n        forward_port: 18080", "hostname: example.com\n        forward_host: 192.0.2.1\n        forward_port: 18090"), "routes message.example.com and example.com are the same service port (app:8080) and need one forward_port: set both to 18080"},
 		"two forward hosts":     {route("forward_host: 192.0.2.1\n        forward_port: 18008", "forward_host: 192.0.2.2\n        forward_port: 18008"), "one forward_host"},
 		"shared forward port":   {route("forward_port: 18008", "forward_port: 18081"), "forward_port 18081 is given to two services"},
 		"no media_address":      {route("    media_address: 192.0.2.1\n", ""), "set media_address"},
@@ -315,6 +325,45 @@ func TestKyMessagePlanRefusals(t *testing.T) {
 	}
 }
 
+// Each unsafe SMTP password file is refused with its own reason, checked on the opened file.
+func TestReadMailPassword(t *testing.T) {
+	dir := t.TempDir()
+	file := func(name, body string, mode os.FileMode) string {
+		p := filepath.Join(dir, name)
+		os.WriteFile(p, []byte(body), 0o600)
+		os.Chmod(p, mode)
+		return p
+	}
+	good := file("good", "s3cret\n", 0o600)
+	link := filepath.Join(dir, "link")
+	os.Symlink(good, link)
+	fifo := filepath.Join(dir, "fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for p, want := range map[string]string{
+		filepath.Join(dir, "missing"):    "does not exist",
+		link:                             "is a symlink",
+		fifo:                             "is not a regular file",
+		dir:                              "is not a regular file",
+		file("loose", "s3cret\n", 0o644): "has mode 0644, not 0600 (chmod 600 " + dir + "/loose)",
+		file("empty", "", 0o600):         "is empty",
+		file("long", strings.Repeat("x", 1025), 0o600): "is longer than 1024 bytes",
+		file("lines", "one\ntwo\n", 0o600):             "holds more than one line (or a CR or NUL byte)",
+		file("nul", "one\x00\n", 0o600):                "holds more than one line (or a CR or NUL byte)",
+	} {
+		if b, err := readMailPassword(p); err == nil || !strings.Contains(err.Error(), p+" "+want+". It must be a regular file of yours with mode 0600") {
+			t.Errorf("%s: %q, %v; want %q", p, b, err, want)
+		}
+	}
+	for body, want := range map[string]string{"s3cret\n": "s3cret", "s3cret": "s3cret", strings.Repeat("x", 1024) + "\n": strings.Repeat("x", 1024)} {
+		p := file("ok", body, 0o600)
+		if b, err := readMailPassword(p); err != nil || string(b) != want {
+			t.Errorf("%q: %q, %v", body, b, err)
+		}
+	}
+}
+
 // AC7: at apply's preflight, a media_address that is not the Docker target's is refused.
 func TestKyMessageMediaAddressPreflight(t *testing.T) {
 	f := newMessageFixture(t)
@@ -324,7 +373,7 @@ func TestKyMessageMediaAddressPreflight(t *testing.T) {
 	f.out.Reset()
 	s.targets = []stack.Target{s.placed["kymessage"]}
 	s.edges = nil
-	if err := s.preflight(context.Background()); err == nil || !strings.Contains(f.out.String(), "media_address 192.0.2.1 is not an address of this host") {
+	if err := s.preflight(context.Background()); err == nil || !strings.Contains(f.out.String(), "media_address 192.0.2.1 is not an address of this host; set media_address to one of its LAN IPv4 addresses (ip -4 addr)") {
 		t.Fatalf("err = %v\n%s", err, f.out.String())
 	}
 	h.addresses = "2: eth0    inet 192.0.2.1/24 brd 192.0.2.255 scope global eth0\n"
@@ -348,8 +397,9 @@ func TestKyMessageSteps(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := strings.Join(slices.DeleteFunc(ids(list), func(id string) bool { return strings.HasPrefix(id, "npm.") || strings.HasPrefix(id, "kyidentity.") }), " ")
-	edges := strings.Join(ids(list)[len(ids(list))-7:], " ")
-	if !strings.HasPrefix(got, "kymessage.secrets kymessage.matrix-init kymessage.credentials kymessage.deploy kymessage.health kymessage.setup k1.edge.removed k1.edge.") || strings.Count(edges, "k1.edge.") != 7 || strings.Contains(got, "scim") {
+	edges := strings.Join(ids(list)[len(ids(list))-8:len(ids(list))-1], " ")
+	if !strings.HasPrefix(got, "kymessage.secrets kymessage.matrix-init kymessage.credentials kymessage.deploy kymessage.health kymessage.setup k1.edge.removed k1.edge.") || strings.Count(edges, "k1.edge.") != 7 ||
+		!strings.HasSuffix(got, " kymessage.directory") || strings.Contains(got, "scim") {
 		t.Fatalf("steps = %s", got)
 	}
 	steps := map[string]engine.Step{}
@@ -638,7 +688,8 @@ func TestGuidedKyMessageRoutes(t *testing.T) {
 	}
 	st := &stack.Stack{Version: 1, Targets: []stack.Target{{Name: "nas", Host: "192.0.2.1", User: "kyq", Port: 22, Root: "/opt/kyq"}},
 		Apps: []stack.App{{Name: "kymessage", Target: "nas", MediaAddress: "192.0.2.1"}}}
-	answers := []string{"lan", "https://npm.example.com", "192.168.1.0/24", "", "yes", "example.com", "192.0.2.1", "3", "", "", "", "", "", "", "", "", "", "", ""}
+	// The address: a wildcard and loopback are refused, then Enter takes the media address.
+	answers := []string{"lan", "https://npm.example.com", "192.168.1.0/24", "", "yes", "example.com", "0.0.0.0", "127.0.0.1", "", "3", "", "", "", "", "", "", "", "", "", "", ""}
 	var out strings.Builder
 	p := &prompts{ctx: context.Background(), in: bufioReader(strings.Join(answers, "\n") + "\n"), out: &out, answers: map[string]string{}, draft: filepath.Join(t.TempDir(), "answers.json")}
 	if err := guidedEdges(p, st, cat); err != nil {
@@ -646,14 +697,60 @@ func TestGuidedKyMessageRoutes(t *testing.T) {
 	}
 	var got []string
 	for _, r := range st.Edges[0].Routes {
-		got = append(got, r.Role+"="+r.Hostname+":"+strconvItoa(r.ForwardPort))
+		got = append(got, r.Role+"="+r.Hostname+":"+strconvItoa(r.ForwardPort)+"@"+r.ForwardHost)
 	}
-	want := []string{"=message.example.com:8080", "server_name=example.com:8080", "matrix=matrix.example.com:8008", "auth=auth.example.com:8081", "chat=chat.example.com:8082", "rtc=rtc.example.com:7880"}
-	if !slices.Equal(got, want) || !strings.Contains(out.String(), "permanent") {
+	want := []string{"=message.example.com:8080@192.0.2.1", "server_name=example.com:8080@192.0.2.1", "matrix=matrix.example.com:8008@192.0.2.1", "auth=auth.example.com:8081@192.0.2.1", "chat=chat.example.com:8082@192.0.2.1", "rtc=rtc.example.com:7880@192.0.2.1"}
+	if !slices.Equal(got, want) {
 		t.Fatalf("routes = %v\n%s", got, out.String())
+	}
+	for _, line := range []string{"kymessage's domain. It becomes the permanent Matrix server name (accounts are @name:<domain>)",
+		"hostnames (each can be changed next): message.example.com (console), example.com (server_name), matrix.example.com (matrix), auth.example.com (auth), chat.example.com (chat), rtc.example.com (rtc). Each needs a DNS record",
+		"address on nas that NPM reaches: one LAN IPv4 address, where every routed port is published [192.0.2.1]",
+		"covering example.com and *.example.com (a wildcard alone misses the apex)", "server_name hostname is permanent"} {
+		if !strings.Contains(out.String(), line) {
+			t.Errorf("prompts lack %q:\n%s", line, out.String())
+		}
+	}
+	if n := strings.Count(out.String(), "Please enter a valid value"); n != 2 {
+		t.Errorf("%d refusals of the wildcard and loopback addresses, want 2", n)
 	}
 	if _, err := withRoute(st, "kymessage", st.Targets[0], cat["kymessage"]); err != nil {
 		t.Fatalf("guided routes refused: %v", err)
+	}
+}
+
+// plan writes the chat client's one possible name for an installed KyMessages with a console
+// client, and nothing for one without.
+func TestWithChatClients(t *testing.T) {
+	cat, err := catalog.Load(catalog.Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := &stack.Stack{Apps: []stack.App{{Name: "kymessage", Target: "nas"}}, Integrations: []stack.Integration{
+		{Product: "kymessage", Target: "nas", IdentityClient: "kymessage"}, {Product: "kymessage", Target: "other", IdentityClient: "kymessage"},
+		{Product: "kynotes", Target: "nas", IdentityClient: "kynotes"}}}
+	withChatClients(st, cat)
+	if got := []string{st.Integrations[0].ChatClient, st.Integrations[1].ChatClient, st.Integrations[2].ChatClient}; !slices.Equal(got, []string{"kymessage-chat", "", ""}) {
+		t.Fatalf("chat clients %q", got)
+	}
+	st.Integrations[0].IdentityClient, st.Integrations[0].ChatClient = "", ""
+	if withChatClients(st, cat); st.Integrations[0].ChatClient != "" {
+		t.Fatal("a chat client without the console's")
+	}
+}
+
+// kymessage.directory: apply goes on only once KyIdentity's connector delivered the console's
+// directory, so an offboarding right after install reaches the chat sweep.
+func TestKyMessageDirectoryStep(t *testing.T) {
+	ctx := context.Background()
+	detail := "pending, 2 pending, 0 failed"
+	s := directoryStep{app: "kymessage", sync: func(context.Context) (string, string) { return "kymessage", detail }}
+	if err := s.Apply(ctx); err == nil || err.Error() != "KyIdentity's kymessage connector has not delivered its directory to kymessage (pending, 2 pending, 0 failed); until it does, offboarding someone may not reach chat. Fix the connector, then rerun apply" {
+		t.Fatalf("undelivered: %v", err)
+	}
+	detail = ""
+	if err := s.Apply(ctx); err != nil || s.Verify(ctx) != nil || s.ID() != "kymessage.directory" {
+		t.Fatalf("delivered: %v", err)
 	}
 }
 
@@ -669,9 +766,23 @@ func TestKyMessageHandover(t *testing.T) {
 		"everyday accounts only (owner)", "owner-admin signs in to the console alone and has no chat", `both "KyMessages" and "KyMessages chat"`, "email is verified",
 		"192.0.2.1, TCP 7881 and UDP 7882, which are open to your LAN; no\n  TURN", "Federation is closed", "sign-out does not end chat sessions", "Offboarding", "ends their open chat sessions\n  within seconds", `"KyMessages chat" alone is locked out`,
 		"docker logs kyq-kymessage-app-1 on nas", "cd '" + f.h.root + "/kymessage' && docker compose -p kyq-kymessage -f compose.yaml -f compose.kyq.yaml exec -T app /bin/sh -c 'eval \"$KYQ_SECRETS\" && exec /app/kymessages init-admin'",
-		"pair it with KyRecovery"} {
+		"pair it with KyRecovery", `Replace the console's local "admin" break-glass password`, "the first lines of docker logs",
+		"No mail relay is set, so only the owner's accounts are verified and nobody else\n  can get a chat account",
+		`Removing someone from "KyMessages chat" alone stops only their new chat sign-ins`, "remove them from \"KyMessages\" too, or\n  offboard them"} {
 		if !strings.Contains(s.handover, want) {
 			t.Errorf("handover lacks %q:\n%s", want, s.handover)
 		}
+	}
+	// With a relay, the handover names it instead.
+	pw := filepath.Join(t.TempDir(), "smtp.password")
+	os.WriteFile(pw, []byte("x\n"), 0o600)
+	messageStackPlan(t, f, func(y string) string {
+		return strings.Replace(y, "      clients: []\n", "      mail: {host: smtp.example.test, port: 587, security: starttls, from: identity@example.test, username: kyidentity, password_file: "+pw+"}\n      clients: []\n", 1)
+	})
+	if s, err = load(f.state, nil, f.o); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(s.handover, "KyIdentity sends that mail through smtp.example.test:587.") || strings.Contains(s.handover, "No mail relay") {
+		t.Errorf("handover with a relay:\n%s", s.handover)
 	}
 }
