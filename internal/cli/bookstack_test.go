@@ -18,6 +18,7 @@ import (
 	"github.com/Busnes-app/kyquickstart/internal/managed"
 	"github.com/Busnes-app/kyquickstart/internal/remote"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
+	"github.com/Busnes-app/kyquickstart/internal/stockbookstack"
 )
 
 const (
@@ -368,5 +369,11 @@ func TestGuidedBookStackRoutes(t *testing.T) {
 	st.Edges[0].EgressAddress = "192.0.2.50"
 	if _, err := withRoute(st, "bookstack", st.Targets[0], cat["bookstack"]); err != nil {
 		t.Fatalf("guided routes refused: %v", err)
+	}
+}
+
+func TestBookStackServiceAccount(t *testing.T) {
+	if bookstackService != stockbookstack.ServiceEmail {
+		t.Fatal("bootstrap re-keys another account than the receiver protects")
 	}
 }

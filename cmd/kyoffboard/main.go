@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/Busnes-app/kyquickstart/internal/offboard"
@@ -19,9 +20,13 @@ const usage = "Usage: kyoffboard --config /private/runtime/config.json [--check]
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	os.Exit(run(ctx, os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
-func run(ctx context.Context, args []string, out, diagnostics io.Writer) int {
+
+func run(ctx context.Context, args []string, stdin io.Reader, out, diagnostics io.Writer) int {
+	if len(args) > 0 && strings.HasPrefix(args[0], "bookstack-") {
+		return bookstack(ctx, args[0], args[1:], stdin, out, diagnostics)
+	}
 	flags := flag.NewFlagSet("kyoffboard", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	file := flags.String("config", "", "private target configuration")

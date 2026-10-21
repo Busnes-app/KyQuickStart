@@ -8,6 +8,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/Busnes-app/kyquickstart/internal/stockbookstack"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -216,4 +217,15 @@ func must(b []byte, err error) []byte {
 		panic(err)
 	}
 	return b
+}
+
+// The receiver's built-in claims are the catalog client's roles.
+func TestBookStackReceiverClaims(t *testing.T) {
+	cat, err := Load(Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o := cat["bookstack"].OIDC; o.AdminRole != stockbookstack.AdminClaim || o.UserRole != stockbookstack.UserClaim || o.DirectoryPath != stockbookstack.DirectoryPath {
+		t.Fatalf("oidc %+v", o)
+	}
 }

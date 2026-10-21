@@ -17,7 +17,7 @@ func TestCommandBoundaryDoesNotReflectInputs(t *testing.T) {
 		{[]string{"--config", "/missing/config.json", "PRIVATE-CANARY"}, 2},
 	} {
 		var out, diagnostics bytes.Buffer
-		if code := run(context.Background(), test.args, &out, &diagnostics); code != test.code {
+		if code := run(context.Background(), test.args, strings.NewReader(""), &out, &diagnostics); code != test.code {
 			t.Fatal("wrong exit", code)
 		}
 		if strings.Contains(out.String()+diagnostics.String(), "PRIVATE-CANARY") {
