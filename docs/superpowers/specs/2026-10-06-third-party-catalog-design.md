@@ -1,6 +1,9 @@
 # Third-party app catalog
 
-Date: 2026-10-06. Status: approved; release admission remains evidence-dependent.
+Date: 2026-10-06. Status: approved; release admission remains evidence-dependent. Redirected
+2026-10-22 ([redirect record](../../redirect.md)): no third-party app enters the catalog (freeze);
+the admission rules stay for KyQuickStart-AI's labelled test installs. The third-party adapter
+code these qualification notes cite was retired on 2026-10-22; git history keeps it.
 
 KyQuickStart installs the Ky suite plus a small catalog of third-party apps. This spec decides
 which third-party apps are in the first catalog, the rules any future app must pass, and the
@@ -51,9 +54,9 @@ Versions are the latest releases checked on 2026-10-06; the release set pins exa
 | App | Purpose | License | Admin grant | Offboarding adapter | Notes |
 |---|---|---|---|---|---|
 | Holm (v0.3.1) | Home dashboard | MIT | `auth.admin_groups` from claim; drop `admin_usernames` | **Blocked**: signed 30-day session, never rechecked, no logout | Needs back-channel logout or session recheck upstream (or fork) before release |
-| Vaultwarden (selected password service; release unpinned) | Passwords and passkeys | AGPL-3.0 | **Gated:** instance administration uses `ADMIN_TOKEN`, not a verified KyIdentity grant | Native disable/deauth APIs exist; adapter session/token proof remains open | Sole password choice; dedicated administrator separation and native owner administration must pass before admission |
-| Forgejo (v16 / LTS v15; 16.0.5 fixture qualified) | Git hosting, Actions CI | GPL-3.0-or-later | Native OIDC app-scoped `roles`; required `aud` equals the KyIdentity client ID; explicit SCIM directory projection with new-account and group-policy opt-ins | **Gated:** native disable/token removal, actual KyIdentity worker creation/profile/role/revocation delivery, sign-in and actual KyIdentity group worker lifecycle verified; complete connector/deployment/restore pending | No back-channel logout; Git over HTTPS uses personal tokens; authenticated directory role replacement denies old-session administration before fresh OIDC; group receiver creates/renames/retires owned teams with retained repositories; production organization setup, group audit/restore and creation/write uncertainty reconciliation remain open |
-| BookStack (v26.09.1 checked) | Wiki | MIT | `OIDC_USER_TO_GROUPS`, `OIDC_GROUPS_CLAIM=roles`, Admin role External Authentication ID `admin` | **Gated:** community module 0.15.0 verifies native setup/OIDC and actual identity-worker birth/profile/role/revocation delivery; complete lifecycle/deployment/restore/release pending | Upstream disable flags are ignored; community module retains accounts/content and denies sessions/tokens; no official image: build or pin one |
+| Vaultwarden (selected password service; release unpinned) **Dropped by the owner, 2026-10-22: not offered** | Passwords and passkeys | AGPL-3.0 | **Gated:** instance administration uses `ADMIN_TOKEN`, not a verified KyIdentity grant | Native disable/deauth APIs exist; adapter session/token proof remains open | Sole password choice; dedicated administrator separation and native owner administration must pass before admission |
+| Forgejo (v16 / LTS v15; 16.0.5 fixture qualified) **Dropped by the owner, 2026-10-22: not offered** | Git hosting, Actions CI | GPL-3.0-or-later | Native OIDC app-scoped `roles`; required `aud` equals the KyIdentity client ID; explicit SCIM directory projection with new-account and group-policy opt-ins | **Gated:** native disable/token removal, actual KyIdentity worker creation/profile/role/revocation delivery, sign-in and actual KyIdentity group worker lifecycle verified; complete connector/deployment/restore pending | No back-channel logout; Git over HTTPS uses personal tokens; authenticated directory role replacement denies old-session administration before fresh OIDC; group receiver creates/renames/retires owned teams with retained repositories; production organization setup, group audit/restore and creation/write uncertainty reconciliation remain open |
+| BookStack (v26.09.1 checked) **Dropped by the owner, 2026-10-22: not offered** | Wiki | MIT | `OIDC_USER_TO_GROUPS`, `OIDC_GROUPS_CLAIM=roles`, Admin role External Authentication ID `admin` | **Gated:** community module 0.15.0 verifies native setup/OIDC and actual identity-worker birth/profile/role/revocation delivery; complete lifecycle/deployment/restore/release pending | Upstream disable flags are ignored; community module retains accounts/content and denies sessions/tokens; no official image: build or pin one |
 | Immich (v3.2.0 native fixture qualified) | Photos | AGPL-3.0 | `roleClaim` → `admin`/`user`; actual KyIdentity PKCE sign-in, assigned-only access and native administrator authorization verified | **Gated:** stock logout retains API keys; a pinned community module verifies retained-account session/key/socket denial and actual KyIdentity creation/profile/role/revocation delivery, with protected creation opt-in; complete lifecycle and deployment remain unfinished | Config via `IMMICH_CONFIG_FILE` or native API; account DELETE schedules content removal and must not implement offboarding. Mobile redirect `app.immich:///oauth-callback` or HTTPS override; native-writer coordination, complete identity lifecycle and release/deployment proof pending |
 | Home Assistant + hass-oidc-auth (2026.9 / v1.2.1) | Home automation | Apache-2.0 / MIT | `roles.admin` from claim | Revoke refresh and long-lived tokens via API | Add-on is community-maintained: label it |
 | Dolibarr (v24.0) | CRM, invoicing, ERP | GPL-3.0 | Installer sets admin flag via API | Disable user, revoke API key | Admin not claim-driven |
@@ -93,7 +96,7 @@ administrator grant/repeat/demotion against the official amd64 image
 Its OCI revision matches the pinned source. Verified RSA back-channel logout denies the old
 everyday session and preserves the unrelated owner, but the everyday personal API key still
 returns successful account access. Stock logout is insufficient. The AGPL-3.0 community
-extension in `internal/adapters/immich/module` adds installation-bound native revocation:
+extension (retired 2026-10-22) added installation-bound native revocation:
 a write-once metadata fence and session/key removal commit together, subject denial prevents
 new sign-in, and subscribed sockets disconnect. Native qualification verifies direct API
 scope/authority refusals, retained account/profile, photo records and original bytes, unrelated
@@ -107,11 +110,7 @@ authorization code cannot restore app access. This does not admit Immich: comple
 lifecycle, restore, dedicated administrator ordinary-workflow separation
 and production release/deployment remain gated. The overlay is a local fixture, not an upstream
 feature or production provenance claim.
-The resident bridge now pins UUID/client receipts, verifies registration and drives this module
-through authenticated SCIM intent and actual worker retry. The disposable native fixture proves
-unavailable-write backoff and retained completion/audit proofs across restart. The bridge
-sender remains a controlled SCIM helper even in real-identity OIDC mode; actual KyIdentity
-worker/event delivery and active account lifecycle remain unqualified.
+The resident bridge that drove this module was retired unreleased on 2026-10-22.
 
 The provider consumer now uses native system configuration with a protected preflight
 fingerprint. It sets verified HTTPS OIDC, signed ID tokens and the roles claim, retains
@@ -338,8 +337,7 @@ request for administrator users". Open before admission:
 6. Resource cost of the required search, cache and database services on a homelab host.
 
 BookStack qualification, 2026-10-09: disposable v26.09.1 tests reproduce upstream's
-ignored disable flags and continued session/token access. The MIT community module in
-`internal/adapters/bookstack/module` uses [logical theme hooks](https://www.bookstackapp.com/docs/admin/hacking-bookstack/#logical-theme-system)
+ignored disable flags and continued session/token access. The MIT community module (retired 2026-10-22) used [logical theme hooks](https://www.bookstackapp.com/docs/admin/hacking-bookstack/#logical-theme-system)
 and a [registered native command](https://github.com/BookStackApp/BookStack/blob/31d94dd8b98e3334dc01b66bed6d514719a2f85d/app/Theming/ThemeService.php).
 Native standard-auth tests now prove exact-binding/private-file refusal, retained identity,
 roles and content, old web/API session denial, API-token removal, new password-login denial,

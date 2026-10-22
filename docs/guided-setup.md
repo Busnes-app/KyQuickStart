@@ -30,6 +30,43 @@ The wizard asks for:
 5. Review and confirmation of the plan.
 6. `finish`, `check` or `deploy`. `finish` is always the default and changes no servers.
 
+### Without the wizard
+
+Unattended callers, KyQuickStart-AI among them, write `stack.yaml` themselves and run
+`review`, `preflight` and `apply` with `--state DIR`. The demo catalog holds one app, so each
+target needs its own state directory. A Docker target over SSH:
+
+```yaml
+demo: true
+version: 1
+targets:
+  - name: lab
+    host: 192.0.2.10
+    port: 22
+    user: kyops
+    root: /srv/ky/kyquickstart
+apps:
+  - name: hello
+    target: lab
+```
+
+A Kubernetes target names its kubeconfig by path (never its contents):
+
+```yaml
+demo: true
+version: 1
+targets:
+  - name: cluster
+    kubeconfig: /home/me/.kube/kyquickstart.yaml
+apps:
+  - name: hello
+    target: cluster
+```
+
+The first `preflight` of a Docker target needs `--trust-host-key lab=SHA256:<fingerprint>`.
+`apply` adds `revision` and `installation_id`. Outside demo mode, drop `demo: true` and add
+the catalog apps, `edges` and `integrations` described in the sections below.
+
 The first computer-name question accepts DNS names such as `K80.example.com`, including
 uppercase letters. It derives a safe installation label (`k80-example-com`); Docker's SSH
 address defaults to the name you entered. Kubernetes still connects through its kubeconfig.
@@ -115,11 +152,21 @@ the plan is saved only after every step passed.
 ./kyquickstart install hello --target nas --state ./morning-test
 ./kyquickstart upgrade --state ./morning-test        # every installed app
 ./kyquickstart status --json --state ./morning-test
+./kyquickstart logs hello --tail 50 --state ./morning-test
+./kyquickstart stop hello --state ./morning-test     # Kubernetes: suspend (0 replicas)
+./kyquickstart start hello --state ./morning-test
+./kyquickstart restart hello --state ./morning-test
 ./kyquickstart unmanage hello --state ./morning-test
 ./kyquickstart uninstall hello --state ./morning-test
 ```
 
 - `install` adds the app and any missing dependencies to the plan on that target.
+- `stop`, `start` and `restart` change nothing else: data, secrets and routes stay. `stop`
+  records `stopped: true` in the plan, so `apply`, `upgrade`, `restart` and `backup` refuse
+  (`app_stopped`) rather than start it again; `start` clears it. Stop an app this way before
+  `restore`; a finished restore starts it and clears the flag. `logs` changes nothing, takes
+  no lock and redacts only the secrets the app's catalog entry generates. `status` reads each app's live
+  state (`running`, `stopped`, `missing`, `unknown`).
 - `uninstall` refuses while another installed app depends on it. It disables the app's NPM
   routes, removes its containers (`docker compose down`, never `-v`) or its Deployment and
   Service, and keeps the app directory, data volumes, claims and secrets on the target.
@@ -214,7 +261,7 @@ ssh -p 22 kyq@nas.example.lan cat /opt/kyquickstart/kydrive/secrets/restic_passw
 `restore APP --snapshot ID` (8 or 64 lowercase hex) restores one; `--replace` and `--yes` are
 refused without `--snapshot`:
 
-1. It refuses (`restore_refused`, nothing changed) a running app and an app with any non-empty
+1. It refuses (`restore_refused`, nothing changed) a running app (`kyquickstart stop APP` first) and an app with any non-empty
    bind directory or secret file unless `--replace`, which moves them to
    `<root>/<app>/.replaced-<UTC time>/` and never deletes them; neither refusal contacts the
    repository. It then refuses a snapshot not tagged for this app and installation. If
@@ -533,8 +580,7 @@ status response and cannot pass `verify-edge` as a suite product.
 
 Edge prompts support existing NPM/certificates plus an existing Cloudflare tunnel or frp
 server. Connector credentials stay in protected target files, never in the wizard. See
-[edge setup](edge.md) for those requirements. Fresh NPM, DNS/certificate issuance, new
-tunnels/VPS provisioning and Kubernetes connector deployment remain unavailable.
+[edge setup](edge.md) for the supported paths.
 
 ## Catalog KyIdentity on Kubernetes
 
@@ -616,7 +662,7 @@ changed intent fails with the product's refusal. `integrate-stack` skips install
   `apply` prints that `kyq-bootstrap` stays an active administrator. Disable it in the admin
   UI after the owner's first sign-in.
 - Not yet: `TRUSTED_PROXY_CIDRS` is unset, so KyIdentity sees the edge pod as every client;
-  Docker placement (no Compose file); SCIM `active:false` proof (gate G2); backups (the
+  SCIM `active:false` proof (gate G2); backups (the
   `data` volume is declared; `kyquickstart backup` covers Docker apps only).
 - 0.4.4's resync replays removals and it ships `resync-system`, which `kyquickstart restore`
   runs after restoring an app whose people come from KyIdentity. An upgrade from 0.4.3 needs
@@ -685,7 +731,7 @@ secrets never reach the workstation, its output or its state.
   catalog product pairs yet. The backup status and restore-start screens are KyRecovery's own;
   restic status needs `KYRECOVERY_RESTIC_DIR` and the rest-server, which is not installed yet.
 - Not yet: `KYRECOVERY_TRUSTED_PROXIES` is unset, so its rate limits see the edge pod as every
-  client; Docker placement; the pod reaches KyIdentity at its public issuer URL, so cluster DNS
+  client; the pod reaches KyIdentity at its public issuer URL, so cluster DNS
   and the edge must answer that name from inside the cluster.
 
 ## Catalog kyPulse on Kubernetes
@@ -742,9 +788,9 @@ other installation's.
 - Not yet, needs a human or a product change: no everyday viewer (KyIdentity's export names only
   the owner's admin account, and KyIdentity refuses the everyday one for this client); no log
   sources (none of the catalog apps sends logs yet: a source needs a sender holding its token,
-  such as `kypulse-send` or the offboarding bridge); the alert webhook is set in its UI;
-  KyRecovery pairing and backups wait on the ceremony; `KYPULSE_TRUSTED_PROXIES` is unset;
-  Docker placement. kyPulse 0.4.2 verifies directory events as an HMAC of the body alone while
+  such as `kypulse-send`); the alert webhook is set in its UI;
+  KyRecovery pairing and backups wait on the ceremony; `KYPULSE_TRUSTED_PROXIES` is unset.
+  kyPulse 0.4.2 verifies directory events as an HMAC of the body alone while
   KyIdentity 0.4.2 signs them with `syncauth` v1, so directory offboarding events to kyPulse are
   expected to be refused until kyPulse adopts `syncauth` (read from both sources, not run).
 
@@ -820,7 +866,7 @@ Limits:
 - `TRUSTED_PROXY_CIDRS` is left at KyNotes' default (loopback only): forwarded headers from the
   edge are ignored, so no client can spoof its address into the rate limiter. KyNotes then
   rate-limits by the edge pod's address.
-- Not yet, or unproven: Docker placement; sign-out is local (KyIdentity's setup registers no
+- Not yet, or unproven: sign-out is local (KyIdentity's setup registers no
   back-channel logout); a directory event (offboarding) reaching KyNotes is not proven live;
   KyRecovery pairing, `KYNOTES_BLOB_TARGET` and restic/K8up blob backups are not configured.
 
@@ -907,7 +953,7 @@ administration). Outstanding human steps it names:
 
 Limits:
 
-- Not yet, or unproven: Docker placement; everyday accounts beyond the owner's; sign-out is
+- Not yet, or unproven: everyday accounts beyond the owner's; sign-out is
   local (no back-channel logout); a directory event (offboarding) reaching KyCalendar is not
   proven live; real CalDAV clients with app passwords are not tested (the kind test proves the
   web/API session only); KyRecovery pairing, PostgreSQL mode, MCP access and ICS subscriptions
@@ -1550,7 +1596,7 @@ The selected build must advertise `scim-connectors` and `suite-webhook-connector
 See the product setup runbook for the bundle and sequencing; this command does not deploy
 a receiver or transfer its signing secret to another target.
 This does not complete downstream product administrator
-grants, groups, resident bridge deployment, sign-on tests, downstream offboarding or a printed
+grants, groups, sign-on tests, downstream offboarding or a printed
 credential handover. Existing references in the guided plan remain references;
 this command is a separate explicit action. The production catalog stays closed
 until the full readiness gates pass.
@@ -1587,7 +1633,7 @@ store updates live, while backup directory/retention remain startup inputs. The
 adapter invokes the product's new read-only inspection after apply. KyIdentity
 must also issue the `kynotes.admin` application role; a local administrator grant
 alone does not prove signed administrator access. Full dedicated identity migration
-and suite acceptance remain part of the ongoing adapter work.
+and suite acceptance remain open.
 
 These commands configure only the explicitly selected product and do not adopt its
 workload. Production images must contain the corresponding interfaces. The new shared
@@ -1611,8 +1657,8 @@ Product `docs/INSTALLER_SETUP.md` documents the bundle and remaining recovery, K
 protected token distribution and suite-composition gates. Existing foreign targets/sources
 are preserved and require explicit resolution rather than automatic adoption.
 The product's SQLite capsules include active installer source credentials and check them
-against the restored database. Putting credentials back on product and bridge targets and
-reconciling bridge receipts remain complete-suite restore qualifications.
+against the restored database. Putting credentials back on product targets remains a
+complete-suite restore qualification.
 
 KyDNS common-envelope setup is available through `integrate-product --product kydns`.
 Its administrator-only interface grants exact verified KyIdentity subjects, activates
@@ -1652,54 +1698,15 @@ administration grants no implicit organization access. Tenant/endpoint compositi
 upgrade orchestration, recovery enrollment and release provenance remain separate gates.
 The optional `KYQ_TEST_YARD_BINARY` fixture exercises actual SSH create/check/resume.
 
-
-## Explicit community Immich setup
-
-`integrate-product --product immich` and saved `integrate-stack` selections support the
-pinned community Immich module's initial setup on Docker targets. Register the instance in
-`existing`, then explicitly select its container and protected `immich.setup/1` bundle path.
-Stock Immich is refused at capability inspection before setup. Kubernetes targets are refused
-before a batch changes any product. The production catalog remains gated; this path configures
-an explicitly selected module instance and does not install or adopt a stock service.
-
-The installer holds the target lock for apply, verifies native installation/account ownership
-through read-only checks, and prints fixed resource labels and native UUIDs. Product secrets,
-raw account subjects and arbitrary product output stay out of the report and workstation state.
-An inspection with planned resources is incomplete and fails; re-running apply resumes exact
-owned state. The module refuses foreign accounts/providers, migration and revoked accounts.
-See `../internal/adapters/immich/module/README.md` for the protected container-local bundle.
-Disposable qualification also uses an actual KyIdentity binary: owned client/role setup,
-Assigned users only, native PKCE sign-in and administrator API access are verified. The
-complete identity lifecycle, dedicated administrator ordinary-workflow
-separation, bulk backup/restore and production deployment remain acceptance gates.
-
-
-Owned Immich directory updates now retain a separate native profile/revision receipt.
-The original installation bundle can still be checked after legitimate name/email updates;
-it verifies the current owned state and preserves it. Role changes are reported honestly,
-and installer verification continues to require owner administration and everyday denial.
-Foreign or stale native changes require reconciliation. Protected resident directory mode
-uses these interfaces for registered owned accounts; controlled native SCIM qualification
-covers profile/repeat/role updates and irreversible revocation. A separate actual KyIdentity
-worker fixture proves registered-account profile/role and assignment-loss delivery with
-native access denial and retained photos. With a separate protected per-app creation opt-in,
-the fixture also proves new-assignment worker creation, ordinary subject-bound PKCE sign-in,
-global-disablement session/key denial and reopened creation/initialization/revocation proofs.
-Installer-managed OAuth requires a provisioned account with an ownership receipt; login
-does not create an account or adopt one by email. Native link/unlink changes are refused.
-Enable the protected per-app creation policy for ongoing new-account provisioning.
-The optional `KYQ_TEST_IMMICH_MULTI=1` producer/create fixture additionally verifies one
-actual global disablement across native Immich and Forgejo, retained content, independent
-app assignment loss and reopened per-product proofs. Full-suite connector coverage, native-writer coordination, full connector audit/restore
-and production admission remain open. Older unreceipted overlays are refused.
-
 ## Catalog Ky products on Docker
 
 All catalog Ky products support Docker targets. KyIdentity, KyNotes, KyCalendar,
-KyRecovery, kyPulse and KyYard now ship per-app Compose templates alongside the
-Kubernetes manifests. The existing KyDrive, KyPost and KyDNS Docker paths remain.
+KyRecovery, kyPulse and KyYard have per-app Compose templates beside their Kubernetes
+manifests; KyDrive, KyPost, KyDNS and KyMessages are Docker only (sections above).
 The same pinned product images, explicit setup selections and owner/everyday
-separation apply. Docker support does not admit an unqualified third-party app.
+separation apply. On Docker these six are tested for startup, readiness, native setup capability
+and restart (`TestDockerKyCatalog`); sign-in through an edge is tested on their Kubernetes
+placement only ([edge compatibility](redirect.md#edge-compatibility)).
 
 Choose the Docker target in `apps` and its integration. Give each app one edge
 route with a literal Docker-host `forward_host` and unused `forward_port`; the
@@ -1727,5 +1734,6 @@ that container. KyDNS retains its client-address/edge gate and host limitations.
 The installer uses per-app bridges and routed host ports. Standalone deployments
 that use shared `kypost-net` create it through KyPost; consumers, including a fixed-IP
 containerized NPM, join it externally. Skipping KyPost requires no shared network.
-The separate KyDrive `docker-compose.office.yml` editor package supports production
-Docker or Kubernetes, with unchanged provenance and acceptance gates.
+KyQuickStart does not install KyDrive's Euro-Office editor. KyDrive (master 936e6d3) ships a
+Kubernetes renderer (`deploy/render.py`) and no Compose service for it; see Unfinished in
+[the redirect record](redirect.md#dispositions).

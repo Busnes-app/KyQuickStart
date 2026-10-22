@@ -31,13 +31,9 @@ var productAdapters = map[string]productAdapter{
 	"kymessage":  {"/app/kymessages", "", messageSetup},
 	"kycalendar": {"/app/kycalendar", "", calendarSetup},
 	"kyyard":     {"/app/kyyard-server", "", yardSetup},
-	"immich":     {"/usr/src/app/server/bin/immich-admin", "", immichSetup},
 }
 
 func validateProductTarget(product string, target stack.Target) error {
-	if product == "immich" && target.Kubernetes() {
-		return errors.New("Immich integration requires a Docker target")
-	}
 	// Kubernetes exec cannot switch users, so a required runtime user needs Docker.
 	if productAdapters[product].runtimeUser != "" && target.Kubernetes() {
 		return errors.New("this product's setup must run as its service user, which requires a Docker target")

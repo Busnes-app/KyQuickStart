@@ -130,6 +130,7 @@ func TestApply(t *testing.T) {
 		exec.Command("docker", "compose", "-p", "kyq-hello", "down").Run()
 		exec.Command("docker", "exec", name, "rm", "-rf", filepath.Join(work, "root")).Run()
 	})
+	foreign := foreignContainer(t)
 	hostPort := docker(t, "port", name, "22")
 	_, port, _ := net.SplitHostPort(hostPort)
 	waitForSSH(t, port, hostFP)
@@ -241,7 +242,9 @@ func TestApply(t *testing.T) {
 	docker(t, "exec", name, "rm", "-r", root+"/.lock")
 	testSuiteCommands(t, ctx, state, hostFP, port, root, name)
 	testDumpBackup(t, ctx, state, port, base, name)
+	testLifecycle(t, ctx, state, port, base, name)
 	testRunner(t, ctx, state, port, base, name)
+	foreign()
 }
 
 // testSuiteCommands drives install, upgrade, uninstall and unmanage over SSH, from a

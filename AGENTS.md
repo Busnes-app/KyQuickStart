@@ -187,7 +187,7 @@ and retain their own identity, sealer label and collection adapters.
 
 ## User Preferences
 
-- Deployment goal: an end-user stack installer guides requirements and connections to every target server, installs the selected suite software, and builds its initial configuration. The installer is `KyQuickStart`, a Go binary run from the operator workstation: bring-your-own Docker hosts over SSH with Kubernetes optional; it never installs Docker or Kubernetes (see `KyQuickStart/docs/superpowers/specs/2026-10-06-installer-architecture-design.md`). When designing suite installation, read `SINGLE_PROMPT_STACK_RESEARCH.md` for the assessed gaps and proposed sequence; recommendations there are not selected implementation contracts.
+- Deployment goal: an end-user stack installer guides requirements and connections to every target server, installs the selected suite software, and builds its initial configuration. The primary path is `KyQuickStart-AI` (owner, 2026-10-22): a local AI agent plans, converses and diagnoses, and `KyQuickStart`, a Go binary run from the operator workstation, is its deterministic execution layer, enforcing validated operations, ownership, credentials and verifiable results; it also runs unattended from the command line. Docker hosts over SSH (Compose) and Kubernetes clusters are both fully supported, bring-your-own; it never installs Docker or Kubernetes. KyQuickStart expansion is frozen: no new catalog apps or standalone orchestration features, only compatibility, safety fixes, verification and the AI integration (`KyQuickStart/docs/redirect.md`). When designing suite installation, read `SINGLE_PROMPT_STACK_RESEARCH.md` for the assessed gaps and proposed sequence; recommendations there are not selected implementation contracts.
 
 - Installer product selection: list available products with a short purpose and an explicit install/skip choice for each. Explain required dependencies and validate the selected combination before deployment; show every required component in the installation plan. Save selections for resume and configure and verify the selected products. Skipping an already installed product does not authorize uninstalling it or deleting its data.
 
@@ -215,7 +215,7 @@ and retain their own identity, sealer label and collection adapters.
 
 - Nextcloud is excluded from document management and file storage. ONLYOFFICE products are excluded for geopolitical reasons. Evaluate Euro-Office's independent governance, build and release chain rather than rejecting it solely for inherited code; it is selected for the KyDrive local integration; production release requires source/build provenance verification. CryptPad's ONLYOFFICE-derived browser editors must remain explicit in comparisons.
 
-- KyPasswords is replaced by Vaultwarden (decided 2026-10-06). Installer password selection is Vaultwarden only (confirmed 2026-10-09); exclude the older KeePass-based KyVault from new installs and adapters. Existing KyVault installations and data stay untouched. KyAuth does not become a Bitwarden client and becomes authenticator-only (TOTP, Push MFA, KyIdentity sign-on and passkey); Android users use the official Bitwarden app against Vaultwarden for passwords and passkeys. See `kyauth-android/docs/superpowers/specs/2026-10-06-vaultwarden-replaces-kypasswords.md`.
+- KyPasswords is replaced by Vaultwarden (decided 2026-10-06). The installer offered Vaultwarden only (confirmed 2026-10-09) until the owner dropped it, with Forgejo and BookStack, from installation on 2026-10-22; existing installations stay untouched. Exclude the older KeePass-based KyVault from new installs and adapters. Existing KyVault installations and data stay untouched. KyAuth does not become a Bitwarden client and becomes authenticator-only (TOTP, Push MFA, KyIdentity sign-on and passkey); Android users use the official Bitwarden app against Vaultwarden for passwords and passkeys. See `kyauth-android/docs/superpowers/specs/2026-10-06-vaultwarden-replaces-kypasswords.md`.
 
 - Third-party apps installed with the suite must pass the admission rules in `KyQuickStart/docs/superpowers/specs/2026-10-06-third-party-catalog-design.md` (approved 2026-10-06): open source with SSO in the free edition, native OIDC against KyIdentity, admin from a claim or an unattended grant, and an offboarding path. No auth-proxy gate is built. Monitoring stays with kyPulse; forms, video calls and video streaming are out of scope.
 
@@ -225,7 +225,7 @@ and retain their own identity, sealer label and collection adapters.
 
 - Web themes default to the Busnes.app cream/light and charcoal/dark palettes with orange accents, following the OS until a browser-local choice is saved. Preserve existing named themes and saved choices.
 
-- KyQuickStart supports Docker placement for every catalog Ky product, including a separate resident runner for KyYard. Kubernetes remains available for products with manifests.
+- KyQuickStart places every catalog Ky product on Docker hosts, including a separate resident runner for KyYard, and on Kubernetes where the product has a manifest. Products keep their documented placement restrictions: KyDrive, KyPost, KyDNS and KyMessages are Docker only (`KyQuickStart/docs/redirect.md`).
 
 - KyPost owns the shared `kypost-net` Docker network; standalone consumers join it as external. Containerized Nginx Proxy Manager is supported with a fixed address trusted as one `/32` (IPv4) or `/128` (IPv6). Preserve existing manually owned networks as explicit legacy exceptions.
 
@@ -238,28 +238,23 @@ root so this repository stands alone. Keep it in step with the workspace copy.
 
 ## Purpose
 
-One command-line installer that stands up the Ky suite and selected third-party apps across the
-operator's servers: choices, prerequisite checks, installation, preconfiguration, and a printed
-handover of admin and everyday logins.
+The deterministic execution layer for KyQuickStart-AI, the primary installation path, and an
+unattended command-line tool. It plans, checks, installs, preconfigures and verifies the Ky
+catalog on Docker hosts over SSH (Compose) and Kubernetes clusters, both fully supported, and
+prints the owner's handover. The AI plans, converses and diagnoses; `kyquickstart` enforces
+validated operations, ownership, credentials and verifiable results. Decision, dispositions and
+edge compatibility: `docs/redirect.md`.
 
 ## Ownership
 
 - Public overview, build and command summary: `README.md`.
 - Third-party catalog, admission rules, edge and reverse-proxy choices, and the app-aware bulk
   backup path: `docs/superpowers/specs/2026-10-06-third-party-catalog-design.md`.
-- Installer architecture (CLI, catalog format, targets, state, setup, offboarding bridge,
-  upgrades, testing): `docs/superpowers/specs/2026-10-06-installer-architecture-design.md`.
-- Build sequence and product readiness gates: `docs/superpowers/plans/2026-10-06-kyquickstart-roadmap.md`.
-  Implementation waits until the suite products are further along; write each phase's detailed
-  plan when its gate opens.
-- Phase 1 installer core: `docs/superpowers/plans/2026-10-08-phase-1-installer-core.md`.
-- Phase 2 Kubernetes driver: `docs/superpowers/plans/2026-10-08-phase-2-kubernetes-driver.md`.
-- All-product adapter implementation: `docs/superpowers/plans/2026-10-09-all-product-adapters.md`.
-- Phase 4 edge implementation plan: `docs/superpowers/plans/2026-10-08-phase-4-edge.md`.
+- Redirect record (decision, freeze, Keep/Simplify/Retire/Unfinished dispositions, placement,
+  per-product edge compatibility): `docs/redirect.md`.
+- Installer architecture (CLI, catalog format, targets, state, setup, upgrades, testing): `docs/superpowers/specs/2026-10-06-installer-architecture-design.md`.
 - Current edge configuration and supported deployment paths: `docs/edge.md`.
 - Guided planning, demo deployment, existing installation references and explicit KyIdentity setup: `docs/guided-setup.md`.
-- Resident offboarding runtime configuration, TLS, command behavior and remaining gates:
-  `docs/offboarding.md`.
 - Suite runner (KyYard manages the suite after install): ownership, hand-off, runner protocol v1,
   HTTP status table and image: `docs/superpowers/specs/2026-10-16-suite-runner-design.md`;
   operator steps in `docs/guided-setup.md` ("Hand-off to KyYard"); compose example
@@ -330,23 +325,15 @@ handover of admin and everyday logins.
   acceptance verify native TLS configuration, owner binding and transfer. SSH additionally
   qualifies native HTTP sign-on and owner/everyday Notes access; browser UI, MFA, Kubernetes
   sign-on and full lifecycle acceptance remain open.
-- A third-party app enters the catalog only if it passes every admission rule in the catalog
-  spec. Record each rejection and its reason there.
+- The catalog takes no new apps (freeze, `docs/redirect.md`). The catalog spec's admission rules
+  stay for KyQuickStart-AI's labelled third-party test installs; record each rejection there.
 - Third-party apps run on Docker hosts only. Kubernetes hosts Ky products and the edge
   components (cloudflared, Nginx Proxy Manager, frp client), deployed with `client-go` typed
-  objects (no Helm); the edge components also deploy to Docker hosts. An app leaving the catalog stops taking new installs after
+  objects (no Helm); cloudflared and the frp client also deploy to Docker hosts, NPM does not. An app leaving the catalog stops taking new installs after
   notice, and existing installs are handed to their owner with `unmanage`.
 - Every installed app signs in through KyIdentity with native OIDC, uses *Assigned users only*,
-  and has an offboarding adapter. The installer builds no auth-proxy gate.
-- Bridge SCIM connectors are app-scoped: assignment loss revokes only that app; global
-  disablement reaches every owning connector. Register verified native bindings first and
-  qualify the complete connector lifecycle before deployment. New-account creation requires
-  an explicit protected per-app opt-in and a verified durable native receipt; never adopt a
-  foreign account. A revocation-only receiver
-  does not satisfy active profile provisioning or resident-service acceptance.
-- Forgejo group delivery is a separate protected runtime opt-in: pin organization and unit
-  permissions, use verified account/team receipts, and retain native repositories on logical
-  group retirement. Qualify actual KyIdentity group event delivery before deployment.
+  and offboards through KyIdentity's SCIM or signed directory webhook into the product's own
+  handling. The installer builds no auth-proxy gate and never adopts a foreign account.
 - Reverse proxy is Nginx Proxy Manager. On an existing NPM, touch only installer-created hosts,
   certificates and certificate users, through its API, never its database. LAN DNS records in
   KyDNS are touched only while listed in the installer's ledger (`docs/edge.md`). NPM admin is LAN-only; its credentials go in the handover.
@@ -357,10 +344,10 @@ handover of admin and everyday logins.
   with a cluster-generated one (`docs/edge.md`).
 - One edge (NPM, and a tunnel or frp client) per target and one owner per hostname. A route's
   app is on the edge's target or on a Docker target, never in another cluster; a cluster edge's
-  egress admits such an upstream's `forward_host` (an IP) and port alone. The installer
-  sets each product's trusted-proxy value to exactly where its edge connects from (pinned /32 on
-  Docker, NAT-free LAN /32 across hosts, pod network plus an edge-only NetworkPolicy in the
-  cluster), never `0.0.0.0/0`, and `verify` checks the client address the product reports.
+  egress admits such an upstream's `forward_host` (an IP) and port alone. A product's
+  trusted-proxy value is unset or loopback only (forwarded headers ignored), or exactly where its edge
+  connects from (`{{edge_address}}`), never `0.0.0.0/0` or a Docker gateway; `verify-edge` checks
+  the client address the product reports. Per-product status: `docs/redirect.md`.
 - Bulk data goes to restic on an operator-run, append-only (`--append-only --private-repos`)
   TLS rest-server off the app's host, one repository (`<repository>/<app>`) and password per
   app. `kyquickstart backup APP` (Docker apps only, no schedule, no prune) snapshots the app's
@@ -416,6 +403,15 @@ handover of admin and everyday logins.
   acknowledgement. The manifest's `upgrade.note` is printed and recorded with it.
   Uninstall keeps data and secrets; unmanage drops the managed labels and the installer then
   refuses to install over the app. Error codes are `internal/suite` codes.
+- `stop`, `start` and `restart APP` act on one installed app under the target lock (Docker:
+  Compose stop/up -d/restart; Kubernetes: replicas 0/1 and a pod-template restart annotation),
+  waiting for health. `stop` records `stopped: true` on the app in stack.yaml; while it is set,
+  `apply`, `upgrade`, `restart` and `backup` refuse `app_stopped`; `start` and a finished
+  `restore` clear it. A workload stopped by hand without it is still repaired by apply. `logs
+  APP` is read-only, redacts the secrets the app's catalog entry generates and needs `get pods/log` on
+  Kubernetes, which preflight does not require. CLI `status` adds the live workload state; the
+  runner's status does not (KyYard decodes it strictly). `handoff` refuses while any app is
+  stopped: the runner cannot start one, and older runner builds refuse the field.
 - Remote commands are POSIX `sh`, quoted with `remote.Quote`. The SSH runner sends each one
   base64-encoded to `sh` (`remote.wrap`), so a non-POSIX login shell such as fish cannot alter
   it. Unit tests run commands for real through `remote.Local` and under sh, bash and fish.
@@ -454,9 +450,10 @@ handover of admin and everyday logins.
 
 ## Work Guidance
 
-Continue adapter implementation across every supported server product; a first working adapter
-is a milestone, not completion of the all-product request. Product interfaces and local tests
-may be built before their production release gates open.
+Expansion is frozen (owner, 2026-10-22; supersedes the all-product adapter and roadmap plans):
+no new catalog apps, Ky or third-party, and no new standalone orchestration features. Work is
+compatibility, safety fixes, verification and the KyQuickStart-AI integration. Record each
+still-wanted capability under Unfinished in `docs/redirect.md` instead of building it here.
 
 Deployment-specific choices (existing or new NPM, domains, Cloudflare or VPS, and target
 connections) are installer runtime inputs. Build against disposable local fixtures; those
@@ -475,14 +472,13 @@ calls and kind nodes must carry their own explicit bounds.
 
 ## Verification
 
-- `make build`: builds workstation `kyquickstart` and resident `kyoffboard` binaries.
+- `make build`: builds the workstation `kyquickstart` binary.
 - `make ci`: tidy check, gofmt, vet (including the `e2e,goolm` tags), race tests. Runner tests decode
   every answer with KyYard's client types (`internal/runner/kyyard_test.go`).
   `cmd/kyquickstart/release_test.go` runs `scripts/release-binaries.sh` (the stamp in all four
   binaries, its refusals) and checks `release-image.yml`'s job graph, permissions and pins.
 - `make workflow-lint`: needs Docker (CI runs it in `vulncheck`); actionlint v1.7.12 on every
-  workflow and offline, digest-pinned zizmor (medium and up) on `release-image.yml` and
-  `kyoffboard-image.yml`.
+  workflow and offline, digest-pinned zizmor (medium and up) on `release-image.yml`.
 - `go test -tags e2e ./test/e2e -run '^TestDockerKy'`: pinned-image Docker startup/readiness/native capabilities/restart for every new template, plus KyYard's private runner socket, credential isolation and container recreation.
 - `make e2e`: needs Docker; runs `apply` against an sshd container on the local Docker socket and
   against a kind cluster (`go run sigs.k8s.io/kind@v0.33.0`), including drift and stale-lock cases.
@@ -585,15 +581,9 @@ calls and kind nodes must carry their own explicit bounds.
 
 ## Child DOX Index
 
-- `cmd/kyoffboard/AGENTS.md`: resident bridge command flags, safe output and signal lifecycle;
-  the root retains deployment and credential provisioning.
 - `internal/cli/AGENTS.md`: guided questions, local plan persistence and command orchestration,
   including `backup` and `restore`.
 - `internal/runner/AGENTS.md`: `kyquickstart serve` and the serve-* commands inside the runner
   container; the root owns the ownership rule and the CLI owns handoff.
 - `internal/edge/AGENTS.md`: NPM reconciliation, connector deployment and public forwarded-header verification.
   The root owns stack schema, CLI orchestration and target drivers.
-- `internal/adapters/AGENTS.md`: native third-party setup, administrator verification,
-  offboarding and disposable qualification; the root retains catalog admission and deployment.
-- `internal/offboard/AGENTS.md`: resident bridge account/group bindings, creation receipts, directory/membership intents, durable revocation jobs and audit
-  outbox; the root retains deployment, target secrets, network policy and admission.
