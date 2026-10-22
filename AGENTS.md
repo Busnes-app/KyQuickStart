@@ -403,6 +403,14 @@ edge compatibility: `docs/redirect.md`.
   acknowledgement. The manifest's `upgrade.note` is printed and recorded with it.
   Uninstall keeps data and secrets; unmanage drops the managed labels and the installer then
   refuses to install over the app. Error codes are `internal/suite` codes.
+- `stop`, `start` and `restart APP` act on one installed app under the target lock (Docker:
+  Compose stop/up -d/restart; Kubernetes: replicas 0/1 and a pod-template restart annotation),
+  waiting for health. `stop` records `stopped: true` on the app in stack.yaml; while it is set,
+  `apply`, `upgrade`, `restart` and `backup` refuse `app_stopped`; `start` and a finished
+  `restore` clear it. A workload stopped by hand without it is still repaired by apply. `logs
+  APP` is read-only, redacts the app's generated secrets and needs `get pods/log` on
+  Kubernetes, which preflight does not require. CLI `status` adds the live workload state; the
+  runner's status does not (KyYard decodes it strictly).
 - Remote commands are POSIX `sh`, quoted with `remote.Quote`. The SSH runner sends each one
   base64-encoded to `sh` (`remote.wrap`), so a non-POSIX login shell such as fish cannot alter
   it. Unit tests run commands for real through `remote.Local` and under sh, bash and fish.

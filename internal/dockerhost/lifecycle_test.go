@@ -2,7 +2,6 @@ package dockerhost
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -11,7 +10,6 @@ import (
 	"time"
 
 	"github.com/Busnes-app/kyquickstart/internal/remote"
-	"github.com/Busnes-app/kyquickstart/internal/suite"
 )
 
 // composeHost runs shell commands for real and keeps one "web" container's state for docker.
@@ -126,18 +124,5 @@ func TestLogs(t *testing.T) {
 	out, err := Logs(context.Background(), a, "web", 5)
 	if err != nil || string(out) != "web-1  | ready\n" || !strings.HasSuffix(h.calls[0], " logs --no-color --tail 5 'web'") {
 		t.Fatalf("logs %q, %v, ran %q", out, err, h.calls)
-	}
-}
-
-func TestBackupRefusesStoppedApp(t *testing.T) {
-	a, h := lifecycleApp(t, "exited")
-	a.Stopped = true
-	_, _, err := Store{App: a}.Backup(context.Background())
-	var se *suite.Error
-	if !errors.As(err, &se) || se.Code != suite.AppStopped || !strings.Contains(err.Error(), "kyquickstart start hello") {
-		t.Fatalf("err = %v", err)
-	}
-	if len(h.calls) != 0 {
-		t.Errorf("docker ran: %q", h.calls)
 	}
 }

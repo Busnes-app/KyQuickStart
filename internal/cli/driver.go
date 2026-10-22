@@ -53,7 +53,6 @@ type sshDriver struct {
 		remote.Runner
 		Close() error
 	}
-	stopped map[string]bool // the plan's apps stopped with kyquickstart stop
 }
 
 func (d sshDriver) preflight(ctx context.Context) []finding {
@@ -81,7 +80,7 @@ func (d sshDriver) steps(name string, app catalog.App, releaseSet string, redact
 }
 
 func (d sshDriver) app(name string, app catalog.App, releaseSet string) dockerhost.App {
-	return dockerhost.App{Name: name, Root: d.t.Root, Runner: d.c, Catalog: app, ReleaseSet: releaseSet, Stopped: d.stopped[name]}
+	return dockerhost.App{Name: name, Root: d.t.Root, Runner: d.c, Catalog: app, ReleaseSet: releaseSet}
 }
 
 func (d sshDriver) deployed(ctx context.Context, name string) (managed.Deployed, error) {

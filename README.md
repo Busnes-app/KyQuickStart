@@ -109,7 +109,7 @@ Choosing `finish` saves the plan without touching any server.
 | `handoff`, `pull-plan` | Hand app management to KyYard's suite runner, or copy its plan back ([guided setup](docs/guided-setup.md#hand-off-to-kyyard)) |
 | `backup`, `restore` | Snapshot a Docker app to its target's rest-server, or restore one ([guided setup](docs/guided-setup.md#backups-and-restore-on-docker)) |
 | `verify-edge` | Check public routing and forwarded headers |
-| TODO-lifecycle | `stop`/`start`, `restart`, `logs`, live `status`: wording pending from branch `redirect/lifecycle` |
+| `stop`, `start`, `restart`, `logs` | Control one installed app on Docker or Kubernetes (suspend/resume there); `status` adds its live state ([guided setup](docs/guided-setup.md#managing-apps)) |
 | `integrate-identity`, `integrate-product`, `integrate-stack` | Configure existing Ky products against KyIdentity |
 | `review` | Show the saved plan |
 | `version` | Print the release set; `--runner-image` prints the runner image a release binary pins |

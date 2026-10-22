@@ -129,7 +129,7 @@ func TestBackupAndRestoreCommands(t *testing.T) {
 	id := snapshotID(t, f, "")
 
 	// Refusals change nothing: running, a foreign snapshot, an unconfirmed restore.
-	if err := f.runIn("", "restore", "dumpdemo", "--snapshot", id, "--yes"); code(err) != suite.RestoreRefused || !strings.Contains(err.Error(), "is running on nas; stop it first (ssh -p 22 kyq@192.0.2.1 docker compose -p kyq-dumpdemo stop)") {
+	if err := f.runIn("", "restore", "dumpdemo", "--snapshot", id, "--yes"); code(err) != suite.RestoreRefused || !strings.Contains(err.Error(), "is running on nas; stop it first (kyquickstart stop dumpdemo)") {
 		t.Fatalf("running: %v", err)
 	}
 	os.WriteFile(filepath.Join(fake, "compose.json"), []byte(`{"db":false,"web":false}`), 0o600)
@@ -566,5 +566,28 @@ func TestRemovalReplayThroughDockerIdentity(t *testing.T) {
 		if !called || status == "delivered" && err != nil || status != "delivered" && code(err) != suite.RestoreIncomplete {
 			t.Fatal(status, err)
 		}
+	}
+}
+
+// A kyquickstart stop is how an app is stopped for restore: backup refuses it before saying
+// anything, and a finished restore, which starts the app, ends the stop in the plan.
+func TestStopForRestore(t *testing.T) {
+	f, _, _ := backupFixture(t)
+	if err := f.run("backup", "dumpdemo"); err != nil {
+		t.Fatal(err, f.out.String())
+	}
+	id := snapshotID(t, f, "")
+	if err := f.run("stop", "dumpdemo"); err != nil || !f.stack(t).Apps[0].Stopped {
+		t.Fatalf("stop: %v\n%s", err, f.out.String())
+	}
+	if err := f.run("backup", "dumpdemo"); code(err) != suite.AppStopped || f.out.Len() != 0 {
+		t.Fatalf("backup of a stopped app: %v\n%s", err, f.out.String())
+	}
+	rev := f.stack(t).Revision
+	if err := f.runIn("dumpdemo\n", "restore", "dumpdemo", "--snapshot", id, "--replace"); err != nil {
+		t.Fatal(err, f.out.String())
+	}
+	if st := f.stack(t); st.Apps[0].Stopped || st.Revision != rev+1 {
+		t.Fatalf("after restore: stopped %v, revision %d (was %d)", st.Apps[0].Stopped, st.Revision, rev)
 	}
 }

@@ -504,13 +504,6 @@ func (s *session) connect(ctx context.Context, trust trustFlag) error {
 			k.edge, k.nodePorts, k.upstreams, k.runnerImage = s.edgeApp(t.Name), s.nodePorts(t.Name), s.upstreams(t.Name), s.o.RunnerImage
 			d = k
 		}
-		if h, ok := d.(sshDriver); ok {
-			h.stopped = map[string]bool{}
-			for _, a := range s.plan.Apps {
-				h.stopped[a.Name] = a.Stopped
-			}
-			d = h
-		}
 		s.drivers[t.Name] = d
 	}
 	for _, e := range s.edges {
