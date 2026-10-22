@@ -29,9 +29,18 @@ func recoveryPlan(t *testing.T, f *fixture, clients string) {
 	path := filepath.Join(f.state, "stack.yaml")
 	b, _ := os.ReadFile(path)
 	y := strings.Replace(string(b), "    target: k1\nedges:", "    target: k1\n  - name: kyrecovery\n    target: k1\nedges:", 1)
-	y = strings.Replace(y, "integrations:", "      - app: kyrecovery\n        hostname: recovery.example.com\n        forward_host: app.kyq-kyrecovery.svc.cluster.local\n        forward_port: 8095\n        certificate_id: 1\nintegrations:", 1)
+	y = strings.Replace(y, "integrations:", "      - app: kyrecovery\n        hostname: recovery.example.com\n        forward_host: app.kyq-kyrecovery.svc.cluster.local\n        forward_port: 8095\n        certificate_id: 1\n        exposure: internal\nintegrations:", 1)
 	y = strings.Replace(y, "      clients: []\n", clients, 1)
-	os.WriteFile(path, []byte(y), 0o600)
+	os.WriteFile(path, []byte(internalEdge(y)), 0o600)
+}
+
+// internalEdge gives the plan's tunnel edge the LAN clients its internal routes serve:
+// KyRecovery, kyPulse and KyYard are internal only.
+func internalEdge(y string) string {
+	if strings.Contains(y, "    allow_cidrs:") {
+		return y
+	}
+	return strings.Replace(y, "    connector_cidr: 192.0.2.9/32\n", "    connector_cidr: 192.0.2.9/32\n    allow_cidrs: [192.168.1.0/24]\n", 1)
 }
 
 const wantRecoveryClient = `{"id":"kyrecovery","name":"KyRecovery","redirectUris":["https://recovery.example.com/api/auth/callback"],"postLogoutUris":null,"administratorRole":"kyrecovery.admin","suiteWebhook":{"url":"https://recovery.example.com/api/installer/directory"}}`

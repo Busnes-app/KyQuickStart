@@ -77,6 +77,9 @@ type Route struct {
 	CertificateID int    `yaml:"certificate_id,omitempty"`
 	Certificate   string `yaml:"certificate,omitempty"` // an edge certificate's name, instead of an ID
 	StatusPath    string `yaml:"status_path,omitempty"`
+	// Exposure is internal (only allow_cidrs clients reach the route) or external (the edge's
+	// public connection serves it). Empty is the edge's own: internal on lan, else external.
+	Exposure string `yaml:"exposure,omitempty"`
 	// Paths and DenyPaths come from the app's catalog route, never the plan.
 	Paths     []string `yaml:"-" json:"-"`
 	DenyPaths []string `yaml:"-" json:"-"`
@@ -97,10 +100,16 @@ func (e Edge) TrustedAddress() string {
 	return e.EgressAddress
 }
 
+// Internal reports whether only allow_cidrs clients reach r: every route of a lan edge, and
+// a tunnel edge's routes marked internal.
+func (e Edge) Internal(r Route) bool {
+	return r.Exposure == "internal" || r.Exposure == "" && e.Provider == "lan"
+}
+
 // URLHost is the host an app's route is reached at: its hostname, plus the port when clients
-// reach the edge on another than 443 (a lan edge's client_port).
+// reach an internal route on another than 443 (client_port).
 func (e Edge) URLHost(r Route) string {
-	if e.ClientPort != 0 && e.ClientPort != 443 {
+	if e.Internal(r) && e.ClientPort != 0 && e.ClientPort != 443 {
 		return r.Hostname + ":" + strconv.Itoa(e.ClientPort)
 	}
 	return r.Hostname
@@ -131,6 +140,9 @@ func Hostname(s string) bool {
 }
 
 func (s *Stack) validateEdges() error {
+	if err := s.Domains.validate(); err != nil {
+		return err
+	}
 	targets, hosts, apis := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	apps := map[string]string{}
 	for _, a := range s.Apps {
@@ -173,13 +185,15 @@ func (s *Stack) validateEdges() error {
 		if !e.Direct() {
 			apis[e.NPMURL] = true
 		}
-		var err error
-		switch e.Provider {
-		case "lan":
+		err := validateExposure(*e, s.Domains)
+		switch {
+		case err != nil:
+		case e.Provider == "lan":
 			err = validateLAN(e)
-		case "cloudflare", "frp":
+		case e.Provider == "cloudflare" || e.Provider == "frp":
 			err = validateConnector(e, target)
 		}
+
 		if err != nil {
 			return err
 		}
@@ -251,13 +265,23 @@ func (s *Stack) validateEdges() error {
 	return nil
 }
 
-// validateConnector checks a tunnel edge: one trusted connector address.
+// validateConnector checks a tunnel edge: one trusted connector address, and the clients its
+// internal routes serve.
 func validateConnector(e *Edge, target Target) error {
-	if len(e.AllowCIDRs) > 0 || e.ClientPort != 0 {
-		return fmt.Errorf("edge %s: allow_cidrs and client_port are only for lan", e.Target)
-	}
 	if err := validateConnectorCIDR(*e); err != nil {
 		return err
+	}
+	if len(e.Routes) > 0 && !slices.ContainsFunc(e.Routes, func(r Route) bool { return r.Exposure != "internal" }) {
+		return fmt.Errorf("edge %s: every route is internal, so the tunnel carries none; use provider lan", e.Target)
+	}
+	if !slices.ContainsFunc(e.Routes, func(r Route) bool { return r.Exposure == "internal" }) {
+		if len(e.AllowCIDRs) > 0 || e.ClientPort != 0 {
+			return fmt.Errorf("edge %s: allow_cidrs and client_port serve internal routes, and this edge has none", e.Target)
+		}
+	} else if err := validateAllowList(e); err != nil {
+		return err
+	} else if connector := netip.MustParsePrefix(e.ConnectorCIDR).Addr(); slices.ContainsFunc(e.AllowCIDRs, func(c string) bool { return netip.MustParsePrefix(c).Contains(connector) }) {
+		return fmt.Errorf("edge %s: allow_cidrs must not contain the connector %s, or the public connection would reach internal routes", e.Target, connector)
 	}
 	if e.Provider == "frp" {
 		if e.ProxyPort == 0 {
@@ -321,8 +345,14 @@ func validateLAN(e *Edge) error {
 	if e.ConnectorCIDR != "" || e.Connector != nil || e.ProxyPort != 0 {
 		return fmt.Errorf("edge %s: lan takes no connector_cidr, connector or proxy_port; clients reach NPM directly", e.Target)
 	}
+	return validateAllowList(e)
+}
+
+// validateAllowList checks the clients an edge's internal routes serve, and the port they
+// reach NPM's 443 on.
+func validateAllowList(e *Edge) error {
 	if len(e.AllowCIDRs) == 0 || len(e.AllowCIDRs) > 32 {
-		return fmt.Errorf("edge %s: lan needs allow_cidrs, 1-32 client prefixes", e.Target)
+		return fmt.Errorf("edge %s: internal routes need allow_cidrs, 1-32 client prefixes", e.Target)
 	}
 	seen := map[string]bool{}
 	for _, c := range e.AllowCIDRs {
@@ -339,6 +369,54 @@ func validateLAN(e *Edge) error {
 	}
 	return nil
 }
+
+// validateExposure checks each route's exposure against what its edge can serve, and its
+// hostname against the plan's domains.
+func validateExposure(e Edge, d *Domains) error {
+	for _, r := range e.Routes {
+		switch {
+		case r.Exposure != "" && r.Exposure != "internal" && r.Exposure != "external":
+			return fmt.Errorf("edge %s: route %s: exposure must be internal or external", e.Target, r.Hostname)
+		case r.Exposure == "external" && e.Provider == "lan":
+			return fmt.Errorf("edge %s: route %s cannot be external: a lan edge has no public connection", e.Target, r.Hostname)
+		case r.Exposure == "internal" && e.Direct():
+			return fmt.Errorf("edge %s: route %s cannot be internal: a cloudflare-direct edge has no LAN path", e.Target, r.Hostname)
+		}
+		if d == nil {
+			continue
+		}
+		if e.Internal(r) && !d.InInternal(r.Hostname) {
+			return fmt.Errorf("edge %s: internal route %s must be a name under the internal domain %s", e.Target, r.Hostname, d.Internal)
+		}
+		if !e.Internal(r) && (!under(r.Hostname, d.External) || d.InInternal(r.Hostname)) {
+			return fmt.Errorf("edge %s: external route %s must be a name under the external domain %s and outside the internal domain %s", e.Target, r.Hostname, d.External, d.Internal)
+		}
+	}
+	return nil
+}
+
+// Domains separates an installation's names: internal routes under Internal, external routes
+// under External and outside Internal. Internal may lie inside External (lan.example.com).
+type Domains struct {
+	Internal string `yaml:"internal"`
+	External string `yaml:"external"`
+}
+
+// InInternal reports whether host is a name under the internal domain.
+func (d *Domains) InInternal(host string) bool { return under(host, d.Internal) }
+
+func (d *Domains) validate() error {
+	if d == nil {
+		return nil
+	}
+	if !Hostname(d.Internal) || !Hostname(d.External) || d.Internal == d.External || under(d.External, d.Internal) {
+		return errors.New("domains: internal and external must be two different lowercase DNS names, the external one not inside the internal one")
+	}
+	return nil
+}
+
+// under reports whether host is a name strictly inside domain.
+func under(host, domain string) bool { return strings.HasSuffix(host, "."+domain) }
 
 // AllowCIDR accepts a canonical network prefix no wider than /8 (IPv4) or /32 (IPv6).
 func AllowCIDR(s string) bool {

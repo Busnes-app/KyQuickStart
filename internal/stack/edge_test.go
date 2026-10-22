@@ -366,9 +366,87 @@ func TestURLHost(t *testing.T) {
 		port int
 		want string
 	}{{0, "identity.example.com"}, {443, "identity.example.com"}, {30543, "identity.example.com:30543"}} {
-		if got := (Edge{ClientPort: c.port}).URLHost(r); got != c.want {
+		if got := (Edge{Provider: "lan", ClientPort: c.port}).URLHost(r); got != c.want {
 			t.Errorf("client_port %d: URLHost = %q, want %q", c.port, got, c.want)
 		}
+	}
+	// client_port is how LAN clients reach NPM; the tunnel serves external routes on 443.
+	tunnel := Edge{Provider: "cloudflare", ClientPort: 30543}
+	if got := tunnel.URLHost(r); got != "identity.example.com" {
+		t.Errorf("external route: URLHost = %q", got)
+	}
+	r.Exposure = "internal"
+	if got := tunnel.URLHost(r); got != "identity.example.com:30543" {
+		t.Errorf("internal route on a tunnel edge: URLHost = %q", got)
+	}
+}
+
+// A tunnel edge serves internal routes only to allow_cidrs, which must not hold the connector;
+// a lan edge has no external routes and a cloudflare-direct edge no internal ones.
+func TestRouteExposure(t *testing.T) {
+	internal := strings.Replace(kubeEdgeStack, "connector_cidr: 172.18.0.2/32\n", "connector_cidr: 172.18.0.2/32\n    allow_cidrs: [192.168.1.0/24]\n", 1)
+	internal = strings.Replace(internal, "        certificate_id: 1\n", "        certificate_id: 1\n        exposure: internal\n", 1)
+	internal += "      - app: npm\n        hostname: www.example.com\n        forward_host: app.kyq-npm.svc.cluster.local\n        forward_port: 8080\n        certificate_id: 1\n"
+	s, err := Parse([]byte(internal))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e := s.Edges[0]; !e.Internal(e.Routes[0]) || e.ClientPort != 443 {
+		t.Fatalf("parsed %+v", e)
+	}
+	if e := s.Edges[0]; e.Internal(Route{}) || !(Edge{Provider: "lan"}).Internal(Route{}) {
+		t.Fatal("an unmarked route must take its edge's exposure")
+	}
+	lan := strings.Replace(kubeEdgeStack, "provider: cloudflare\n    npm_url: kube://kyq-npm/app:81\n    connector_cidr: 172.18.0.2/32\n",
+		"provider: lan\n    npm_url: kube://kyq-npm/app:81\n    allow_cidrs: [192.168.1.0/24]\n", 1)
+	for name, c := range map[string]struct{ plan, old, new, want string }{
+		"unknown exposure":         {internal, "exposure: internal", "exposure: public", "internal or external"},
+		"internal needs allow":     {internal, "    allow_cidrs: [192.168.1.0/24]\n", "", "need allow_cidrs"},
+		"allow without internal":   {internal, "        exposure: internal\n", "", "has none"},
+		"connector in allow_cidrs": {internal, "[192.168.1.0/24]", "[172.16.0.0/12]", "must not contain the connector"},
+		"every route internal":     {internal, "kyq-npm.svc.cluster.local\n        forward_port: 8080\n        certificate_id: 1\n", "kyq-npm.svc.cluster.local\n        forward_port: 8080\n        certificate_id: 1\n        exposure: internal\n", "every route is internal"},
+		"external on lan":          {lan, "        certificate_id: 1\n", "        certificate_id: 1\n        exposure: external\n", "no public connection"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := strings.Replace(c.plan, c.old, c.new, 1)
+			if bad == c.plan {
+				t.Fatal("replacement did not apply")
+			}
+			if _, err := Parse([]byte(bad)); err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("got %v, want %q", err, c.want)
+			}
+		})
+	}
+	if _, err := Parse([]byte(strings.Replace(lan, "        certificate_id: 1\n", "        certificate_id: 1\n        exposure: internal\n", 1))); err != nil {
+		t.Fatalf("explicit internal on lan: %v", err)
+	}
+}
+
+// domains keeps internal names under the internal domain and external names outside it.
+func TestDomains(t *testing.T) {
+	lan := strings.Replace(kubeEdgeStack, "provider: cloudflare\n    npm_url: kube://kyq-npm/app:81\n    connector_cidr: 172.18.0.2/32\n",
+		"provider: lan\n    npm_url: kube://kyq-npm/app:81\n    allow_cidrs: [192.168.1.0/24]\n", 1)
+	withDomains := func(plan, internal, external string) string {
+		return strings.Replace(plan, "edges:\n", fmt.Sprintf("domains: {internal: %s, external: %s}\nedges:\n", internal, external), 1)
+	}
+	for name, c := range map[string]struct {
+		plan string
+		ok   bool
+	}{
+		"internal route under internal": {withDomains(strings.Replace(lan, "hello.example.com", "hello.lan.example.com", 1), "lan.example.com", "example.com"), true},
+		"internal route outside it":     {withDomains(lan, "lan.example.com", "example.com"), false},
+		"external route under external": {withDomains(kubeEdgeStack, "lan.example.com", "example.com"), true},
+		"external route in internal":    {withDomains(strings.Replace(kubeEdgeStack, "hello.example.com", "hello.lan.example.com", 1), "lan.example.com", "example.com"), false},
+		"external route elsewhere":      {withDomains(kubeEdgeStack, "lan.example.com", "example.net"), false},
+		"same domain":                   {withDomains(kubeEdgeStack, "example.com", "example.com"), false},
+		"external inside internal":      {withDomains(kubeEdgeStack, "example.com", "pub.example.com"), false},
+		"not a name":                    {withDomains(kubeEdgeStack, "'*.lan.example.com'", "example.com"), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Parse([]byte(c.plan)); (err == nil) != c.ok {
+				t.Fatalf("ok=%v: %v", c.ok, err)
+			}
+		})
 	}
 }
 
@@ -448,6 +526,7 @@ func TestCloudflareDirectEdge(t *testing.T) {
 		"https origin":        {"forward_port: 18080", "forward_port: 18080\n        forward_scheme: https"},
 		"certificate":         {"forward_port: 18080", "forward_port: 18080\n        certificate_id: 1"},
 		"app on other target": {"app: hello", "app: far"},
+		"internal route":      {"forward_port: 18080", "forward_port: 18080\n        exposure: internal"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if !strings.Contains(directStack, pair[0]) {

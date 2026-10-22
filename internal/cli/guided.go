@@ -512,6 +512,9 @@ func validateSelection(st *stack.Stack, cat catalog.Catalog, o Options) error {
 	if err := routedNeedsSetup(st); err != nil {
 		return err
 	}
+	if err := exposurePlan(st, cat); err != nil {
+		return err
+	}
 	if err := calendarAccounts(st); err != nil {
 		return err
 	}
@@ -537,6 +540,32 @@ func routedNeedsSetup(st *stack.Stack) error {
 		if !slices.ContainsFunc(st.Integrations, func(i stack.Integration) bool { return i.Product == a.Name && i.Installed(st) }) {
 			return fmt.Errorf("%s is routed but has no integration on %s: its route would expose its first-run web setup. Add {product: %s, target: %s, bundle: /data/installer/setup.json, identity_client: %s} to integrations, or remove its route", a.Name, a.Target, a.Name, a.Target, a.Name)
 		}
+	}
+	return nil
+}
+
+// exposurePlan refuses an internal-only catalog app on an external route, and an external
+// route signing in through a KyIdentity this plan routes only internally: the browser of
+// whoever reaches that app must reach KyIdentity too.
+func exposurePlan(st *stack.Stack, cat catalog.Catalog) error {
+	var signIn string
+	identity, identityExternal := false, false
+	for _, e := range st.Edges {
+		for _, r := range e.Routes {
+			external := !e.Internal(r)
+			if external && cat[r.App].Exposure == "internal" {
+				return fmt.Errorf("%s is internal only: its route %s needs exposure: internal, which only allow_cidrs clients reach", r.App, r.Hostname)
+			}
+			if external && cat[r.App].OIDC != nil {
+				signIn = r.Hostname
+			}
+			if r.App == "kyidentity" {
+				identity, identityExternal = true, identityExternal || external
+			}
+		}
+	}
+	if signIn != "" && identity && !identityExternal {
+		return fmt.Errorf("external route %s signs in through KyIdentity, so KyIdentity's route must be external too (LAN clients can still reach it directly through lan_dns)", signIn)
 	}
 	return nil
 }
@@ -847,6 +876,11 @@ func guidedEdges(p *prompts, st *stack.Stack, cat catalog.Catalog) error {
 			if yes == "no" {
 				continue
 			}
+			exposure, err := askExposure(p, rk, e, name, cat[name])
+			if err != nil {
+				return err
+			}
+			before := len(e.Routes)
 			if e.Direct() {
 				r, err := askDirectRoute(p, rk, name)
 				if err != nil {
@@ -861,6 +895,7 @@ func guidedEdges(p *prompts, st *stack.Stack, cat catalog.Catalog) error {
 					return err
 				}
 				e.Routes = append(e.Routes, routes...)
+				setExposure(e.Routes[before:], exposure)
 				continue
 			}
 			r := stack.Route{App: name}
@@ -891,9 +926,19 @@ func guidedEdges(p *prompts, st *stack.Stack, cat catalog.Catalog) error {
 				return err
 			}
 			e.Routes = append(e.Routes, r)
+			setExposure(e.Routes[before:], exposure)
 		}
 		if len(e.Routes) == 0 {
 			return errors.New("edge has no routes; rerun plan and choose none or enable a route")
+		}
+		if (e.Provider == "cloudflare" || e.Provider == "frp") && !slices.ContainsFunc(e.Routes, func(r stack.Route) bool { return r.Exposure != "internal" }) {
+			return fmt.Errorf("every route on %s's %s edge is internal, so the tunnel would carry none; rerun plan and choose lan", t.Name, e.Provider)
+		}
+		if (e.Provider == "cloudflare" || e.Provider == "frp") && slices.ContainsFunc(e.Routes, func(r stack.Route) bool { return r.Exposure == "internal" }) {
+			fmt.Fprintln(p.out, "Internal routes serve only the LAN clients NPM is reached by directly; the tunnel never reaches them.")
+			if err := askLAN(p, key, &e); err != nil {
+				return err
+			}
 		}
 		if e.Direct() {
 			fmt.Fprintf(p.out, "The tunnel credentials must already be stored on %s in %s/edge/secrets/cloudflare_tunnel_credentials (mode 0600). See docs/edge.md.\n", t.Name, t.Root)
@@ -1113,11 +1158,31 @@ func askConnector(p *prompts, key string, t stack.Target, e *stack.Edge) error {
 	return nil
 }
 
+// askExposure asks whether a tunnel edge's route for name is internal or external; an
+// internal-only catalog app is internal without asking. Other edges have one exposure: "".
+func askExposure(p *prompts, rk string, e stack.Edge, name string, app catalog.App) (string, error) {
+	if e.Provider != "cloudflare" && e.Provider != "frp" {
+		return "", nil
+	}
+	if app.Exposure == "internal" {
+		fmt.Fprintf(p.out, "%s is internal only: LAN clients reach it, the tunnel does not.\n", name)
+		return "internal", nil
+	}
+	return p.ask(rk+"exposure", "Who reaches "+name+": internal (LAN clients only)/external (through the tunnel)", "external", oneOf("internal", "external"))
+}
+
+// setExposure marks routes with exposure; "" leaves them the edge's own.
+func setExposure(routes []stack.Route, exposure string) {
+	for i := range routes {
+		routes[i].Exposure = exposure
+	}
+}
+
 func seedEdges(a map[string]string, edges []stack.Edge) {
 	for _, e := range edges {
 		k := "edge." + e.Target + "."
 		a[k+"provider"], a[k+"npm"], a[k+"cidr"], a[k+"proxy_port"] = e.Provider, e.NPMURL, e.ConnectorCIDR, strconv.Itoa(e.ProxyPort)
-		if e.Provider == "lan" {
+		if len(e.AllowCIDRs) > 0 {
 			a[k+"allow_cidrs"], a[k+"client_port"] = strings.Join(e.AllowCIDRs, ","), strconv.Itoa(e.ClientPort)
 		}
 		if c := e.Connector; c != nil {
@@ -1127,6 +1192,9 @@ func seedEdges(a map[string]string, edges []stack.Edge) {
 		for _, r := range e.Routes {
 			k := k + "route." + r.App + "."
 			a[k+"enabled"] = "yes"
+			if r.Exposure != "" {
+				a[k+"exposure"] = r.Exposure
+			}
 			if r.Role != "" {
 				a[k+r.Role+".hostname"], a[k+r.Role+".port"] = r.Hostname, strconv.Itoa(r.ForwardPort)
 				continue

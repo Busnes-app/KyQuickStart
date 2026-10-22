@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/netip"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -38,12 +39,14 @@ func credentialName(provider string) string {
 }
 
 // connectorConfig has no secret; the programs read the protected file at runtime. A direct
-// edge routes each hostname to its Origin; the others route to NPM.
+// edge routes each hostname to its Origin; the others route to NPM. Internal routes are left
+// out: the tunnel never carries their names.
 func connectorConfig(e stack.Edge) ([]byte, string, []string) {
 	c := e.Connector
+	routes := slices.DeleteFunc(slices.Clone(e.Routes), e.Internal)
 	if e.Provider == "frp" {
-		hosts := make([]string, 0, len(e.Routes))
-		for _, route := range e.Routes {
+		hosts := make([]string, 0, len(routes))
+		for _, route := range routes {
 			hosts = append(hosts, strconv.Quote(route.Hostname))
 		}
 		text := fmt.Sprintf(`serverAddr = %s
@@ -66,7 +69,7 @@ transport.proxyProtocolVersion = "v2"
 		return []byte(text), frpcImage, []string{"-c", "/etc/kyq/connector.conf"}
 	}
 	var ingress []map[string]any
-	for _, route := range e.Routes {
+	for _, route := range routes {
 		if e.Direct() {
 			// Plain HTTP on the dedicated edge network, which never leaves the host.
 			ingress = append(ingress, map[string]any{"hostname": route.Hostname, "service": route.Origin})
