@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"io"
 	"math/big"
 	"net/netip"
 	"os"
@@ -255,9 +254,18 @@ func TestCloudflaredDirectContainer(t *testing.T) {
 	t.Cleanup(func() {
 		exec.Command("docker", "compose", "-p", "kyq-"+name, "-f", filepath.Join(dir, "compose.yaml"), "-f", filepath.Join(dir, "compose.kyq.yaml"), "down").Run()
 	})
-	en := &engine.Engine{Dir: filepath.Join(t.TempDir(), "state"), Out: io.Discard, Redact: &engine.Redactor{}}
+	var out bytes.Buffer
+	en := &engine.Engine{Dir: filepath.Join(t.TempDir(), "state"), Out: &out, Redact: &engine.Redactor{}}
 	if err := en.Run(ctx, dockerhost.Steps(app)); err != nil {
 		t.Fatal(err)
+	}
+	// A second operation reads the override back: Deployed, then an unchanged rerun.
+	if d, err := dockerhost.Deployed(ctx, app); err != nil || !d.Found || !d.Managed {
+		t.Fatalf("deployed = %+v, %v", d, err)
+	}
+	out.Reset()
+	if err := en.Run(ctx, dockerhost.Steps(app)); err != nil || strings.Count(out.String(), "skipped") != len(dockerhost.Steps(app)) {
+		t.Fatalf("rerun was not a no-op: %v\n%s", err, out.String())
 	}
 	probe := func(args ...string) string {
 		run := append(append([]string{"run", "--rm", "--network", e.Connector.Network}, limits...), args...)
@@ -297,5 +305,24 @@ func TestCloudflaredDirectContainer(t *testing.T) {
 	t.Cleanup(func() { exec.Command("docker", "rm", "-f", foreign).Run() })
 	if err := CheckConnector(ctx, remote.Local{}, root, e); err == nil || !strings.Contains(err.Error(), "only this installer's containers") {
 		t.Fatalf("foreign container on the edge network: %v", err)
+	}
+	docker("rm", "-f", foreign)
+
+	// unmanage keeps the network in the override and the container on it, unlabelled, so
+	// preflight then refuses the edge until the operator disconnects it.
+	if err := en.Run(ctx, dockerhost.UnmanageSteps(app)); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "compose.kyq.yaml")); err != nil || !strings.Contains(string(b), "name: "+e.Connector.Network) {
+		t.Fatalf("unmanage dropped the edge network: %v\n%s", err, b)
+	}
+	if d, err := dockerhost.Deployed(ctx, app); err != nil || !d.Found || d.Managed {
+		t.Fatalf("deployed after unmanage = %+v, %v", d, err)
+	}
+	if seen := probe("--ip", ip.String()); seen != ip.String() {
+		t.Fatalf("unmanaged app saw %q", seen)
+	}
+	if err := CheckConnector(ctx, remote.Local{}, root, e); err == nil || !strings.Contains(err.Error(), "only this installer's containers") {
+		t.Fatalf("unmanaged app on the edge network: %v", err)
 	}
 }

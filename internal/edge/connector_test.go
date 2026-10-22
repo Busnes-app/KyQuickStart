@@ -3,6 +3,7 @@ package edge
 import (
 	"context"
 	"encoding/pem"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -171,5 +172,35 @@ func TestCloudflareDirectCredential(t *testing.T) {
 	conf, err := os.ReadFile(filepath.Join(root, connectorName(e.Target), "connector.conf"))
 	if err != nil || strings.Contains(string(conf), "tunnel-secret-value") || !strings.Contains(string(conf), "kyq-kyidentity:5867") {
 		t.Fatalf("config %v: %s", err, conf)
+	}
+}
+
+// networkRunner runs shell commands for real and answers docker network inspect with body.
+type networkRunner string
+
+func (n networkRunner) Run(ctx context.Context, cmd string, stdin []byte) ([]byte, error) {
+	if strings.HasPrefix(cmd, "docker network inspect") {
+		return []byte(n), nil
+	}
+	return remote.Local{}.Run(ctx, cmd, stdin)
+}
+
+// An IPv6-enabled network could show the apps cloudflared at an address they do not trust.
+func TestCloudflareDirectRefusesIPv6Network(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := directEdge()
+	os.MkdirAll(filepath.Join(root, "edge", "secrets"), 0o700)
+	if err := os.WriteFile(filepath.Join(root, "edge", "secrets", "cloudflare_tunnel_credentials"), []byte(`{"AccountTag":"a","TunnelSecret":"s","TunnelID":"`+e.Connector.TunnelID+`"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	network := `[{"EnableIPv6":%s,"IPAM":{"Config":[{"Subnet":"172.30.0.0/24","IPRange":"172.30.0.128/25"}]},"Containers":{}}]`
+	if err := CheckConnector(context.Background(), networkRunner(fmt.Sprintf(network, "false")), root, e); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckConnector(context.Background(), networkRunner(fmt.Sprintf(network, "true")), root, e); err == nil || !strings.Contains(err.Error(), "IPv6") {
+		t.Fatalf("IPv6 network: %v", err)
 	}
 }

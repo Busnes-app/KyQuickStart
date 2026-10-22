@@ -120,7 +120,8 @@ func CheckConnector(ctx context.Context, r remote.Runner, root string, e stack.E
 		return errors.New("connector's existing Docker network is unavailable")
 	}
 	var networks []struct {
-		IPAM struct {
+		EnableIPv6 bool
+		IPAM       struct {
 			Config []struct{ Subnet, IPRange string }
 		}
 		Containers map[string]struct {
@@ -130,6 +131,10 @@ func CheckConnector(ctx context.Context, r remote.Runner, root string, e stack.E
 	}
 	if json.Unmarshal(b, &networks) != nil || len(networks) != 1 {
 		return errors.New("invalid Docker network response")
+	}
+	// With IPv6, the apps could see cloudflared from an address they do not trust.
+	if e.Direct() && networks[0].EnableIPv6 {
+		return errors.New("a cloudflare-direct network must not enable IPv6: its apps trust cloudflared's IPv4 address alone")
 	}
 	ip := netip.MustParsePrefix(e.ConnectorCIDR).Addr()
 	// NPM trusts this address, so Docker must never hand it to another container:

@@ -136,9 +136,11 @@ NPM too. There is no TLS to bypass: the tunnel to Cloudflare is cloudflared's ow
 **The network.** Create it for this edge alone, with an explicit subnet and a dynamic `--ip-range`
 that excludes `connector_cidr`, so Docker never hands cloudflared's trusted address to another
 container: `docker network create --subnet 172.30.0.0/24 --ip-range 172.30.0.128/25 kyq-edge-net`.
-Preflight refuses a network without that reservation, and a network holding any container
-without the installer's `ky.managed-by` label, because apps are found there by alias and trust
-cloudflared's address. Every routed app can reach every other routed app's port on it; those
+Preflight refuses a network without that reservation, one with IPv6 enabled (the apps trust
+cloudflared's IPv4 address alone), and one holding any container without the installer's
+`ky.managed-by` label, because apps are found there by alias and trust cloudflared's address.
+Containers carry no installation ID, so a container another installation's kyquickstart
+deployed passes that check: keep the network to this edge. Every routed app can reach every other routed app's port on it; those
 requests come from the app's own address, so a product trusting `connector_cidr` does not
 trust them. `unmanage` leaves the app attached and unlabelled, so preflight then refuses the
 edge until you run `docker network disconnect kyq-edge-net <container>`.
@@ -537,9 +539,10 @@ Separate connector tests prove authenticated frpc login with verified TLS and pa
 cloudflared ingress with the pinned image. `TestCloudflaredDirectContainer` has the pinned
 cloudflared validate a generated `cloudflare-direct` ingress and match each hostname to its
 app's origin and any other to 404; then, on a real reserved network, a stand-in app deployed
-through the Docker driver with the edge network is reached by its alias and sees exactly the
-connector's fixed address, a container on a dynamic address cannot present it, and preflight's
-network check refuses a foreign container. No live Cloudflare account or operator server is
+through the Docker driver with the edge network is read back and rerun as a no-op, is reached by
+its alias and sees exactly the connector's fixed address, a container on a dynamic address
+cannot present it, and preflight's network check refuses a foreign container and, after
+`unmanage` (which keeps the network), the unlabelled app. No live Cloudflare account or operator server is
 used. A complete public frp/Cloudflare-to-product G11 pilot is still required; for
 `cloudflare-direct` that includes the tunnel's connection, Cloudflare's headers as products see
 them and every catalog app through it.
