@@ -81,7 +81,12 @@ target markers from earlier builds stay valid.
 - CalDAV clients.
 - Euro-Office: browser editing through the edge, KyDrive-to-editor commands, backup and
   upgrade, and its provenance gate: the image's build provenance is observed, not verified
-  ([guided setup](guided-setup.md)).
+  ([guided setup](guided-setup.md)). Its deploy refuses a cluster whose network plugin does not
+  enforce egress (`egress_unenforced`); that refusal is unit-tested only, since kind enforces,
+  and the probe checks one denied destination, once per deploy. Accepted residual: a KyDrive
+  user who can edit can make the editor fetch any hostname its edge routes over HTTPS.
+- cloudflare-direct: containers of another installation on the same edge network pass
+  preflight; keep that network dedicated to one edge.
 - `cloudflare-direct` on Kubernetes; KyNotes behind it (a two-phase connector); an explicit
   per-route opt-in or Cloudflare Access for admin-only apps; a live tunnel through every
   eligible product.
