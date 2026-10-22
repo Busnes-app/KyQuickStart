@@ -339,11 +339,19 @@ func guided(ctx context.Context, args []string, o Options) error {
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	// KyDrive's editor is its option: asked right after KyDrive, and only when it installs.
+	if i := slices.Index(names, euroOffice); i >= 0 && slices.Contains(names, "kydrive") {
+		names = slices.Delete(names, i, i+1)
+		names = slices.Insert(names, slices.Index(names, "kydrive")+1, euroOffice)
+	}
 	targetNames := []string{}
 	for _, t := range st.Targets {
 		targetNames = append(targetNames, t.Name)
 	}
 	for _, name := range names {
+		if name == euroOffice && !slices.ContainsFunc(st.Apps, func(a stack.App) bool { return a.Name == "kydrive" }) {
+			continue
+		}
 		app := cat[name]
 		purpose := app.Description
 		if name == "hello" && st.Demo {
@@ -353,6 +361,9 @@ func guided(ctx context.Context, args []string, o Options) error {
 			purpose = app.Category + " application"
 		}
 		fmt.Fprintf(o.Out, "\n%s — %s\nRequired products: %s\n", name, purpose, strings.Join(app.DependsOn, ", "))
+		if name == euroOffice {
+			fmt.Fprintln(o.Out, "Optional for KyDrive. It runs on a Kubernetes target only, as root (Pod Security baseline, 4 GiB memory), behind that cluster's edge with its own route; KyDrive gets its URL and a shared secret.")
+		}
 		install, err := p.ask("app."+name+".install", "Install or skip?", "skip", oneOf("install", "skip"))
 		if err != nil {
 			return err
@@ -507,7 +518,10 @@ func validateSelection(st *stack.Stack, cat catalog.Catalog, o Options) error {
 	if err := messagePlan(st, cat); err != nil {
 		return err
 	}
-	_, err := plan.Order(names, cat)
+	if _, err := plan.Order(names, cat); err != nil {
+		return err
+	}
+	_, _, err := editorPlan(st, cat)
 	return err
 }
 

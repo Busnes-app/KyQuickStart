@@ -2,6 +2,8 @@ package kube
 
 import (
 	"encoding/json"
+	"fmt"
+	"maps"
 	"net/netip"
 	"os"
 	"slices"
@@ -433,5 +435,64 @@ func TestRenderKyYard(t *testing.T) {
 	b.RunnerImage = strings.Replace(testRunnerImage, "1111", "2222", 1)
 	if render(b).hash() == o.hash() {
 		t.Fatal("runner image change keeps the deployment hash")
+	}
+}
+
+// Euro-Office: root under baseline with its measured capabilities, both claims seeded from the
+// image by a root init container (no private subdirectory), its secrets where its entrypoint
+// reads them, and egress to cluster DNS and the edge's pods only.
+func TestRenderEuroOffice(t *testing.T) {
+	cat, err := catalog.Load(catalog.Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := render(App{Name: "euro-office", Catalog: cat["euro-office"], ReleaseSet: "rs-1", Edge: "npm"})
+	if (App{Catalog: cat["euro-office"]}).namespaceLabels()[podSecurity] != "baseline" {
+		t.Fatal("euro-office namespace is not baseline")
+	}
+	spec := o.Deployment.Spec.Template.Spec
+	c := spec.Containers[0]
+	sc := c.SecurityContext
+	if *sc.RunAsUser != 0 || *sc.ReadOnlyRootFilesystem || *sc.AllowPrivilegeEscalation || fmt.Sprint(sc.Capabilities.Drop, sc.Capabilities.Add) != "[ALL] [CHOWN DAC_OVERRIDE FOWNER SETGID SETUID KILL]" {
+		t.Fatalf("security context = %+v", sc)
+	}
+	if spec.SecurityContext.FSGroup != nil || spec.SecurityContext.Sysctls[0].Name != "net.ipv4.ip_unprivileged_port_start" {
+		t.Fatalf("pod security context = %+v", spec.SecurityContext)
+	}
+	mounts := map[string]corev1.VolumeMount{}
+	for _, m := range c.VolumeMounts {
+		mounts[m.MountPath] = m
+	}
+	if m := mounts["/var/www/euro-office/Data/.private"]; m.Name != "secrets" || !m.ReadOnly {
+		t.Fatalf("secrets mount = %+v", c.VolumeMounts)
+	}
+	if _, ok := mounts["/run/secrets"]; ok {
+		t.Fatal("secrets also mounted at /run/secrets")
+	}
+	for path, claim := range map[string]string{"/var/lib/postgresql": "vol-database", "/var/lib/euro-office": "vol-cache"} {
+		if m := mounts[path]; m.Name != claim || m.SubPath != "" {
+			t.Fatalf("%s mount = %+v", path, m)
+		}
+	}
+	if len(spec.InitContainers) != 1 {
+		t.Fatalf("init containers = %+v", spec.InitContainers)
+	}
+	seed := spec.InitContainers[0]
+	want := "test -e /seed/database/.kyq-seeded || { cp -a /var/lib/postgresql/. /seed/database/; chown --reference=/var/lib/postgresql /seed/database; chmod --reference=/var/lib/postgresql /seed/database; touch /seed/database/.kyq-seeded; }\n" +
+		"test -e /seed/cache/.kyq-seeded || { cp -a /var/lib/euro-office/. /seed/cache/; chown --reference=/var/lib/euro-office /seed/cache; chmod --reference=/var/lib/euro-office /seed/cache; touch /seed/cache/.kyq-seeded; }\n"
+	if seed.Image != c.Image || seed.SecurityContext != c.SecurityContext || fmt.Sprint(seed.Command[:2]) != "[/bin/sh -ec]" || seed.Command[2] != want {
+		t.Fatalf("seed = %+v", seed)
+	}
+	if len(seed.VolumeMounts) != 2 || seed.VolumeMounts[0].MountPath != "/seed/database" || seed.VolumeMounts[1].Name != "vol-cache" {
+		t.Fatalf("seed mounts = %+v", seed.VolumeMounts)
+	}
+	p := o.Policy.Spec
+	if len(p.PolicyTypes) != 2 || len(p.Egress) != 2 || len(p.Egress[0].Ports) != 2 || p.Egress[0].To[0].PodSelector.MatchLabels["k8s-app"] != "kube-dns" ||
+		len(p.Egress[1].Ports) != 0 || p.Egress[1].To[0].NamespaceSelector.MatchLabels[nsNameLabel] != "kyq-npm" || !maps.Equal(p.Egress[1].To[0].PodSelector.MatchLabels, selector("npm")) {
+		t.Fatalf("policy = %+v", p)
+	}
+	// Without an edge on the cluster, only DNS.
+	if p := render(App{Name: "euro-office", Catalog: cat["euro-office"], ReleaseSet: "rs-1"}).Policy.Spec; len(p.Egress) != 1 || len(p.Ingress) != 0 {
+		t.Fatalf("edgeless policy = %+v", p)
 	}
 }

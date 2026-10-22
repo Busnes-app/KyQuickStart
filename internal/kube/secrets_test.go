@@ -183,3 +183,49 @@ func TestSecretsRefusesForeignSecret(t *testing.T) {
 		t.Fatalf("foreign secret changed: %+v", sec)
 	}
 }
+
+// A SecretFrom key is copied from its source, never generated, and must keep matching it: a
+// differing source is refused, and neither side is replaced.
+func TestSecretsCopiedFromSource(t *testing.T) {
+	ctx := context.Background()
+	a, cs := testApp(t, "jwt_secret", "token")
+	plain := secretsStep{a}.InputHash()
+	source := []byte("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") // 43 bytes of base64url
+	reads := 0
+	a.SecretFrom = map[string]func(context.Context) ([]byte, error){"jwt_secret": func(context.Context) ([]byte, error) {
+		reads++
+		return source, nil
+	}}
+	s := secretsStep{a}
+	if s.InputHash() == plain {
+		t.Error("a copied key does not change the input hash")
+	}
+	if err := s.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	sec, _ := cs.CoreV1().Secrets("kyq-hello").Get(ctx, secretName, metav1.GetOptions{})
+	if string(sec.Data["jwt_secret"]) != string(source) || len(sec.Data["token"]) != 43 || string(sec.Data["token"]) == string(source) {
+		t.Fatalf("secret = %q", sec.Data)
+	}
+	if err := s.Verify(ctx); err != nil || reads != 2 {
+		t.Fatalf("Verify = %v after %d reads", err, reads)
+	}
+	if a.Redact.Redact(string(source)) != "[redacted]" {
+		t.Error("copied secret not registered for redaction")
+	}
+	source = []byte("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB")
+	if done, err := s.Inspect(ctx); err != nil || !done {
+		t.Fatalf("Inspect = %v %v", done, err)
+	}
+	if err := s.Verify(ctx); err == nil || !strings.Contains(err.Error(), "differs from its source") || strings.Contains(err.Error(), "BBBB") {
+		t.Fatalf("a changed source was accepted or named: %v", err)
+	}
+	sec, _ = cs.CoreV1().Secrets("kyq-hello").Get(ctx, secretName, metav1.GetOptions{})
+	if string(sec.Data["jwt_secret"]) == string(source) {
+		t.Fatal("copied secret replaced")
+	}
+	a.SecretFrom["jwt_secret"] = func(context.Context) ([]byte, error) { return nil, errors.New("source unreadable") }
+	if err := (secretsStep{a}).Verify(ctx); err == nil || !strings.Contains(err.Error(), "source unreadable") {
+		t.Fatalf("unreadable source = %v", err)
+	}
+}

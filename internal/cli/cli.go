@@ -399,6 +399,11 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 			}
 		}
 	}
+	if drive, ok, err := editorPlan(st, cat); err != nil {
+		return nil, err
+	} else if ok {
+		cat["kydrive"] = drive
+	}
 	// A cluster edge's egress policy admits an upstream off the cluster by address only.
 	for _, e := range st.Edges {
 		for _, r := range e.Routes {
@@ -734,6 +739,9 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 			steps = append(steps, noteStep{id: name + ".upgrade", note: note})
 		}
 		app := d.steps(name, s.cat[name], s.o.ReleaseSet, s.redact)
+		if k, ok := d.(kubeDriver); ok && name == euroOffice {
+			app = s.editorSteps(k)
+		}
 		for _, i := range s.integrations {
 			if i.Product == name && i.Target == s.placed[name].Name && i.ChatClient != "" {
 				before, setup, err := s.messageSteps(d, i)
