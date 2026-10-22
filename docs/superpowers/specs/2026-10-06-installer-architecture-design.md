@@ -1,6 +1,8 @@
 # Installer architecture
 
-Date: 2026-10-06. Status: approved by Yoshi, 2026-10-10.
+Date: 2026-10-06. Status: approved by Yoshi, 2026-10-10; redirected 2026-10-22: KyQuickStart is
+the execution layer for KyQuickStart-AI, expansion is frozen, and [the redirect record](../../redirect.md)
+wins where this spec disagrees.
 
 How `kyquickstart` installs, configures, verifies, offboards and upgrades the Ky suite and the
 third-party catalog (`2026-10-06-third-party-catalog-design.md`). The catalog spec decides what
@@ -30,7 +32,8 @@ is installed; this spec decides how.
   tested release set.
 - **Ky products gain a container-local `apply-setup --file <bundle>` command.** It is the
   installer's only authority inside a Ky product.
-- **A resident offboarding bridge** turns KyIdentity deactivations into per-app deprovisioning.
+- **Offboarding goes through KyIdentity** (SCIM or signed suite webhook) into each product's own
+  directory handling.
 
 ## Components
 
@@ -44,7 +47,6 @@ is installed; this spec decides how.
 | `integrate-stack` | Runs explicit secret-free `integrations` selections through the implemented native product setup adapters; KyIdentity first, then saved order. `--check` is read-only. Typed KyNotes and KyIdentity settings prepare private native bundles through product-owned stdin and read-only comparison; Identity generates target-held credentials with immutable receipts. Other bundles are supplied separately; automatic graph construction and cross-target credential distribution remain pending |
 | `verify` | Not built: acceptance checks (see Verification) |
 | `handover` | Not built as a command; apply prints the handover at the end. Prints URLs, admin and everyday logins, activation links, NPM admin credentials, and outstanding human steps |
-| `offboard <user>` | Not built: runs every app's `Deprovision` for one user; fallback for the bridge. The bridge itself is the separate `kyoffboard --config <file> [--check]` service binary (`docs/offboarding.md`), not a `kyquickstart` command |
 | `upgrade` | Upgrades installed apps to this release set under the upgrade rules |
 | `backup <app>` | Built for Docker apps: one restic snapshot of the app's dump (or, without a dump command, its stopped bind directories) and its `capsule_secrets` to its target's rest-server, tagged with app and installation; creates the repository and its target-held password once. No schedule (`docs/guided-setup.md`, "Backups and restore on Docker") |
 | `restore <app> [--snapshot <id>] [--replace] [--yes]` | Built for Docker apps from a restic snapshot alone: lists snapshots, or restores one after a typed confirmation, refusing a running app or existing data without `--replace`; for an app whose people come from KyIdentity, only with KyIdentity v0.4.4+ and after its `resync-system` delivered. The capsule path below is not built |
@@ -116,57 +118,24 @@ KyYard refuses to start. The installer therefore places proxies and sets those v
   writes one audit row per change, reports what it did as JSON, exposes no network credential.
   Container access already implies full control of the product, so it grants nothing new.
 - **KyIdentity's bundle:** owner's admin and everyday identities, groups, OIDC clients, app roles,
-  *Assigned users only* access, assignments, the bridge's app-scoped SCIM connectors.
-- **Third-party apps:** their own CLIs and local APIs through the adapter (for example
-  `vikunja user set-admin`). Forgejo's public REST API omits authentication sources:
-  its adapter uses release-qualified native administrator HTTP forms to create and inspect
-  sources, and its REST API for accounts/offboarding. Native CLI source creation requires
-  provider-cache activation before PKCE login; native source-form creation activates in the
-  serving process. Pin the release and verify actual login before counting either path ready.
+  *Assigned users only* access, assignments, app-scoped SCIM connectors.
+- **Third-party apps:** none in the catalog (freeze); KyQuickStart-AI installs them as labelled
+  test installs.
 - **Human steps stay human:** the KyRecovery custodian ceremony. A pairing code is generated
   in-container with `kyrecovery pair generate` when the same operator runs KyRecovery; otherwise
   the code is entered by hand.
 
 ### Offboarding bridge
 
-A resident Go service built from this repository, deployed by the installer.
-
-- An app-scoped SCIM 2.0 target/connector per selected app, attached to that app's owned
-  KyIdentity OIDC application. Assignment loss runs only that app's `Deprovision`; global
-  disablement reaches every owning connector. Disable accounts and revoke sessions/app tokens.
-- Register exact native identity/source/subject bindings before connector delivery. Missing
-  registration is a conflict, not proof that the native account is absent. Never select a
-  target or native account from a directory event's username/email.
-- Persist intent, attempts and audits on the bridge target. A queued or partial revocation
-  stays pending; only native inspection/revocation/verification proves completion. Lost wire
-  outcomes preserve KyIdentity's normal uncertainty fencing. No activation can clear an
-  accepted permanent revocation intent.
-- Current app-scoped receiver groundwork supports exact identity lookup and `active=false`
-  PATCH only; active profile provisioning is explicitly refused. Its five-second synchronous
-  attempt returns retryable 429 for pending work and 204 only for proved completion. Complete
-  lifecycle composition, resident service orchestration, audit delivery, protected deployment
-  and restore must pass before registering it as an operational generic SCIM connector.
-- `kyoffboard` now loads protected target-local runtime JSON and distinct credentials/server
-  TLS files, checks without requests/writes, and serves the receiver with the independent
-  worker under one state lease. Optional protected kyPulse configuration runs an independent
-  ordered audit relay, with authenticated capability/source proof, persisted body/sequence
-  and verified durable receipts. Native tests cover lost replies and restart through the
-  actual executable without duplicate ingestion. Shutdown joins HTTP/native/audit calls
-  before state closes. Failure-alert creation remains unimplemented.
-  `docs/offboarding.md` owns this runtime contract; installer deployment and complete connector
-  lifecycle/audit/recovery qualification remain required before admission.
-- Holds one credential per app, the narrowest each app allows, stored on the bridge's own target.
-- Network policy: inbound only from KyIdentity; outbound only to the catalog apps' APIs and
-  kyPulse. No other ingress.
-- Every action and failure is audited to kyPulse. Failed deprovisions retry with backoff and
-  raise a kyPulse alert.
+Retired unreleased on 2026-10-22: offboarding goes through KyIdentity (SCIM or suite webhook) and
+each product's own directory handling.
 
 ## State and secrets
 
 - **Workstation:** a state directory with `stack.yaml` and one result file per step (status,
   input hash, time, redacted diagnostics). Separate files per step; no shared state file.
 - **Targets:** every generated secret (database passwords, OIDC client secrets, the restic
-  password, bridge credentials) is created once where it is used. On re-run the installer reads
+  password) is created once where it is used. On re-run the installer reads
   the existing secret instead of generating a new one.
 - **Recovery:** the installer seals nothing to KyRecovery. `backup` puts a Docker app's
   `capsule_secrets` into its restic snapshot, encrypted by restic (`docs/guided-setup.md`,
@@ -192,9 +161,8 @@ Nothing changes on a target until `plan` and `preflight` pass. `apply` then runs
    identity, and a check that the everyday identity has none → NPM host → kyPulse target.
    No backup schedule is built: `backup` runs only when the operator starts it. KyRecovery
    pairing is an owner step that apply prints as outstanding.
-6. **Offboarding bridge:** deploy; register its SCIM connector in KyIdentity.
-7. **KyYard enrollment** of every target.
-8. **Handover:** apply prints it at the end. Separate `verify` and `handover` commands are not built.
+6. **KyYard enrollment** of every target.
+7. **Handover:** apply prints it at the end. Separate `verify` and `handover` commands are not built.
 
 ## Failure handling
 
@@ -251,8 +219,7 @@ Running pods alone is not completion.
 - **End to end:** disposable kind cluster plus an SSH-reachable Docker host: full `apply`, a
   second `apply` that changes nothing, `apply` killed mid-run then resumed, `verify`, `upgrade`
   across two release sets, `uninstall` keeping data, restore drill.
-- **Security checks:** no secret in the state directory; host secret files mode 0600; bridge
-  network policy denies everything off its allowlist; NPM admin unreachable from the edge.
+- **Security checks:** no secret in the state directory; host secret files mode 0600; NPM admin unreachable from the edge.
 
 ## Work in other repositories
 
@@ -279,5 +246,5 @@ Running pods alone is not completion.
 ## Out of scope
 
 - Installing Docker or Kubernetes.
-- Natural-language prompt front end (layered on `stack.yaml` later).
+- A natural-language front end inside this binary: that is KyQuickStart-AI.
 - High availability; a single-instance deployment is not described as HA.

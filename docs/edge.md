@@ -2,9 +2,8 @@
 
 This build adds edge configuration to `stack.yaml`, reconciles Nginx Proxy Manager (NPM) hosts
 through its API, deploys and bootstraps NPM itself on a Kubernetes target, and optionally deploys
-a Docker connector for an existing Cloudflare tunnel or frp server. It is one part of the
-installer, not a complete suite release: NPM is the only production catalog app and product setup
-interfaces remain gated.
+a Docker connector for an existing Cloudflare tunnel or frp server. Per-product compatibility
+with these paths is in [the redirect record](redirect.md#edge-compatibility).
 
 ## Supported paths
 
@@ -16,9 +15,8 @@ interfaces remain gated.
 | LAN clients only (`lan`) | Clients connect to NPM directly, no tunnel; NPM serves only `allow_cidrs` |
 | Kubernetes target | NPM from the catalog (`npm` app) managed through `kube://`, or an existing NPM's API; connector deployment is rejected |
 
-Fresh NPM on a Docker host, DNS-01 certificates on a Docker edge or through a DNS provider other
-than Cloudflare, creating Cloudflare tunnels and public DNS records, provisioning an frps server, remotely managed Cloudflare token tunnels, and Kubernetes
-connector isolation remain to be implemented. NPS is not implemented.
+No other edge path is provided; the requirements still open are listed under Unfinished in
+[the redirect record](redirect.md#dispositions).
 
 ## Configuration
 

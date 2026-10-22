@@ -128,6 +128,13 @@ func handoffCommand(ctx context.Context, cmd string, args []string, o Options) e
 	if cmd == "pull-plan" {
 		return s.pullPlan(ctx, r)
 	}
+	// The runner cannot start an app, and a runner build older than kyquickstart stop
+	// refuses the field, so a stop never crosses a hand-off.
+	for _, a := range s.plan.Apps {
+		if a.Stopped {
+			return suite.Errorf(suite.AppStopped, "%s was stopped with kyquickstart stop; run kyquickstart start %s before handing the plan to KyYard", a.Name, a.Name)
+		}
+	}
 	return s.handoff(ctx, r, false)
 }
 

@@ -137,6 +137,8 @@ type App struct {
 	NodePorts map[int]int `yaml:"node_ports,omitempty"`
 	// MediaAddress is the one IPv4 address of a Docker target the app publishes call media on.
 	MediaAddress string `yaml:"media_address,omitempty" json:",omitempty"`
+	// Stopped is the operator's `kyquickstart stop`: commands that would start the app refuse.
+	Stopped bool `yaml:"stopped,omitempty" json:",omitempty"`
 }
 
 // MediaAddress accepts one unicast IPv4 address a LAN client can reach.
