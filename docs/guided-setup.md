@@ -1157,7 +1157,8 @@ graceful restart and its live `--check`.
   `backups` and both secrets cold (see "Backups and restore on Docker"); restore needs KyIdentity
   v0.4.4 or later. KyDrive's own `KYDRIVE_BULK_BACKUP_REPOSITORY` stays unset: the installer's
   snapshot is the independent copy, and the `backups` directory, on the same disk as `data`, is not.
-- Not yet: the Euro-Office editor (`KYDRIVE_EDITOR_URL` unset); recovery pairing;
+- With `euro-office` in the plan, see "Catalog Euro-Office on Kubernetes".
+- Not yet: recovery pairing;
   `KY_TRUSTED_PROXIES` (unset, so KyDrive sees the edge as every client and `verify-edge`
   fails for its route); kyPulse does not watch it (no readiness path on Docker).
 

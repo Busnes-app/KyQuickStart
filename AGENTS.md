@@ -325,7 +325,8 @@ edge compatibility: `docs/redirect.md`.
   acceptance verify native TLS configuration, owner binding and transfer. SSH additionally
   qualifies native HTTP sign-on and owner/everyday Notes access; browser UI, MFA, Kubernetes
   sign-on and full lifecycle acceptance remain open.
-- The catalog takes no new apps (freeze, `docs/redirect.md`). The catalog spec's admission rules
+- The catalog takes no new apps (freeze, `docs/redirect.md`). Owner amendments, 2026-10-22:
+  `euro-office`, KyDrive's optional editor on Kubernetes, and the `cloudflare-direct` edge. The catalog spec's admission rules
   stay for KyQuickStart-AI's labelled third-party test installs; record each rejection there.
 - Third-party apps run on Docker hosts only. Kubernetes hosts Ky products and the edge
   components (cloudflared, Nginx Proxy Manager, frp client), deployed with `client-go` typed
@@ -334,7 +335,9 @@ edge compatibility: `docs/redirect.md`.
 - Every installed app signs in through KyIdentity with native OIDC, uses *Assigned users only*,
   and offboards through KyIdentity's SCIM or signed directory webhook into the product's own
   handling. The installer builds no auth-proxy gate and never adopts a foreign account.
-- Reverse proxy is Nginx Proxy Manager. On an existing NPM, touch only installer-created hosts,
+- Reverse proxy is Nginx Proxy Manager, except a `cloudflare-direct` edge (Docker only): cloudflared
+  routes each listed hostname straight to its app on a dedicated Docker network. Only KyIdentity,
+  KyCalendar, KyPost and KyDrive are eligible; Kubernetes is refused (`docs/edge.md`). On an existing NPM, touch only installer-created hosts,
   certificates and certificate users, through its API, never its database. LAN DNS records in
   KyDNS are touched only while listed in the installer's ledger (`docs/edge.md`). NPM admin is LAN-only; its credentials go in the handover.
   A host is this installation's only with `stack.yaml`'s `installation_id` in its marks; hosts
@@ -342,11 +345,12 @@ edge compatibility: `docs/redirect.md`.
   Kubernetes the catalog's `npm` app keeps its admin API on a ClusterIP Service reached through
   the driver's port-forward (`kube://`); bootstrap replaces NPM's first or default administrator
   with a cluster-generated one (`docs/edge.md`).
-- One edge (NPM, and a tunnel or frp client) per target and one owner per hostname. A route's
+- One edge (NPM and a tunnel or frp client, or a `cloudflare-direct` cloudflared) per target and one owner per hostname. A route's
   app is on the edge's target or on a Docker target, never in another cluster; a cluster edge's
   egress admits such an upstream's `forward_host` (an IP) and port alone. A product's
   trusted-proxy value is unset or loopback only (forwarded headers ignored), or exactly where its edge
-  connects from (`{{edge_address}}`), never `0.0.0.0/0` or a Docker gateway; `verify-edge` checks
+  connects from (`{{edge_address}}`: `egress_address`, or a `cloudflare-direct` edge's
+  `connector_cidr`), never `0.0.0.0/0` or a Docker gateway; `verify-edge` checks
   the client address the product reports. Per-product status: `docs/redirect.md`.
 - Bulk data goes to restic on an operator-run, append-only (`--append-only --private-repos`)
   TLS rest-server off the app's host, one repository (`<repository>/<app>`) and password per
@@ -418,8 +422,11 @@ edge compatibility: `docs/redirect.md`.
 - Host keys are pinned in `<state>/known_hosts`; a changed key is never accepted, by flag or prompt.
 - On a cluster each app lives in namespace `kyq-<app>` (Pod Security `restricted`, default-deny
   ingress) and the run lock is Lease `kyquickstart/kyquickstart-lock`. A manifest's
-  `pod_security: baseline` is the only exception (today only NPM, whose root init it needs;
-  `docs/edge.md` records its measured capabilities). Only edge components publish NodePorts,
+  `pod_security: baseline` is the only exception (NPM, whose root init it needs, and
+  `euro-office`, whose entrypoint starts its bundled services as root; `docs/edge.md` and
+  `docs/guided-setup.md` record their measured capabilities). `kubernetes.egress: edge` limits an
+  app's egress to cluster DNS and the edge's pods; `euro-office` relies on it for
+  `ALLOW_PRIVATE_IP_ADDRESS`. Only edge components publish NodePorts,
   never NPM's port 81, and preflight refuses one held by any Service but that app's own; with an edge on the cluster, apps admit ingress from its pods alone. The installer never adopts
   a namespace or object without the managed label. A kubeconfig is referenced by path and may not
   live inside the state directory, symlinks resolved. One target per cluster; `apply` repairs
@@ -480,6 +487,10 @@ calls and kind nodes must carry their own explicit bounds.
 - `make workflow-lint`: needs Docker (CI runs it in `vulncheck`); actionlint v1.7.12 on every
   workflow and offline, digest-pinned zizmor (medium and up) on `release-image.yml`.
 - `go test -tags e2e ./test/e2e -run '^TestDockerKy'`: pinned-image Docker startup/readiness/native capabilities/restart for every new template, plus KyYard's private runner socket, credential isolation and container recreation.
+- With `KYQ_TEST_EURO_OFFICE=1`, `TestKubernetesEuroOffice` (own kind cluster, 5 GiB node) installs NPM,
+  KyIdentity and `euro-office` with KyDrive on an sshd target: baseline pod and its capabilities,
+  seeded claims, the copied secret, `/healthcheck` through the edge, a signed KyDrive callback
+  (200/401), egress through the edge only, a skipped rerun and a restart. Not part of `make e2e`.
 - `make e2e`: needs Docker; runs `apply` against an sshd container on the local Docker socket and
   against a kind cluster (`go run sigs.k8s.io/kind@v0.33.0`), including drift and stale-lock cases.
   Also runs disposable NPM, frpc/frps and cloudflared container tests in `internal/edge`, and
