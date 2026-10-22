@@ -53,6 +53,7 @@ target markers from earlier builds stay valid.
 | Offboarding bridge: `cmd/kyoffboard`, `internal/offboard`, `kyoffboard-image.yml` and its CI job | No importers outside it; the workflow never ran; no tags or releases; no pilot use. Whether a ghcr package exists is unproven (the token lacks `read:packages`) | None. Offboarding goes through KyIdentity (SCIM or suite webhook) and each product's directory handling |
 | Third-party adapters `internal/adapters` (BookStack, Forgejo, Immich, LibreChat) and the Forgejo e2e make block | No catalog entry uses them | None |
 | Immich `integrate-product` adapter | Needs a patched Immich, and only stock third-party apps may ship | `integrate-product --product immich` and `integrate-stack` selections naming Immich are now refused as unsupported |
+| BookStack catalog entry (draft PR #67, branch `factory/010-bookstack-catalog`) | Closed unmerged by the owner: a catalog addition that needed the bridge | None; KyQuickStart-AI can still test-install BookStack |
 | Roadmap and expansion plans in `docs/superpowers/plans/` (roadmap, phase 1, phase 2, phase 4 edge, all-product adapters, adapters handoff, deployment plan); `docs/offboarding.md`; the 2026-10-19 setup-gap report | Superseded by this record; git history keeps them | Docs only |
 
 **Preserve temporarily**
@@ -60,8 +61,6 @@ target markers from earlier builds stay valid.
 - The admission rules in the
   [third-party catalog spec](superpowers/specs/2026-10-06-third-party-catalog-design.md#admission-rules).
   KyQuickStart-AI uses them for labelled test installs.
-- Draft PR #67 (BookStack catalog entry) is frozen. It cannot merge after the retirement, and
-  the owner decides its fate.
 - Branches `factory/004` and `factory/007` are untouched.
 
 **Unfinished** (the requirement stays; the work is not done)
