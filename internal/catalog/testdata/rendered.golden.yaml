@@ -1,3 +1,45 @@
+euro-office:
+    compose: ""
+    kubernetes: |
+        image: documentserver
+        args: []
+        env:
+            ALLOW_META_IP_ADDRESS: "false"
+            ALLOW_PRIVATE_IP_ADDRESS: "true"
+            JWT_ENABLED: "true"
+            NGINX_CLIENT_MAX_BODY_SIZE: 129m
+            USE_UNAUTHORIZED_STORAGE: "false"
+        ports:
+            - 80
+        readiness_path: /healthcheck
+        run_as: 0
+        resources:
+            cpu: "2"
+            cpu_request: 500m
+            memory: 4Gi
+        volumes:
+            - name: database
+              mount: /var/lib/postgresql
+              size: 2Gi
+              seed: true
+            - name: cache
+              mount: /var/lib/euro-office
+              size: 10Gi
+              seed: true
+        capabilities:
+            - CHOWN
+            - DAC_OVERRIDE
+            - FOWNER
+            - SETGID
+            - SETUID
+            - KILL
+        writable_root: true
+        low_ports: true
+        node_ports: {}
+        termination_grace_seconds: 120
+        suite_runner: false
+        secrets_dir: /var/www/euro-office/Data/.private
+        egress: edge
 kycalendar:
     compose: |
         # Docker variant of this product's pinned manifest; bind data belongs to the SSH user.

@@ -1,0 +1,60 @@
+name: euro-office
+description: Euro-Office, KyDrive's document editor; KyDrive opens documents, spreadsheets and presentations in it
+category: ky
+version: 9.3.4
+# Euro-Office DocumentServer v9.3.4-hotfix.1 (source 4ba0c0f202ae), the amd64 image of release
+# workflow run 33166218952. That run and the registry's BuildKit provenance name this digest;
+# GitHub holds no attestation for it and no independent rebuild was made (docs/guided-setup.md).
+images:
+  documentserver: ghcr.io/euro-office/documentserver@sha256:beca380debb9b4eadb7e4c662d112a325c5df0f2179453a4affd8e6ba5d00562
+# jwt_secret is KyDrive's editor_secret, copied from its target; secure_link_secret signs the
+# editor's cache links. Both are mounted where its entrypoint reads them, so it writes neither.
+secrets: [jwt_secret, secure_link_secret]
+# KyDrive is the only thing that opens documents in it.
+depends_on: [kydrive]
+health:
+  timeout_seconds: 600
+upgrade:
+  # First catalog release. Its bundled PostgreSQL holds editing sessions' changes.
+  min_from: 9.3.4
+  migrates_data: true
+# The second exception to restricted, after NPM: its entrypoint starts PostgreSQL, RabbitMQ,
+# Redis, nginx and supervisord as root, and they drop to their own users.
+pod_security: baseline
+kubernetes:
+  image: documentserver
+  env:
+    JWT_ENABLED: "true"
+    # KyDrive's route resolves to a private address. The editor fetches only what a request
+    # signed with the JWT names, and egress (below) reaches cluster DNS and the edge alone.
+    ALLOW_PRIVATE_IP_ADDRESS: "true"
+    ALLOW_META_IP_ADDRESS: "false"
+    USE_UNAUTHORIZED_STORAGE: "false"
+    # KyDrive accepts saved output up to 128 MiB.
+    NGINX_CLIENT_MAX_BODY_SIZE: 129m
+  ports: [80]
+  readiness_path: /healthcheck
+  run_as: 0
+  # Measured: without any one of these the entrypoint fails (chown, sed into ds-owned files,
+  # chmod, runuser) or supervisord cannot stop its ds-owned services. nginx binds 80 by low_ports.
+  capabilities: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID, KILL]
+  writable_root: true
+  low_ports: true
+  secrets_dir: /var/www/euro-office/Data/.private
+  egress: edge
+  termination_grace_seconds: 120
+  resources:
+    cpu: "2"
+    cpu_request: 500m
+    # 2.8 GiB measured at start (fonts, caches, converters); 4 GiB is upstream's limit.
+    memory: 4Gi
+  volumes:
+    # Seeded from the image: the bundled database, and the editor's document cache.
+    - name: database
+      mount: /var/lib/postgresql
+      size: 2Gi
+      seed: true
+    - name: cache
+      mount: /var/lib/euro-office
+      size: 10Gi
+      seed: true

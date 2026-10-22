@@ -177,11 +177,15 @@ func (d kubeDriver) writeMarker(ctx context.Context, m stack.Marker) error {
 }
 
 func (d kubeDriver) steps(name string, app catalog.App, releaseSet string, redact *engine.Redactor) []engine.Step {
+	return kube.Steps(d.app(name, app, releaseSet, redact))
+}
+
+func (d kubeDriver) app(name string, app catalog.App, releaseSet string, redact *engine.Redactor) kube.App {
 	a := kube.App{Name: name, Client: d.c, Catalog: app, ReleaseSet: releaseSet, Redact: redact, StorageClass: d.storageClass, Edge: d.edge, RunnerImage: d.runnerImage}
 	if name == d.edge {
 		a.Upstreams = d.upstreams
 	}
-	return kube.Steps(a)
+	return a
 }
 
 func (d kubeDriver) deployed(ctx context.Context, name string) (managed.Deployed, error) {
