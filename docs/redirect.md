@@ -53,6 +53,7 @@ target markers from earlier builds stay valid.
 | Offboarding bridge: `cmd/kyoffboard`, `internal/offboard`, `kyoffboard-image.yml` and its CI job | No importers outside it; the workflow never ran; no tags or releases; no pilot use. Whether a ghcr package exists is unproven (the token lacks `read:packages`) | None. Offboarding goes through KyIdentity (SCIM or suite webhook) and each product's directory handling |
 | Third-party adapters `internal/adapters` (BookStack, Forgejo, Immich, LibreChat) and the Forgejo e2e make block | No catalog entry uses them | None |
 | Immich `integrate-product` adapter | Needs a patched Immich, and only stock third-party apps may ship | `integrate-product --product immich` and `integrate-stack` selections naming Immich are now refused as unsupported |
+| Vaultwarden, Forgejo and BookStack as installable apps | Dropped by the owner, 2026-10-22; their admission notes stay in the catalog spec as history | KyQuickStart-AI no longer offers them; existing installations are untouched |
 | BookStack catalog entry (draft PR #67, branch `factory/010-bookstack-catalog`) | Closed unmerged by the owner: a catalog addition that needed the bridge | None; KyQuickStart-AI can still test-install BookStack |
 | Roadmap and expansion plans in `docs/superpowers/plans/` (roadmap, phase 1, phase 2, phase 4 edge, all-product adapters, adapters handoff, deployment plan); `docs/offboarding.md`; the 2026-10-19 setup-gap report | Superseded by this record; git history keeps them | Docs only |
 
@@ -91,7 +92,8 @@ target markers from earlier builds stay valid.
 - Remote SSH negotiates the pinned host-key type, or ed25519 first on first contact, so a
   fingerprint from `ssh-keyscan -t ed25519` matches on servers that also hold ECDSA keys.
 - Third-party apps are installed only by KyQuickStart-AI, as labelled test installs outside the
-  catalog.
+  catalog. Vaultwarden, Forgejo and BookStack are no longer offered, so the installer offers no
+  password manager.
 
 ## Placement
 
