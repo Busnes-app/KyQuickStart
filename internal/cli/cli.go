@@ -46,7 +46,15 @@ commands:
   uninstall APP            remove APP's workloads; its data and secrets stay on the target
   unmanage APP             hand APP to its owner: drop the managed labels, record it in handover.md
   upgrade [APP...]         redeploy installed apps (default all) under their upgrade rules
-  status [--json]          per installed app: version, target, state, last results
+  stop APP                 stop APP (Kubernetes: scale to zero) and record it in stack.yaml;
+                           apply, upgrade, restart and backup then refuse until start
+  start APP                start APP and wait until it is healthy; clears the stop
+  restart APP              restart APP and wait until it is healthy
+  logs APP [--tail N] [--service S]
+                           print APP's recent log lines (default 200; S: a Compose service or
+                           pod container). Installer-generated secrets are redacted; anything
+                           else the product logs is printed as it is
+  status [--json]          per installed app: version, target, state, live workload, last results
   backup APP [--state DIR]  snapshot a Docker app to its target's rest-server (restic)
   restore APP [--state DIR] [--snapshot ID [--replace] [--yes]]
                            list APP's snapshots, or restore one; a lost password comes on stdin
@@ -104,7 +112,7 @@ func Run(ctx context.Context, args []string, o Options) error {
 		return integrateStack(ctx, args[1:], o)
 	case "review":
 		return review(args[1:], o)
-	case "install", "uninstall", "unmanage", "upgrade", "status":
+	case "install", "uninstall", "unmanage", "upgrade", "status", "stop", "start", "restart", "logs":
 		return suiteCommand(ctx, cmd, args[1:], o)
 	case "handoff", "pull-plan":
 		return handoffCommand(ctx, cmd, args[1:], o)
@@ -163,6 +171,9 @@ func Run(ctx context.Context, args []string, o Options) error {
 	}
 	var publishPlan func() error
 	if cmd == "apply" {
+		if err := s.refuseStopped(); err != nil {
+			return err
+		}
 		if publishPlan, err = s.ensureInstallation(*state); err != nil {
 			return err
 		}
@@ -492,6 +503,13 @@ func (s *session) connect(ctx context.Context, trust trustFlag) error {
 		if k, ok := d.(kubeDriver); ok {
 			k.edge, k.nodePorts, k.upstreams, k.runnerImage = s.edgeApp(t.Name), s.nodePorts(t.Name), s.upstreams(t.Name), s.o.RunnerImage
 			d = k
+		}
+		if h, ok := d.(sshDriver); ok {
+			h.stopped = map[string]bool{}
+			for _, a := range s.plan.Apps {
+				h.stopped[a.Name] = a.Stopped
+			}
+			d = h
 		}
 		s.drivers[t.Name] = d
 	}

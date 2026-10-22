@@ -15,6 +15,7 @@ import (
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/remote"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
+	"github.com/Busnes-app/kyquickstart/internal/suite"
 )
 
 // ResticImage is restic 0.19.1's linux/amd64 manifest (index sha256:136600b6ff68…), from
@@ -154,6 +155,9 @@ func (s Store) Backup(ctx context.Context) (id string, created bool, err error) 
 	b := s.App.Catalog.Backup
 	if err := refuseUnfinishedRestore(ctx, s.App); err != nil {
 		return "", false, err
+	}
+	if s.App.Stopped {
+		return "", false, suite.Errorf(suite.AppStopped, "%s was stopped with kyquickstart stop, and a backup would start it again; run kyquickstart start %s first", s.App.Name, s.App.Name)
 	}
 	if created, err = s.ensureRepository(ctx); err != nil {
 		return "", created, err
