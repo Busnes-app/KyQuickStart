@@ -1,6 +1,0 @@
-FROM ghcr.io/immich-app/immich-server@sha256:949bbf9ff32543539f471bc275437e6d1a1a4fee43c55bb9e4c06b946909bf1c
-ARG KYQ_SOURCE_PATCH_SHA256
-LABEL kyq.immich-access.contract="ky.immich-access/1" \
-      kyq.immich-access.source="1b6098c9dbfffe978bec2d414606ed7a4c8e019a" \
-      kyq.immich-access.patch-sha256="$KYQ_SOURCE_PATCH_SHA256"
-COPY dist /usr/src/app/server/dist
