@@ -225,7 +225,7 @@ and retain their own identity, sealer label and collection adapters.
 
 - Web themes default to the Busnes.app cream/light and charcoal/dark palettes with orange accents, following the OS until a browser-local choice is saved. Preserve existing named themes and saved choices.
 
-- KyQuickStart places every catalog Ky product on Docker hosts, including a separate resident runner for KyYard, and on Kubernetes where the product has a manifest. Products keep their documented placement restrictions: KyDrive, KyPost, KyDNS and KyMessages are Docker only (`KyQuickStart/docs/redirect.md`).
+- KyQuickStart places every catalog Ky product on Docker hosts, including a separate resident runner for KyYard, and on Kubernetes where the product has a manifest. Products keep their documented placement restrictions: KyDrive, KyPost, KyDNS and KyMessages are Docker only (`KyQuickStart/docs/redirect.md`). Euro-Office (`euro-office`, KyDrive's optional editor) is Kubernetes only.
 
 - KyPost owns the shared `kypost-net` Docker network; standalone consumers join it as external. Containerized Nginx Proxy Manager is supported with a fixed address trusted as one `/32` (IPv4) or `/128` (IPv6). Preserve existing manually owned networks as explicit legacy exceptions.
 
