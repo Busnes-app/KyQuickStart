@@ -222,7 +222,7 @@ jobs:
             f="dist/kyquickstart-$VERSION-$p"
             info="$(go version -m "$f")"
             for want in "GOOS=${p%-*}" "GOARCH=${p#*-}" "-trimpath=true" "CGO_ENABLED=0"; do
-              printf '%s\n' "$info" | grep -qF "$want" || { echo "::error::$f: no $want" >&2; exit 1; }
+              printf '%s\n' "$info" | grep -qF -e "$want" || { echo "::error::$f: no $want" >&2; exit 1; }
             done
             grep -qF "$PIN" "$f" || { echo "::error::$f does not carry $PIN" >&2; exit 1; }
           done
@@ -268,7 +268,7 @@ jobs:
               { echo "::error::the attestation for uploaded $f did not verify" >&2; exit 1; }
             info="$(go version -m "$f")"
             for want in "GOOS=${p%-*}" "GOARCH=${p#*-}"; do
-              printf '%s\n' "$info" | grep -qF "$want" || { echo "::error::uploaded $f: no $want" >&2; exit 1; }
+              printf '%s\n' "$info" | grep -qF -e "$want" || { echo "::error::uploaded $f: no $want" >&2; exit 1; }
             done
             grep -qF "$PIN" "$f" || { echo "::error::uploaded $f does not carry $PIN" >&2; exit 1; }
           done
