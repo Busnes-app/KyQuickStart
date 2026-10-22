@@ -166,3 +166,25 @@ deploys like `upgrade`. `logs` and `status` take no lock and change nothing.
 `start` and a finished `restore` clear it. `logs` redacts the secrets the app's catalog entry
 generates; installer-written credentials outside that list (a restic password, a transferred
 client secret) and anything a product logs itself are printed as they are.
+
+## Verification of the redirect (2026-10-22)
+
+- **Execution layer:** `make ci` and `make e2e` on this branch. `TestApply` (SSH) and
+  `TestKubernetesApply` (kind) run stop, status, the `app_stopped` refusal, start, restart,
+  redacted logs and uninstall, with an unrelated workload that must survive. Product sign-in
+  through the `lan` edge, the admin/everyday split, upgrades and Docker restore stay covered by
+  `TestKubernetesNPMEdge`, `TestKubernetesRestore` and `TestKubernetesKyMessage`.
+- **AI-led path:** one real KyQuickStart-AI session (Claude Code, non-interactive, hands-off
+  rules passed as flags) through `kyqs-ai` against a disposable Debian sshd host (ECDSA,
+  ED25519 and RSA host keys) and a kind cluster, with the demo app `hello` on each. It ran
+  review, preflight with the launcher's pinned key, apply, rerun (all skipped), status, logs,
+  stop, the refused apply, start, restart and uninstall on both targets: 215 s, 31 kyquickstart
+  calls, no user interventions, no manual repairs. Afterwards, checked independently: data and
+  secrets kept (the Docker app directory; the Kubernetes PVC and Secret), the unrelated
+  container and Deployment still running, no generated secret anywhere in the run folder or
+  transcript. An apply interrupted mid-way (Docker `compose up`, Kubernetes health wait)
+  resumed on rerun with the earlier steps skipped and the token unchanged.
+- **Not demonstrated by the AI-led path:** a real product with sign-in through an edge (it
+  needs a disposable DNS and certificate fixture that exists only inside the Go e2e harness),
+  backup and restore (the demo app has no backup block), and anything on Kubernetes backup,
+  which is unfinished.
