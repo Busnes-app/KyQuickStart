@@ -1503,6 +1503,116 @@ integrations:
   delivery in KyIdentity (the person's offboarding view shows it blocked); a person the console
   never heard of is still locked by its sweep.
 
+## Catalog BookStack on Docker
+
+The catalog's `bookstack` app installs stock BookStack v26.09.2 (LinuxServer.io's community
+image), its MariaDB 11.4 and the offboarding receiver (`kyoffboard bookstack-directory`) on one
+Docker host. Sign-in is KyIdentity's only. Either all of it installs or apply refuses before
+changing anything. Docker only: a plan placing it on a cluster is refused. **Not installable
+yet:** the receiver ships in the `kyoffboard` image, which has no published release, so the
+catalog lists it as pending and every plan installing BookStack is refused (`pending_images`)
+until a `kyoffboard-vX.Y.Z` tag publishes it and the catalog pins its attested digest.
+
+```yaml
+apps:
+  - name: bookstack
+    target: docker02
+edges:
+  - target: k80
+    egress_address: 192.168.1.10      # required: BookStack trusts exactly this proxy
+    routes:                           # one edge, one forward_host, one port per service
+      - {app: bookstack, hostname: wiki.example.com, forward_host: 192.168.1.225, forward_port: 18090, certificate_id: 3}
+      - {app: bookstack, role: directory, hostname: wiki-directory.example.com, forward_host: 192.168.1.225, forward_port: 18091, certificate_id: 3}
+integrations:
+  - product: bookstack
+    target: docker02
+    bundle: /data/installer/<setup UUID>/setup.json   # names the setup; BookStack has no bundle
+    identity_client: bookstack
+```
+
+- **Two hostnames.** The primary route (no `role`) is BookStack, with `/my-account` and
+  `/my-account/delete` closed at the edge (self-delete). `directory` serves only
+  `/kyq/directory`, KyIdentity's signed directory webhook to the receiver. `plan` asks one
+  domain and defaults `bookstack.<domain>` and `bookstack-directory.<domain>`; a certificate for
+  `*.<domain>` covers both. Both are published on `forward_host`, one LAN IPv4 address of the
+  host. The edge needs `egress_address` (BookStack's `APP_PROXIES`, never `*`); `plan` does not
+  ask for it, so add it by hand.
+- **Who gets which role.** KyIdentity's client is `bookstack` (admin `bookstack.admin`,
+  everyday `bookstack.user`). BookStack's Admin role is mapped to the `bookstack.admin` claim
+  and nothing else; every account also gets the registration default, Editor. So the owner's
+  admin account is Admin and Editor, and the everyday account and anyone else KyIdentity assigns
+  to BookStack is Editor. Roles follow the claim at every sign-in.
+- **Adding people.** Assign them to "BookStack" in KyIdentity; BookStack creates their account,
+  as Editor, at their first sign-in. Anyone not assigned is refused by KyIdentity. A second
+  administrator needs KyIdentity's `bookstack.admin` role, which installer reruns then refuse as
+  an extra role holder.
+- **The service account.** BookStack's seeded `admin@admin.com` becomes the installer's service
+  account: Admin, holding the receiver's one API token (`token/bookstack_token`, 0600). It
+  cannot sign in (sign-in is KyIdentity's), and nobody knows its password: every bootstrap gives
+  it a new one, used once and never stored. Do not remove its Admin role or change its address.
+- **Steps.** `bookstack.secrets` (the database passwords and Laravel's `APP_KEY`, generated on
+  the host), `bookstack.setup` (KyIdentity's issuer, the client's ID and secret and the directory
+  secret as 0600 files from KyIdentity's export, never replaced), `bookstack.deploy`,
+  `bookstack.health`, `bookstack.bootstrap`, `bookstack.roles`, the two routes, then
+  `bookstack.directory`, which waits until KyIdentity's connector delivered the directory.
+  `bookstack.bootstrap` runs only while the receiver's token is refused: it stops BookStack,
+  starts a one-off standard-auth BookStack with no published port and no route, re-keys the
+  service account with `bookstack:create-admin --initial --generate-password` and pipes that
+  password straight into the receiver image's sign-in client, which replaces the account's
+  tokens with one, sets Editor as the registration default with self-registration off, and
+  writes the token; then the one-off is removed and BookStack started again. `bookstack.roles`
+  maps the Admin role and refuses another role either claim would also grant (rename it or
+  change its external authentication ID). Apply refuses BookStack with a KyIdentity older than
+  0.4.6 (which sends a removal made before a person's first sign-in), or an `existing` one.
+- **Offboarding.** The receiver verifies KyIdentity's signature before reading an event and only
+  ever removes roles: a removed person (disabled, deleted or unassigned) loses every role, and a
+  person who loses `bookstack.admin` loses Admin and keeps Editor. It never grants a role or
+  deletes an account. In plain words:
+  Offboarding (disabling, deleting or unassigning the person in KyIdentity) removes every
+  role from their BookStack account within seconds: their API tokens are refused and they can
+  read and edit nothing. Their account and authorship stay. BookStack cannot end one person's
+  web session: one already open stays signed in, with no roles, until it has been idle for
+  60 minutes, and meanwhile they can still change their own name, email, language and profile
+  image. The edge refuses self-delete; from a LAN host that reaches BookStack's published port
+  directly, that open session could still delete its own account (blanking the authorship of
+  its pages) until it idles.
+  Re-enabling or re-assigning them needs no step: their next sign-in brings Editor (and Admin
+  from the claim) back.
+- **Backup and restore** follow [Backups and restore on Docker](#backups-and-restore-on-docker):
+  a `mariadb-dump` (its password from a private file in the container, never on a command line)
+  plus `config` (without logs, caches and sessions, so a restore signs everyone out), `data`,
+  `token` and the three secrets, taken while BookStack runs. Restore starts MariaDB, loads the
+  dump, starts BookStack and the receiver, then replays KyIdentity's removals
+  (`replay_after: directory`) through the receiver.
+
+### BookStack: provenance, measurements and residuals
+
+- **Images.** BookStack publishes no image. The catalog pins LinuxServer.io's build
+  v26.09.2-ls292 by digest: unsigned, with a BuildKit SLSA provenance naming
+  `github.com/linuxserver/docker-bookstack` at `45704cc9` and an SPDX SBOM. MariaDB is the Docker
+  Official Image 11.4.13, without attestation. The receiver is this repository's `kyoffboard`
+  image, pinned by its attested digest once released.
+- **Privilege.** Every container runs as the target user with no capabilities and a read-only
+  root filesystem; LinuxServer's image runs its supervisor unprivileged that way (its startup
+  `chown` of `/config` only warns).
+- **Measured in the end-to-end test.** The service token read no role on the account 2-4 s
+  after an unassignment or a disable in KyIdentity (bound: 5 minutes). Installing BookStack by
+  amendment took about 75 s, a hot backup 10 s and a disaster restore with the replay about
+  30 s.
+- **Residuals.** The open session of an offboarded person, as above: signed in with no roles
+  for up to 60 idle minutes, with its own profile writable, and on the LAN able to delete its
+  own account by the published port. Restore: until the replay is delivered, a person removed
+  after the snapshot has their roles and API token back (KyIdentity refuses their sign-in and
+  no session is restored). Routed ports are reachable on the LAN without the edge. BookStack's
+  audit log shows Docker's NAT address, not the client's, on a host that hides client
+  addresses. The image is a community build with provenance but no signature. If KyIdentity
+  delivers a change while the receiver or its route is down (a crashed target, a restore in
+  progress), the edge answers 502 and KyIdentity may hold that person's later changes as an
+  uncertain write until an administrator resumes the delivery in KyIdentity; until then a
+  restore's replay ends `restore_incomplete` with BookStack stopped. The end-to-end test saw
+  the replay fail this way in two of five runs that reached it (cause unproven: one person's state was never
+  re-sent) and now lets KyIdentity deliver everything before the disaster.
+
 ## Existing KyIdentity setup
 
 The first real product adapter is `integrate-identity`. It runs the selected

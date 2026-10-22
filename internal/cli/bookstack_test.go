@@ -377,3 +377,19 @@ func TestBookStackServiceAccount(t *testing.T) {
 		t.Fatal("bootstrap re-keys another account than the receiver protects")
 	}
 }
+
+// AC15: the handover's offboarding residual and self-delete note are the guide's, word for word.
+func TestBookStackResidualMatchesDocs(t *testing.T) {
+	doc, err := os.ReadFile("../../docs/guided-setup.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	flat := func(s string) string { return strings.Join(strings.Fields(s), " ") }
+	section, _, _ := strings.Cut(string(doc[strings.Index(string(doc), "## Catalog BookStack on Docker"):]), "\n## ")
+	if !strings.Contains(flat(section), flat(bookstackResidual)) {
+		t.Fatal("docs/guided-setup.md's BookStack section lacks the handover's residual verbatim")
+	}
+	if h := bookstackHandover("wiki.example.com", "a", "e"); !strings.Contains(h, bookstackResidual) {
+		t.Fatal("the handover lacks the residual")
+	}
+}

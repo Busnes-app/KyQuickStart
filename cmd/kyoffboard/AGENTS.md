@@ -17,6 +17,12 @@ Standalone resident offboarding bridge command.
 - This executable does not admit products, compose KyIdentity connectors or prove deployment.
 - Accepted risk (Yoshi, 2026-10-10): any `bookstack`/`forgejo`/`immich` app in operator
   config is served without a code-level qualification check; the catalog gate is procedural.
+- `bookstack-*` subcommands (`bookstack.go`, over `internal/stockbookstack`) serve the catalog
+  BookStack, which uses only these and never the module-backed `kind: bookstack`:
+  `bookstack-directory [--probe]` (the receiver; its healthcheck), `bookstack-bootstrap`
+  (create-admin's password on stdin), `bookstack-check`, `bookstack-roles [--check]`. Flags
+  carry URLs, file paths and role claims only; their defaults are the catalog Compose file's.
+  The `--config` invocation is unchanged.
 - Image: `Dockerfile` here (build context is the repo root), static on distroless `nonroot`,
   uid 65532, no shell, OCI source/revision/version labels from build args. ci.yml's
   "kyoffboard image build & run" proves `--check` and TLS serving read-only with no capabilities.
@@ -30,6 +36,7 @@ Standalone resident offboarding bridge command.
 ## Verification
 
 - `go test ./cmd/kyoffboard`: exit-code/diagnostic boundary and private input redaction.
+- `go test ./internal/stockbookstack`: the receiver's contract against a fake BookStack API.
 - `internal/offboard` tests verify protected loading and serving behavior.
 - `workflow_test.go`: `kyoffboard-image.yml` trigger, permissions, SHA-pinned actions, CI guard
   naming every ci.yml job, attestation identity and gitCommit check; no kyoffboard digest pin.

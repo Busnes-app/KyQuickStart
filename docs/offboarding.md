@@ -6,6 +6,35 @@ updates profiles and app-scoped administrator grants on already registered nativ
 Production admission still requires complete native lifecycle, actual KyIdentity connector
 composition, audit/failure-alert deployment and restore proof.
 
+## The catalog BookStack's receiver
+
+The catalog BookStack ([guided setup](guided-setup.md#catalog-bookstack-on-docker)) does not use
+this runtime, its `kind: bookstack` or the BookStack module: it runs stock BookStack and the
+same image's `kyoffboard bookstack-directory`, deployed and set up by `apply`. That receiver:
+
+- answers `POST /kyq/directory` alone (any other path 404, any other method 405), behind the
+  edge's `directory` route as KyIdentity's signed suite webhook for the `bookstack` client;
+- reads at most 64 KiB and verifies KyIdentity's `syncauth` v1 signature, timestamp (five
+  minutes either way), event type and event ID before parsing, with the directory secret from
+  `/run/secrets/directory_secret`; anything else is 401 and touches nothing;
+- talks to BookStack only over its REST API with the service account's token from
+  `/token/bookstack_token`, read per call, so a bootstrap's new token needs no restart;
+- for a removal (`user.deleted`, or `user.updated` with `active: false`) finds the one account
+  whose `external_auth_id` is exactly the event's `externalId`, sets its roles to none and reads
+  them back before answering 204; no account is 404 (KyIdentity counts that delivered);
+- for an active `user.updated` without the `bookstack.admin` claim removes the Admin role alone;
+  it never grants a role, and `user.created` and `user.mfa_reset` change nothing (roles come at
+  sign-in);
+- answers 409 for two matches, a match differing only in case, the service account or an empty
+  ID, and 503 when BookStack is down or refuses the token, so KyIdentity retries;
+- logs one line per request: the event ID and type, the outcome and the BookStack user ID, never
+  a token, a secret or a body.
+
+Every action only removes and is idempotent: a retry, or a replay inside the signature window,
+repeats a removal and can never grant. The same image's `bookstack-bootstrap`,
+`bookstack-check` and `bookstack-roles` are the installer's setup steps; `--probe` is the
+receiver's healthcheck.
+
 ## Private target configuration
 
 The service reads `ky.offboarding-runtime/1` JSON from a canonical service-owned 0700 directory.

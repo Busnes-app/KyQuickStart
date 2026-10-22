@@ -338,6 +338,17 @@ handover of admin and everyday logins.
   notice, and existing installs are handed to their owner with `unmanage`.
 - Every installed app signs in through KyIdentity with native OIDC, uses *Assigned users only*,
   and has an offboarding adapter. The installer builds no auth-proxy gate.
+- The catalog BookStack is stock (Yoshi, 2026-10-20): LinuxServer.io's image, MariaDB and the
+  receiver `kyoffboard bookstack-directory` (`internal/stockbookstack`), never
+  `internal/adapters/bookstack/module` or the module-backed `kind: bookstack`. Offboarding
+  removes every role; an open session stays signed in with no roles until it idles (60 min) and
+  can still edit its own profile, and on the LAN, past the edge's block, delete its own account
+  (accepted residuals, `docs/guided-setup.md`). It needs KyIdentity 0.4.6 or later.
+- A manifest's `pending_images` names images not published yet: the app renders but every plan
+  installing it is refused. `secret_formats: {<secret>: laravel}` generates `base64:` and 32
+  random bytes in standard base64 (Laravel's `APP_KEY`). `oidc.directory_role` puts the
+  directory webhook at a non-primary route whose `paths` include `directory_path`. A route's
+  `deny_paths` may end with `$`.
 - Bridge SCIM connectors are app-scoped: assignment loss revokes only that app; global
   disablement reaches every owning connector. Register verified native bindings first and
   qualify the complete connector lifecycle before deployment. New-account creation requires
@@ -536,6 +547,15 @@ calls and kind nodes must carry their own explicit bounds.
   port, private setup files, live `--check`, health and an untrusted-proxy network status
   through the edge, admin and everyday sign-in (`/api/users` 200/403), the handover's
   break-glass read and session-ending restart run verbatim on the target, and a skipped rerun.
+  `TestKubernetesBookStack` (`bookstack_kube_test.go`, `bookstack_target_test.go`) installs the
+  catalog BookStack by amendment on a non-root sshd target in the host's network namespace,
+  with the receiver image the manifest pins or, while it is pending, this checkout's pushed to
+  a disposable local registry (`KYQ_TEST_KYOFFBOARD_IMAGE` skips the build; test plumbing):
+  pinned images, ownership and modes, publications, no secret in output, state, container
+  environment or any sampled command line, bootstrap's one token and refused `POST /login`,
+  owner, everyday and later sign-in by role, offboarding by unassignment and by disable with
+  the residual as documented, removal before first sign-in, reactivation, and backup and
+  restore with the replay through the receiver.
   `TestKubernetesKyMessage` (`message_stack_test.go`, `message_chat_test.go`) installs the whole
   KyMessages stack on a non-root sshd target in the host's network namespace by amendment, with
   KyIdentity's first setup relaying mail through a test-only Mailpit (STARTTLS, AUTH, test CA)
@@ -595,5 +615,7 @@ calls and kind nodes must carry their own explicit bounds.
   The root owns stack schema, CLI orchestration and target drivers.
 - `internal/adapters/AGENTS.md`: native third-party setup, administrator verification,
   offboarding and disposable qualification; the root retains catalog admission and deployment.
+- `internal/stockbookstack/AGENTS.md`: the catalog BookStack's receiver and setup clients over
+  BookStack's own HTTP interfaces; the root retains the catalog entry.
 - `internal/offboard/AGENTS.md`: resident bridge account/group bindings, creation receipts, directory/membership intents, durable revocation jobs and audit
   outbox; the root retains deployment, target secrets, network policy and admission.

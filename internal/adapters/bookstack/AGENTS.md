@@ -3,6 +3,8 @@
 ## Purpose
 
 Build and verify native setup, directory and offboarding interfaces before qualifying BookStack for installation.
+The catalog BookStack never uses this groundwork or `module/`: it runs stock BookStack with the
+receiver in `internal/stockbookstack` (Yoshi, 2026-10-20: stock only).
 
 ## Ownership
 

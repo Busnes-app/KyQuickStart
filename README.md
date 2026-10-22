@@ -20,7 +20,10 @@ Docker apps back up to an off-host restic
 rest-server with `kyquickstart backup` and come back with `kyquickstart restore`
 ([guided setup](docs/guided-setup.md#backups-and-restore-on-docker)); restoring an app whose
 people come from KyIdentity needs KyIdentity v0.4.4 or later (the catalog's is v0.4.6). The offboarding bridge's image
-(`ghcr.io/busnes-app/kyoffboard`) has a release workflow but no published version yet.
+(`ghcr.io/busnes-app/kyoffboard`) has a release workflow but no published version yet, so the
+first third-party app, stock [BookStack](docs/guided-setup.md#catalog-bookstack-on-docker) on a
+Docker host with that image's offboarding receiver, is in the catalog but refused by every plan
+until a release pins it.
 `integrate-product` connects already-running Ky products to KyIdentity. See
 [the deployment plan](docs/superpowers/plans/2026-10-10-deployment-plan.md) for what remains.
 

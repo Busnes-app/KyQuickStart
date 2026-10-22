@@ -135,6 +135,21 @@ Plain terminal planning and command orchestration for the operator-run installer
   ends no open session) and `initAdminLine` are what apply prints. `askRoutes` (guided) asks the
   domain as the permanent server name, lists the six hostnames, defaults the address to
   `media_address` and refuses one `stack.MediaAddress` refuses.
+- `bookstack.go` owns the catalog BookStack (Docker only; stock, never the BookStack module):
+  `bookstackPlan` (plan, review, every command) refuses an app with `pending_images`, a
+  BookStack without its integration or its edge's `egress_address`, and a plan or `existing`
+  KyIdentity below 0.4.6; `refuseOldIdentity` (deploySteps) refuses a recorded one this run
+  leaves in place. `bookstackSteps` puts `bookstack.setup` (issuer, client ID and secret,
+  directory secret into `data/`, from KyIdentity's export, never replaced) before its deploy and
+  `bookstack.bootstrap` (only while the receiver's token is refused: BookStack stopped, a
+  one-off standard-auth BookStack with no port, `create-admin` piped into the receiver image's
+  sign-in client, the one-off removed, BookStack started) and `bookstack.roles` after its
+  health; `deploySteps` adds `directoryStep` for a third-party app with a directory.
+  `bookstackHandover` prints `bookstackResidual`, which `docs/guided-setup.md` repeats word for
+  word (a test compares them). `composeClients` puts a client's webhook at its
+  `oidc.directory_role` route's host. `askRoutes` keeps KyMessages' Matrix wording and defaults
+  for apps with a chat client; other multi-route apps get `<app>.<domain>` and
+  `<app>-<role>.<domain>`.
 - KyRecovery setup runs explicitly as `kyrecovery`, activates live, commits exact administrator grants with its keyed SQL audit, and never performs the custodian ceremony.
   `appsetup.go` owns apply's catalog apps that sign in through KyIdentity (KyRecovery,
   kyPulse, KyNotes, KyCalendar and KyYard on Docker or Kubernetes, KyDrive, KyPost and KyDNS on Docker): `composeClients` adds each one's catalog-derived client to the installed
