@@ -26,7 +26,10 @@ same image's `kyoffboard bookstack-directory`, deployed and set up by `apply`. T
   it never grants a role, and `user.created` and `user.mfa_reset` change nothing (roles come at
   sign-in);
 - answers 409 for two matches, a match differing only in case, the service account or an empty
-  ID, and 503 when BookStack is down or refuses the token, so KyIdentity retries;
+  ID, and 503 when BookStack is down, refuses the token or takes over 3 seconds, so KyIdentity
+  retries (its client gives up after 5 seconds and would then hold the person's later changes
+  for an administrator); the edge's `directory` route (`webhook: true`) likewise answers 503
+  when the receiver is unreachable or slow, instead of 502 or 504;
 - logs one line per request: the event ID and type, the outcome and the BookStack user ID, never
   a token, a secret or a body.
 

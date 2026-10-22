@@ -348,7 +348,8 @@ handover of admin and everyday logins.
   installing it is refused. `secret_formats: {<secret>: laravel}` generates `base64:` and 32
   random bytes in standard base64 (Laravel's `APP_KEY`). `oidc.directory_role` puts the
   directory webhook at a non-primary route whose `paths` include `directory_path`. A route's
-  `deny_paths` may end with `$`.
+  `deny_paths` may end with `$`; `webhook: true` (paths only) makes the edge answer 503 for an
+  unreachable or slow upstream, for a receiver that only removes access.
 - Bridge SCIM connectors are app-scoped: assignment loss revokes only that app; global
   disablement reaches every owning connector. Register verified native bindings first and
   qualify the complete connector lifecycle before deployment. New-account creation requires

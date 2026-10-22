@@ -47,7 +47,7 @@ Plain terminal planning and command orchestration for the operator-run installer
   `dockerhost.Store` does the target work. `removalGate` refuses restoring an app with an
   `oidc` block unless the plan's KyIdentity deployment record is `replayVersion` (0.4.4) or
   later (an `existing` KyIdentity is refused); `replayRemovals` runs `resync-system --client
-  <identity_client> --wait 10m` through the target driver in KyIdentity's container (`kube.ExecReport` on Kubernetes, managed-service `docker exec` on Docker) and accepts only `delivered`, else `restore_incomplete`. `restoreLocked` refuses a
+  <identity_client> --wait 10m` through the target driver in KyIdentity's container (`kube.ExecReport` on Kubernetes, managed-service `docker exec` on Docker) and accepts only `delivered` (a refused delivery resynced every 10 s for up to 10 min, `retryRefused`), else `restore_incomplete`, whose message says how to resume a delivery KyIdentity holds. `restoreLocked` refuses a
   running app and existing data without `--replace` before contacting the repository, then a
   foreign snapshot; `--replace`/`--yes` without `--snapshot` are refused; it wants the typed name
   or `--yes`, reads a lost password from `Options.Stdin` (no echo on a terminal) and records
@@ -136,8 +136,8 @@ Plain terminal planning and command orchestration for the operator-run installer
   domain as the permanent server name, lists the six hostnames, defaults the address to
   `media_address` and refuses one `stack.MediaAddress` refuses.
 - `bookstack.go` owns the catalog BookStack (Docker only; stock, never the BookStack module):
-  `bookstackPlan` (plan, review, every command) refuses an app with `pending_images`, a
-  BookStack without its integration or its edge's `egress_address`, and a plan or `existing`
+  `pendingPlan` (plan, review, every command) refuses an app with `pending_images`;
+  `bookstackPlan` a BookStack without its integration or its edge's `egress_address`, and a plan or `existing`
   KyIdentity below 0.4.6; `refuseOldIdentity` (deploySteps) refuses a recorded one this run
   leaves in place. `bookstackSteps` puts `bookstack.setup` (issuer, client ID and secret,
   directory secret into `data/`, from KyIdentity's export, never replaced) before its deploy and

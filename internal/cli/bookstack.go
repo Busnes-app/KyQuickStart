@@ -22,15 +22,19 @@ import (
 // made before a person's first delivery, and BookStack keeps every account a sign-in made.
 const bookstackIdentity = "0.4.6"
 
-// bookstackPlan refuses, before connecting, an app whose image is not published yet, and a
-// BookStack without its KyIdentity client or whose KyIdentity is older than bookstackIdentity
-// or unknown.
-func bookstackPlan(st *stack.Stack, cat catalog.Catalog) error {
+// pendingPlan refuses, before connecting, an app whose image is not published yet.
+func pendingPlan(st *stack.Stack, cat catalog.Catalog) error {
 	for _, a := range st.Apps {
 		if p := cat[a.Name].PendingImages; len(p) > 0 {
-			return fmt.Errorf("app %q needs the %s image, which is not published yet: this build cannot install it (pending_images)", a.Name, strings.Join(p, ", "))
+			return fmt.Errorf("app %q cannot be installed yet: its %s image has no published release. Nothing was changed; remove %s from the plan until a release of this installer can install it", a.Name, strings.Join(p, ", "), a.Name)
 		}
 	}
+	return nil
+}
+
+// bookstackPlan refuses, before connecting, a BookStack without its KyIdentity client or its
+// edge's egress_address, or whose KyIdentity is older than bookstackIdentity or unknown.
+func bookstackPlan(st *stack.Stack, cat catalog.Catalog) error {
 	k := slices.IndexFunc(st.Apps, func(a stack.App) bool { return a.Name == "bookstack" })
 	switch {
 	case k < 0:
@@ -259,8 +263,8 @@ func (s rolesStep) do(ctx context.Context, check bool) error {
 
 // bookstackResidual is what the handover and docs/guided-setup.md say about offboarding.
 const bookstackResidual = `Offboarding (disabling, deleting or unassigning the person in KyIdentity) removes every
-  role from their BookStack account within seconds: their API tokens are refused and they can
-  read and edit nothing. Their account and authorship stay. BookStack cannot end one person's
+  role from their BookStack account within seconds (if BookStack is down then, KyIdentity
+  retries until it is back): their API tokens are refused and they can read and edit nothing. Their account and authorship stay. BookStack cannot end one person's
   web session: one already open stays signed in, with no roles, until it has been idle for
   60 minutes, and meanwhile they can still change their own name, email, language and profile
   image. The edge refuses self-delete; from a LAN host that reaches BookStack's published port
@@ -276,5 +280,9 @@ BookStack at https://%[1]s/: sign in through KyIdentity as %[2]s (BookStack's Ad
   extra role holder. Its service account (admin@admin.com, Admin) holds the receiver's API
   token; it cannot sign in, and every bootstrap gives it a new password nobody keeps.
   %[4]s
+  After a restore, someone removed after the snapshot has their roles and API token back until
+  KyIdentity's replay is delivered, seconds after BookStack starts; if it is not, restore
+  stops BookStack again.
+  All residuals: docs/guided-setup.md, "BookStack: provenance, measurements and residuals".
 `, host, admin, everyday, bookstackResidual)
 }

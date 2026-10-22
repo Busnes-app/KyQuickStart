@@ -111,7 +111,7 @@ func TestBookStackPlanRefusals(t *testing.T) {
 		"kyidentity 0.4.5": {identityAt("0.4.5"), nil, "found: 0.4.5, the version this plan installs"},
 		"receiver pending": {func(p, body string) string {
 			return strings.Replace(body, "images:\n  kyoffboard:", "pending_images: [kyoffboard]\nimages:\n  unused:", 1)
-		}, nil, "needs the kyoffboard image, which is not published yet"},
+		}, nil, "its kyoffboard image has no published release. Nothing was changed"},
 		"no edge egress": {nil, route("    egress_address: 192.0.2.50\n", ""), "egress_address"},
 		"wildcard forward": {nil, func(y string) string {
 			return strings.ReplaceAll(y, "forward_host: 192.0.2.1", "forward_host: 0.0.0.0")
@@ -142,7 +142,7 @@ func TestBookStackPlanRefusals(t *testing.T) {
 	}
 	// The embedded catalog has no receiver image yet: no plan installs BookStack.
 	f.o.Catalog = catalog.Embedded()
-	if err := f.run("review"); err == nil || !strings.Contains(err.Error(), "pending_images") {
+	if err := f.run("review"); err == nil || !strings.Contains(err.Error(), "cannot be installed yet") {
 		t.Fatalf("embedded catalog: %v", err)
 	}
 }
@@ -391,5 +391,26 @@ func TestBookStackResidualMatchesDocs(t *testing.T) {
 	}
 	if h := bookstackHandover("wiki.example.com", "a", "e"); !strings.Contains(h, bookstackResidual) {
 		t.Fatal("the handover lacks the residual")
+	}
+}
+
+// The edge gets BookStack's directory route as a webhook route, and no other route.
+func TestBookStackWebhookRoute(t *testing.T) {
+	f := newBookStackFixture(t, nil)
+	bookstackStackPlan(t, f, nil)
+	s, err := load(f.state, nil, f.o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hooks []string
+	for _, e := range s.edges {
+		for _, r := range e.Routes {
+			if r.Webhook {
+				hooks = append(hooks, r.Hostname)
+			}
+		}
+	}
+	if !slices.Equal(hooks, []string{"wiki-directory.example.com"}) {
+		t.Fatalf("webhook routes %v", hooks)
 	}
 }

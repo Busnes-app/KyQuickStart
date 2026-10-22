@@ -507,6 +507,9 @@ func validateSelection(st *stack.Stack, cat catalog.Catalog, o Options) error {
 	if err := messagePlan(st, cat); err != nil {
 		return err
 	}
+	if err := pendingPlan(st, cat); err != nil {
+		return err
+	}
 	if err := bookstackPlan(st, cat); err != nil {
 		return err
 	}

@@ -22,7 +22,11 @@ Reconcile owned NPM routes, deploy Docker edge connectors, and verify product pr
   for `kube://` plain HTTP inside the Kubernetes driver's port-forward, never a local listener.
 - Reconcile only hosts carrying the expected installer marker and ownership metadata, including
   the installation ID. A non-primary route's marker carries its role (`<app>:<role>:<hostname>`).
-  A route's catalog `Paths` are the only paths its host proxies; `DenyPaths` answer 404. Legacy target-only marks are claimed and rewritten only with `Adopt`.
+  A route's catalog `Paths` are the only paths its host proxies; `DenyPaths` answer 404. A `Webhook` route (BookStack's
+  receiver, which only removes access) answers an unreachable or slow upstream with 503
+  (`proxy_connect_timeout 2s`, `proxy_read_timeout 4s`), which KyIdentity retries; a 502 or 504
+  would make it hold the person's later changes. KyMessages' console is not a webhook route:
+  its receiver also grants, so an unknown outcome stays held there. Legacy target-only marks are claimed and rewritten only with `Adopt`.
   Disable hosts before changing their configuration and enable only after persistence verification.
 - A certificate is this installation's only when its owner is the NPM user marked
   `kyquickstart:<installation>:<target>` for its email; never reuse or change another owner's.

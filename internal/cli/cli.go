@@ -343,6 +343,9 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 		}
 	}
 	sort.Slice(s.targets, func(i, j int) bool { return s.targets[i].Name < s.targets[j].Name })
+	if err := pendingPlan(st, cat); err != nil {
+		return nil, err
+	}
 	if err := bookstackPlan(st, cat); err != nil {
 		return nil, err
 	}
