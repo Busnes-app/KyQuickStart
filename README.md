@@ -1,28 +1,24 @@
 # KyQuickStart
 
-A command-line installer for the supported catalog of Ky products and selected third-party apps across
-your own servers: choices, prerequisite checks, installation, preconfiguration and a printed
-handover of administrator and everyday logins.
+The deterministic execution layer for [KyQuickStart-AI](https://github.com/Busnes-app/KyQuickStart-AI),
+the primary installation path, and a command-line tool that also runs unattended from a saved
+`stack.yaml`. It installs the Ky suite on your own Docker hosts and Kubernetes clusters with
+validated operations, owned credentials and verifiable results, and prints a handover of
+administrator and everyday logins. New catalog apps and standalone features are frozen
+([redirect record](docs/redirect.md)).
 
-**Status:** pre-release. The production catalog holds Nginx Proxy Manager as the edge on a
-Kubernetes target ([docs/edge.md](docs/edge.md)), KyIdentity behind it
-([docs/guided-setup.md](docs/guided-setup.md#catalog-kyidentity-on-kubernetes)), and KyRecovery,
-kyPulse, KyNotes and KyCalendar signing in through it ([docs/guided-setup.md](docs/guided-setup.md#catalog-kyrecovery-on-kubernetes),
-[kyPulse](docs/guided-setup.md#catalog-kypulse-on-kubernetes), [KyNotes](docs/guided-setup.md#catalog-kynotes-on-kubernetes),
-[KyCalendar](docs/guided-setup.md#catalog-kycalendar-on-kubernetes)), with KyDrive, KyPost, KyDNS and the
-KyMessages chat stack on a Docker host routed through that edge
-([KyDrive](docs/guided-setup.md#catalog-kydrive-on-docker), [KyPost](docs/guided-setup.md#catalog-kypost-on-docker),
-[KyDNS](docs/guided-setup.md#catalog-kydns-on-docker), [KyMessages](docs/guided-setup.md#catalog-kymessages-on-docker));
-otherwise only a disposable demo app installs. KyYard, with the suite runner in its pod, installs
+**Status:** pre-release. The catalog holds the ten Ky products and Nginx Proxy Manager, the edge on
+a Kubernetes target ([docs/edge.md](docs/edge.md)). Each product's placement and setup are in
+[guided setup](docs/guided-setup.md); KyDrive, KyPost, KyDNS and KyMessages run on Docker only
+([placement](docs/redirect.md#placement)). KyYard, with the suite runner in its pod, installs
 from a [release binary](#install-a-release), which carries the digest of the runner image it was
 released with; source builds refuse it ([KyYard](docs/guided-setup.md#catalog-kyyard-on-kubernetes)).
 Docker apps back up to an off-host restic
 rest-server with `kyquickstart backup` and come back with `kyquickstart restore`
 ([guided setup](docs/guided-setup.md#backups-and-restore-on-docker)); restoring an app whose
-people come from KyIdentity needs KyIdentity v0.4.4 or later (the catalog's is v0.4.6). The offboarding bridge's image
-(`ghcr.io/busnes-app/kyoffboard`) has a release workflow but no published version yet.
-`integrate-product` connects already-running Ky products to KyIdentity. See
-[the deployment plan](docs/superpowers/plans/2026-10-10-deployment-plan.md) for what remains.
+people come from KyIdentity needs KyIdentity v0.4.4 or later (the catalog's is v0.4.6).
+`integrate-product` connects already-running Ky products to KyIdentity. Open requirements are
+listed under [Unfinished](docs/redirect.md#dispositions).
 
 ## Targets
 
@@ -30,14 +26,17 @@ people come from KyIdentity needs KyIdentity v0.4.4 or later (the catalog's is v
 - Kubernetes clusters through an existing kubeconfig. App volumes use the cluster's default
   StorageClass, or the one a target names with `storage_class`.
 
-The installer binary runs on your workstation and keeps its plan/state there. Target-side
+Both are fully supported; see [Docker product setup](docs/guided-setup.md#catalog-ky-products-on-docker)
+for routes, protected target credentials and KyYard's private resident runner.
+
+The binary runs on your workstation and keeps its plan/state there. Target-side
 secrets are referenced rather than copied into ordinary plan/log output. Protect the
 operator account, target credentials and handover output; inspect the command-specific
 secret/handover contract before exporting results.
 
 ## Independent installation and first run
 
-You do not need an existing Ky suite to run the installer. You do need prepared target
+You do not need an existing Ky suite to run KyQuickStart. You do need prepared target
 infrastructure: Docker Engine/Compose and SSH agent access with a verified host key for
 Docker targets, or an existing Kubernetes cluster, working kubeconfig and persistent
 StorageClass for Kubernetes. KyQuickStart does **not** install Docker or Kubernetes.
@@ -110,15 +109,17 @@ Choosing `finish` saves the plan without touching any server.
 | `handoff`, `pull-plan` | Hand app management to KyYard's suite runner, or copy its plan back ([guided setup](docs/guided-setup.md#hand-off-to-kyyard)) |
 | `backup`, `restore` | Snapshot a Docker app to its target's rest-server, or restore one ([guided setup](docs/guided-setup.md#backups-and-restore-on-docker)) |
 | `verify-edge` | Check public routing and forwarded headers |
+| TODO-lifecycle | `stop`/`start`, `restart`, `logs`, live `status`: wording pending from branch `redirect/lifecycle` |
 | `integrate-identity`, `integrate-product`, `integrate-stack` | Configure existing Ky products against KyIdentity |
 | `review` | Show the saved plan |
 | `version` | Print the release set; `--runner-image` prints the runner image a release binary pins |
 
 ## Documentation
 
+- [KyQuickStart-AI, the primary installation path](https://github.com/Busnes-app/KyQuickStart-AI)
 - [Guided setup](docs/guided-setup.md)
 - [Edge and reverse proxy](docs/edge.md)
-- [Offboarding bridge](docs/offboarding.md)
+- [Redirect record: decision, dispositions, edge compatibility](docs/redirect.md)
 - [Suite runner (KyYard manages the suite)](docs/superpowers/specs/2026-10-16-suite-runner-design.md)
 - [Third-party catalog and admission rules](docs/superpowers/specs/2026-10-06-third-party-catalog-design.md)
 - [Installer architecture](docs/superpowers/specs/2026-10-06-installer-architecture-design.md)
@@ -126,5 +127,3 @@ Choosing `finish` saves the plan without touching any server.
 ## License
 
 MIT. See [LICENSE.txt](LICENSE.txt).
-
-All catalog Ky products support Docker targets; see [Docker product setup](docs/guided-setup.md#catalog-ky-products-on-docker) for routes, protected target credentials and KyYard's private resident runner.
