@@ -23,13 +23,23 @@ func labels(releaseSet, version string) map[string]string {
 	return l
 }
 
-// override is compose.kyq.yaml: labels on every service.
-func override(services []string, labels map[string]string) []byte {
+// EdgeAlias is the name a cloudflare-direct edge's cloudflared reaches app by on its network.
+func EdgeAlias(app string) string { return "kyq-" + app }
+
+// override is compose.kyq.yaml: labels on every service and, with an edge network, that
+// network for service "app" beside its default one.
+func (a App) override(labels map[string]string) []byte {
 	svcs := map[string]any{}
-	for _, s := range services {
+	for _, s := range a.Catalog.Services {
 		svcs[s] = map[string]any{"labels": labels}
 	}
-	b, err := yaml.Marshal(map[string]any{"services": svcs})
+	top := map[string]any{"services": svcs}
+	if a.EdgeNetwork != "" {
+		svcs["app"] = map[string]any{"labels": labels, "networks": map[string]any{
+			"default": map[string]any{}, "kyq-edge": map[string]any{"aliases": []string{EdgeAlias(a.Name)}}}}
+		top["networks"] = map[string]any{"kyq-edge": map[string]any{"external": true, "name": a.EdgeNetwork}}
+	}
+	b, err := yaml.Marshal(top)
 	if err != nil {
 		panic(err) // maps of strings always marshal
 	}
@@ -134,7 +144,7 @@ func RunInit(ctx context.Context, a App, svc string, env []string, stdin []byte)
 	if !slices.Contains(a.Catalog.Init, svc) {
 		return nil, fmt.Errorf("%s is not a one-shot service of %s", svc, a.Name)
 	}
-	if err := a.writeCompose(ctx, override(a.Catalog.Services, labels(a.ReleaseSet, a.Catalog.Version))); err != nil {
+	if err := a.writeCompose(ctx, a.override(labels(a.ReleaseSet, a.Catalog.Version))); err != nil {
 		return nil, err
 	}
 	args := "run --rm -T"

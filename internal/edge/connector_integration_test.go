@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"math/big"
 	"net/netip"
 	"os"
@@ -21,9 +22,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/kyquickstart/internal/catalog"
+	"github.com/Busnes-app/kyquickstart/internal/dockerhost"
 	"github.com/Busnes-app/kyquickstart/internal/engine"
 	"github.com/Busnes-app/kyquickstart/internal/remote"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
+	"go.yaml.in/yaml/v3"
 )
 
 func TestFRPConnectorContainer(t *testing.T) {
@@ -177,5 +181,121 @@ func TestCloudflaredIngressContainer(t *testing.T) {
 	run = append(run, "ingress", "validate")
 	if out, err := exec.CommandContext(ctx, "docker", run...).CombinedOutput(); err != nil {
 		t.Fatalf("cloudflared rejected generated ingress: %v\n%s", err, out)
+	}
+}
+
+// TestCloudflaredDirectContainer checks a cloudflare-direct edge offline: the pinned
+// cloudflared accepts the generated ingress and matches each hostname to its app's origin and
+// anything else to 404; on a real reserved network the app, joined by the Compose override,
+// sees exactly the connector's fixed address, and a container elsewhere on the network cannot.
+// Reaching Cloudflare needs a live tunnel and is not tested.
+func TestCloudflaredDirectContainer(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	docker := func(args ...string) string {
+		t.Helper()
+		b, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("docker %v: %v\n%s", args, err, b)
+		}
+		return strings.TrimSpace(string(b))
+	}
+	limits := []string{"--memory", "64m", "--memory-swap", "64m", "--cpus", "0.5", "--pids-limit", "64"}
+	const busybox = "busybox:1.37.0-musl@sha256:dc88b80842580654294472735332ec7c7789a4010ec9a68b69f9b88c19abede6"
+
+	name := fmt.Sprintf("direct%d", time.Now().UnixNano()%1e9)
+	e := stack.Edge{Target: name, Provider: "cloudflare-direct",
+		Connector: &stack.Connector{Network: "kyq-" + name + "-net", TunnelID: "12345678-1234-1234-1234-123456789012"},
+		Routes: []stack.Route{
+			{App: name, Hostname: "id.example.com", ForwardHost: "127.0.0.1", ForwardPort: 15867, Origin: "http://" + dockerhost.EdgeAlias(name) + ":8080"},
+			{App: "kypost", Hostname: "mail.example.com", ForwardHost: "127.0.0.1", ForwardPort: 15866, Origin: "http://kyq-kypost:5866"},
+		}}
+	conf, image, args := connectorConfig(e)
+	file := filepath.Join(t.TempDir(), "connector.conf")
+	if err := os.WriteFile(file, conf, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cloudflared := append(append([]string{"run", "--rm", "--network", "none", "--user", "65532:65532", "-v", file + ":/etc/kyq/connector.conf:ro"}, limits...), image)
+	cloudflared = append(cloudflared, args[:len(args)-1]...)
+	docker(append(cloudflared, "ingress", "validate")...)
+	for url, service := range map[string]string{"https://id.example.com/": e.Routes[0].Origin, "https://mail.example.com/x": "http://kyq-kypost:5866", "https://other.example.com/": "http_status:404"} {
+		if out := docker(append(cloudflared, "ingress", "rule", url)...); !strings.Contains(out, service) {
+			t.Errorf("%s matched %s, want %s", url, out, service)
+		}
+	}
+
+	createReservedNetwork(t, e.Connector.Network)
+	t.Cleanup(func() { exec.Command("docker", "network", "rm", e.Connector.Network).Run() })
+	var networks []struct {
+		IPAM struct{ Config []struct{ Subnet string } }
+	}
+	if err := json.Unmarshal([]byte(docker("network", "inspect", e.Connector.Network)), &networks); err != nil || len(networks) != 1 {
+		t.Fatal("invalid network response")
+	}
+	ip := netip.MustParsePrefix(networks[0].IPAM.Config[0].Subnet).Masked().Addr()
+	for i := 0; i < 10; i++ {
+		ip = ip.Next()
+	}
+	e.ConnectorCIDR = ip.String() + "/32"
+
+	// A stand-in app: busybox httpd answering each request with the peer address it sees.
+	compose, err := yaml.Marshal(map[string]any{"services": map[string]any{"app": map[string]any{
+		"image": busybox, "read_only": true, "tmpfs": []string{"/tmp:exec"}, "cap_drop": []string{"ALL"},
+		"mem_limit": "64m", "memswap_limit": "64m", "cpus": 0.5, "pids_limit": 64,
+		"environment": map[string]string{"SCRIPT": "#!/bin/sh\necho Content-Type: text/plain\necho\necho $$REMOTE_ADDR\n"},
+		"command":     []string{"sh", "-c", `mkdir -p /tmp/www/cgi-bin && printf %s "$$SCRIPT" > /tmp/www/cgi-bin/addr && chmod 755 /tmp/www/cgi-bin/addr && exec httpd -f -p 8080 -h /tmp/www`},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	app := dockerhost.App{Name: name, Root: root, Runner: remote.Local{}, ReleaseSet: "e2e", Redact: &engine.Redactor{}, EdgeNetwork: e.Connector.Network,
+		Catalog: catalog.App{Manifest: catalog.Manifest{Name: name, Category: "ky", Images: map[string]string{"app": busybox}, Health: catalog.Health{TimeoutSeconds: 60}}, Compose: compose, Services: []string{"app"}}}
+	dir := filepath.Join(root, name)
+	t.Cleanup(func() {
+		exec.Command("docker", "compose", "-p", "kyq-"+name, "-f", filepath.Join(dir, "compose.yaml"), "-f", filepath.Join(dir, "compose.kyq.yaml"), "down").Run()
+	})
+	en := &engine.Engine{Dir: filepath.Join(t.TempDir(), "state"), Out: io.Discard, Redact: &engine.Redactor{}}
+	if err := en.Run(ctx, dockerhost.Steps(app)); err != nil {
+		t.Fatal(err)
+	}
+	probe := func(args ...string) string {
+		run := append(append([]string{"run", "--rm", "--network", e.Connector.Network}, limits...), args...)
+		run = append(run, busybox, "wget", "-qO-", "-T", "5", "http://"+dockerhost.EdgeAlias(name)+":8080/cgi-bin/addr")
+		var out string
+		for i := 0; i < 50; i++ { // httpd may still be starting
+			b, err := exec.CommandContext(ctx, "docker", run...).CombinedOutput()
+			out = strings.TrimSpace(string(b))
+			if a, perr := netip.ParseAddr(strings.Trim(out, "[]")); err == nil && perr == nil {
+				return a.Unmap().String() // httpd reports [::ffff:a.b.c.d]
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		t.Fatalf("probe failed: %s", out)
+		return ""
+	}
+	if seen := probe("--ip", ip.String()); seen != ip.String() {
+		t.Fatalf("app saw %q from the connector address %s: a trusted /32 would not match", seen, ip)
+	}
+	if seen := probe(); seen == ip.String() || seen == "" {
+		t.Fatalf("another container presented as %q", seen)
+	}
+
+	// The network must hold only installer containers.
+	secrets := filepath.Join(root, "edge", "secrets")
+	if err := os.MkdirAll(secrets, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(secrets, "cloudflare_tunnel_credentials"), []byte(`{"AccountTag":"a","TunnelSecret":"s","TunnelID":"`+e.Connector.TunnelID+`"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckConnector(ctx, remote.Local{}, root, e); err != nil {
+		t.Fatalf("network with only the installer's app refused: %v", err)
+	}
+	foreign := name + "-foreign"
+	docker(append(append([]string{"run", "-d", "--name", foreign, "--network", e.Connector.Network}, limits...), busybox, "sleep", "300")...)
+	t.Cleanup(func() { exec.Command("docker", "rm", "-f", foreign).Run() })
+	if err := CheckConnector(ctx, remote.Local{}, root, e); err == nil || !strings.Contains(err.Error(), "only this installer's containers") {
+		t.Fatalf("foreign container on the edge network: %v", err)
 	}
 }

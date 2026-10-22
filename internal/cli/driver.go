@@ -53,6 +53,7 @@ type sshDriver struct {
 		remote.Runner
 		Close() error
 	}
+	edgeNets map[string]string // app -> its cloudflare-direct edge's Docker network
 }
 
 func (d sshDriver) preflight(ctx context.Context) []finding {
@@ -76,11 +77,13 @@ func (d sshDriver) writeMarker(ctx context.Context, m stack.Marker) error {
 }
 
 func (d sshDriver) steps(name string, app catalog.App, releaseSet string, redact *engine.Redactor) []engine.Step {
-	return dockerhost.Steps(dockerhost.App{Name: name, Root: d.t.Root, Runner: d.c, Catalog: app, ReleaseSet: releaseSet, Redact: redact})
+	a := d.app(name, app, releaseSet)
+	a.Redact = redact
+	return dockerhost.Steps(a)
 }
 
 func (d sshDriver) app(name string, app catalog.App, releaseSet string) dockerhost.App {
-	return dockerhost.App{Name: name, Root: d.t.Root, Runner: d.c, Catalog: app, ReleaseSet: releaseSet}
+	return dockerhost.App{Name: name, Root: d.t.Root, Runner: d.c, Catalog: app, ReleaseSet: releaseSet, EdgeNetwork: d.edgeNets[name]}
 }
 
 func (d sshDriver) deployed(ctx context.Context, name string) (managed.Deployed, error) {

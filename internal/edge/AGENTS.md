@@ -1,6 +1,7 @@
 # Purpose
 
-Reconcile owned NPM routes, deploy Docker edge connectors, and verify product proxy behavior.
+Reconcile owned NPM routes, deploy Docker edge connectors (including cloudflared routing
+straight to the apps, `cloudflare-direct`), and verify product proxy behavior.
 
 ## Ownership
 
@@ -9,7 +10,9 @@ Reconcile owned NPM routes, deploy Docker edge connectors, and verify product pr
 - NPM's own administrator (setup-mode creation, login, verification, rotation) for bootstrap: `admin.go`.
 - Let's Encrypt DNS-01 certificates, their per-email NPM user and route name resolution: `certs.go`.
 - KyDNS LAN A records and their ownership ledger: `kydns.go`.
-- Target-held connector credentials, pinned images and configuration: `connector.go`.
+- Target-held connector credentials, pinned images and configuration: `connector.go`, including
+  a `cloudflare-direct` edge's ingress (each hostname to its route's `Origin`, then 404) and its
+  dedicated-network check.
 - Public HTTPS forwarded-header proof: `verify.go`.
 - Operator configuration and supported scope: `../../docs/edge.md`.
 - Before changing frp transport or NPM listeners, read
@@ -41,7 +44,12 @@ Reconcile owned NPM routes, deploy Docker edge connectors, and verify product pr
   verification runs from an allowed client, on `client_port`.
 - Optional connector deployment uses an existing Docker network and existing tunnel/server credentials.
   Containers run with a fixed address, read-only files, no published ports and no capabilities.
-- Kubernetes connector deployment remains unavailable until source-address isolation is implemented.
+- A `cloudflare-direct` edge has no NPM: its connector is required, routes go to
+  `http://kyq-<app>:<port>` on its network (the CLI sets `Route.Origin`), and `CheckConnector`
+  refuses a network holding any container without the managed label. Its apps trust exactly
+  `connector_cidr`. Never add a TLS bypass or route to another host.
+- Kubernetes connector deployment, `cloudflare-direct` included, remains unavailable until
+  source-address isolation is implemented.
 - Public verification requires the product's G11 response, including resolved HTTPS scheme;
   an incomplete response cannot pass verification.
 
@@ -54,6 +62,9 @@ Use disposable fixtures for infrastructure tests. Preserve existing operator res
 - `make ci` covers unit tests, race checks and vet with the e2e tag.
 - `make e2e` runs actual pinned NPM API/configuration, frps/frpc routing with client-IP
   preservation and cloudflared ingress parsing. The kind NPM test also covers a `lan` route.
-  The Cloudflare fixture does not prove a live account connection.
+  `TestCloudflaredDirectContainer` matches a direct ingress's hostnames with the pinned
+  cloudflared and proves, on a real reserved network, the app sees exactly the connector's
+  address and a foreign container is refused. The Cloudflare fixtures do not prove a live
+  account connection.
 
 ## Child DOX Index

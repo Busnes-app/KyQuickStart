@@ -46,7 +46,7 @@ func installed(t *testing.T, r remote.Runner) App {
 	a.Root = realTemp(t)
 	a.Catalog.Version = "1.2.3"
 	os.MkdirAll(a.dir(), 0o700)
-	os.WriteFile(filepath.Join(a.dir(), "compose.kyq.yaml"), override(a.Catalog.Services, labels(a.ReleaseSet, a.Catalog.Version)), 0o600)
+	os.WriteFile(filepath.Join(a.dir(), "compose.kyq.yaml"), a.override(labels(a.ReleaseSet, a.Catalog.Version)), 0o600)
 	os.WriteFile(filepath.Join(a.dir(), ".input-hash"), []byte("h"), 0o600)
 	return a
 }
