@@ -1,6 +1,6 @@
 # Suite runner: KyYard manages the suite after install
 
-Status: approved 2026-10-16. Replaces "KyYard imports the catalog and upgrade module" in
+Status: approved 2026-10-16; kept by the 2026-10-22 redirect ([redirect record](../../redirect.md)). Replaces "KyYard imports the catalog and upgrade module" in
 `2026-10-06-installer-architecture-design.md` (Upgrades, KyYard rows).
 
 ## Decision

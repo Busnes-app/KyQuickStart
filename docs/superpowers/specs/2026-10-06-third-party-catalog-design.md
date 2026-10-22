@@ -1,6 +1,9 @@
 # Third-party app catalog
 
-Date: 2026-10-06. Status: approved; release admission remains evidence-dependent.
+Date: 2026-10-06. Status: approved; release admission remains evidence-dependent. Redirected
+2026-10-22 ([redirect record](../../redirect.md)): no third-party app enters the catalog (freeze);
+the admission rules stay for KyQuickStart-AI's labelled test installs. The third-party adapter
+code these qualification notes cite was retired on 2026-10-22; git history keeps it.
 
 KyQuickStart installs the Ky suite plus a small catalog of third-party apps. This spec decides
 which third-party apps are in the first catalog, the rules any future app must pass, and the
@@ -93,7 +96,7 @@ administrator grant/repeat/demotion against the official amd64 image
 Its OCI revision matches the pinned source. Verified RSA back-channel logout denies the old
 everyday session and preserves the unrelated owner, but the everyday personal API key still
 returns successful account access. Stock logout is insufficient. The AGPL-3.0 community
-extension in `internal/adapters/immich/module` adds installation-bound native revocation:
+extension (retired 2026-10-22) added installation-bound native revocation:
 a write-once metadata fence and session/key removal commit together, subject denial prevents
 new sign-in, and subscribed sockets disconnect. Native qualification verifies direct API
 scope/authority refusals, retained account/profile, photo records and original bytes, unrelated
@@ -107,11 +110,7 @@ authorization code cannot restore app access. This does not admit Immich: comple
 lifecycle, restore, dedicated administrator ordinary-workflow separation
 and production release/deployment remain gated. The overlay is a local fixture, not an upstream
 feature or production provenance claim.
-The resident bridge now pins UUID/client receipts, verifies registration and drives this module
-through authenticated SCIM intent and actual worker retry. The disposable native fixture proves
-unavailable-write backoff and retained completion/audit proofs across restart. The bridge
-sender remains a controlled SCIM helper even in real-identity OIDC mode; actual KyIdentity
-worker/event delivery and active account lifecycle remain unqualified.
+The resident bridge that drove this module was retired unreleased on 2026-10-22.
 
 The provider consumer now uses native system configuration with a protected preflight
 fingerprint. It sets verified HTTPS OIDC, signed ID tokens and the roles claim, retains
@@ -338,8 +337,7 @@ request for administrator users". Open before admission:
 6. Resource cost of the required search, cache and database services on a homelab host.
 
 BookStack qualification, 2026-10-09: disposable v26.09.1 tests reproduce upstream's
-ignored disable flags and continued session/token access. The MIT community module in
-`internal/adapters/bookstack/module` uses [logical theme hooks](https://www.bookstackapp.com/docs/admin/hacking-bookstack/#logical-theme-system)
+ignored disable flags and continued session/token access. The MIT community module (retired 2026-10-22) used [logical theme hooks](https://www.bookstackapp.com/docs/admin/hacking-bookstack/#logical-theme-system)
 and a [registered native command](https://github.com/BookStackApp/BookStack/blob/31d94dd8b98e3334dc01b66bed6d514719a2f85d/app/Theming/ThemeService.php).
 Native standard-auth tests now prove exact-binding/private-file refusal, retained identity,
 roles and content, old web/API session denial, API-token removal, new password-login denial,
