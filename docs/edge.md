@@ -2,8 +2,10 @@
 
 This build adds edge configuration to `stack.yaml`, reconciles Nginx Proxy Manager (NPM) hosts
 through its API, deploys and bootstraps NPM itself on a Kubernetes target, and optionally deploys
-a Docker connector for an existing Cloudflare tunnel or frp server. Per-product compatibility
-with these paths is in [the redirect record](redirect.md#edge-compatibility).
+a Docker connector for an existing Cloudflare tunnel or frp server. On a Docker target it can
+also deploy cloudflared routing straight to the apps, with no NPM
+([`cloudflare-direct`](#cloudflare-tunnel-straight-to-the-apps-provider-cloudflare-direct)).
+Per-product compatibility with these paths is in [the redirect record](redirect.md#edge-compatibility).
 
 ## Supported paths
 
@@ -11,9 +13,10 @@ with these paths is in [the redirect record](redirect.md#edge-compatibility).
 | --- | --- |
 | Existing NPM | Reuse existing certificates or, on a Kubernetes edge, have NPM request Let's Encrypt certificates through Cloudflare DNS-01; create and repair installer-owned proxy hosts only |
 | Existing Cloudflare tunnel | Locally managed tunnel credentials; optional cloudflared deployment on Docker |
+| Existing Cloudflare tunnel, no NPM (`cloudflare-direct`) | Docker only: cloudflared deployed beside the apps it routes; only the apps listed below |
 | Existing frp server | Optional frpc deployment on Docker, verified server TLS and PROXY v2 |
 | LAN clients only (`lan`) | Clients connect to NPM directly, no tunnel; NPM serves only `allow_cidrs` |
-| Kubernetes target | NPM from the catalog (`npm` app) managed through `kube://`, or an existing NPM's API; connector deployment is rejected |
+| Kubernetes target | NPM from the catalog (`npm` app) managed through `kube://`, or an existing NPM's API; connector deployment and `cloudflare-direct` are rejected |
 
 No other edge path is provided; the requirements still open are listed under Unfinished in
 [the redirect record](redirect.md#dispositions).
@@ -89,6 +92,92 @@ fields with `tunnel_id: <existing-tunnel-UUID>`. The generated ingress configura
 only the listed hostnames, verifies origin TLS using each hostname and ends with a 404 rule.
 Use dedicated tunnel credentials: an existing tunnel may have connectors with different
 ingress configuration, and this build does not reconcile those other connectors.
+
+## Cloudflare Tunnel straight to the apps (`provider: cloudflare-direct`)
+
+cloudflared, for an existing locally managed tunnel, routes each hostname straight to its app on
+the same Docker host. There is no NPM, so there are no NPM certificates (Cloudflare terminates
+TLS), no path blocks and no allow-list: every route is public to the internet.
+
+```yaml
+edges:
+  - target: nas
+    provider: cloudflare-direct
+    connector_cidr: 172.30.0.3/32       # cloudflared's fixed address; the apps trust exactly this
+    connector:
+      network: kyq-edge-net             # existing, dedicated to this edge
+      tunnel_id: <existing-tunnel-UUID>
+    routes:
+      - app: kyidentity
+        hostname: id.example.com
+        forward_host: 127.0.0.1         # required: the app publishes on the target's loopback only
+        forward_port: 15867             # unique on the target; cloudflared does not use it
+        status_path: /readyz
+```
+
+`npm_url`, `proxy_port`, `allow_cidrs`, `client_port`, `certificates`, `lan_dns`,
+`egress_address`, `npm_host`, the frp fields, `certificate_id`, `certificate` and
+`forward_scheme: https` are refused. A route's app must be on the edge's target.
+
+**How it routes.** Apply deploys cloudflared at `connector_cidr` on the network, read-only, as the
+target user, with no capabilities and no published ports, like the other connectors. Each routed
+app's Compose service `app` joins the network beside its own default network, under the alias
+`kyq-<app>`. The generated ingress sends each hostname to `http://kyq-<app>:<container port>` and
+ends with `http_status:404`. The app's published port stays on `127.0.0.1`, so nothing on the LAN
+goes around the tunnel. Removing a route, or uninstalling its app, redeploys cloudflared without
+it; with no routes left only the 404 rule remains. Removing the whole edge leaves cloudflared
+running with its last configuration.
+
+**Origin scheme: HTTP, on purpose.** The hop from cloudflared to the app is a Linux bridge inside
+one host: the traffic never reaches a wire. HTTPS there would need a certificate per app and
+origin verification against it, with nothing to gain on that hop, and the apps serve HTTP behind
+NPM too. There is no TLS to bypass: the tunnel to Cloudflare is cloudflared's own verified TLS.
+
+**The network.** Create it for this edge alone, with an explicit subnet and a dynamic `--ip-range`
+that excludes `connector_cidr`, so Docker never hands cloudflared's trusted address to another
+container: `docker network create --subnet 172.30.0.0/24 --ip-range 172.30.0.128/25 kyq-edge-net`.
+Preflight refuses a network without that reservation, and a network holding any container
+without the installer's `ky.managed-by` label, because apps are found there by alias and trust
+cloudflared's address. Every routed app can reach every other routed app's port on it; those
+requests come from the app's own address, so a product trusting `connector_cidr` does not
+trust them. `unmanage` leaves the app attached and unlabelled, so preflight then refuses the
+edge until you run `docker network disconnect kyq-edge-net <container>`.
+
+**Client addresses.** `{{edge_address}}` is cloudflared's address, and the apps see exactly it
+(proven offline, below). Cloudflare sets `CF-Connecting-IP` to the client's address and appends
+it to any `X-Forwarded-For` the client sent, so a product trusting cloudflared must take the
+last `X-Forwarded-For` entry, or `CF-Connecting-IP`, never the first. `verify-edge` sends forged
+`X-Forwarded-For`, `X-Real-IP`, `Forwarded`, `CF-Connecting-IP` and `True-Client-IP` and passes
+only when the product reports the real address over HTTPS. None of the eligible products
+trusts forwarded headers today: each sees cloudflared as every client, so `verify-edge` fails
+for them, as it does through NPM, and per-address rate limits share one bucket.
+
+**Which apps.** Without NPM, an app's whole origin is public. The installer allows only:
+
+| App | cloudflare-direct | Why |
+| --- | --- | --- |
+| KyIdentity | Allowed | Public sign-in is its job; through Cloudflare and NPM it is equally public |
+| KyCalendar, KyPost, KyDrive | Allowed | Sign in through KyIdentity; no admin-only origin |
+| KyNotes | Refused | Its first-run web setup must be closed by its setup before its route opens; one cloudflared opens every route at once |
+| KyMessages | Refused | Its routes rely on NPM's path allow-lists and admin-path blocks |
+| KyDNS | Refused | Its admin API belongs on the LAN; use a `lan` edge |
+| KyRecovery | Refused | Its admin UI and custodian ceremony would be internet-facing |
+| kyPulse | Refused | Admin-only monitoring console |
+| KyYard | Refused | It manages the whole suite |
+| Any other app | Refused | Not assessed |
+
+`plan` offers `cloudflare-direct` only for a Docker target and skips refused apps with the
+reason; `plan`, `review` and every command refuse them in a saved plan. Cloudflare Access is not
+configured by the installer.
+
+**Kubernetes: not implemented, refused.** Pods have no fixed address for a product to trust as
+one `/32`, and NetworkPolicy enforcement depends on the cluster's network plugin. The candidate
+design is a cloudflared Deployment in its own namespace (digest-pinned, Pod Security
+`restricted`), app namespaces admitting ingress only from it, and its egress limited to
+Cloudflare and the app Services; it is recorded as unfinished.
+
+**Credentials** are those of `provider: cloudflare`: `edge/secrets/cloudflare_tunnel_credentials`
+on the target ([Credentials](#credentials)), never in workstation state or output.
 
 ## LAN clients (`provider: lan`)
 
@@ -442,8 +531,15 @@ address in `X-Forwarded-For` and `X-Real-IP` despite forged ones, and a client o
 `allow_cidrs` is refused, also when it forges an allowed address in `X-Real-IP` or
 `X-Forwarded-For` from inside NPM's trusted private ranges.
 Separate connector tests prove authenticated frpc login with verified TLS and parse generated
-cloudflared ingress with the pinned image. No live Cloudflare account or operator server is
-used. A complete public frp/Cloudflare-to-product G11 pilot is still required.
+cloudflared ingress with the pinned image. `TestCloudflaredDirectContainer` has the pinned
+cloudflared validate a generated `cloudflare-direct` ingress and match each hostname to its
+app's origin and any other to 404; then, on a real reserved network, a stand-in app deployed
+through the Docker driver with the edge network is reached by its alias and sees exactly the
+connector's fixed address, a container on a dynamic address cannot present it, and preflight's
+network check refuses a foreign container. No live Cloudflare account or operator server is
+used. A complete public frp/Cloudflare-to-product G11 pilot is still required; for
+`cloudflare-direct` that includes the tunnel's connection, Cloudflare's headers as products see
+them and every catalog app through it.
 
 Managed certificates and LAN DNS are covered by unit tests against fake NPM 2.16 and KyDNS APIs
 written from their source (NPM `v2.16.0` `backend/schema` and `backend/internal/certificate.js`;

@@ -26,7 +26,7 @@ func TestProductVerificationRejectsMissingAndSpoofedReports(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Header.Get("Forwarded") == "" || r.Header.Get("X-Forwarded-Proto") != "http" {
+				if r.Header.Get("Forwarded") == "" || r.Header.Get("X-Forwarded-Proto") != "http" || r.Header.Get("CF-Connecting-IP") == "" {
 					t.Error("probe did not challenge header handling")
 				}
 				fmt.Fprint(w, tc.body)

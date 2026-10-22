@@ -303,8 +303,9 @@ func remove(ctx context.Context, state string, r Request, trust trustFlag, o Opt
 	if err != nil {
 		return err
 	}
-	// The app's edges without its routes: their removed-route steps disable them in NPM. An
-	// edge may be on another target, which is then locked too.
+	// The app's edges without its routes: their removed-route steps disable them in NPM, and a
+	// direct edge's cloudflared is redeployed without them. An edge may be on another target,
+	// which is then locked too.
 	var edges []stack.Edge
 	var hostnames []string
 	targets := []stack.Target{t}
@@ -331,7 +332,16 @@ func remove(ctx context.Context, state string, r Request, trust trustFlag, o Opt
 	return s.operate(ctx, r.Holder, func(ctx context.Context) ([]engine.Step, error) {
 		var steps []engine.Step
 		for _, e := range edges {
-			steps = append(steps, s.npms[e.Target].Steps(e)[0]) // the removed-route step
+			if !e.Direct() {
+				steps = append(steps, s.npms[e.Target].Steps(e)[0]) // the removed-route step
+				continue
+			}
+			// cloudflared again without the app's routes; with none left, only its 404 rule.
+			connector, err := s.drivers[e.Target].connectorSteps(ctx, e, s.o.ReleaseSet, s.redact)
+			if err != nil {
+				return nil, fmt.Errorf("edge %s: %w", e.Target, err)
+			}
+			steps = append(steps, connector...)
 		}
 		if !unmanage {
 			return append(steps, d.removeSteps(name, s.cat[name])...), nil

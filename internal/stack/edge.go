@@ -17,8 +17,8 @@ import (
 // Edge references infrastructure and target-held credentials, never credential values.
 type Edge struct {
 	Target        string     `yaml:"target"`
-	Provider      string     `yaml:"provider"` // cloudflare, frp or lan
-	NPMURL        string     `yaml:"npm_url"`
+	Provider      string     `yaml:"provider"` // cloudflare, cloudflare-direct, frp or lan
+	NPMURL        string     `yaml:"npm_url,omitempty"`
 	ConnectorCIDR string     `yaml:"connector_cidr,omitempty"`
 	ProxyPort     int        `yaml:"proxy_port,omitempty"` // separate PROXY-protocol TLS listener for frp
 	Routes        []Route    `yaml:"routes"`
@@ -55,11 +55,12 @@ type Certificate struct {
 	Credentials SecretRef `yaml:"credentials"`
 }
 
-// Connector attaches to an existing Docker network shared with NPM. The server or
-// Cloudflare tunnel already exists; its credential remains on the target.
+// Connector attaches to an existing Docker network shared with NPM, or for cloudflare-direct
+// with the routed apps. The server or Cloudflare tunnel already exists; its credential
+// remains on the target.
 type Connector struct {
 	Network   string `yaml:"network"`
-	NPMHost   string `yaml:"npm_host"`
+	NPMHost   string `yaml:"npm_host,omitempty"`
 	FRPServer string `yaml:"frp_server,omitempty"`
 	FRPPort   int    `yaml:"frp_port,omitempty"`
 	TunnelID  string `yaml:"tunnel_id,omitempty"`
@@ -79,6 +80,21 @@ type Route struct {
 	// Paths and DenyPaths come from the app's catalog route, never the plan.
 	Paths     []string `yaml:"-" json:"-"`
 	DenyPaths []string `yaml:"-" json:"-"`
+	// Origin is where a cloudflare-direct edge's cloudflared reaches the app, set by the CLI.
+	Origin string `yaml:"-" json:"-"`
+}
+
+// Direct reports a cloudflare-direct edge: cloudflared routes each hostname straight to its
+// app on a shared Docker network, with no NPM in between.
+func (e Edge) Direct() bool { return e.Provider == "cloudflare-direct" }
+
+// TrustedAddress is the one address the edge's apps see its requests from ({{edge_address}}):
+// a direct edge's cloudflared, otherwise egress_address.
+func (e Edge) TrustedAddress() string {
+	if e.Direct() {
+		return strings.TrimSuffix(e.ConnectorCIDR, "/32")
+	}
+	return e.EgressAddress
 }
 
 // URLHost is the host an app's route is reached at: its hostname, plus the port when clients
@@ -126,13 +142,17 @@ func (s *Stack) validateEdges() error {
 			return fmt.Errorf("edge target %q must exist and have only one edge", e.Target)
 		}
 		targets[e.Target] = true
-		if e.Provider != "cloudflare" && e.Provider != "frp" && e.Provider != "lan" {
-			return fmt.Errorf("edge %s: provider must be cloudflare, frp or lan", e.Target)
+		if !slices.Contains([]string{"cloudflare", "cloudflare-direct", "frp", "lan"}, e.Provider) {
+			return fmt.Errorf("edge %s: provider must be cloudflare, cloudflare-direct, frp or lan", e.Target)
 		}
 		target, _ := s.Target(e.Target)
 		// adminHost and adminPort name the NPM API, which no route may forward to.
 		var adminHost, adminPort string
-		if ns, svc, port, ok := KubeService(e.NPMURL); ok {
+		if e.Direct() {
+			if err := validateDirect(e, target); err != nil {
+				return err
+			}
+		} else if ns, svc, port, ok := KubeService(e.NPMURL); ok {
 			if !target.Kubernetes() {
 				return fmt.Errorf("edge %s: a kube:// npm_url needs a Kubernetes target", e.Target)
 			}
@@ -150,11 +170,14 @@ func (s *Stack) validateEdges() error {
 		if apis[e.NPMURL] {
 			return fmt.Errorf("edge %s: npm_url is already owned by another target", e.Target)
 		}
-		apis[e.NPMURL] = true
+		if !e.Direct() {
+			apis[e.NPMURL] = true
+		}
 		var err error
-		if e.Provider == "lan" {
+		switch e.Provider {
+		case "lan":
 			err = validateLAN(e)
-		} else {
+		case "cloudflare", "frp":
 			err = validateConnector(e, target)
 		}
 		if err != nil {
@@ -192,11 +215,16 @@ func (s *Stack) validateEdges() error {
 			if !hostRE.MatchString(r.ForwardHost) || strings.Contains(r.ForwardHost, "..") {
 				return fmt.Errorf("edge %s: invalid forward_host", e.Target)
 			}
+			// cloudflared reaches the app on the edge network; its published port stays on
+			// the host's loopback, so nothing on the LAN goes around the tunnel.
+			if e.Direct() && (apps[r.App] != e.Target || r.ForwardHost != "127.0.0.1" || r.ForwardScheme != "" && r.ForwardScheme != "http" || r.CertificateID != 0 || r.Certificate != "") {
+				return fmt.Errorf("edge %s: route %s: a cloudflare-direct route's app must be on this target with forward_host 127.0.0.1, forward_scheme http and no certificate (Cloudflare terminates TLS)", e.Target, r.Hostname)
+			}
 			if r.ForwardPort < 1 || r.ForwardPort > 65535 || r.ForwardPort == 81 {
 				return fmt.Errorf("edge %s: forward_port must be 1-65535 and cannot be NPM admin port 81", e.Target)
 			}
 			host := strings.ToLower(r.ForwardHost)
-			if (host == adminHost || strings.HasPrefix(host, adminHost+".svc")) && strconv.Itoa(r.ForwardPort) == adminPort {
+			if adminHost != "" && (host == adminHost || strings.HasPrefix(host, adminHost+".svc")) && strconv.Itoa(r.ForwardPort) == adminPort {
 				return fmt.Errorf("edge %s: a route cannot forward to its NPM administration endpoint", e.Target)
 			}
 			if r.ForwardScheme == "" {
@@ -205,7 +233,7 @@ func (s *Stack) validateEdges() error {
 			if r.ForwardScheme != "http" && r.ForwardScheme != "https" {
 				return fmt.Errorf("edge %s: forward_scheme must be http or https", e.Target)
 			}
-			if (r.CertificateID == 0) == (r.Certificate == "") || r.CertificateID < 0 {
+			if !e.Direct() && (r.CertificateID == 0) == (r.Certificate == "") || r.CertificateID < 0 {
 				return fmt.Errorf("edge %s: route %s needs exactly one of certificate_id (an existing NPM certificate) or certificate (one of the edge's certificates)", e.Target, r.Hostname)
 			}
 			if c, ok := certs[r.Certificate]; r.Certificate != "" && (!ok || !slices.ContainsFunc(c.Domains, func(d string) bool { return Covers(d, r.Hostname) })) {
@@ -228,9 +256,8 @@ func validateConnector(e *Edge, target Target) error {
 	if len(e.AllowCIDRs) > 0 || e.ClientPort != 0 {
 		return fmt.Errorf("edge %s: allow_cidrs and client_port are only for lan", e.Target)
 	}
-	p, err := netip.ParsePrefix(e.ConnectorCIDR)
-	if err != nil || !p.Addr().Is4() || p.Bits() != 32 || p.Addr().IsUnspecified() || p.Addr().IsMulticast() {
-		return fmt.Errorf("edge %s: connector_cidr must pin one IPv4 address (/32)", e.Target)
+	if err := validateConnectorCIDR(*e); err != nil {
+		return err
 	}
 	if e.Provider == "frp" {
 		if e.ProxyPort == 0 {
@@ -263,6 +290,30 @@ func validateConnector(e *Edge, target Target) error {
 		}
 	}
 	return nil
+}
+
+func validateConnectorCIDR(e Edge) error {
+	p, err := netip.ParsePrefix(e.ConnectorCIDR)
+	if err != nil || !p.Addr().Is4() || p.Bits() != 32 || p.Addr().IsUnspecified() || p.Addr().IsMulticast() {
+		return fmt.Errorf("edge %s: connector_cidr must pin one IPv4 address (/32)", e.Target)
+	}
+	return nil
+}
+
+// validateDirect checks a cloudflare-direct edge: the installer deploys cloudflared on the
+// Docker target at connector_cidr, the one address its apps trust. Every NPM field is refused.
+func validateDirect(e *Edge, target Target) error {
+	if target.Kubernetes() {
+		return fmt.Errorf("edge %s: cloudflare-direct needs a Docker target; on Kubernetes cloudflared's source address cannot yet be pinned for its apps to trust", e.Target)
+	}
+	if e.NPMURL != "" || e.ProxyPort != 0 || len(e.AllowCIDRs) > 0 || e.ClientPort != 0 || len(e.Certificates) > 0 || e.LANDNS != nil || e.EgressAddress != "" {
+		return fmt.Errorf("edge %s: cloudflare-direct has no NPM: remove npm_url, proxy_port, allow_cidrs, client_port, certificates, lan_dns and egress_address (its apps trust connector_cidr)", e.Target)
+	}
+	c := e.Connector
+	if c == nil || !contextRE.MatchString(c.Network) || strings.ContainsAny(c.Network, "@:/") || c.NPMHost != "" || c.FRPServer != "" || c.FRPPort != 0 || !tunnelRE.MatchString(c.TunnelID) {
+		return fmt.Errorf("edge %s: cloudflare-direct deploys cloudflared: connector needs a Docker network and a tunnel_id UUID, with no npm_host or frp fields", e.Target)
+	}
+	return validateConnectorCIDR(*e)
 }
 
 // validateLAN checks an edge LAN clients reach directly: NPM trusts no forwarding header.
