@@ -37,7 +37,9 @@ func TestOverrideLabelsEveryService(t *testing.T) {
 	var o struct {
 		Services map[string]struct{ Labels map[string]string }
 	}
-	if err := yaml.Unmarshal(override([]string{"web", "db"}, labels("rs-1", "1.2.3")), &o); err != nil {
+	a := App{Name: "hello"}
+	a.Catalog.Services = []string{"web", "db"}
+	if err := yaml.Unmarshal(a.override(labels("rs-1", "1.2.3")), &o); err != nil {
 		t.Fatal(err)
 	}
 	for _, svc := range []string{"web", "db"} {
@@ -45,6 +47,36 @@ func TestOverrideLabelsEveryService(t *testing.T) {
 		if l[managed.Label] != managed.Value || l[managed.ReleaseSetLabel] != "rs-1" || l[managed.VersionLabel] != "1.2.3" {
 			t.Errorf("%s labels = %v", svc, l)
 		}
+	}
+}
+
+// A cloudflare-direct edge's network joins service "app" under its alias, keeping the default.
+func TestOverrideJoinsEdgeNetwork(t *testing.T) {
+	var o struct {
+		Services map[string]struct {
+			Labels   map[string]string
+			Networks map[string]struct{ Aliases []string }
+		}
+		Networks map[string]struct {
+			External bool
+			Name     string
+		}
+	}
+	a := App{Name: "kyidentity", EdgeNetwork: "edge-net"}
+	a.Catalog.Services = []string{"app", "db"}
+	if err := yaml.Unmarshal(a.override(labels("rs-1", "")), &o); err != nil {
+		t.Fatal(err)
+	}
+	app := o.Services["app"]
+	if _, ok := app.Networks["default"]; !ok || app.Labels[managed.Label] != managed.Value || len(app.Networks["kyq-edge"].Aliases) != 1 || app.Networks["kyq-edge"].Aliases[0] != "kyq-kyidentity" {
+		t.Fatalf("app service = %+v", app)
+	}
+	if o.Services["db"].Networks != nil || !o.Networks["kyq-edge"].External || o.Networks["kyq-edge"].Name != "edge-net" {
+		t.Fatalf("override = %+v", o)
+	}
+	a.EdgeNetwork = ""
+	if strings.Contains(string(a.override(labels("rs-1", ""))), "networks") {
+		t.Fatal("network without an edge")
 	}
 }
 

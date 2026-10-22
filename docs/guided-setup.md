@@ -1157,9 +1157,154 @@ graceful restart and its live `--check`.
   `backups` and both secrets cold (see "Backups and restore on Docker"); restore needs KyIdentity
   v0.4.4 or later. KyDrive's own `KYDRIVE_BULK_BACKUP_REPOSITORY` stays unset: the installer's
   snapshot is the independent copy, and the `backups` directory, on the same disk as `data`, is not.
-- Not yet: the Euro-Office editor (`KYDRIVE_EDITOR_URL` unset); recovery pairing;
+- With `euro-office` in the plan, see "Catalog Euro-Office on Kubernetes".
+- Not yet: recovery pairing;
   `KY_TRUSTED_PROXIES` (unset, so KyDrive sees the edge as every client and `verify-edge`
   fails for its route); kyPulse does not watch it (no readiness path on Docker).
+
+## Catalog Euro-Office on Kubernetes
+
+The catalog's `euro-office` app is KyDrive's optional document editor: Euro-Office
+DocumentServer 9.3.4 (release `v9.3.4-hotfix.1`) on a Kubernetes target, beside the catalog
+KyDrive on a Docker target. `plan` offers it right after KyDrive, and only when KyDrive is
+installed. `plan` and `review` refuse it without `kydrive` in the plan, on a Docker target, or
+without exactly one edge route, which must sit on its cluster's edge.
+
+```yaml
+apps:
+  - name: kydrive
+    target: docker02
+  - name: euro-office
+    target: k80
+edges:
+  - target: k80
+    routes:
+      - app: euro-office
+        hostname: office.k80.example.com
+        forward_host: app.kyq-euro-office.svc.cluster.local
+        forward_port: 80
+        certificate: k80
+```
+
+It runs on Kubernetes only. The owner asked for the cluster, and the catalog's Docker templates
+run every product as the target user with no capabilities, which this editor cannot do.
+
+- **The connection.** KyDrive's Compose file gains `KYDRIVE_EDITOR_URL: https://<office route
+  URL host>` and a Compose secret, `editor_secret`. Its entrypoint exports that secret as
+  `KYDRIVE_EDITOR_SECRET` beside the session secret, because KyDrive 0.4.2 reads both only from
+  the environment. Neither secret appears in Compose or in `docker inspect`. Without
+  `euro-office`, KyDrive's Compose file and every step input are unchanged, byte for byte.
+- **The shared secret.** `kydrive.secrets` generates `editor_secret` on KyDrive's target with
+  its other secrets. `euro-office.secrets` runs after KyDrive's steps. It reads that file over
+  SSH into memory (0600, owned by the target user, no symlinks), writes it as `jwt_secret` in
+  the editor's Secret `kyq-euro-office/kyq-secrets`, and generates `secure_link_secret` in the
+  cluster. Nothing reaches the workstation's disk, output or state. Neither copy is ever
+  replaced. If the two differ later, the step fails and names the mismatch; copy one over the
+  other by hand.
+- **The pod.** Namespace `kyq-euro-office` runs under Pod Security `baseline`, the second
+  exception after NPM. The entrypoint runs as root and starts the bundled PostgreSQL,
+  RabbitMQ, Redis, nginx and supervisord, which drop to their own users. All capabilities are
+  dropped, then six are added back: `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETGID`, `SETUID` and
+  `KILL`. Privilege escalation is off, seccomp is `RuntimeDefault`, and the root filesystem is
+  writable. `net.ipv4.ip_unprivileged_port_start=0` lets nginx bind port 80 without
+  `NET_BIND_SERVICE`. The pod gets 2 CPUs (500m requested) and 4 GiB of memory, requested and
+  limited; it used 2.8 GiB at start. It has 120 seconds to stop.
+- **How the capabilities were measured.** The pinned image ran under Docker with
+  `--cap-drop ALL` and `no-new-privileges`. With none added, `chown` of its `local.json`
+  failed. Without `DAC_OVERRIDE`, `sed` could not write into ds-owned files. Without `FOWNER`,
+  `chmod /var/run/postgresql` failed. Without `SETUID` or `SETGID`, it exited before nginx
+  started. Without `KILL`, supervisord could not stop the ds-owned services ("Operation not
+  permitted"). With all six it was healthy in about 45 seconds and stopped cleanly in 4
+  seconds. `TestKubernetesEuroOffice` checks the same set in kind.
+- **The secrets' files.** The Secret is mounted read-only at
+  `/var/www/euro-office/Data/.private`, where the entrypoint reads `jwt_secret` and
+  `secure_link_secret`, so it generates and writes neither. The pod spec carries neither
+  value. The entrypoint itself writes the JWT secret into its `local.json` inside the container.
+- **Claims.** `database` (`/var/lib/postgresql`, 2 GiB) holds edits made since a document's
+  last save. `cache` (`/var/lib/euro-office`, 10 GiB) is the document cache. An empty claim would
+  hide what the image ships at those paths, so on first start the init container
+  `seed-volumes` copies it in. That container uses the editor's image and security context,
+  keeps owners and modes, and writes `.kyq-seeded` last, so an interrupted copy runs again.
+  RabbitMQ, Redis and the `Data` directory stay in the container and reset when the pod is
+  recreated.
+- **Network.** Ingress comes only from the edge's pods, on port 80. Egress reaches only
+  cluster DNS and the edge's HTTPS container port (443). `ALLOW_PRIVATE_IP_ADDRESS=true` is set
+  because KyDrive's route resolves to a private address. The editor fetches the URLs KyDrive's
+  signed requests name, but also URLs an editing user supplies, such as an image inserted by
+  URL; the egress policy is what confines both.
+  - **Enforcement is checked, not assumed.** `euro-office.deploy` writes the policy, then
+    starts `kyq-egress-check-*` in the namespace: BusyBox (the credential generator's pinned
+    image), restricted, no service-account token, removed by UID, at most 120 seconds. Under
+    the same policy it must resolve `kubernetes.default.svc.cluster.local` through cluster
+    DNS and must fail to connect to that API server address on 443. Otherwise the step fails
+    with `egress_unenforced` (code `step_failed`) and no Deployment is written. A plugin that
+    ignores NetworkPolicy egress, such as plain flannel, is refused. An open result is retried
+    for about 8 seconds while the policy settles.
+  - **Residual.** Any KyDrive user who can edit a document can make the editor GET any
+    hostname this NPM routes, over HTTPS, as a client inside the cluster's pod network (which a
+    `lan` edge's `allow_cidrs` must admit for the editor to reach KyDrive). That reaches every
+    app routed by that edge, past any Cloudflare-side control on those hostnames. The editor's
+    request filter works on addresses only, and every routed hostname shares the edge's
+    address, so it cannot narrow this per hostname.
+  - From the editor's pod, KyDrive's hostname must resolve to an address that reaches this
+    edge's HTTPS port, such as a node's NodePort; any other path is blocked. The editor must
+    trust the edge's certificate through its image's roots, which works for Let's Encrypt but
+    not for a private CA. `ALLOW_META_IP_ADDRESS` and `USE_UNAUTHORIZED_STORAGE` stay `false`.
+- **Route path blocks.** NPM answers 404 for `/info`, `/internal`, `/ai-proxy`, `/admin`,
+  `/example` and `/welcome` (any case), and for `/info`, `/internal` and `/ai-proxy` behind a
+  `/<version>-<hash>/` prefix. The pinned image's nginx (`/etc/nginx/includes/ds-*.conf`,
+  inspected 2026-10-22) routes these besides the editor's own paths:
+  - `/info` and `/internal` are already limited to 127.0.0.1 there;
+  - the admin panel and example app are not started, but nginx still routes to them;
+  - `/welcome/` is a static product page;
+  - `/ai-proxy` relays to AI services.
+
+  Everything else stays routed: the editor's assets, `/cache/files` (secure links), the
+  co-editing socket, `/healthcheck`, and the command and conversion services KyDrive calls.
+- **Readiness.** The probe is `GET /healthcheck` on port 80, and only its status code counts.
+  The e2e test also checks the body, `true`, through the edge.
+- **Provenance: correspondence observed, not verified** (checked 2026-10-22).
+  - The registry index of tag `v9.3.4-hotfix.1` lists the pinned amd64 digest `beca380d…`.
+  - Its BuildKit SLSA provenance names builder run 33166218952 of `Euro-Office/DocumentServer`,
+    a GitHub-hosted push of `refs/tags/v9.3.4-hotfix.1`. GitHub's API reports that run
+    successful at commit `4ba0c0f202ae`, which the tag object `4fc31e7` points to.
+  - That provenance is unsigned, and the registry stores it beside the image. GitHub holds no
+    attestation for the digest (`gh attestation verify` answers 404). The tag's signature is
+    unverified, and the ref is unprotected.
+  - Nobody has rebuilt the image independently.
+  - The workspace rule requires source/build provenance verification before a production
+    release, so that gate is still open (`KyDrive-server/docs/EURO-PROVENANCE.md`).
+- **Uninstall.** `uninstall euro-office` (and `unmanage`) first redeploys KyDrive without
+  the editor's URL and secret, so KyDrive never points at an editor that is gone. That is
+  refused with `app_stopped` while KyDrive is stopped, since the redeploy would start it.
+  `editor_secret` stays on KyDrive's target, and the editor's Secret stays in the cluster.
+- **Upgrades.** `migrates_data: true`, so any version change needs a backup, and Kubernetes
+  backups do not exist yet. No upgrade path exists.
+- **Verification.** `TestKubernetesEuroOffice` needs the 7 GB image and a 5 GiB kind node, so
+  it runs only with `KYQ_TEST_EURO_OFFICE=1` and stays out of `make e2e`. It runs NPM,
+  KyIdentity and `euro-office` in kind and KyDrive on an sshd Docker target, then checks:
+  - the baseline pod and its capabilities;
+  - the seeded claims;
+  - the editor's `jwt_secret` equals KyDrive's `editor_secret`;
+  - `/healthcheck` through the edge;
+  - KyDrive accepts a callback signed with that secret (200) and refuses one signed with
+    another (401);
+  - the deploy step's egress check passed and left no pod;
+  - the route's path blocks answer 404, and the editor's `api.js` still loads;
+  - from the editor's pod, KyDrive answers through the edge's HTTPS port, and neither the
+    edge's HTTP port nor the API server answers;
+  - a skipped rerun;
+  - `restart euro-office`;
+  - `uninstall euro-office`, after which KyDrive is redeployed without `KYDRIVE_EDITOR_*`
+    and answers its editor callback with 503;
+  - no copy of the secret in output or state.
+- **Not yet.**
+  - Opening, editing and saving a document through the edge in a browser. The KyDrive pilot
+    showed that path outside the installer.
+  - KyDrive-to-editor commands (revocation `drop`, thumbnails). They need KyDrive's container
+    to resolve the office host and trust its certificate.
+  - NPM's timeouts and body limit for this route, which are NPM's defaults.
+  - Backups.
 
 ## Catalog KyDNS on Docker
 

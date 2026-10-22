@@ -1,9 +1,12 @@
 package kube
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
+	"maps"
+	"slices"
 
 	"github.com/Busnes-app/kyquickstart/internal/engine"
 	corev1 "k8s.io/api/core/v1"
@@ -12,11 +15,18 @@ import (
 )
 
 // secretsStep keeps one Secret per app holding every declared secret. Values are created once
-// and never replaced; a key added to the catalog later is generated on its own.
+// and never replaced; a key added to the catalog later is generated on its own. A key in
+// SecretFrom is copied from its source instead, and must keep matching it.
 type secretsStep struct{ a App }
 
-func (s secretsStep) ID() string        { return s.a.Name + ".secrets" }
-func (s secretsStep) InputHash() string { return hashOf(s.a.Catalog.Secrets...) }
+func (s secretsStep) ID() string { return s.a.Name + ".secrets" }
+func (s secretsStep) InputHash() string {
+	parts := s.a.Catalog.Secrets
+	for _, n := range slices.Sorted(maps.Keys(s.a.SecretFrom)) {
+		parts = append(slices.Clip(parts), "from:"+n)
+	}
+	return hashOf(parts...)
+}
 
 func (s secretsStep) read(ctx context.Context) (*corev1.Secret, bool, error) {
 	return getOwned(ctx, s.a.Client.cs.CoreV1().Secrets(namespaceOf(s.a.Name)), "secret", secretName)
@@ -66,13 +76,29 @@ func (s secretsStep) Apply(ctx context.Context) error {
 	if len(missing) == 0 {
 		return nil
 	}
-	values, err := s.a.Client.generateCredentials(ctx, sec.Namespace, s.a.ReleaseSet, len(missing))
-	if err != nil {
-		return err
+	var generate []string
+	for _, n := range missing {
+		from, ok := s.a.SecretFrom[n]
+		if !ok {
+			generate = append(generate, n)
+			continue
+		}
+		v, err := from(ctx)
+		if err != nil {
+			return fmt.Errorf("secret %s: %w", n, err)
+		}
+		s.a.Redact.Add(string(v))
+		sec.Data[n] = v
 	}
-	for i, n := range missing {
-		s.a.Redact.Add(string(values[i]))
-		sec.Data[n] = values[i]
+	if len(generate) > 0 {
+		values, err := s.a.Client.generateCredentials(ctx, sec.Namespace, s.a.ReleaseSet, len(generate))
+		if err != nil {
+			return err
+		}
+		for i, n := range generate {
+			s.a.Redact.Add(string(values[i]))
+			sec.Data[n] = values[i]
+		}
 	}
 	// Written against the resourceVersion just read: a concurrent writer is a conflict, retried
 	// by the engine after a fresh Inspect, never silently overwritten.
@@ -108,6 +134,15 @@ func (s secretsStep) Verify(ctx context.Context) error {
 			return fmt.Errorf("secret %s is not canonical unpadded base64url", n)
 		}
 		s.a.Redact.Add(string(sec.Data[n]))
+		if from, ok := s.a.SecretFrom[n]; ok {
+			v, err := from(ctx)
+			if err != nil {
+				return fmt.Errorf("secret %s: %w", n, err)
+			}
+			if !bytes.Equal(v, sec.Data[n]) {
+				return fmt.Errorf("secret %s differs from its source, and neither is ever replaced; restore one from the other by hand", n)
+			}
+		}
 	}
 	return nil
 }

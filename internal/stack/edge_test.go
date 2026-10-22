@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"go.yaml.in/yaml/v3"
 )
 
 const edgeStack = `version: 1
@@ -387,5 +389,75 @@ func TestEgressAddress(t *testing.T) {
 		if _, err := Parse([]byte(with(bad))); err == nil || !strings.Contains(err.Error(), "egress_address") {
 			t.Errorf("%q accepted: %v", bad, err)
 		}
+	}
+}
+
+const directStack = `version: 1
+targets:
+  - name: nas
+    host: 192.0.2.1
+    user: kyq
+  - name: other
+    host: 192.0.2.2
+    user: kyq
+  - name: k8s
+    kubeconfig: /kc
+apps:
+  - name: hello
+    target: nas
+  - name: far
+    target: other
+edges:
+  - target: nas
+    provider: cloudflare-direct
+    connector_cidr: 172.30.0.3/32
+    connector:
+      network: edge-net
+      tunnel_id: 12345678-1234-1234-1234-123456789012
+    routes:
+      - app: hello
+        hostname: hello.example.com
+        forward_host: 127.0.0.1
+        forward_port: 18080
+`
+
+func TestCloudflareDirectEdge(t *testing.T) {
+	s, err := Parse([]byte(directStack))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := s.Edges[0]
+	if !e.Direct() || e.TrustedAddress() != "172.30.0.3" || e.Routes[0].ForwardScheme != "http" || e.Routes[0].StatusPath != "/api/status" {
+		t.Fatalf("direct edge = %+v", e)
+	}
+	if out, err := yaml.Marshal(s); err != nil || strings.Contains(string(out), "npm_url") || strings.Contains(string(out), "npm_host") {
+		t.Fatalf("saved plan writes empty NPM fields: %v\n%s", err, out)
+	}
+	for name, pair := range map[string][2]string{
+		"kubernetes target":   {"  - target: nas\n    provider", "  - target: k8s\n    provider"},
+		"npm_url":             {"    connector_cidr:", "    npm_url: https://npm.example.com\n    connector_cidr:"},
+		"egress_address":      {"    connector_cidr:", "    egress_address: 172.30.0.9\n    connector_cidr:"},
+		"allow_cidrs":         {"    connector_cidr:", "    allow_cidrs: [192.168.1.0/24]\n    connector_cidr:"},
+		"proxy_port":          {"    connector_cidr:", "    proxy_port: 8443\n    connector_cidr:"},
+		"broad trust":         {"172.30.0.3/32", "172.30.0.0/24"},
+		"no connector":        {"    connector:\n      network: edge-net\n      tunnel_id: 12345678-1234-1234-1234-123456789012\n", ""},
+		"npm_host":            {"      network: edge-net\n", "      network: edge-net\n      npm_host: npm\n"},
+		"frp fields":          {"      network: edge-net\n", "      network: edge-net\n      frp_server: relay.example.com\n"},
+		"bad tunnel":          {"12345678-1234-1234-1234-123456789012", "not-a-uuid"},
+		"LAN forward_host":    {"forward_host: 127.0.0.1", "forward_host: 192.168.1.10"},
+		"https origin":        {"forward_port: 18080", "forward_port: 18080\n        forward_scheme: https"},
+		"certificate":         {"forward_port: 18080", "forward_port: 18080\n        certificate_id: 1"},
+		"app on other target": {"app: hello", "app: far"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if !strings.Contains(directStack, pair[0]) {
+				t.Fatalf("fixture lacks %q", pair[0])
+			}
+			_, err := Parse([]byte(strings.Replace(directStack, pair[0], pair[1], 1)))
+			if err == nil {
+				t.Fatal("accepted unsafe cloudflare-direct edge")
+			}
+			t.Log(err)
+		})
 	}
 }

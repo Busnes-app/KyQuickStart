@@ -339,11 +339,19 @@ func guided(ctx context.Context, args []string, o Options) error {
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	// KyDrive's editor is its option: asked right after KyDrive, and only when it installs.
+	if i := slices.Index(names, euroOffice); i >= 0 && slices.Contains(names, "kydrive") {
+		names = slices.Delete(names, i, i+1)
+		names = slices.Insert(names, slices.Index(names, "kydrive")+1, euroOffice)
+	}
 	targetNames := []string{}
 	for _, t := range st.Targets {
 		targetNames = append(targetNames, t.Name)
 	}
 	for _, name := range names {
+		if name == euroOffice && !slices.ContainsFunc(st.Apps, func(a stack.App) bool { return a.Name == "kydrive" }) {
+			continue
+		}
 		app := cat[name]
 		purpose := app.Description
 		if name == "hello" && st.Demo {
@@ -353,6 +361,9 @@ func guided(ctx context.Context, args []string, o Options) error {
 			purpose = app.Category + " application"
 		}
 		fmt.Fprintf(o.Out, "\n%s — %s\nRequired products: %s\n", name, purpose, strings.Join(app.DependsOn, ", "))
+		if name == euroOffice {
+			fmt.Fprintln(o.Out, "Optional for KyDrive. It runs on a Kubernetes target only, as root (Pod Security baseline, 4 GiB memory), behind that cluster's edge with its own route; KyDrive gets its URL and a shared secret.")
+		}
 		install, err := p.ask("app."+name+".install", "Install or skip?", "skip", oneOf("install", "skip"))
 		if err != nil {
 			return err
@@ -507,7 +518,10 @@ func validateSelection(st *stack.Stack, cat catalog.Catalog, o Options) error {
 	if err := messagePlan(st, cat); err != nil {
 		return err
 	}
-	_, err := plan.Order(names, cat)
+	if _, err := plan.Order(names, cat); err != nil {
+		return err
+	}
+	_, _, err := editorPlan(st, cat)
 	return err
 }
 
@@ -653,8 +667,12 @@ func showPlan(out io.Writer, st *stack.Stack, cat catalog.Catalog) {
 		}
 	}
 	for _, e := range st.Edges {
-		fmt.Fprintf(out, "Edge %s: existing NPM %s via %s\n", e.Target, e.NPMURL, e.Provider)
-		if e.Connector != nil {
+		if e.Direct() {
+			fmt.Fprintf(out, "Edge %s: Cloudflare tunnel %s straight to the apps, no NPM; cloudflared at %s on Docker network %s. Routes are public: no NPM path blocks or allow-list\n", e.Target, e.Connector.TunnelID, e.ConnectorCIDR, e.Connector.Network)
+		} else {
+			fmt.Fprintf(out, "Edge %s: existing NPM %s via %s\n", e.Target, e.NPMURL, e.Provider)
+		}
+		if e.Connector != nil && !e.Direct() {
 			fmt.Fprintln(out, "  Deploy connector on existing Docker network", e.Connector.Network)
 		}
 		for _, r := range e.Routes {
@@ -785,34 +803,56 @@ func guidedEdges(p *prompts, st *stack.Stack, cat catalog.Catalog) error {
 			continue
 		}
 		key := "edge." + t.Name + "."
-		provider, err := p.ask(key+"provider", "Public connection for "+t.Name+": none/cloudflare/frp/lan (LAN clients only, no tunnel)", "none", oneOf("none", "cloudflare", "frp", "lan"))
+		question, choices := "Public connection for "+t.Name+": none/cloudflare/cloudflare-direct (tunnel straight to the apps, no NPM)/frp/lan (LAN clients only, no tunnel)", []string{"none", "cloudflare", "cloudflare-direct", "frp", "lan"}
+		if t.Kubernetes() {
+			question, choices = "Public connection for "+t.Name+": none/cloudflare/frp/lan (LAN clients only, no tunnel); cloudflare-direct is Docker only", slices.DeleteFunc(choices, func(c string) bool { return c == "cloudflare-direct" })
+		}
+		provider, err := p.ask(key+"provider", question, "none", oneOf(choices...))
 		if err != nil {
 			return err
 		}
 		if provider == "none" {
 			continue
 		}
-		fmt.Fprintln(p.out, "This build reuses existing NPM and certificates, and an existing tunnel or frp server. No credential values are entered here.")
 		e := stack.Edge{Target: t.Name, Provider: provider}
-		e.NPMURL, err = p.ask(key+"npm", "Existing NPM LAN HTTPS management origin", "", httpsOrigin)
-		if err != nil {
-			return err
-		}
-		if provider == "lan" {
-			err = askLAN(p, key, &e)
+		if e.Direct() {
+			fmt.Fprintln(p.out, "cloudflare-direct deploys cloudflared for an existing locally managed tunnel; its routes are public, with no NPM path blocks or allow-list. No credential values are entered here.")
+			err = askDirect(p, key, &e)
 		} else {
-			err = askConnector(p, key, t, &e)
+			fmt.Fprintln(p.out, "This build reuses existing NPM and certificates, and an existing tunnel or frp server. No credential values are entered here.")
+			if e.NPMURL, err = p.ask(key+"npm", "Existing NPM LAN HTTPS management origin", "", httpsOrigin); err != nil {
+				return err
+			}
+			if provider == "lan" {
+				err = askLAN(p, key, &e)
+			} else {
+				err = askConnector(p, key, t, &e)
+			}
 		}
 		if err != nil {
 			return err
 		}
 		for _, name := range apps {
 			rk := key + "route." + name + "."
+			if e.Direct() {
+				if err := directAllowed(name); err != nil {
+					fmt.Fprintln(p.out, err)
+					continue
+				}
+			}
 			yes, err := p.ask(rk+"enabled", "Expose "+name+" through this edge? yes/no", "yes", oneOf("yes", "no"))
 			if err != nil {
 				return err
 			}
 			if yes == "no" {
+				continue
+			}
+			if e.Direct() {
+				r, err := askDirectRoute(p, rk, name)
+				if err != nil {
+					return err
+				}
+				e.Routes = append(e.Routes, r)
 				continue
 			}
 			if len(cat[name].Routes) > 0 {
@@ -846,10 +886,7 @@ func guidedEdges(p *prompts, st *stack.Stack, cat catalog.Catalog) error {
 				return err
 			}
 			r.CertificateID, _ = strconv.Atoi(id)
-			r.StatusPath, err = p.ask(rk+"status", "Product G11 status path", "/api/status", func(s string) bool {
-				u, err := url.ParseRequestURI(s)
-				return err == nil && strings.HasPrefix(s, "/") && !strings.HasPrefix(s, "//") && u.RawQuery == "" && u.Fragment == ""
-			})
+			r.StatusPath, err = p.ask(rk+"status", "Product G11 status path", "/api/status", statusPath)
 			if err != nil {
 				return err
 			}
@@ -858,7 +895,11 @@ func guidedEdges(p *prompts, st *stack.Stack, cat catalog.Catalog) error {
 		if len(e.Routes) == 0 {
 			return errors.New("edge has no routes; rerun plan and choose none or enable a route")
 		}
-		fmt.Fprintf(p.out, "NPM token must already be stored on %s in %s/edge/secrets/npm_token (mode 0600). See docs/edge.md for connector credentials and Kubernetes Secrets.\n", t.Name, t.Root)
+		if e.Direct() {
+			fmt.Fprintf(p.out, "The tunnel credentials must already be stored on %s in %s/edge/secrets/cloudflare_tunnel_credentials (mode 0600). See docs/edge.md.\n", t.Name, t.Root)
+		} else {
+			fmt.Fprintf(p.out, "NPM token must already be stored on %s in %s/edge/secrets/npm_token (mode 0600). See docs/edge.md for connector credentials and Kubernetes Secrets.\n", t.Name, t.Root)
+		}
 		st.Edges = append(st.Edges, e)
 	}
 	return nil
@@ -940,6 +981,63 @@ func askRoutes(p *prompts, rk string, st *stack.Stack, name string, app catalog.
 	return routes, nil
 }
 
+// askDirect asks for a cloudflare-direct edge's cloudflared: its address and network, and the tunnel.
+func askDirect(p *prompts, key string, e *stack.Edge) error {
+	var err error
+	if e.ConnectorCIDR, err = p.ask(key+"cidr", "cloudflared's fixed IPv4 /32 on the edge network (outside its --ip-range); the apps trust exactly this address", "", connectorCIDR); err != nil {
+		return err
+	}
+	c := &stack.Connector{}
+	if c.Network, err = p.ask(key+"network", "Existing Docker network dedicated to this edge (explicit --subnet and --ip-range)", "", stack.ValidName); err != nil {
+		return err
+	}
+	if c.TunnelID, err = p.ask(key+"tunnel_id", "Existing locally managed Cloudflare tunnel UUID", "", tunnelID); err != nil {
+		return err
+	}
+	e.Connector = c
+	return nil
+}
+
+// askDirectRoute asks a cloudflare-direct route: cloudflared reaches the app on the edge
+// network, so its published port stays on the target's loopback.
+func askDirectRoute(p *prompts, rk, name string) (stack.Route, error) {
+	r := stack.Route{App: name, ForwardHost: "127.0.0.1", ForwardScheme: "http"}
+	var err error
+	if r.Hostname, err = p.ask(rk+"hostname", "Product's public hostname", "", stack.Hostname); err != nil {
+		return r, err
+	}
+	port, err := p.ask(rk+"port", "Port "+name+" publishes on the target's loopback (unique on the target)", strconv.Itoa(directApps[name]), integer(1, 65535))
+	if err != nil {
+		return r, err
+	}
+	r.ForwardPort, _ = strconv.Atoi(port)
+	r.StatusPath, err = p.ask(rk+"status", "Product G11 status path", "/api/status", statusPath)
+	return r, err
+}
+
+func statusPath(s string) bool {
+	u, err := url.ParseRequestURI(s)
+	return err == nil && strings.HasPrefix(s, "/") && !strings.HasPrefix(s, "//") && u.RawQuery == "" && u.Fragment == ""
+}
+
+func connectorCIDR(s string) bool {
+	ip, err := netip.ParsePrefix(s)
+	return err == nil && ip.Addr().Is4() && ip.Bits() == 32 && !ip.Addr().IsUnspecified() && !ip.Addr().IsMulticast()
+}
+
+func tunnelID(s string) bool {
+	parts := strings.Split(s, "-")
+	if len(parts) != 5 {
+		return false
+	}
+	for i, size := range []int{8, 4, 4, 4, 12} {
+		if len(parts[i]) != size || strings.Trim(parts[i], "0123456789abcdef") != "" {
+			return false
+		}
+	}
+	return true
+}
+
 // askLAN asks which LAN clients NPM serves directly.
 func askLAN(p *prompts, key string, e *stack.Edge) error {
 	split := func(s string) []string {
@@ -964,10 +1062,7 @@ func askLAN(p *prompts, key string, e *stack.Edge) error {
 // askConnector asks for a tunnel edge's connector.
 func askConnector(p *prompts, key string, t stack.Target, e *stack.Edge) error {
 	var err error
-	e.ConnectorCIDR, err = p.ask(key+"cidr", "Connector's fixed source IPv4 /32", "", func(s string) bool {
-		ip, err := netip.ParsePrefix(s)
-		return err == nil && ip.Addr().Is4() && ip.Bits() == 32 && !ip.Addr().IsUnspecified() && !ip.Addr().IsMulticast()
-	})
+	e.ConnectorCIDR, err = p.ask(key+"cidr", "Connector's fixed source IPv4 /32", "", connectorCIDR)
 	if err != nil {
 		return err
 	}
@@ -1008,24 +1103,7 @@ func askConnector(p *prompts, key string, t stack.Target, e *stack.Edge) error {
 			}
 			c.FRPPort, _ = strconv.Atoi(port)
 		} else {
-			c.TunnelID, err = p.ask(key+"tunnel_id", "Existing locally managed Cloudflare tunnel UUID", "", func(s string) bool {
-				parts := strings.Split(s, "-")
-				if len(parts) != 5 {
-					return false
-				}
-				sizes := []int{8, 4, 4, 4, 12}
-				for i, v := range parts {
-					if len(v) != sizes[i] {
-						return false
-					}
-					for _, ch := range v {
-						if !strings.ContainsRune("0123456789abcdef", ch) {
-							return false
-						}
-					}
-				}
-				return true
-			})
+			c.TunnelID, err = p.ask(key+"tunnel_id", "Existing locally managed Cloudflare tunnel UUID", "", tunnelID)
 			if err != nil {
 				return err
 			}

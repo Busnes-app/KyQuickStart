@@ -37,7 +37,8 @@ func credentialName(provider string) string {
 	return "cloudflare_tunnel_credentials"
 }
 
-// connectorConfig has no secret; the programs read the protected file at runtime.
+// connectorConfig has no secret; the programs read the protected file at runtime. A direct
+// edge routes each hostname to its Origin; the others route to NPM.
 func connectorConfig(e stack.Edge) ([]byte, string, []string) {
 	c := e.Connector
 	if e.Provider == "frp" {
@@ -66,6 +67,11 @@ transport.proxyProtocolVersion = "v2"
 	}
 	var ingress []map[string]any
 	for _, route := range e.Routes {
+		if e.Direct() {
+			// Plain HTTP on the dedicated edge network, which never leaves the host.
+			ingress = append(ingress, map[string]any{"hostname": route.Hostname, "service": route.Origin})
+			continue
+		}
 		ingress = append(ingress, map[string]any{
 			"hostname": route.Hostname, "service": "https://" + c.NPMHost + ":443",
 			"originRequest": map[string]any{"originServerName": route.Hostname, "httpHostHeader": route.Hostname},
@@ -84,7 +90,7 @@ func connectorCredential(ctx context.Context, r remote.Runner, root string, e st
 	if err != nil {
 		return nil, err
 	}
-	if e.Provider == "cloudflare" {
+	if e.Provider != "frp" {
 		var credentials struct {
 			Account string `json:"AccountTag"`
 			Secret  string `json:"TunnelSecret"`
@@ -114,7 +120,8 @@ func CheckConnector(ctx context.Context, r remote.Runner, root string, e stack.E
 		return errors.New("connector's existing Docker network is unavailable")
 	}
 	var networks []struct {
-		IPAM struct {
+		EnableIPv6 bool
+		IPAM       struct {
 			Config []struct{ Subnet, IPRange string }
 		}
 		Containers map[string]struct {
@@ -124,6 +131,10 @@ func CheckConnector(ctx context.Context, r remote.Runner, root string, e stack.E
 	}
 	if json.Unmarshal(b, &networks) != nil || len(networks) != 1 {
 		return errors.New("invalid Docker network response")
+	}
+	// With IPv6, the apps could see cloudflared from an address they do not trust.
+	if e.Direct() && networks[0].EnableIPv6 {
+		return errors.New("a cloudflare-direct network must not enable IPv6: its apps trust cloudflared's IPv4 address alone")
 	}
 	ip := netip.MustParsePrefix(e.ConnectorCIDR).Addr()
 	// NPM trusts this address, so Docker must never hand it to another container:
@@ -145,13 +156,19 @@ func CheckConnector(ctx context.Context, r remote.Runner, root string, e stack.E
 	}
 	for id, c := range networks[0].Containers {
 		p, err := netip.ParsePrefix(c.Address)
-		if err != nil || p.Addr() != ip {
+		at := err == nil && p.Addr() == ip
+		// A direct edge's apps are reached by alias on this network, so it holds only ours.
+		if !at && !e.Direct() {
 			continue
 		}
 		b, err := r.Run(ctx, "docker inspect --format '{{json .Config.Labels}}' "+remote.Quote(id), nil)
 		var labels map[string]string
-		if err != nil || json.Unmarshal(b, &labels) != nil || labels[managed.Label] != managed.Value || labels["com.docker.compose.project"] != "kyq-"+connectorName(e.Target) {
+		ours := err == nil && json.Unmarshal(b, &labels) == nil && labels[managed.Label] == managed.Value
+		if at && (!ours || labels["com.docker.compose.project"] != "kyq-"+connectorName(e.Target)) {
 			return errors.New("connector_cidr is occupied by a foreign container")
+		}
+		if !ours {
+			return fmt.Errorf("a cloudflare-direct network must hold only this installer's containers; %q is not one", c.Name)
 		}
 	}
 	return nil

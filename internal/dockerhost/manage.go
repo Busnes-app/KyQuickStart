@@ -1,6 +1,7 @@
 package dockerhost
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -15,8 +16,9 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// readOverride returns the app's compose.kyq.yaml, nil when absent.
-func (a App) readOverride(ctx context.Context) (map[string]map[string]map[string]string, error) {
+// readOverride returns the app's compose.kyq.yaml, nil when absent. Any key override does
+// not write makes it not ours.
+func (a App) readOverride(ctx context.Context) (*overrideFile, error) {
 	f := remote.Quote(a.dir() + "/compose.kyq.yaml")
 	out, err := a.Runner.Run(ctx, "test ! -e "+f+" || head -c 65537 "+f, nil)
 	if err != nil {
@@ -25,23 +27,23 @@ func (a App) readOverride(ctx context.Context) (map[string]map[string]map[string
 	if len(out) == 0 {
 		return nil, nil
 	}
-	var o struct {
-		Services map[string]map[string]map[string]string // service -> "labels" -> labels
-	}
-	if len(out) > 65536 || yaml.Unmarshal(out, &o) != nil || len(o.Services) == 0 {
+	var o overrideFile
+	dec := yaml.NewDecoder(bytes.NewReader(out))
+	dec.KnownFields(true)
+	if len(out) > 65536 || dec.Decode(&o) != nil || len(o.Services) == 0 {
 		return nil, errors.New("compose.kyq.yaml is not an installer override")
 	}
-	return o.Services, nil
+	return &o, nil
 }
 
 // Deployed reads the labels of the app's last deployment from its compose.kyq.yaml, which
 // uninstall keeps.
 func Deployed(ctx context.Context, a App) (managed.Deployed, error) {
-	svcs, err := a.readOverride(ctx)
-	if err != nil || svcs == nil {
+	o, err := a.readOverride(ctx)
+	if err != nil || o == nil {
 		return managed.Deployed{}, err
 	}
-	l := svcs[slices.Sorted(maps.Keys(svcs))[0]]["labels"]
+	l := o.Services[slices.Sorted(maps.Keys(o.Services))[0]].Labels
 	return managed.Deployed{Found: true, Managed: l[managed.Label] == managed.Value,
 		ReleaseSet: l[managed.ReleaseSetLabel], Version: l[managed.VersionLabel]}, nil
 }
@@ -133,16 +135,16 @@ func (s unmanageStep) Apply(ctx context.Context) error {
 	if err := refuseUnfinishedRestore(ctx, s.a); err != nil {
 		return err
 	}
-	svcs, err := s.a.readOverride(ctx)
+	o, err := s.a.readOverride(ctx)
 	if err != nil {
 		return err
 	}
-	if svcs != nil {
-		for _, svc := range svcs {
-			delete(svc["labels"], managed.Label)
-			delete(svc["labels"], managed.ReleaseSetLabel)
+	if o != nil {
+		for _, svc := range o.Services {
+			delete(svc.Labels, managed.Label)
+			delete(svc.Labels, managed.ReleaseSetLabel)
 		}
-		b, err := yaml.Marshal(map[string]any{"services": svcs})
+		b, err := yaml.Marshal(o)
 		if err != nil {
 			return err
 		}

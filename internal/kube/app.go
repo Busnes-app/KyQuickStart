@@ -1,6 +1,7 @@
 package kube
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"net/netip"
@@ -25,6 +26,8 @@ type App struct {
 	Upstreams []netip.AddrPort
 	// RunnerImage is the suite runner sidecar's image, for an app with kubernetes.suite_runner.
 	RunnerImage string
+	// SecretFrom reads secrets copied from another target rather than generated here, by key.
+	SecretFrom map[string]func(context.Context) ([]byte, error)
 }
 
 func hashOf(parts ...string) string {

@@ -46,7 +46,7 @@ func installed(t *testing.T, r remote.Runner) App {
 	a.Root = realTemp(t)
 	a.Catalog.Version = "1.2.3"
 	os.MkdirAll(a.dir(), 0o700)
-	os.WriteFile(filepath.Join(a.dir(), "compose.kyq.yaml"), override(a.Catalog.Services, labels(a.ReleaseSet, a.Catalog.Version)), 0o600)
+	os.WriteFile(filepath.Join(a.dir(), "compose.kyq.yaml"), a.override(labels(a.ReleaseSet, a.Catalog.Version)), 0o600)
 	os.WriteFile(filepath.Join(a.dir(), ".input-hash"), []byte("h"), 0o600)
 	return a
 }
@@ -255,5 +255,38 @@ func TestUnmanageRecordKeepsTheStepOpen(t *testing.T) {
 	os.WriteFile(filepath.Join(a.dir(), unmanageRecord), []byte("recreate web\nstart web\n"), 0o600)
 	if done, _ := s.Inspect(ctx); done {
 		t.Fatal("a recorded recreate inspected as done")
+	}
+}
+
+// A cloudflare-direct app's override keeps its edge network through Deployed and unmanage:
+// reading it must not fail, and the rewrite must not drop it.
+func TestEdgeNetworkOverrideSurvivesDeployedAndUnmanage(t *testing.T) {
+	ctx := context.Background()
+	r := &localDocker{containers: "c1\n", labelled: "c1\n"}
+	a := installed(t, r)
+	a.EdgeNetwork, a.Catalog.Services = "edge-net", []string{"app", "db"}
+	file := filepath.Join(a.dir(), "compose.kyq.yaml")
+	os.WriteFile(file, a.override(labels(a.ReleaseSet, a.Catalog.Version)), 0o600)
+	if d, err := Deployed(ctx, a); err != nil || d != (managed.Deployed{Found: true, Managed: true, ReleaseSet: "rs-1", Version: "1.2.3"}) {
+		t.Fatalf("deployed = %+v, %v", d, err)
+	}
+	s := UnmanageSteps(a)[0]
+	if err := s.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Verify(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(file)
+	if want := a.override(map[string]string{managed.VersionLabel: "1.2.3"}); string(got) != string(want) {
+		t.Fatalf("unmanage rewrote\n%s\nwant\n%s", got, want)
+	}
+	if !strings.Contains(string(got), "kyq-hello") || !strings.Contains(string(got), "name: edge-net") {
+		t.Fatalf("edge network dropped:\n%s", got)
+	}
+	// A key the installer never writes is not its override.
+	os.WriteFile(file, append(a.override(labels("rs-1", "")), "volumes: {x: {}}\n"...), 0o600)
+	if _, err := Deployed(ctx, a); err == nil {
+		t.Fatal("accepted a foreign key")
 	}
 }

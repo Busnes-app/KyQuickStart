@@ -115,7 +115,7 @@ func render(a App) objects {
 		volumes = append(volumes, corev1.Volume{Name: "secrets", VolumeSource: corev1.VolumeSource{
 			Secret: &corev1.SecretVolumeSource{SecretName: secretName, DefaultMode: ptr.To(int32(0o440))},
 		}})
-		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: "secrets", MountPath: "/run/secrets", ReadOnly: true})
+		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: "secrets", MountPath: k.SecretsMount(), ReadOnly: true})
 	}
 	o := objects{Policy: &networkingv1.NetworkPolicy{ObjectMeta: meta(policyName), Spec: policy(a)}}
 	var class *string // nil is omitted from the JSON the hash covers
@@ -134,6 +134,26 @@ func render(a App) objects {
 			SecurityContext: container.SecurityContext,
 		})
 	}
+	// A seeded claim starts as a copy of what the image holds at its mount (a bundled database,
+	// say), which an empty claim would hide. The marker comes last: an interrupted copy reruns.
+	var seed *corev1.Container
+	for _, v := range k.Volumes {
+		if !v.Seed {
+			continue
+		}
+		if seed == nil {
+			seed = &corev1.Container{
+				Name: "seed-volumes", Image: container.Image, Command: []string{"/bin/sh", "-ec", ""},
+				Resources: container.Resources, SecurityContext: container.SecurityContext,
+			}
+		}
+		at := "/seed/" + v.Name
+		seed.Command[2] += fmt.Sprintf("test -e %[1]s/.kyq-seeded || { cp -a %[2]s/. %[1]s/; chown --reference=%[2]s %[1]s; chmod --reference=%[2]s %[1]s; touch %[1]s/.kyq-seeded; }\n", at, v.Mount)
+		seed.VolumeMounts = append(seed.VolumeMounts, corev1.VolumeMount{Name: "vol-" + v.Name, MountPath: at})
+	}
+	if seed != nil {
+		inits = append(inits, *seed)
+	}
 	for _, v := range k.Volumes {
 		claim := "vol-" + v.Name
 		o.Claims = append(o.Claims, &corev1.PersistentVolumeClaim{
@@ -148,7 +168,7 @@ func render(a App) objects {
 			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: claim},
 		}})
 		mount := corev1.VolumeMount{Name: claim, MountPath: v.Mount}
-		if inits != nil {
+		if !root {
 			at := "/volumes/" + v.Name
 			inits[0].Command = append(inits[0].Command, at+"/"+privateDir)
 			inits[0].VolumeMounts = append(inits[0].VolumeMounts, corev1.VolumeMount{Name: claim, MountPath: at})
@@ -280,7 +300,8 @@ func podSecurityContext(k *catalog.Kubernetes) *corev1.PodSecurityContext {
 // policy denies all ingress except, for an edge, to its published ports and, for an app on a
 // cluster with an edge, from the edge's pods. An edge's egress is limited to DNS, HTTP(S)
 // anywhere (ACME and upstreams), its upstreams off the cluster and pods in installer-managed
-// namespaces, whose own policies decide what it reaches there.
+// namespaces, whose own policies decide what it reaches there. An app with egress "edge"
+// reaches only cluster DNS and the edge's HTTPS listener.
 func policy(a App) networkingv1.NetworkPolicySpec {
 	k := a.Catalog.Kubernetes
 	spec := networkingv1.NetworkPolicySpec{PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress}}
@@ -295,13 +316,9 @@ func policy(a App) networkingv1.NetworkPolicySpec {
 		if len(k.NodePorts) > 0 {
 			spec.Ingress = []networkingv1.NetworkPolicyIngressRule{{Ports: tcp(slices.Sorted(maps.Keys(k.NodePorts))...)}}
 		}
-		dns := append(tcp(53), networkingv1.NetworkPolicyPort{Protocol: ptr.To(corev1.ProtocolUDP), Port: ptr.To(intstr.FromInt(53))})
 		spec.PolicyTypes = append(spec.PolicyTypes, networkingv1.PolicyTypeEgress)
 		spec.Egress = []networkingv1.NetworkPolicyEgressRule{
-			{Ports: dns, To: []networkingv1.NetworkPolicyPeer{{
-				NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{nsNameLabel: "kube-system"}},
-				PodSelector:       &metav1.LabelSelector{MatchLabels: map[string]string{"k8s-app": "kube-dns"}},
-			}}},
+			{Ports: dnsPorts(), To: clusterDNS()},
 			{Ports: tcp(80, 443)},
 			{To: []networkingv1.NetworkPolicyPeer{{NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{managed.Label: managed.Value}}}}},
 		}
@@ -311,11 +328,36 @@ func policy(a App) networkingv1.NetworkPolicySpec {
 		}
 		return spec
 	}
+	edgePods := []networkingv1.NetworkPolicyPeer{{
+		NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{nsNameLabel: namespaceOf(a.Edge)}},
+		PodSelector:       &metav1.LabelSelector{MatchLabels: selector(a.Edge)},
+	}}
 	if a.Edge != "" && len(k.Ports) > 0 {
-		spec.Ingress = []networkingv1.NetworkPolicyIngressRule{{Ports: tcp(k.Ports...), From: []networkingv1.NetworkPolicyPeer{{
-			NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{nsNameLabel: namespaceOf(a.Edge)}},
-			PodSelector:       &metav1.LabelSelector{MatchLabels: selector(a.Edge)},
-		}}}}
+		spec.Ingress = []networkingv1.NetworkPolicyIngressRule{{Ports: tcp(k.Ports...), From: edgePods}}
+	}
+	if k.Egress == "edge" {
+		spec.PolicyTypes = append(spec.PolicyTypes, networkingv1.PolicyTypeEgress)
+		spec.Egress = []networkingv1.NetworkPolicyEgressRule{{Ports: dnsPorts(), To: clusterDNS()}}
+		if a.Edge != "" {
+			spec.Egress = append(spec.Egress, networkingv1.NetworkPolicyEgressRule{Ports: tcp(edgeHTTPS), To: edgePods})
+		}
 	}
 	return spec
+}
+
+// edgeHTTPS is NPM's TLS container port, where a NodePort's 443 traffic arrives.
+const edgeHTTPS = 443
+
+func dnsPorts() []networkingv1.NetworkPolicyPort {
+	return []networkingv1.NetworkPolicyPort{
+		{Protocol: ptr.To(corev1.ProtocolTCP), Port: ptr.To(intstr.FromInt(53))},
+		{Protocol: ptr.To(corev1.ProtocolUDP), Port: ptr.To(intstr.FromInt(53))},
+	}
+}
+
+func clusterDNS() []networkingv1.NetworkPolicyPeer {
+	return []networkingv1.NetworkPolicyPeer{{
+		NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{nsNameLabel: "kube-system"}},
+		PodSelector:       &metav1.LabelSelector{MatchLabels: map[string]string{"k8s-app": "kube-dns"}},
+	}}
 }
