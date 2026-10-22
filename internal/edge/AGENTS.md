@@ -38,10 +38,13 @@ straight to the apps, `cloudflare-direct`), and verify product proxy behavior.
   fails while one is enabled. Deletion is the operator's choice.
 - Each route trusts exactly its connector IPv4 /32. frp uses a separate TLS listener accepting
   PROXY v2; Cloudflare uses its connecting-IP header. Sanitize forwarding headers before the product.
-- A `lan` edge has no connector and trusts no forwarding header: `set_real_ip_from unix:;`
-  overrides NPM's `nginx.conf` trust of `X-Real-IP` from every private range, then each
-  `allow_cidrs` prefix is allowed, everyone else denied, and the SNI check kept. Its
-  verification runs from an allowed client, on `client_port`.
+- An internal route (every route of a `lan` edge, and a tunnel edge's `exposure: internal`
+  routes, `Edge.Internal`) has no connector trust and trusts no forwarding header:
+  `set_real_ip_from unix:;` overrides NPM's `nginx.conf` trust of `X-Real-IP` from every
+  private range, then each `allow_cidrs` prefix is allowed, everyone else denied, and the SNI
+  check kept. Its verification runs from an allowed client, on `client_port`.
+- The tunnel never carries an internal route: connector configuration (frpc `customDomains`,
+  cloudflared ingress) lists external routes only, and `allow_cidrs` never holds the connector.
 - Optional connector deployment uses an existing Docker network and existing tunnel/server credentials.
   Containers run with a fixed address, read-only files, no published ports and no capabilities.
 - A `cloudflare-direct` edge has no NPM: its connector is required, routes go to

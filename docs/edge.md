@@ -16,6 +16,7 @@ Per-product compatibility with these paths is in [the redirect record](redirect.
 | Existing Cloudflare tunnel, no NPM (`cloudflare-direct`) | Docker only: cloudflared deployed beside the apps it routes; only the apps listed below |
 | Existing frp server | Optional frpc deployment on Docker, verified server TLS and PROXY v2 |
 | LAN clients only (`lan`) | Clients connect to NPM directly, no tunnel; NPM serves only `allow_cidrs` |
+| Internal and external routes on one edge | A `cloudflare` or `frp` edge's `exposure: internal` routes serve only `allow_cidrs`, beside its external routes ([below](#internal-and-external-routes-exposure)) |
 | Kubernetes target | NPM from the catalog (`npm` app) managed through `kube://`, or an existing NPM's API; connector deployment and `cloudflare-direct` are rejected |
 
 No other edge path is provided; the requirements still open are listed under Unfinished in
@@ -236,6 +237,64 @@ allow-list meaningless; `verify-edge` then fails because the product reports the
 address. NPM's ACME challenge location (`/.well-known/acme-challenge/`, Let's Encrypt
 certificates only) keeps NPM's own `allow all`; it serves only challenge files, never the
 product.
+
+## Internal and external routes (`exposure`)
+
+Each route is `internal` or `external`. Only `allow_cidrs` clients reach an internal route; an
+external route is served through the edge's public connection. An unmarked route takes its
+edge's: internal on `lan`, external on `cloudflare`, `frp` and `cloudflare-direct`.
+
+| Edge | Internal routes | External routes |
+| --- | --- | --- |
+| `lan` | every route (`exposure: external` is refused) | none: it has no public connection |
+| `cloudflare`, `frp` | with `exposure: internal`, on `allow_cidrs` and `client_port` | the default |
+| `cloudflare-direct` | none: it has no NPM and no LAN path | every route |
+
+A tunnel edge with internal routes serves them as a `lan` edge serves its routes (the host
+config above). Its connector is kept out of them: `allow_cidrs` may not contain the connector's
+address, the generated cloudflared ingress and frpc `customDomains` list only external
+hostnames, and an internal frp route has no PROXY-protocol listener. `allow_cidrs` and
+`client_port` are refused on a tunnel edge without internal routes, and a tunnel edge whose
+every route is internal is refused: use `lan`.
+
+```yaml
+domains:                     # optional: keeps the two kinds of names apart
+  internal: lan.example.com  # internal routes are names under it
+  external: example.com      # external routes are names under it, outside the internal domain
+edges:
+  - target: k80
+    provider: cloudflare
+    npm_url: kube://kyq-npm/app:81
+    connector_cidr: 172.18.0.2/32
+    allow_cidrs: [192.168.1.0/24]
+    routes:
+      - {app: kyidentity, hostname: id.example.com, ...}            # external
+      - {app: kynotes, hostname: notes.example.com, ...}            # external
+      - {app: kyrecovery, hostname: recovery.lan.example.com, exposure: internal, ...}
+      - {app: kypulse, hostname: pulse.lan.example.com, exposure: internal, ...}
+```
+
+**Catalog rules.** `review` and `apply` refuse:
+
+- an external route to an internal-only app: KyRecovery, kyPulse, KyDNS and KyYard (catalog
+  `exposure: internal`), which serve administrators and the suite itself;
+- an external route to an app that signs in through KyIdentity while this plan routes
+  KyIdentity only internally: whoever reaches the app must reach KyIdentity. Internal apps
+  use the same external issuer; on the LAN, `lan_dns` can resolve it to the edge directly.
+
+A saved plan that routes one of the internal-only apps through a tunnel edge is refused until
+that route has `exposure: internal` and the edge has `allow_cidrs`.
+
+One hostname per route still holds, and an app's issuer and redirect URLs come from its one
+route, so the split is per app, not two names for one app. Internal routes are never published
+by the tunnel, but a public DNS record or an operator-managed tunnel may still name them; they
+then answer 403. Keep internal names out of public DNS. `lan_dns` publishes every route,
+internal and external, so KyDNS's private zone must contain both domains (with the example
+above, `example.com`, the LAN side of a split-horizon zone).
+
+`verify-edge` checks one side per run: from a workstation inside `allow_cidrs` the internal
+routes on `client_port`; from outside, with `--expected-client-ip` its public address, the
+external routes.
 
 ## NPM on Kubernetes
 

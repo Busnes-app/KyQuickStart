@@ -352,6 +352,12 @@ edge compatibility: `docs/redirect.md`.
   connects from (`{{edge_address}}`: `egress_address`, or a `cloudflare-direct` edge's
   `connector_cidr`), never `0.0.0.0/0` or a Docker gateway; `verify-edge` checks
   the client address the product reports. Per-product status: `docs/redirect.md`.
+- Each route is internal (`allow_cidrs` clients only) or external (the public connection);
+  unmarked takes its edge's (`lan` internal, tunnel external). A tunnel edge may carry both, never
+  only internal ones, and its connector never carries or reaches an internal route. Catalog
+  `exposure: internal` apps (KyRecovery, kyPulse, KyDNS, KyYard) are never external, and an
+  external sign-in app needs an external KyIdentity route. Optional plan `domains` keeps internal
+  names under `internal` and external names under `external` and outside it (`docs/edge.md`).
 - Bulk data goes to restic on an operator-run, append-only (`--append-only --private-repos`)
   TLS rest-server off the app's host, one repository (`<repository>/<app>`) and password per
   app. `kyquickstart backup APP` (Docker apps only, no schedule, no prune) snapshots the app's
@@ -436,7 +442,7 @@ edge compatibility: `docs/redirect.md`.
   A non-root app mounts each claim through a 0700 `private` subdirectory that an init container
   (the pinned BusyBox helper, the app's uid) creates. `kubernetes.termination_grace_seconds`
   (0-3600, 0 keeps the default) sets the pod's termination grace. A `kubernetes.env` value may contain
-  `{{host}}`, replaced by the URL host of the app's one edge route (hostname, plus `:client_port` when it is not 443); no other template syntax.
+  `{{host}}`, replaced by the URL host of the app's one edge route (hostname, plus `:client_port` when an internal route's is not 443); no other template syntax.
 - A Compose template may write `{{host}}`, `{{forward}}` (the route's
   `forward_host:forward_port`, an IP of the Docker target, where the app publishes its port),
   `{{forward_addr}}` (that IP alone), `{{hostname}}` (the route's hostname without a client

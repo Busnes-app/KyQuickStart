@@ -265,8 +265,9 @@ func (n *NPM) refuse(h host, e stack.Edge, rest, why string) error {
 func (n *NPM) config(e stack.Edge, r stack.Route, cert int) hostConfig {
 	sni := fmt.Sprintf("if ($ssl_server_name != %s) { return 421; }\n", r.Hostname)
 	advanced, port := n.marker(e, r), 443
-	if e.Provider == "lan" {
-		// NPM's http block trusts X-Real-IP from every private range. Trust only unix
+	if e.Internal(r) {
+		// An internal route serves only allow_cidrs clients; validation keeps the connector out
+		// of them. NPM's http block trusts X-Real-IP from every private range. Trust only unix
 		// sockets, which NPM never listens on, so $remote_addr stays the TCP peer.
 		advanced += "set_real_ip_from unix:;\n" + sni
 		for _, c := range e.AllowCIDRs {

@@ -586,8 +586,8 @@ server. Connector credentials stay in protected target files, never in the wizar
 
 The catalog's `kyidentity` app installs KyIdentity 0.4.6 on a Kubernetes target from its
 attested release image (`internal/catalog/apps/kyidentity/manifest.yaml` records the digest).
-It needs an edge route: its issuer is `https://<route hostname>`, plus `:<client_port>` behind a
-`lan` edge whose `client_port` is not 443, and a plan without exactly one route for it is refused. Select its setup with an `integrations` entry that names no
+It needs an edge route: its issuer is `https://<route hostname>`, plus `:<client_port>` on an
+internal route whose edge's `client_port` is not 443, and a plan without exactly one route for it is refused. Select its setup with an `integrations` entry that names no
 container, namespace or pod; `apply` finds the app's own pod.
 
 ```yaml

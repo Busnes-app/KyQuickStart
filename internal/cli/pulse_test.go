@@ -31,9 +31,9 @@ func pulsePlan(t *testing.T, f *fixture) {
 	path := filepath.Join(f.state, "stack.yaml")
 	b, _ := os.ReadFile(path)
 	y := strings.Replace(string(b), "  - name: kyrecovery\n    target: k1\nedges:", "  - name: kyrecovery\n    target: k1\n  - name: kypulse\n    target: k1\nedges:", 1)
-	y = strings.Replace(y, "integrations:", "      - app: kypulse\n        hostname: pulse.example.com\n        forward_host: app.kyq-kypulse.svc.cluster.local\n        forward_port: 8080\n        certificate_id: 1\nintegrations:", 1)
+	y = strings.Replace(y, "integrations:", "      - app: kypulse\n        hostname: pulse.example.com\n        forward_host: app.kyq-kypulse.svc.cluster.local\n        forward_port: 8080\n        certificate_id: 1\n        exposure: internal\nintegrations:", 1)
 	y += "  - product: kypulse\n    target: k1\n    bundle: " + pulseBundle + "\n    identity_client: kypulse\n"
-	os.WriteFile(path, []byte(y), 0o600)
+	os.WriteFile(path, []byte(internalEdge(y)), 0o600)
 }
 
 const wantPulseClient = `{"id":"kypulse","name":"kyPulse","redirectUris":["https://pulse.example.com/api/sso/kysignon/callback"],"postLogoutUris":null,"administratorRole":"kypulse.admin","suiteWebhook":{"url":"https://pulse.example.com/api/sso/kysignon/sync"}}`
