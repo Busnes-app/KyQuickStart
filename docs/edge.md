@@ -269,6 +269,9 @@ apps:
 
 ### The baseline exception
 
+`euro-office` is the second baseline exception; its measured capabilities and egress policy are
+in guided-setup's "Catalog Euro-Office on Kubernetes".
+
 Every other app namespace enforces Pod Security `restricted`. `kyq-npm` enforces `baseline`
 (the manifest's `pod_security`), because NPM's s6-overlay init must start as root: it creates
 its service user, chowns `/data` and its nginx directories, and rewrites configuration in the

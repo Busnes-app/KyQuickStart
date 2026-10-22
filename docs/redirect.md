@@ -15,6 +15,9 @@ this one wins.
 - Expansion is frozen: no new catalog apps (Ky or third-party) and no new standalone
   orchestration features. Work is limited to compatibility, safety fixes, verification and the
   AI integration. This supersedes the earlier all-product adapter and roadmap plans.
+- Amendments (owner, 2026-10-22): KyDrive offers Euro-Office on a cluster (`euro-office`, the one
+  catalog addition under the freeze), and a `cloudflare-direct` edge routes a Cloudflare Tunnel
+  straight to eligible apps without NPM ([edge](edge.md)).
 
 ## What KyQuickStart does now
 
@@ -76,8 +79,12 @@ target markers from earlier builds stay valid.
 - The KyDNS edge on Docker hosts that hide client addresses.
 - WebSocket upgrade and LiveKit media through an edge.
 - CalDAV clients.
-- KyDrive's Euro-Office editor. KyDrive 936e6d3 ships only a Kubernetes renderer
-  (`deploy/render.py`) and no Compose service for it.
+- Euro-Office: browser editing through the edge, KyDrive-to-editor commands, backup and
+  upgrade, and its provenance gate: the image's build provenance is observed, not verified
+  ([guided setup](guided-setup.md)).
+- `cloudflare-direct` on Kubernetes; KyNotes behind it (a two-phase connector); an explicit
+  per-route opt-in or Cloudflare Access for admin-only apps; a live tunnel through every
+  eligible product.
 - A KyPost setting for private mail hosts (`SANDBOX_PRIVATE_HOSTS`).
 
 ## Compatibility consequences
@@ -103,6 +110,7 @@ target markers from earlier builds stay valid.
 | KyDrive, KyPost, KyMessages | Yes | Refused |
 | KyDNS | Yes; its route must be on the catalog NPM on a cluster | Refused |
 | NPM (`npm`) | Refused (use an existing NPM) | Yes |
+| Euro-Office (`euro-office`, KyDrive's editor) | Refused | Yes (baseline) |
 
 ## Edge compatibility
 
@@ -118,6 +126,9 @@ There are **no removal candidates**: no test shows an incompatibility.
 - **Tested edges.** Only the `lan` edge with the catalog NPM on Kubernetes has been tested with
   products: `TestKubernetesNPMEdge`, `TestKubernetesKyYard` and `TestKubernetesKyMessage` in CI
   run 39680983040, plus the [K80 pilot](pilot/README.md).
+- **cloudflare-direct** (Docker only) is tested offline only (`TestCloudflaredDirectContainer`)
+  and is Unverified for every product. Eligible: KyIdentity, KyCalendar, KyPost, KyDrive.
+  Refused: KyNotes, KyMessages, KyDNS, KyRecovery, kyPulse, KyYard ([edge](edge.md)).
 - **frp and Cloudflare** have been tested with the demo app only ([edge](edge.md#test-scope)).
   For every product they are Unverified.
 - **Forwarded headers.** No product passes `verify-edge`. Each either ignores forwarded headers
@@ -136,7 +147,7 @@ There are **no removal candidates**: no test shows an incompatibility.
 | KyNotes | Verified: CI `notesSignOn` | Loopback default | – | Verified |
 | KyCalendar | Verified: CI `calendarSignOn` | Unset | CalDAV clients untested | Verified; CalDAV Unverified |
 | KyPost | Verified: CI `postSignOn` (asserts untrusted) | Empty | No mail listener; IMAP/SMTP outbound only; private mail hosts refused | Verified; mail-host setting Fixable |
-| KyDrive | Verified: CI and pilot (hlwcdocker02 behind K80; SCIM through the edge) | Unset. WebDAV behind a proxy needs it (KyDrive README) | The published port is reachable on the LAN; firewall rule open | Verified; trust Fixable; Euro-Office Unverified |
+| KyDrive | Verified: CI and pilot (hlwcdocker02 behind K80; SCIM through the edge) | Unset. WebDAV behind a proxy needs it (KyDrive README) | The published port is reachable on the LAN; firewall rule open | Verified; trust Fixable; Euro-Office `/healthcheck` and signed callback verified (`TestKubernetesEuroOffice`), editing Unverified |
 | KyMessages | Verified: CI (six routes, path blocks, MAS sign-in, encrypted sync, LiveKit `/rtc/validate` over HTTP) | `{{edge_address}}`; untrusted behind the CI Docker NAT | WebSocket upgrade enabled (`internal/edge/npm.go`) but never exercised; media 7881/tcp and 7882/udp go straight to `media_address`, no TURN | Verified (HTTP); WebSocket and media Unverified |
 | KyDNS | Fails closed in CI: KyDNS sees gateway 172.22.0.1, not the edge 172.18.0.2 | `egress_address` only; a gateway value is refused by `kydns.gate` | DNS over UDP and TCP 53 verified on the forward address; direct requests get 403 | Unverified (edge) |
 

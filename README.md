@@ -7,7 +7,7 @@ validated operations, owned credentials and verifiable results, and prints a han
 administrator and everyday logins. New catalog apps and standalone features are frozen
 ([redirect record](docs/redirect.md)).
 
-**Status:** pre-release. The catalog holds the ten Ky products and Nginx Proxy Manager, the edge on
+**Status:** pre-release. The catalog holds the ten Ky products, Euro-Office (KyDrive's optional editor, Kubernetes only) and Nginx Proxy Manager, the edge on
 a Kubernetes target ([docs/edge.md](docs/edge.md)). Each product's placement and setup are in
 [guided setup](docs/guided-setup.md); KyDrive, KyPost, KyDNS and KyMessages run on Docker only
 ([placement](docs/redirect.md#placement)). KyYard, with the suite runner in its pod, installs
