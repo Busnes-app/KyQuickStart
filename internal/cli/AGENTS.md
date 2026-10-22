@@ -62,11 +62,6 @@ Plain terminal planning and command orchestration for the operator-run installer
   it runs again. `backupLines` adds
   the backup, restore and password-record lines to apply's handover.
 - Product adapter discovery, bounded reports and activation verification: `product.go`; only implemented product interfaces enter its registry.
-- `immich.go` owns initial setup dispatch for the pinned community Immich module on
-  Docker only: require native capabilities/version, validate bounded account/role reports,
-  compare installation/UUID/subject readback, and render fixed labels/native UUIDs only.
-  Pending initial setup is an error. This does not admit Immich or prove ongoing lifecycle,
-  actual KyIdentity delivery or administrator ordinary-workflow separation.
 - `integration.go` owns guided setup selections and unattended `integrate-stack` dispatch,
   which skips installed apps' entries (`apply` runs those).
   Validate every selection before connecting; run KyIdentity first and otherwise preserve
