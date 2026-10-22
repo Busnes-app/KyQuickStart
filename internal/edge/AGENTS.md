@@ -46,7 +46,7 @@ straight to the apps, `cloudflare-direct`), and verify product proxy behavior.
   Containers run with a fixed address, read-only files, no published ports and no capabilities.
 - A `cloudflare-direct` edge has no NPM: its connector is required, routes go to
   `http://kyq-<app>:<port>` on its network (the CLI sets `Route.Origin`), and `CheckConnector`
-  refuses a network holding any container without the managed label. Its apps trust exactly
+  refuses an IPv6-enabled network and one holding any container without the managed label. Its apps trust exactly
   `connector_cidr`. Never add a TLS bypass or route to another host.
 - Kubernetes connector deployment, `cloudflare-direct` included, remains unavailable until
   source-address isolation is implemented.

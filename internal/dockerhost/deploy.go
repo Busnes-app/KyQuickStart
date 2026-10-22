@@ -26,22 +26,42 @@ func labels(releaseSet, version string) map[string]string {
 // EdgeAlias is the name a cloudflare-direct edge's cloudflared reaches app by on its network.
 func EdgeAlias(app string) string { return "kyq-" + app }
 
+// overrideFile is compose.kyq.yaml's whole shape: written by override, read back by
+// readOverride and rewritten by unmanage, so nothing in it is lost on the way.
+type overrideFile struct {
+	Services map[string]overrideService `yaml:"services"`
+	Networks map[string]edgeNetwork     `yaml:"networks,omitempty"`
+}
+
+type overrideService struct {
+	Labels   map[string]string        `yaml:"labels"`
+	Networks map[string]networkAttach `yaml:"networks,omitempty"`
+}
+
+type networkAttach struct {
+	Aliases []string `yaml:"aliases,omitempty"`
+}
+
+type edgeNetwork struct {
+	External bool   `yaml:"external"`
+	Name     string `yaml:"name"`
+}
+
 // override is compose.kyq.yaml: labels on every service and, with an edge network, that
 // network for service "app" beside its default one.
 func (a App) override(labels map[string]string) []byte {
-	svcs := map[string]any{}
+	o := overrideFile{Services: map[string]overrideService{}}
 	for _, s := range a.Catalog.Services {
-		svcs[s] = map[string]any{"labels": labels}
+		o.Services[s] = overrideService{Labels: labels}
 	}
-	top := map[string]any{"services": svcs}
 	if a.EdgeNetwork != "" {
-		svcs["app"] = map[string]any{"labels": labels, "networks": map[string]any{
-			"default": map[string]any{}, "kyq-edge": map[string]any{"aliases": []string{EdgeAlias(a.Name)}}}}
-		top["networks"] = map[string]any{"kyq-edge": map[string]any{"external": true, "name": a.EdgeNetwork}}
+		o.Services["app"] = overrideService{Labels: labels, Networks: map[string]networkAttach{
+			"default": {}, "kyq-edge": {Aliases: []string{EdgeAlias(a.Name)}}}}
+		o.Networks = map[string]edgeNetwork{"kyq-edge": {External: true, Name: a.EdgeNetwork}}
 	}
-	b, err := yaml.Marshal(top)
+	b, err := yaml.Marshal(o)
 	if err != nil {
-		panic(err) // maps of strings always marshal
+		panic(err) // plain structs of strings always marshal
 	}
 	return b
 }
