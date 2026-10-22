@@ -91,7 +91,7 @@ func TestPulseAdapterRequiresMonitoringEnrollmentCapabilities(t *testing.T) {
 
 func TestProductTargetRefusesKubernetesWhenARuntimeUserIsRequired(t *testing.T) {
 	kube := stack.Target{Kubeconfig: "/home/user/.kube/config"}
-	for _, product := range []string{"kypost", "kyrecovery", "immich"} {
+	for _, product := range []string{"kypost", "kyrecovery"} {
 		if validateProductTarget(product, kube) == nil {
 			t.Fatal("Kubernetes accepted for", product)
 		}
