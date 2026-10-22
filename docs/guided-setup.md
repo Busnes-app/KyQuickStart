@@ -115,11 +115,21 @@ the plan is saved only after every step passed.
 ./kyquickstart install hello --target nas --state ./morning-test
 ./kyquickstart upgrade --state ./morning-test        # every installed app
 ./kyquickstart status --json --state ./morning-test
+./kyquickstart logs hello --tail 50 --state ./morning-test
+./kyquickstart stop hello --state ./morning-test     # Kubernetes: suspend (0 replicas)
+./kyquickstart start hello --state ./morning-test
+./kyquickstart restart hello --state ./morning-test
 ./kyquickstart unmanage hello --state ./morning-test
 ./kyquickstart uninstall hello --state ./morning-test
 ```
 
 - `install` adds the app and any missing dependencies to the plan on that target.
+- `stop`, `start` and `restart` change nothing else: data, secrets and routes stay. `stop`
+  records `stopped: true` in the plan, so `apply`, `upgrade`, `restart` and `backup` refuse
+  (`app_stopped`) rather than start it again; `start` clears it. Stop an app this way before
+  `restore`; a finished restore starts it and clears the flag. `logs` changes nothing, takes
+  no lock and redacts the installer-generated secrets only. `status` reads each app's live
+  state (`running`, `stopped`, `missing`, `unknown`).
 - `uninstall` refuses while another installed app depends on it. It disables the app's NPM
   routes, removes its containers (`docker compose down`, never `-v`) or its Deployment and
   Service, and keeps the app directory, data volumes, claims and secrets on the target.
@@ -214,7 +224,7 @@ ssh -p 22 kyq@nas.example.lan cat /opt/kyquickstart/kydrive/secrets/restic_passw
 `restore APP --snapshot ID` (8 or 64 lowercase hex) restores one; `--replace` and `--yes` are
 refused without `--snapshot`:
 
-1. It refuses (`restore_refused`, nothing changed) a running app and an app with any non-empty
+1. It refuses (`restore_refused`, nothing changed) a running app (`kyquickstart stop APP` first) and an app with any non-empty
    bind directory or secret file unless `--replace`, which moves them to
    `<root>/<app>/.replaced-<UTC time>/` and never deletes them; neither refusal contacts the
    repository. It then refuses a snapshot not tagged for this app and installation. If

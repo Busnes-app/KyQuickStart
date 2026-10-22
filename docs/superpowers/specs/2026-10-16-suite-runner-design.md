@@ -278,7 +278,8 @@ handed to it, or has no plan yet), `owned_by_other_plan` (the target's marker na
 installation), `not_found` (no such operation or route), `internal` (any
 failure without a code above, such as an unreachable target). The CLI's `backup` and `restore`
 (not runner operations) add `backup_unconfigured`, `backup_unsupported`, `restore_refused` and
-`restore_incomplete`.
+`restore_incomplete`. `app_stopped` is the CLI's `stop`: a runner `install` or `upgrade` that would
+start an app stopped that way returns it.
 
 Error bodies: `{"error": {"code": "…", "message": "…"}}`, message at most 512 bytes, redacted
 with the run's redactor (every secret a step read). The same codes and messages appear in an
@@ -289,7 +290,7 @@ operation's `error`. A code's HTTP status, when the runner answers with it direc
 | 400 | `invalid_request` (413 when the body exceeds 64 KiB; 405 for a wrong method) |
 | 404 | `not_found` only: KyYard reads any 404 as an operation the runner does not know |
 | 409 | `id_conflict`, `busy`, `plan_stale`, `target_locked`, `owned_by_runner`, `owned_by_cli`, `owned_by_other_plan` |
-| 422 | `unknown_app`, `unknown_target`, `already_installed`, `not_installed`, `dependency`, `upgrade_refused`, `backup_required`, `ack_required`, `issuer_changed`, `server_name_changed`, `provider_id_mismatch`, `runner_host`, `backup_unconfigured`, `backup_unsupported`, `restore_refused` |
+| 422 | `unknown_app`, `unknown_target`, `already_installed`, `not_installed`, `dependency`, `upgrade_refused`, `backup_required`, `ack_required`, `issuer_changed`, `server_name_changed`, `provider_id_mismatch`, `runner_host`, `backup_unconfigured`, `backup_unsupported`, `restore_refused`, `app_stopped` |
 | 500 | `step_failed`, `restore_incomplete`, `internal` |
 
 ## KyYard

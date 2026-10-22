@@ -158,6 +158,9 @@ func backup(ctx context.Context, state, name string, trust trustFlag, o Options)
 		return err
 	}
 	defer s.close()
+	if s.stopped(name) {
+		return suite.Errorf(suite.AppStopped, "%s was stopped with kyquickstart stop, and a cold backup would start it again; run kyquickstart start %s first", name, name)
+	}
 	s.targets = []stack.Target{t}
 	if err := s.connect(ctx, trust); err != nil {
 		return err
@@ -240,6 +243,23 @@ func restore(ctx context.Context, state string, r restoreRequest, trust trustFla
 	if err := s.connect(ctx, trust); err != nil {
 		return err
 	}
+	// A finished restore leaves the app running, so it also ends a kyquickstart stop.
+	resumed := func() error { return nil }
+	if s.stopped(r.app) {
+		_, data, err := changePlan(state, s.revision, func(st *stack.Stack) {
+			st.Apps[slices.IndexFunc(st.Apps, func(a stack.App) bool { return a.Name == r.app })].Stopped = false
+		})
+		if err != nil {
+			return err
+		}
+		resumed = func() error {
+			if err := publish(state, s.revision, data); err != nil {
+				return err
+			}
+			s.revision, s.saved = s.revision+1, s.installation
+			return nil
+		}
+	}
 	in := bufio.NewReader(o.Stdin)
 	return s.locked(ctx, func(ctx context.Context) error {
 		if app.OIDC != nil {
@@ -255,7 +275,10 @@ func restore(ctx context.Context, state string, r restoreRequest, trust trustFla
 		if err != nil {
 			return err
 		}
-		return s.restoreLocked(ctx, st, r, in)
+		if err := s.restoreLocked(ctx, st, r, in); err != nil {
+			return err
+		}
+		return resumed()
 	})
 }
 
@@ -284,8 +307,7 @@ func (s *session) restoreLocked(ctx context.Context, st dockerhost.Store, r rest
 			return err
 		}
 		if running {
-			t := s.placed[r.app]
-			return refuse("%s is running on %s; stop it first (ssh -p %d %s@%s docker compose -p kyq-%s stop) or uninstall it. Nothing was changed", r.app, st.Host, t.Port, t.User, t.Host, r.app)
+			return refuse("%s is running on %s; stop it first (kyquickstart stop %s) or uninstall it. Nothing was changed", r.app, st.Host, r.app)
 		}
 		if occupied, err = st.Occupied(ctx); err != nil {
 			return err

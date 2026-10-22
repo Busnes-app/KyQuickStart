@@ -30,8 +30,6 @@ type App struct {
 	// Restoring is set by restore alone: deploy refuses an app with an unfinished restore
 	// (.restore-pending), whose removal replay has not been delivered.
 	Restoring bool
-	// Stopped is the plan's `kyquickstart stop`: backup refuses rather than start the app.
-	Stopped bool
 }
 
 func (a App) dir() string { return path.Join(a.Root, a.Name) }

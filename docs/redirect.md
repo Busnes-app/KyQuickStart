@@ -143,7 +143,18 @@ Docker host behind the K80 NPM.
 
 ## Lifecycle commands
 
-<!-- TODO-lifecycle: command table supplied by branch redirect/lifecycle -->
+Thin verbs on the existing drivers, under the same lock, ownership and runner rules as
+`upgrade` ([guided setup](guided-setup.md#managing-apps)):
 
-Placeholder: thin `stop`/`start` (Kubernetes suspend/resume), `restart`, `logs` and live status
-verbs on the existing drivers are being added on branch `redirect/lifecycle`.
+| Command | Docker | Kubernetes |
+| --- | --- | --- |
+| `stop APP` | `compose stop` | replicas 0 (suspend), waits for the pod to go |
+| `start APP` | `compose up -d`, health wait | replicas 1 (resume), readiness wait |
+| `restart APP` | `compose restart`, health wait | pod-template annotation, readiness wait |
+| `logs APP [--tail N] [--service S]` | `compose logs` | pod logs; needs `get pods/log`, which preflight does not require |
+| `status [--json]` | live `running`, `stopped`, `missing` or `unknown` | same |
+
+`stop` records `stopped: true` for the app in `stack.yaml`. While it is set, `apply`,
+`upgrade`, `restart` and `backup` refuse `app_stopped` instead of starting the app again;
+`start` and a finished `restore` clear it. `logs` redacts the secrets the installer generated
+for the app; anything else a product logs is printed as it is.
