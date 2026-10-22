@@ -329,7 +329,7 @@ edge compatibility: `docs/redirect.md`.
   stay for KyQuickStart-AI's labelled third-party test installs; record each rejection there.
 - Third-party apps run on Docker hosts only. Kubernetes hosts Ky products and the edge
   components (cloudflared, Nginx Proxy Manager, frp client), deployed with `client-go` typed
-  objects (no Helm); the edge components also deploy to Docker hosts. An app leaving the catalog stops taking new installs after
+  objects (no Helm); cloudflared and the frp client also deploy to Docker hosts, NPM does not. An app leaving the catalog stops taking new installs after
   notice, and existing installs are handed to their owner with `unmanage`.
 - Every installed app signs in through KyIdentity with native OIDC, uses *Assigned users only*,
   and offboards through KyIdentity's SCIM or signed directory webhook into the product's own
@@ -408,9 +408,10 @@ edge compatibility: `docs/redirect.md`.
   waiting for health. `stop` records `stopped: true` on the app in stack.yaml; while it is set,
   `apply`, `upgrade`, `restart` and `backup` refuse `app_stopped`; `start` and a finished
   `restore` clear it. A workload stopped by hand without it is still repaired by apply. `logs
-  APP` is read-only, redacts the app's generated secrets and needs `get pods/log` on
+  APP` is read-only, redacts the secrets the app's catalog entry generates and needs `get pods/log` on
   Kubernetes, which preflight does not require. CLI `status` adds the live workload state; the
-  runner's status does not (KyYard decodes it strictly).
+  runner's status does not (KyYard decodes it strictly). `handoff` refuses while any app is
+  stopped: the runner cannot start one, and older runner builds refuse the field.
 - Remote commands are POSIX `sh`, quoted with `remote.Quote`. The SSH runner sends each one
   base64-encoded to `sh` (`remote.wrap`), so a non-POSIX login shell such as fish cannot alter
   it. Unit tests run commands for real through `remote.Local` and under sh, bash and fish.

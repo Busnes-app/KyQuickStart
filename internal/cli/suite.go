@@ -528,8 +528,9 @@ func status(ctx context.Context, state string, trust trustFlag, o Options, live 
 		}
 		a := suite.App{Name: name, Category: s.cat[name].Category, Version: installedVersion(deployed, s.cat[name], o.ReleaseSet), Target: t.Name, State: "unknown"}
 		if live {
+			// One unreadable workload leaves the other apps' status readable.
 			if a.Workload, err = s.drivers[t.Name].workload(ctx, name, s.cat[name]); err != nil {
-				return suite.Status{}, fmt.Errorf("%s: %w", name, err)
+				a.Workload = "unknown"
 			}
 			a.Stopped = s.stopped(name)
 		}

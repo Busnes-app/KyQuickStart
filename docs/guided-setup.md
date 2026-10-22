@@ -128,7 +128,7 @@ the plan is saved only after every step passed.
   records `stopped: true` in the plan, so `apply`, `upgrade`, `restart` and `backup` refuse
   (`app_stopped`) rather than start it again; `start` clears it. Stop an app this way before
   `restore`; a finished restore starts it and clears the flag. `logs` changes nothing, takes
-  no lock and redacts the installer-generated secrets only. `status` reads each app's live
+  no lock and redacts only the secrets the app's catalog entry generates. `status` reads each app's live
   state (`running`, `stopped`, `missing`, `unknown`).
 - `uninstall` refuses while another installed app depends on it. It disables the app's NPM
   routes, removes its containers (`docker compose down`, never `-v`) or its Deployment and

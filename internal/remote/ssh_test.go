@@ -2,7 +2,9 @@ package remote
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/pem"
 	"errors"
@@ -10,10 +12,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 var addr = &net.TCPAddr{IP: net.ParseIP("192.0.2.1"), Port: 22}
@@ -133,7 +137,7 @@ func TestWrapSurvivesLoginShells(t *testing.T) {
 }
 
 // serveSSH accepts one client key on a loopback port and answers every exec with "ran".
-func serveSSH(t *testing.T, client ssh.PublicKey) (port int, hostFP string) {
+func serveSSH(t *testing.T, client ssh.PublicKey, extra ...ssh.Signer) (port int, hostFP string) {
 	t.Helper()
 	_, hostPriv, _ := ed25519.GenerateKey(rand.Reader)
 	host, _ := ssh.NewSignerFromKey(hostPriv)
@@ -144,6 +148,9 @@ func serveSSH(t *testing.T, client ssh.PublicKey) (port int, hostFP string) {
 		return nil, nil
 	}}
 	cfg.AddHostKey(host)
+	for _, k := range extra {
+		cfg.AddHostKey(k)
+	}
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -204,5 +211,40 @@ func TestDialWithKeyFile(t *testing.T) {
 	os.Chmod(key, 0o644)
 	if _, err := Dial(context.Background(), c); err == nil || !strings.Contains(err.Error(), "ssh key") {
 		t.Fatalf("readable key: %v", err)
+	}
+}
+
+// A stock server also holds an ECDSA key, which Go would ask for first. An unpinned host is
+// asked for ed25519, the key an operator's ssh-keyscan -t ed25519 fingerprint names; a pinned
+// host only for the pinned type, so earlier ECDSA pins keep working.
+func TestHostKeyAlgorithmMatchesThePin(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "")
+	_, priv, _ := ed25519.GenerateKey(rand.Reader)
+	signer, _ := ssh.NewSignerFromKey(priv)
+	block, _ := ssh.MarshalPrivateKey(priv, "")
+	dir := t.TempDir()
+	key := filepath.Join(dir, "id_ed25519")
+	os.WriteFile(key, pem.EncodeToMemory(block), 0o600)
+	ec, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	ecSigner, _ := ssh.NewSignerFromKey(ec)
+	port, fp := serveSSH(t, signer.PublicKey(), ecSigner)
+	dial := func(kh, trust string) error {
+		s, err := Dial(context.Background(), SSHConfig{Name: "nas", Host: "127.0.0.1", Port: port, User: "kyq", KnownHosts: kh, Trust: trust, KeyFile: key})
+		if err == nil {
+			s.Close()
+		}
+		return err
+	}
+	kh := filepath.Join(dir, "known_hosts")
+	if err := dial(kh, fp); err != nil {
+		t.Fatalf("first contact with the ed25519 fingerprint: %v", err)
+	}
+	if err := dial(kh, ""); err != nil {
+		t.Fatalf("pinned ed25519: %v", err)
+	}
+	old := filepath.Join(dir, "known_hosts.ecdsa")
+	os.WriteFile(old, []byte(knownhosts.Line([]string{knownhosts.Normalize(net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))}, ecSigner.PublicKey())+"\n"), 0o600)
+	if err := dial(old, ""); err != nil {
+		t.Fatalf("pinned ECDSA: %v", err)
 	}
 }

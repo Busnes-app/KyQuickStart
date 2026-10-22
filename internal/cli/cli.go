@@ -52,8 +52,8 @@ commands:
   restart APP              restart APP and wait until it is healthy
   logs APP [--tail N] [--service S]
                            print APP's recent log lines (default 200; S: a Compose service or
-                           pod container). Installer-generated secrets are redacted; anything
-                           else the product logs is printed as it is
+                           pod container). The secrets APP's catalog entry generates are
+                           redacted; anything else the product logs is printed as it is
   status [--json]          per installed app: version, target, state, live workload, last results
   backup APP [--state DIR]  snapshot a Docker app to its target's rest-server (restic)
   restore APP [--state DIR] [--snapshot ID [--replace] [--yes]]
