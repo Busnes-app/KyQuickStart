@@ -30,6 +30,43 @@ The wizard asks for:
 5. Review and confirmation of the plan.
 6. `finish`, `check` or `deploy`. `finish` is always the default and changes no servers.
 
+### Without the wizard
+
+Unattended callers, KyQuickStart-AI among them, write `stack.yaml` themselves and run
+`review`, `preflight` and `apply` with `--state DIR`. The demo catalog holds one app, so each
+target needs its own state directory. A Docker target over SSH:
+
+```yaml
+demo: true
+version: 1
+targets:
+  - name: lab
+    host: 192.0.2.10
+    port: 22
+    user: kyops
+    root: /srv/ky/kyquickstart
+apps:
+  - name: hello
+    target: lab
+```
+
+A Kubernetes target names its kubeconfig by path (never its contents):
+
+```yaml
+demo: true
+version: 1
+targets:
+  - name: cluster
+    kubeconfig: /home/me/.kube/kyquickstart.yaml
+apps:
+  - name: hello
+    target: cluster
+```
+
+The first `preflight` of a Docker target needs `--trust-host-key lab=SHA256:<fingerprint>`.
+`apply` adds `revision` and `installation_id`. Outside demo mode, drop `demo: true` and add
+the catalog apps, `edges` and `integrations` described in the sections below.
+
 The first computer-name question accepts DNS names such as `K80.example.com`, including
 uppercase letters. It derives a safe installation label (`k80-example-com`); Docker's SSH
 address defaults to the name you entered. Kubernetes still connects through its kubeconfig.
