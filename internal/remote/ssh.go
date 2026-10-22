@@ -69,10 +69,17 @@ func Dial(ctx context.Context, c SSHConfig) (*SSH, error) {
 		return nil, fmt.Errorf("%s: %w", c.Name, err)
 	}
 	conn.SetDeadline(time.Now().Add(dialTimeout))
+	algos, err := hostKeyAlgorithms(c.KnownHosts, addr)
+	if err != nil {
+		conn.Close()
+		closeAgent()
+		return nil, err
+	}
 	sc, chans, reqs, err := ssh.NewClientConn(conn, addr, &ssh.ClientConfig{
-		User:            c.User,
-		Auth:            []ssh.AuthMethod{auth},
-		HostKeyCallback: hk,
+		User:              c.User,
+		Auth:              []ssh.AuthMethod{auth},
+		HostKeyCallback:   hk,
+		HostKeyAlgorithms: algos,
 	})
 	if err != nil {
 		conn.Close()
@@ -145,6 +152,37 @@ func (s *SSH) Close() error {
 		err = errors.Join(err, s.agent.Close())
 	}
 	return err
+}
+
+// firstContactAlgorithms prefers ed25519, the key `ssh-keyscan -t ed25519` and ssh-keygen pin;
+// Go's default would ask a stock server for its ECDSA key and miss a fingerprint taken that way.
+var firstContactAlgorithms = []string{ssh.KeyAlgoED25519, ssh.KeyAlgoECDSA256, ssh.KeyAlgoECDSA384, ssh.KeyAlgoECDSA521, ssh.KeyAlgoRSASHA512, ssh.KeyAlgoRSASHA256}
+
+// hostKeyAlgorithms asks a pinned host only for the key types pinned for it, so the server
+// presents a key the pin can match, and an unpinned host for firstContactAlgorithms.
+func hostKeyAlgorithms(knownHosts, addr string) ([]string, error) {
+	b, err := os.ReadFile(knownHosts)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	host := knownhosts.Normalize(addr)
+	var algos []string
+	for _, line := range bytes.Split(b, []byte("\n")) {
+		f := bytes.Fields(line)
+		if len(f) < 2 || string(f[0]) != host {
+			continue
+		}
+		switch t := string(f[1]); t {
+		case ssh.KeyAlgoRSA:
+			algos = append(algos, ssh.KeyAlgoRSASHA512, ssh.KeyAlgoRSASHA256)
+		default:
+			algos = append(algos, t)
+		}
+	}
+	if len(algos) == 0 {
+		return firstContactAlgorithms, nil
+	}
+	return algos, nil
 }
 
 // hostKeyCallback accepts a pinned key, pins an unknown key only when trusted by flag or

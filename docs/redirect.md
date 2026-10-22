@@ -85,7 +85,12 @@ target markers from earlier builds stay valid.
 - The `kyoffboard` binary and image are gone. Nothing released depended on them.
 - `integrate-product --product immich` and `integrate-stack` selections naming Immich are
   refused as unsupported. Configure those instances by hand.
-- Plans, state, catalog versions and error codes are unchanged. A saved `stack.yaml` keeps working.
+- A saved `stack.yaml` and target markers keep working; catalog versions are unchanged.
+- `stack.yaml` gains an optional `stopped` field, written by `kyquickstart stop`. Builds older
+  than this redirect refuse a plan that carries it, so `handoff` refuses while an app is stopped.
+- New error code `app_stopped` (HTTP 422 from the runner).
+- Remote SSH negotiates the pinned host-key type, or ed25519 first on first contact, so a
+  fingerprint from `ssh-keyscan -t ed25519` matches on servers that also hold ECDSA keys.
 - Third-party apps are installed only by KyQuickStart-AI, as labelled test installs outside the
   catalog.
 
@@ -143,8 +148,10 @@ Docker host behind the K80 NPM.
 
 ## Lifecycle commands
 
-Thin verbs on the existing drivers, under the same lock, ownership and runner rules as
-`upgrade` ([guided setup](guided-setup.md#managing-apps)):
+Thin verbs on the existing drivers ([guided setup](guided-setup.md#managing-apps)). `stop`,
+`start` and `restart` take the target lock and refuse apps kyquickstart did not deploy; `stop`
+and `start` change the plan like `install` (refused on a runner-owned target), `restart`
+deploys like `upgrade`. `logs` and `status` take no lock and change nothing.
 
 | Command | Docker | Kubernetes |
 | --- | --- | --- |
@@ -156,5 +163,6 @@ Thin verbs on the existing drivers, under the same lock, ownership and runner ru
 
 `stop` records `stopped: true` for the app in `stack.yaml`. While it is set, `apply`,
 `upgrade`, `restart` and `backup` refuse `app_stopped` instead of starting the app again;
-`start` and a finished `restore` clear it. `logs` redacts the secrets the installer generated
-for the app; anything else a product logs is printed as it is.
+`start` and a finished `restore` clear it. `logs` redacts the secrets the app's catalog entry
+generates; installer-written credentials outside that list (a restic password, a transferred
+client secret) and anything a product logs itself are printed as they are.

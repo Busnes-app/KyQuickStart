@@ -6,9 +6,11 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"go.yaml.in/yaml/v3"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -367,5 +369,26 @@ func TestHandoffRefusesBadKeygenOutput(t *testing.T) {
 		if _, _, err := runnerKey([]byte(out)); err == nil {
 			t.Errorf("accepted %q", out)
 		}
+	}
+}
+
+// A stopped app would strand the runner, which cannot start it; the hand-off waits for start.
+func TestHandoffRefusesAStoppedApp(t *testing.T) {
+	f, _ := suiteFixture(t)
+	t.Setenv("HOME", t.TempDir())
+	newFakeRunner(t, f)
+	if err := f.run("install", "web", "--target", "nas"); err != nil {
+		t.Fatal(err)
+	}
+	st := f.stack(t)
+	st.Apps[slices.IndexFunc(st.Apps, func(a stack.App) bool { return a.Name == "web" })].Stopped = true
+	b, _ := yaml.Marshal(st)
+	os.WriteFile(filepath.Join(f.state, "stack.yaml"), b, 0o600)
+	rev := f.stack(t).Revision
+	if err := f.run("handoff", "--kyyard-target", "nas"); code(err) != suite.AppStopped || !strings.Contains(err.Error(), "kyquickstart start web") {
+		t.Fatalf("handoff of a stopped app: %v", err)
+	}
+	if f.stack(t).Revision != rev {
+		t.Fatal("a refused hand-off changed the plan")
 	}
 }
