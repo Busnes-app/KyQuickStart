@@ -13,6 +13,7 @@ import (
 	"github.com/Busnes-app/kyquickstart/internal/kube"
 	"github.com/Busnes-app/kyquickstart/internal/managed"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
+	"github.com/Busnes-app/kyquickstart/internal/suite"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -78,6 +79,12 @@ func TestEditorConnectsKyDrive(t *testing.T) {
 	}
 	if strings.Contains(string(drive.Compose), "KYDRIVE_EDITOR_SECRET:") {
 		t.Error("the editor secret is in Compose's environment")
+	}
+	// The editor's route carries its catalog path blocks to the edge; KyDrive's carries none.
+	for _, r := range s.edges[0].Routes {
+		if want := cat[r.App].DenyPaths; !slices.Equal(r.DenyPaths, want) || r.App == euroOffice && len(want) != 2 {
+			t.Fatalf("%s route deny paths = %q", r.App, r.DenyPaths)
+		}
 	}
 	// A KyDrive template without the expected lines is refused, not half-edited.
 	broken := cat["kydrive"]
@@ -209,5 +216,41 @@ func TestGuidedOffersEditorWithKyDrive(t *testing.T) {
 	}
 	if out := ask("skip\n"); strings.Contains(out, "euro-office") || !strings.Contains(out, "\nkyidentity —") {
 		t.Fatalf("euro-office offered without KyDrive:\n%s", out)
+	}
+}
+
+// Removing euro-office takes KyDrive as the remaining plan deploys it: without the editor, byte
+// for byte the KyDrive of a plan that never had one. A stopped KyDrive is refused, since the
+// redeploy would start it; other apps need nothing.
+func TestDriveWithoutEditor(t *testing.T) {
+	f := newFixture(t, "../catalog/testdata/apps")
+	f.o.Catalog = catalog.Embedded()
+	drivePlan(t, f, "192.0.2.1")
+	plain, err := load(f.state, nil, f.o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	editorDrivePlan(t, f)
+	s, err := load(f.state, nil, f.o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := f.stack(t)
+	next.Apps = slices.DeleteFunc(next.Apps, func(a stack.App) bool { return a.Name == euroOffice })
+	for i := range next.Edges {
+		next.Edges[i].Routes = slices.DeleteFunc(next.Edges[i].Routes, func(r stack.Route) bool { return r.App == euroOffice })
+	}
+	drive, err := s.driveWithoutEditor(euroOffice, next, f.state, nil)
+	if err != nil || drive == nil || !bytes.Equal(drive.Compose, plain.cat["kydrive"].Compose) || !slices.Equal(drive.Secrets, plain.cat["kydrive"].Secrets) {
+		t.Fatalf("KyDrive without the editor = %v, %v", drive, err)
+	}
+	if drive, err := s.driveWithoutEditor("kyidentity", next, f.state, nil); drive != nil || err != nil {
+		t.Fatalf("another app = %v, %v", drive, err)
+	}
+	for i := range s.plan.Apps {
+		s.plan.Apps[i].Stopped = s.plan.Apps[i].Name == "kydrive"
+	}
+	if _, err := s.driveWithoutEditor(euroOffice, next, f.state, nil); code(err) != suite.AppStopped {
+		t.Fatalf("stopped KyDrive = %v", err)
 	}
 }

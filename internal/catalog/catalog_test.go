@@ -345,6 +345,9 @@ func TestEuroOfficeEntry(t *testing.T) {
 	if k.Env["JWT_ENABLED"] != "true" || k.Env["ALLOW_PRIVATE_IP_ADDRESS"] != "true" || k.Env["ALLOW_META_IP_ADDRESS"] != "false" || k.Env["USE_UNAUTHORIZED_STORAGE"] != "false" || k.Egress != "edge" {
 		t.Fatalf("env %v, egress %q", k.Env, k.Egress)
 	}
+	if !slices.Equal(a.DenyPaths, []string{"^/(?i)(info|internal|ai-proxy|admin|example|welcome)", "^/[0-9]+[.][0-9]+[.][0-9]+[.-][A-Za-z0-9_]+/(?i)(info|internal|ai-proxy)"}) {
+		t.Fatalf("deny_paths = %q", a.DenyPaths)
+	}
 	if k.ReadinessPath != "/healthcheck" || !slices.Equal(k.Ports, []int{80}) || k.Resources.Memory != "4Gi" || len(k.Volumes) != 2 || !k.Volumes[0].Seed || !k.Volumes[1].Seed {
 		t.Fatalf("kubernetes = %+v", k)
 	}
@@ -524,12 +527,14 @@ func TestLoadRejects(t *testing.T) {
 		"runner mount taken":   {manifest + strings.Replace(kube, "65532", "10001", 1) + runnerKube + "  volumes:\n    - {name: x, mount: /run/kyquickstart, size: 1Gi}\n", compose, "the runner's"},
 		"runner no kubernetes": {manifest + "suite_runner: true\n", compose, "field suite_runner not found"},
 
-		"seed non-root":        {manifest + kube + "  volumes:\n    - {name: db, mount: /db, size: 1Gi, seed: true}\n", compose, "only a root app"},
-		"secrets_dir relative": {manifest + kube + "  secrets_dir: run/secrets\n", compose, "secrets_dir"},
-		"secrets_dir tmp":      {manifest + kube + "  secrets_dir: /tmp\n", compose, "secrets_dir"},
-		"volume on secrets":    {manifest + kube + "  secrets_dir: /keys\n  volumes:\n    - {name: k, mount: /keys, size: 1Gi}\n", compose, "the secrets'"},
-		"egress unknown":       {manifest + kube + "  egress: none\n", compose, "egress"},
-		"egress on edge":       {edgeKube("ports: [81, 80]", "{80: 30080}") + "  egress: edge\n", compose, "egress"},
+		"seed non-root":         {manifest + kube + "  volumes:\n    - {name: db, mount: /db, size: 1Gi, seed: true}\n", compose, "only a root app"},
+		"secrets_dir relative":  {manifest + kube + "  secrets_dir: run/secrets\n", compose, "secrets_dir"},
+		"secrets_dir tmp":       {manifest + kube + "  secrets_dir: /tmp\n", compose, "secrets_dir"},
+		"volume on secrets":     {manifest + kube + "  secrets_dir: /keys\n  volumes:\n    - {name: k, mount: /keys, size: 1Gi}\n", compose, "the secrets'"},
+		"egress unknown":        {manifest + kube + "  egress: none\n", compose, "egress"},
+		"deny_paths unanchored": {manifest + "deny_paths: [/info]\n", compose, "deny_paths"},
+		"deny_paths bad regexp": {manifest + "deny_paths: [\"^/(info\"]\n", compose, "deny_paths"},
+		"egress on edge":        {edgeKube("ports: [81, 80]", "{80: 30080}") + "  egress: edge\n", compose, "egress"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

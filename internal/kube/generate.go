@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -57,13 +58,42 @@ func credentialPod(namespace, release string) *corev1.Pod {
 // Exec output is not a container log. No service token, app Secret or persistent
 // volume enters the pod; the workstation only receives the bounded result in memory.
 func (c *Client) generateCredentials(ctx context.Context, namespace, release string, count int) (values [][]byte, resultErr error) {
-	pods := c.cs.CoreV1().Pods(namespace)
-	pod, err := pods.Create(ctx, credentialPod(namespace, release), metav1.CreateOptions{})
+	err := c.podSession(ctx, credentialPod(namespace, release), "credential generator", func(name string) error {
+		for i := 0; i < count; i++ {
+			output, err := c.Exec(ctx, namespace, name, "generator", []string{"/bin/sh", "-c", credentialCommand})
+			if err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				return errors.New("cluster-local credential generation failed")
+			}
+			if len(output) != 43 {
+				return errors.New("credential generator returned an invalid value")
+			}
+			if _, err := base64.RawURLEncoding.Strict().DecodeString(string(output)); err != nil {
+				return errors.New("credential generator returned malformed encoding")
+			}
+			values = append(values, output)
+		}
+		return nil
+	})
 	if err != nil {
-		return nil, errors.New("cluster refused the credential generator pod")
+		return nil, err
+	}
+	return values, nil
+}
+
+// podSession creates pod, waits until it is ready, runs use with its name, then deletes it by
+// UID and waits until it is gone. A pod it cannot remove fails the session; its
+// ActiveDeadlineSeconds bounds its life.
+func (c *Client) podSession(ctx context.Context, pod *corev1.Pod, what string, use func(name string) error) (resultErr error) {
+	pods := c.cs.CoreV1().Pods(pod.Namespace)
+	pod, err := pods.Create(ctx, pod, metav1.CreateOptions{})
+	if err != nil {
+		return errors.New("cluster refused the " + what + " pod")
 	}
 	if pod.Name == "" || pod.UID == "" {
-		return nil, errors.New("credential generator has no server-issued identity")
+		return errors.New(what + " has no server-issued identity")
 	}
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
@@ -77,14 +107,13 @@ func (c *Client) generateCredentials(ctx context.Context, namespace, release str
 					return true, nil
 				}
 				if err != nil {
-					return false, errors.New("cannot verify credential pod removal")
+					return false, errors.New("cannot verify " + what + " removal")
 				}
 				return current.UID != uid, nil
 			})
 		}
 		if err != nil {
-			values = nil
-			resultErr = errors.New("credential generator cleanup failed; its lifetime is capped at 180 seconds")
+			resultErr = fmt.Errorf("%s cleanup failed; its lifetime is capped at %d seconds", what, *pod.Spec.ActiveDeadlineSeconds)
 		}
 	}()
 	ready, cancel := context.WithTimeout(ctx, 90*time.Second)
@@ -92,13 +121,13 @@ func (c *Client) generateCredentials(ctx context.Context, namespace, release str
 	err = wait.PollUntilContextCancel(ready, 100*time.Millisecond, true, func(ctx context.Context) (bool, error) {
 		current, err := pods.Get(ctx, pod.Name, metav1.GetOptions{})
 		if err != nil {
-			return false, errors.New("cannot inspect credential generator")
+			return false, errors.New("cannot inspect " + what)
 		}
 		if current.UID != pod.UID || !owned(current) {
-			return false, errors.New("credential generator ownership changed")
+			return false, errors.New(what + " ownership changed")
 		}
 		if current.Status.Phase == corev1.PodFailed || current.Status.Phase == corev1.PodSucceeded {
-			return false, errors.New("credential generator stopped before execution")
+			return false, errors.New(what + " stopped before execution")
 		}
 		for _, condition := range current.Status.Conditions {
 			if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
@@ -109,25 +138,9 @@ func (c *Client) generateCredentials(ctx context.Context, namespace, release str
 	})
 	if err != nil {
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return ctx.Err()
 		}
-		return nil, errors.New("credential generator did not become ready")
+		return errors.New(what + " did not become ready")
 	}
-	for i := 0; i < count; i++ {
-		output, err := c.Exec(ctx, namespace, pod.Name, "generator", []string{"/bin/sh", "-c", credentialCommand})
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
-			}
-			return nil, errors.New("cluster-local credential generation failed")
-		}
-		if len(output) != 43 {
-			return nil, errors.New("credential generator returned an invalid value")
-		}
-		if _, err := base64.RawURLEncoding.Strict().DecodeString(string(output)); err != nil {
-			return nil, errors.New("credential generator returned malformed encoding")
-		}
-		values = append(values, output)
-	}
-	return values, nil
+	return use(pod.Name)
 }

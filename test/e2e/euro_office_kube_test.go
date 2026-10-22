@@ -169,6 +169,15 @@ func TestKubernetesEuroOffice(t *testing.T) {
 	if got := viaEdge("https://" + officeHost + ":30443/healthcheck"); got != "true" {
 		t.Fatalf("/healthcheck through the edge = %q", got)
 	}
+	// Non-editor surfaces answer 404 at the edge; the editor's loader still comes through.
+	for _, path := range []string{"/info/info.json", "/INFO/info.json", "/internal/cluster/inactive", "/9.3.4-x1/info/info.json", "/ai-proxy", "/admin", "/example/", "/welcome/", "/"} {
+		if got := viaEdge("-o", "/dev/null", "-w", "%{http_code}", "https://"+officeHost+":30443"+path); got != "404" && !(path == "/" && got == "302") {
+			t.Errorf("%s through the edge: HTTP %s, want 404", path, got)
+		}
+	}
+	if got := viaEdge("-o", "/dev/null", "-w", "%{http_code}", "https://"+officeHost+":30443/web-apps/apps/api/documents/api.js"); got != "200" {
+		t.Fatalf("the editor's api.js through the edge: HTTP %s", got)
+	}
 	callback := func(secret string) string {
 		return viaEdge("-o", "/dev/null", "-w", "%{http_code}", "-X", "POST", "-H", "Content-Type: application/json",
 			"-H", "Authorization: Bearer "+signHS256(secret, fmt.Sprintf(`{"key":"kyq-e2e-probe","status":1,"exp":%d}`, time.Now().Add(5*time.Minute).Unix())),
@@ -181,7 +190,14 @@ func TestKubernetesEuroOffice(t *testing.T) {
 		t.Fatalf("KyDrive took a callback signed with another secret: HTTP %s", got)
 	}
 
-	// Egress: KyDrive through the edge, not the API server.
+	// The deploy step's egress check ran and left no pod behind.
+	if pods, _ := cs.CoreV1().Pods("kyq-euro-office").List(ctx, metav1.ListOptions{}); len(pods.Items) != 1 {
+		t.Fatalf("pods in kyq-euro-office: %d, want the editor's alone", len(pods.Items))
+	}
+	// Egress: KyDrive through the edge's HTTPS port; not its plain HTTP port, not the API server.
+	if got := inPod("curl -s -m 5 -o /dev/null -w '%{http_code}' http://" + catalogDriveHost + ":30080/ || true"); got != "000" {
+		t.Fatalf("the editor reached the edge's HTTP port: HTTP %s", got)
+	}
 	if got := inPod("curl -sk -m 15 -o /dev/null -w '%{http_code}' https://" + catalogDriveURLHost + "/healthz || true"); got != "200" {
 		t.Fatalf("the editor cannot reach KyDrive through the edge: HTTP %s", got)
 	}
@@ -201,6 +217,18 @@ func TestKubernetesEuroOffice(t *testing.T) {
 	}
 	if logs, err := connected.Logs(ctx, "euro-office", "", 2000); err != nil || bytes.Contains(logs, []byte("Operation not permitted")) {
 		t.Fatalf("editor logs (%v) name a refused operation:\n%s", err, logs)
+	}
+
+	// Uninstall: KyDrive is redeployed without the editor first, then the editor goes.
+	apply("uninstall", "uninstall", "euro-office")
+	if env := docker(t, "inspect", "kyq-kydrive-app-1", "--format", "{{json .Config.Env}}"); strings.Contains(env, "KYDRIVE_EDITOR") {
+		t.Fatalf("KyDrive still names the editor: %s", env)
+	}
+	if got := callback(jwt); got != "503" {
+		t.Fatalf("KyDrive's editor callback after uninstall: HTTP %s, want 503 (no editor)", got)
+	}
+	if _, err := cs.AppsV1().Deployments("kyq-euro-office").Get(ctx, "app", metav1.GetOptions{}); err == nil {
+		t.Fatal("the editor's Deployment survived uninstall")
 	}
 
 	// The shared secret never reached the workstation's output or state.

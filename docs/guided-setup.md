@@ -1228,14 +1228,39 @@ run every product as the target user with no capabilities, which this editor can
   RabbitMQ, Redis and the `Data` directory stay in the container and reset when the pod is
   recreated.
 - **Network.** Ingress comes only from the edge's pods, on port 80. Egress reaches only
-  cluster DNS and the edge's pods. `ALLOW_PRIVATE_IP_ADDRESS=true` is set because KyDrive's
-  route resolves to a private address. The editor fetches only URLs named in requests signed
-  with the shared JWT, and the egress policy is what confines it. The cluster's network plugin
-  must enforce NetworkPolicy egress: kind's does (the e2e test checks it), and other plugins are
-  unproven. From the editor's pod, KyDrive's hostname must resolve to an address that reaches
-  this edge, such as a node's NodePort. Any other path is blocked. The editor must also trust
-  the edge's certificate through its image's roots, which works for Let's Encrypt but not for a
-  private CA. `ALLOW_META_IP_ADDRESS` and `USE_UNAUTHORIZED_STORAGE` stay `false`.
+  cluster DNS and the edge's HTTPS container port (443). `ALLOW_PRIVATE_IP_ADDRESS=true` is set
+  because KyDrive's route resolves to a private address. The editor fetches the URLs KyDrive's
+  signed requests name, but also URLs an editing user supplies, such as an image inserted by
+  URL; the egress policy is what confines both.
+  - **Enforcement is checked, not assumed.** `euro-office.deploy` writes the policy, then
+    starts `kyq-egress-check-*` in the namespace: BusyBox (the credential generator's pinned
+    image), restricted, no service-account token, removed by UID, at most 120 seconds. Under
+    the same policy it must resolve `kubernetes.default.svc.cluster.local` through cluster
+    DNS and must fail to connect to that API server address on 443. Otherwise the step fails
+    with `egress_unenforced` (code `step_failed`) and no Deployment is written. A plugin that
+    ignores NetworkPolicy egress, such as plain flannel, is refused. An open result is retried
+    for about 8 seconds while the policy settles.
+  - **Residual.** Any KyDrive user who can edit a document can make the editor GET any
+    hostname this NPM routes, over HTTPS, as a client inside the cluster's pod network (which a
+    `lan` edge's `allow_cidrs` must admit for the editor to reach KyDrive). That reaches every
+    app routed by that edge, past any Cloudflare-side control on those hostnames. The editor's
+    request filter works on addresses only, and every routed hostname shares the edge's
+    address, so it cannot narrow this per hostname.
+  - From the editor's pod, KyDrive's hostname must resolve to an address that reaches this
+    edge's HTTPS port, such as a node's NodePort; any other path is blocked. The editor must
+    trust the edge's certificate through its image's roots, which works for Let's Encrypt but
+    not for a private CA. `ALLOW_META_IP_ADDRESS` and `USE_UNAUTHORIZED_STORAGE` stay `false`.
+- **Route path blocks.** NPM answers 404 for `/info`, `/internal`, `/ai-proxy`, `/admin`,
+  `/example` and `/welcome` (any case), and for `/info`, `/internal` and `/ai-proxy` behind a
+  `/<version>-<hash>/` prefix. The pinned image's nginx (`/etc/nginx/includes/ds-*.conf`,
+  inspected 2026-10-22) routes these besides the editor's own paths:
+  - `/info` and `/internal` are already limited to 127.0.0.1 there;
+  - the admin panel and example app are not started, but nginx still routes to them;
+  - `/welcome/` is a static product page;
+  - `/ai-proxy` relays to AI services.
+
+  Everything else stays routed: the editor's assets, `/cache/files` (secure links), the
+  co-editing socket, `/healthcheck`, and the command and conversion services KyDrive calls.
 - **Readiness.** The probe is `GET /healthcheck` on port 80, and only its status code counts.
   The e2e test also checks the body, `true`, through the edge.
 - **Provenance: correspondence observed, not verified** (checked 2026-10-22).
@@ -1249,6 +1274,10 @@ run every product as the target user with no capabilities, which this editor can
   - Nobody has rebuilt the image independently.
   - The workspace rule requires source/build provenance verification before a production
     release, so that gate is still open (`KyDrive-server/docs/EURO-PROVENANCE.md`).
+- **Uninstall.** `uninstall euro-office` (and `unmanage`) first redeploys KyDrive without
+  the editor's URL and secret, so KyDrive never points at an editor that is gone. That is
+  refused with `app_stopped` while KyDrive is stopped, since the redeploy would start it.
+  `editor_secret` stays on KyDrive's target, and the editor's Secret stays in the cluster.
 - **Upgrades.** `migrates_data: true`, so any version change needs a backup, and Kubernetes
   backups do not exist yet. No upgrade path exists.
 - **Verification.** `TestKubernetesEuroOffice` needs the 7 GB image and a 5 GiB kind node, so
@@ -1260,9 +1289,14 @@ run every product as the target user with no capabilities, which this editor can
   - `/healthcheck` through the edge;
   - KyDrive accepts a callback signed with that secret (200) and refuses one signed with
     another (401);
-  - from the editor's pod, KyDrive answers through the edge and the API server does not;
+  - the deploy step's egress check passed and left no pod;
+  - the route's path blocks answer 404, and the editor's `api.js` still loads;
+  - from the editor's pod, KyDrive answers through the edge's HTTPS port, and neither the
+    edge's HTTP port nor the API server answers;
   - a skipped rerun;
   - `restart euro-office`;
+  - `uninstall euro-office`, after which KyDrive is redeployed without `KYDRIVE_EDITOR_*`
+    and answers its editor callback with 503;
   - no copy of the secret in output or state.
 - **Not yet.**
   - Opening, editing and saving a document through the edge in a browser. The KyDrive pilot

@@ -323,6 +323,13 @@ func remove(ctx context.Context, state string, r Request, trust trustFlag, o Opt
 			edges = append(edges, e)
 		}
 	}
+	drive, err := s.driveWithoutEditor(name, next, state, trust)
+	if err != nil {
+		return err
+	}
+	if drive != nil && !slices.ContainsFunc(targets, func(x stack.Target) bool { return x.Name == s.placed["kydrive"].Name }) {
+		targets = append(targets, s.placed["kydrive"])
+	}
 	s.targets, s.edges, s.changesPlan, s.installation = targets, edges, true, next.InstallationID
 	if err := s.connect(ctx, trust); err != nil {
 		return err
@@ -342,6 +349,9 @@ func remove(ctx context.Context, state string, r Request, trust trustFlag, o Opt
 				return nil, fmt.Errorf("edge %s: %w", e.Target, err)
 			}
 			steps = append(steps, connector...)
+		}
+		if drive != nil { // KyDrive first: it never points at an editor that is gone
+			steps = append(steps, s.drivers[s.placed["kydrive"].Name].steps("kydrive", *drive, s.o.ReleaseSet, s.redact)...)
 		}
 		if !unmanage {
 			return append(steps, d.removeSteps(name, s.cat[name])...), nil
