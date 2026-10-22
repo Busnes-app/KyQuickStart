@@ -40,9 +40,9 @@ func yardPlanFixture(t *testing.T, f *fixture, clients string) {
 	p := filepath.Join(f.state, "stack.yaml")
 	b, _ := os.ReadFile(p)
 	y := strings.Replace(string(b), "    target: k1\nedges:", "    target: k1\n  - name: kyyard\n    target: k1\nedges:", 1)
-	y = strings.Replace(y, "integrations:", "      - app: kyyard\n        hostname: yard.example.com\n        forward_host: app.kyq-kyyard.svc.cluster.local\n        forward_port: 9273\n        certificate_id: 1\nintegrations:", 1)
+	y = strings.Replace(y, "integrations:", "      - app: kyyard\n        hostname: yard.example.com\n        forward_host: app.kyq-kyyard.svc.cluster.local\n        forward_port: 9273\n        certificate_id: 1\n        exposure: internal\nintegrations:", 1)
 	y = strings.Replace(y, "      clients: []\n", clients, 1)
-	os.WriteFile(p, []byte(y), 0o600)
+	os.WriteFile(p, []byte(internalEdge(y)), 0o600)
 }
 
 func yardFixture(t *testing.T) *fixture {

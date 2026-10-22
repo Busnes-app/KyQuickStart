@@ -38,6 +38,9 @@ type Manifest struct {
 	Media *Media `yaml:"media"`
 	// ChatOIDC is a second, everyday-only KyIdentity client at one of the app's routes.
 	ChatOIDC *ChatOIDC `yaml:"chat_oidc"`
+	// Exposure internal keeps every route of the app off the public connection: an app for
+	// administrators and the suite itself. Empty allows either.
+	Exposure string `yaml:"exposure,omitempty"`
 	// PodSecurity is the app namespace's enforced level: restricted (the default) or baseline.
 	PodSecurity string `yaml:"pod_security"`
 	// DenyPaths are what an app with one route answers 404 for at the edge, like a route
@@ -420,6 +423,9 @@ func (m Manifest) validate(dir string) error {
 		if !stack.ValidName(d) || d == m.Name {
 			return fmt.Errorf("depends_on %q is not another app", d)
 		}
+	}
+	if m.Exposure != "" && m.Exposure != "internal" {
+		return fmt.Errorf("exposure %q must be internal or empty", m.Exposure)
 	}
 	if m.Health.TimeoutSeconds < 1 || m.Health.TimeoutSeconds > 1800 {
 		return fmt.Errorf("health.timeout_seconds %d must be 1-1800", m.Health.TimeoutSeconds)

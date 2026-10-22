@@ -17,24 +17,32 @@ import (
 
 // VerifyRoutes probes public HTTPS while injecting forged forwarding headers. A product
 // must report its resolved client address, trusted-proxy decision, and resolved scheme.
-// On a lan edge, expected is this workstation's LAN address, which must be allowed.
-func VerifyRoutes(ctx context.Context, e stack.Edge, expected netip.Addr) error {
-	port := ""
-	if e.Provider == "lan" {
-		if !slices.ContainsFunc(e.AllowCIDRs, func(c string) bool { return netip.MustParsePrefix(c).Contains(expected.Unmap()) }) {
-			return fmt.Errorf("this workstation's address %s is outside allow_cidrs; verify-edge must run from a client the lan edge serves", expected)
-		}
-		port = ":" + strconv.Itoa(e.ClientPort)
+// expected decides which routes this run reaches: inside allow_cidrs (this workstation's LAN
+// address), the internal routes on client_port; outside, the external routes. It returns
+// which of the two it verified.
+func VerifyRoutes(ctx context.Context, e stack.Edge, expected netip.Addr) (string, error) {
+	inside := slices.ContainsFunc(e.AllowCIDRs, func(c string) bool { return netip.MustParsePrefix(c).Contains(expected.Unmap()) })
+	scope, port := "external", ""
+	if inside {
+		scope, port = "internal", ":"+strconv.Itoa(e.ClientPort)
+	}
+	routes := slices.DeleteFunc(slices.Clone(e.Routes), func(r stack.Route) bool { return e.Internal(r) != inside })
+	switch {
+	case len(routes) > 0:
+	case inside:
+		return "", fmt.Errorf("this workstation's address %s is inside allow_cidrs, which reach only internal routes, and this edge has none; verify-edge must run from outside them", expected)
+	default:
+		return "", fmt.Errorf("this workstation's address %s is outside allow_cidrs; verify-edge must run from a client the edge's internal routes serve", expected)
 	}
 	client := &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	defer client.CloseIdleConnections()
-	for _, r := range e.Routes {
+	for _, r := range routes {
 		if err := verifyRoute(ctx, client, "https://"+r.Hostname+port+r.StatusPath, expected); err != nil {
-			return fmt.Errorf("route %s: %w", r.Hostname, err)
+			return "", fmt.Errorf("route %s: %w", r.Hostname, err)
 		}
 	}
-	return nil
+	return scope, nil
 }
 
 func verifyRoute(ctx context.Context, client *http.Client, endpoint string, expected netip.Addr) error {

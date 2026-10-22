@@ -28,6 +28,7 @@ type Stack struct {
 	Targets      []Target      `yaml:"targets"`
 	Apps         []App         `yaml:"apps"`
 	Edges        []Edge        `yaml:"edges,omitempty"`
+	Domains      *Domains      `yaml:"domains,omitempty"` // when set, keeps internal and external route names apart
 	Existing     []Existing    `yaml:"existing,omitempty"`
 	Integrations []Integration `yaml:"integrations,omitempty"`
 	// InstallationID (UUID v4) marks this installation's NPM hosts; written once, by plan or apply.

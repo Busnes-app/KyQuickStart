@@ -18,6 +18,10 @@ this one wins.
 - Amendments (owner, 2026-10-22): KyDrive offers Euro-Office on a cluster (`euro-office`, the one
   catalog addition under the freeze), and a `cloudflare-direct` edge routes a Cloudflare Tunnel
   straight to eligible apps without NPM ([edge](edge.md)).
+- Amendment (owner, 2026-10-22): internal and external routes. Each route is internal
+  (`allow_cidrs` clients only) or external (the public connection), one tunnel edge may carry
+  both, the catalog keeps KyRecovery, kyPulse, KyDNS and KyYard internal, and optional plan
+  `domains` keep internal and external names apart ([edge](edge.md#internal-and-external-routes-exposure)).
 
 ## What KyQuickStart does now
 
@@ -91,6 +95,8 @@ target markers from earlier builds stay valid.
   per-route opt-in or Cloudflare Access for admin-only apps; a live tunnel through every
   eligible product.
 - A KyPost setting for private mail hosts (`SANDBOX_PRIVATE_HOSTS`).
+- Internal and external routes on one tunnel edge: covered by unit tests (validation, NPM host
+  config, connector configuration, `verify-edge` selection, wizard); no e2e or live tunnel run.
 
 ## Compatibility consequences
 

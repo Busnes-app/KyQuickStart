@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -130,8 +131,8 @@ func TestGuidedExistingEdgeChoicesRoundTrip(t *testing.T) {
 		name    string
 		answers []string
 	}{
-		{"frp", []string{"frp", "https://npm.example.test", "172.30.0.10/32", "8443", "yes", "npm-net", "npm", "frp.example.test", "7000", "yes", "hello.example.test", "hello", "8080", "http", "12", "/api/status"}},
-		{"cloudflare", []string{"cloudflare", "https://npm.example.test", "172.30.0.10/32", "yes", "npm-net", "npm", "12345678-1234-1234-1234-123456789012", "yes", "hello.example.test", "hello", "8080", "http", "12", "/api/status"}},
+		{"frp", []string{"frp", "https://npm.example.test", "172.30.0.10/32", "8443", "yes", "npm-net", "npm", "frp.example.test", "7000", "yes", "external", "hello.example.test", "hello", "8080", "http", "12", "/api/status"}},
+		{"cloudflare", []string{"cloudflare", "https://npm.example.test", "172.30.0.10/32", "yes", "npm-net", "npm", "12345678-1234-1234-1234-123456789012", "yes", "external", "hello.example.test", "hello", "8080", "http", "12", "/api/status"}},
 		{"lan", []string{"lan", "https://npm.example.test", "192.168.1.0/24, fd00:1::/48", "30543", "yes", "hello.example.test", "hello", "8080", "http", "12", "/api/status"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -159,6 +160,39 @@ func TestGuidedExistingEdgeChoicesRoundTrip(t *testing.T) {
 				t.Fatal("editing defaults lost an edge choice")
 			}
 		})
+	}
+}
+
+// A tunnel edge's apps are each internal or external; internal ones bring the allow-list, and
+// an edge whose every route is internal is refused in favour of lan.
+func TestGuidedMixedTunnelEdge(t *testing.T) {
+	run := func(answers ...string) (*stack.Stack, error) {
+		st, err := stack.Parse([]byte(stackYAML + "  - name: web\n    target: nas\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		p := &prompts{ctx: context.Background(), in: bufio.NewReader(strings.NewReader(strings.Join(answers, "\n") + "\n")), out: &out, answers: map[string]string{}, draft: filepath.Join(t.TempDir(), "answers.json")}
+		return st, guidedEdges(p, st, nil)
+	}
+	edge := []string{"cloudflare", "https://npm.example.test", "172.30.0.10/32", "no"}
+	route := func(exposure, name string) []string {
+		return []string{"yes", exposure, name + ".example.test", name, "8080", "http", "12", "/api/status"}
+	}
+	st, err := run(slices.Concat(edge, route("internal", "hello"), route("external", "web"), []string{"192.168.1.0/24", "443"})...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := st.Edges[0]
+	if e.Routes[0].Exposure != "internal" || e.Routes[1].Exposure != "external" || !slices.Equal(e.AllowCIDRs, []string{"192.168.1.0/24"}) {
+		t.Fatalf("edge %+v", e)
+	}
+	data, _ := yaml.Marshal(st)
+	if _, err := stack.Parse(data); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(slices.Concat(edge, route("internal", "hello"), route("internal", "web"))...); err == nil || !strings.Contains(err.Error(), "choose lan") {
+		t.Fatalf("all-internal tunnel edge: %v", err)
 	}
 }
 
