@@ -65,6 +65,22 @@ func TestPreflight(t *testing.T) {
 	}
 }
 
+// A lock namespace someone else created fails preflight, as it would fail apply's lock.
+func TestPreflightReservedLockNamespace(t *testing.T) {
+	ctx := context.Background()
+	cs := cluster("37", "")
+	cs.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: lockNamespace}}, metav1.CreateOptions{})
+	if f := find(Preflight(ctx, New(cs), false, "", nil), "lock"); f.OK || !strings.Contains(f.Detail, "not managed by kyquickstart") {
+		t.Fatalf("foreign lock namespace: %+v", f)
+	}
+	ns, _ := cs.CoreV1().Namespaces().Get(ctx, lockNamespace, metav1.GetOptions{})
+	ns.Labels = map[string]string{"ky.managed-by": "kyquickstart"}
+	cs.CoreV1().Namespaces().Update(ctx, ns, metav1.UpdateOptions{})
+	if f := find(Preflight(ctx, New(cs), false, "", nil), "lock"); !f.OK {
+		t.Fatalf("own lock namespace: %+v", f)
+	}
+}
+
 func TestPreflightRequiresCredentialPodAndExecPermissions(t *testing.T) {
 	for _, permission := range []string{"create pods", "get pods", "delete pods", "create pods/exec"} {
 		if f := find(Preflight(context.Background(), New(cluster("37", permission)), false, "", nil), "permissions"); f.OK || !strings.Contains(f.Detail, permission) {

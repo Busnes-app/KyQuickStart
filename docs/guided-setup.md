@@ -64,7 +64,8 @@ apps:
 ```
 
 The first `preflight` of a Docker target needs `--trust-host-key lab=SHA256:<fingerprint>`.
-`apply` adds `revision` and `installation_id`. Outside demo mode, drop `demo: true` and add
+`apply` adds `revision` and `installation_id`, except that a plan installing KyMessages needs
+`installation_id` before `review`: its refusal prints a fresh one to add. Outside demo mode, drop `demo: true` and add
 the catalog apps, `edges` and `integrations` described in the sections below.
 
 The first computer-name question accepts DNS names such as `K80.example.com`, including
@@ -167,8 +168,8 @@ the plan is saved only after every step passed.
   `restore`; a finished restore starts it and clears the flag. `logs` changes nothing, takes
   no lock and redacts only the secrets the app's catalog entry generates. `status` reads each app's live
   state (`running`, `stopped`, `missing`, `unknown`).
-- `uninstall` refuses while another installed app depends on it. It disables the app's NPM
-  routes, removes its containers (`docker compose down`, never `-v`) or its Deployment and
+- `uninstall` refuses while another installed app depends on it. It drops the app, its routes
+  and its `integrations` entry from the plan, disables the app's NPM routes, removes its containers (`docker compose down`, never `-v`) or its Deployment and
   Service, and keeps the app directory, data volumes, claims and secrets on the target.
 - `unmanage` removes `ky.managed-by` and `ky.release-set` and records the hand-over in
   `<state>/handover.md`. Docker cannot relabel a container, so existing containers are
@@ -187,7 +188,9 @@ the plan is saved only after every step passed.
   Apps upgrade one at a time in dependency order and stop at the first failure.
 
 `stack.yaml` carries a `revision`, raised on every plan write. Every locked run records it
-on each target (`<root>/.plan`, or annotations on the `kyquickstart` namespace). A target
+on each target (`<root>/.plan`, or annotations on the `kyquickstart` namespace). That namespace
+is reserved: kyquickstart creates it, and `preflight` and `apply` refuse one it did not create,
+so keep the workstation's ServiceAccount and anything else out of it. A target
 recording a newer revision is refused (`plan_stale`): another workstation or the suite
 runner changed it, so copy its plan back with `kyquickstart pull-plan` first. Markers also
 record the plan's `installation_id`; a target another plan manages is refused

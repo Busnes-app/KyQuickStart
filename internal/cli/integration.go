@@ -28,7 +28,7 @@ func integrationOrder(st *stack.Stack) ([]stack.Integration, error) {
 		if _, ok := productAdapters[i.Product]; !ok {
 			return nil, fmt.Errorf("product %s has no supported setup adapter", i.Product)
 		}
-		if target, ok := st.Target(i.Target); ok {
+		if target, ok := st.Target(i.Target); ok && !i.Installed(st) {
 			if err := validateProductTarget(i.Product, target); err != nil {
 				return nil, err
 			}
