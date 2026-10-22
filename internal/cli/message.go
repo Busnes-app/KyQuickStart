@@ -430,8 +430,9 @@ func (s *session) messageSteps(d driver, i stack.Integration) (before []engine.S
 	return []engine.Step{matrixInitStep{app: i.Product, target: host.t.Name, seed: seed, env: env, hash: hash, file: file, run: run}, creds}, step, nil
 }
 
-// directoryRetry spaces directoryStep's resyncs after a failed delivery.
-var directoryRetry = 10 * time.Second
+// directoryRetry spaces retryRefused's resyncs after a failed delivery, for at most
+// refusedWindow.
+var directoryRetry, refusedWindow = 10 * time.Second, resyncWait
 
 // directoryStep (<app>.directory), after the routes, waits until KyIdentity's connector has
 // delivered the console's directory, so apply reports the app set up only once the console
@@ -448,21 +449,30 @@ func (s directoryStep) InputHash() string                     { return "resync" 
 func (s directoryStep) Inspect(context.Context) (bool, error) { return false, nil }
 func (s directoryStep) Verify(context.Context) error          { return nil }
 func (s directoryStep) Apply(ctx context.Context) error {
-	client, detail := s.sync(ctx)
-	// KyIdentity's resync reports a refused delivery (the console or its route not ready yet)
-	// as failed at once; resyncing again re-sends it.
-	for deadline := time.Now().Add(resyncWait); strings.HasPrefix(detail, "failed") && time.Now().Before(deadline); {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(directoryRetry):
-		}
-		client, detail = s.sync(ctx)
+	client, detail := retryRefused(ctx, s.sync)
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
 	if detail != "" {
 		return fmt.Errorf("KyIdentity's %s connector has not delivered its directory to %s (%s); until it does, offboarding someone may not reach %s. Fix the connector, then rerun apply", client, s.app, detail, s.reach)
 	}
 	return nil
+}
+
+// retryRefused resyncs until KyIdentity delivers or resyncWait passes: KyIdentity's resync
+// reports a refused delivery (the app or its route not ready yet) as failed at once, and
+// resyncing again re-sends it.
+func retryRefused(ctx context.Context, sync func(context.Context) (client, detail string)) (string, string) {
+	client, detail := sync(ctx)
+	for deadline := time.Now().Add(refusedWindow); strings.HasPrefix(detail, "failed") && time.Now().Before(deadline); {
+		select {
+		case <-ctx.Done():
+			return client, detail
+		case <-time.After(directoryRetry):
+		}
+		client, detail = sync(ctx)
+	}
+	return client, detail
 }
 
 // firstIdentity is the installed KyIdentity's integration, which composeClients found.

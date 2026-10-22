@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -139,7 +140,13 @@ func TestBookStackComposeHygiene(t *testing.T) {
 	if !slices.Equal(a.Services, []string{"bookstack", "directory", "mariadb"}) || !slices.Equal(a.Init, []string{"bootstrap", "standard"}) {
 		t.Fatalf("services %v, one-shots %v", a.Services, a.Init)
 	}
-	mib := map[string]int{"64m": 64, "512m": 512}
+	mib := func(v string) int {
+		n, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimSuffix(v, "m"), "g"))
+		if strings.HasSuffix(v, "g") {
+			n *= 1024
+		}
+		return n
+	}
 	total := 0
 	var published []string
 	for name, s := range c.Services {
@@ -148,11 +155,11 @@ func TestBookStackComposeHygiene(t *testing.T) {
 			!slices.Equal(s.SecurityOpt, []string{"no-new-privileges:true"}) || !s.ReadOnly || s.Privileged || s.NetworkMode != "" || s.Build != nil {
 			t.Errorf("%s: user %q cap_drop %v cap_add %v security_opt %v read_only %v", name, s.User, s.CapDrop, s.CapAdd, s.SecurityOpt, s.ReadOnly)
 		}
-		if mib[s.MemLimit] == 0 || s.MemLimit != s.MemSwap || s.PidsLimit <= 0 || s.CPUs <= 0 {
+		if mib(s.MemLimit) == 0 || s.MemLimit != s.MemSwap || s.PidsLimit <= 0 || s.CPUs <= 0 {
 			t.Errorf("%s: mem_limit %q memswap_limit %q pids_limit %d cpus %v", name, s.MemLimit, s.MemSwap, s.PidsLimit, s.CPUs)
 		}
 		if len(s.Profiles) == 0 {
-			total += mib[s.MemLimit]
+			total += mib(s.MemLimit)
 			if s.Healthcheck == nil {
 				t.Errorf("%s has no healthcheck", name)
 			}

@@ -337,6 +337,9 @@ func TestUsageListsBackupAndRestore(t *testing.T) {
 // AC8/H6: restore's replay runs KyIdentity's resync-system for the app's client and succeeds
 // only on delivered; anything else is restore_incomplete naming the connector.
 func TestReplayRemovals(t *testing.T) {
+	window := refusedWindow
+	refusedWindow = 0
+	t.Cleanup(func() { refusedWindow = window })
 	ctx := context.Background()
 	for status, want := range map[string]suite.Code{"delivered": "", "failed": suite.RestoreIncomplete, "timeout": suite.RestoreIncomplete, "blocked": suite.RestoreIncomplete} {
 		f := newFixture(t, "../catalog/testdata/apps")
@@ -375,6 +378,9 @@ func TestReplayRemovals(t *testing.T) {
 // dump command; replayAfter: its backup's replay_after), and KyIdentity does not deliver the
 // replay. delivered makes it deliver; up lists, per replay, which services were running.
 func failedReplay(t *testing.T, cold bool, replayAfter string) (f *fixture, fake string, k *killRunner, id string, delivered func(), up *[]string) {
+	window := refusedWindow
+	refusedWindow = 0
+	t.Cleanup(func() { refusedWindow = window })
 	t.Helper()
 	ctx := context.Background()
 	f, fake, k = backupFixture(t)

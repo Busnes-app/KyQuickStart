@@ -219,7 +219,7 @@ func (s bootstrapStep) Apply(ctx context.Context) (err error) {
 		}
 	}
 	rekey := "docker exec " + bootstrapContainer + " /usr/bin/with-contenv php /app/www/artisan bookstack:create-admin --initial --email=" +
-		bookstackService + " --name='KyQuickStart service' --generate-password 2>/dev/null | " + s.compose("run --rm -T bootstrap")
+		bookstackService + " --name='KyQuickStart service' --generate-password 2>/dev/null | (" + s.compose("run --rm -T bootstrap") + ")"
 	if err := s.run(ctx, rekey); err != nil {
 		return fmt.Errorf("re-key BookStack's service account on %s and mint its token: %w", s.target, err)
 	}

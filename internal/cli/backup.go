@@ -523,7 +523,7 @@ type resyncReport struct {
 // delivered is restore_incomplete: finishRestore stops the app until a rerun delivers it.
 func (s *session) replayRemovals(ctx context.Context, name string) error {
 	start := time.Now()
-	client, detail := s.resync(ctx, name)
+	client, detail := retryRefused(ctx, func(ctx context.Context) (string, string) { return s.resync(ctx, name) })
 	if detail != "" {
 		return suite.Errorf(suite.RestoreIncomplete, "%s is restored but stopped: KyIdentity's %s connector did not deliver the replay of removals (%s), and until it does someone removed after the snapshot could sign in. Fix the connector, then rerun kyquickstart restore %s, which starts the app and replays again", name, client, detail, name)
 	}

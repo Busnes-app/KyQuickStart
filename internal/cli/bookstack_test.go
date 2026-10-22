@@ -325,7 +325,7 @@ func TestBookStackBootstrapKilled(t *testing.T) {
 		if !strings.HasPrefix(log[len(log)-1], "docker rm -f "+bootstrapContainer) || strings.Count(all, "create-admin") < 1 {
 			t.Fatalf("kill at %d: no final removal or re-key:\n%s", kill, all)
 		}
-		if !strings.Contains(all, "--initial --email=admin@admin.com") || !strings.Contains(all, "--generate-password 2>/dev/null | COMPOSE run --rm -T bootstrap") {
+		if !strings.Contains(all, "--initial --email=admin@admin.com") || !strings.Contains(all, "--generate-password 2>/dev/null | (COMPOSE run --rm -T bootstrap)") {
 			t.Fatalf("re-key does not pipe the password into the receiver image:\n%s", all)
 		}
 		// The failed run removed its one-off too.
