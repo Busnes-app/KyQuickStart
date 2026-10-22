@@ -88,6 +88,7 @@ func TestKubernetesApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	cs := kubernetes.NewForConfigOrDie(cfg)
+	foreign := foreignDeployment(t, ctx, cs)
 
 	os.WriteFile(filepath.Join(state, "stack.yaml"), []byte(
 		"version: 1\ninstallation_id: "+kubeInstallation+"\ntargets:\n  - name: k8s\n    kubeconfig: "+kc+"\napps:\n  - name: hello\n    target: k8s\n"), 0o600)
@@ -192,4 +193,6 @@ func TestKubernetesApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	testRunnerPod(t, ctx, cs, name, kc)
+	testKubernetesLifecycle(t, ctx, cs, connected, state)
+	foreign()
 }
