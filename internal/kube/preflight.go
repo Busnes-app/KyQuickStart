@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	authorizationv1 "k8s.io/api/authorization/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -45,7 +46,7 @@ var required = func() []authorizationv1.ResourceAttributes {
 // Preflight checks a cluster and changes nothing. A named storageClass must exist; with none,
 // claims need a default class. nodePorts maps each NodePort the plan's apps publish to its app.
 func Preflight(ctx context.Context, c *Client, needsStorage bool, storageClass string, nodePorts map[int]string) []Finding {
-	out := []Finding{c.versionCheck(), c.accessCheck(ctx)}
+	out := []Finding{c.versionCheck(), c.accessCheck(ctx), c.lockCheck(ctx)}
 	if needsStorage {
 		out = append(out, c.storageCheck(ctx, storageClass))
 	}
@@ -75,6 +76,20 @@ func (c *Client) nodePortCheck(ctx context.Context, want map[int]string) Finding
 		return Finding{"nodeports", false, strings.Join(held, "; ") + "; set the app's node_ports in stack.yaml"}
 	}
 	return Finding{"nodeports", true, fmt.Sprintf("%d free", len(want))}
+}
+
+// lockCheck refuses, as apply's lock would, a lock namespace kyquickstart did not create.
+func (c *Client) lockCheck(ctx context.Context) Finding {
+	ns, err := c.cs.CoreV1().Namespaces().Get(ctx, lockNamespace, metav1.GetOptions{})
+	switch {
+	case apierrors.IsNotFound(err):
+		return Finding{"lock", true, "namespace " + lockNamespace + " is free; apply creates it"}
+	case err != nil:
+		return Finding{"lock", false, err.Error()}
+	case !owned(ns):
+		return Finding{"lock", false, "namespace " + lockNamespace + " exists and is not managed by kyquickstart, which reserves it for its lock and plan markers. Move anything in it (such as this kubeconfig's ServiceAccount) to another namespace first, then delete it"}
+	}
+	return Finding{"lock", true, "namespace " + lockNamespace + " is kyquickstart's"}
 }
 
 func (c *Client) versionCheck() Finding {

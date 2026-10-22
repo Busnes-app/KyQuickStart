@@ -154,6 +154,10 @@ func (s *session) composeClients(st *stack.Stack) error {
 			s.handover += text
 		}
 	}
+	if k >= 0 {
+		host, _ := routeHost(st, "kyidentity")
+		s.handover = identityHandover(s.state, host, n, path.Dir(s.integrations[k].Bundle), s.placed["kyidentity"]) + s.handover
+	}
 	if n.Mail != nil {
 		// KyIdentity reads its copy of the relay password beside its preparation directories.
 		m := *n.Mail
@@ -269,6 +273,21 @@ Outstanding human step, unless already done: the KyRecovery custodian ceremony.
   pairing codes before it. Its local "admin" break-glass password is printed once, to its first
   pod's log (kubectl -n kyq-kyrecovery logs deployment/app), and lost when that pod is replaced.
 `
+
+// identityHandover says where KyIdentity's setup left the owner's two generated passwords, in
+// its setup directory scope inside the app's container.
+func identityHandover(state, host string, n stack.IdentityPreparation, scope string, t stack.Target) string {
+	read, where := kubectl(state, t)+" -n kyq-kyidentity exec deployment/app --", ""
+	if !t.Kubernetes() {
+		read, where = "docker exec kyq-kyidentity-app-1", fmt.Sprintf("  Run the Docker commands on target %s.\n", t.Name)
+	}
+	return fmt.Sprintf(`
+KyIdentity at https://%[1]s/: the owner's accounts are %[2]s (administration only) and %[3]s
+  (everyday use). Read each one's generated first password, sign in, change it and enrol MFA:
+    %[4]s cat %[5]s
+    %[4]s cat %[6]s
+`, host, n.Admin.Username, n.Everyday.Username, read, path.Join(scope, "admin.password"), path.Join(scope, "everyday.password")) + where
+}
 
 // driveHandover is printed after every apply that installs KyDrive.
 const driveHandover = `
