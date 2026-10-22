@@ -12,7 +12,7 @@ import (
 // before KyYard rendered them: adding a field for one app must not redeploy the others.
 // kyidentity's changed only with its image pin and version (now 0.4.6).
 var renderedHashes = map[string]string{
-	"euro-office": "7dfb6f21452e7e389a596da62ade04dd6a6e524f9a3ce1c8385a1440045a25e1",
+	"euro-office": "a65a4a42bbe42da10dc46343eac3260d5dcf030b79e42f80cf270256f355e3e0",
 	"kycalendar":  "6afd512799d26b78d2431b482f8e850fa8394d875b14ab77529e32b47b460627",
 	"kyidentity":  "6f86bc9f29a3a3db1276c053d23256a21c953c94f6a2052bfc04abe42cc24be1",
 	"kynotes":     "048c95d97187c8258ecc7c6bcca37e4ce7ba44ddec5c52066d6726a6f0a8873f",

@@ -18,6 +18,13 @@ upgrade:
   # First catalog release. Its bundled PostgreSQL holds editing sessions' changes.
   min_from: 9.3.4
   migrates_data: true
+# Answered 404 at the edge: the editor's welcome page, example app and admin panel (off in
+# this image, but routed by its nginx), its AI proxy, and /info and /internal, which its nginx
+# already admits from 127.0.0.1 only. Its nginx and docservice match some case-insensitively,
+# and any path may carry a /<version>-<hash>/ prefix. KyDrive and browsers use none of them.
+deny_paths:
+  - ^/(?i)(info|internal|ai-proxy|admin|example|welcome)
+  - ^/[0-9]+[.][0-9]+[.][0-9]+[.-][A-Za-z0-9_]+/(?i)(info|internal|ai-proxy)
 # The second exception to restricted, after NPM: its entrypoint starts PostgreSQL, RabbitMQ,
 # Redis, nginx and supervisord as root, and they drop to their own users.
 pod_security: baseline
@@ -25,8 +32,11 @@ kubernetes:
   image: documentserver
   env:
     JWT_ENABLED: "true"
-    # KyDrive's route resolves to a private address. The editor fetches only what a request
-    # signed with the JWT names, and egress (below) reaches cluster DNS and the edge alone.
+    # KyDrive's route resolves to a private address. The editor fetches what KyDrive's signed
+    # requests name and also URLs an editing user supplies (an image inserted by URL). Egress
+    # (below) reaches only cluster DNS and the edge's HTTPS port, and deploy refuses a cluster
+    # that does not enforce that. Residual: an editing user can make the editor GET any
+    # hostname this edge routes.
     ALLOW_PRIVATE_IP_ADDRESS: "true"
     ALLOW_META_IP_ADDRESS: "false"
     USE_UNAUTHORIZED_STORAGE: "false"

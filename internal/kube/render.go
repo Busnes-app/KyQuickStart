@@ -301,7 +301,7 @@ func podSecurityContext(k *catalog.Kubernetes) *corev1.PodSecurityContext {
 // cluster with an edge, from the edge's pods. An edge's egress is limited to DNS, HTTP(S)
 // anywhere (ACME and upstreams), its upstreams off the cluster and pods in installer-managed
 // namespaces, whose own policies decide what it reaches there. An app with egress "edge"
-// reaches only cluster DNS and the edge's pods.
+// reaches only cluster DNS and the edge's HTTPS listener.
 func policy(a App) networkingv1.NetworkPolicySpec {
 	k := a.Catalog.Kubernetes
 	spec := networkingv1.NetworkPolicySpec{PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress}}
@@ -339,11 +339,14 @@ func policy(a App) networkingv1.NetworkPolicySpec {
 		spec.PolicyTypes = append(spec.PolicyTypes, networkingv1.PolicyTypeEgress)
 		spec.Egress = []networkingv1.NetworkPolicyEgressRule{{Ports: dnsPorts(), To: clusterDNS()}}
 		if a.Edge != "" {
-			spec.Egress = append(spec.Egress, networkingv1.NetworkPolicyEgressRule{To: edgePods})
+			spec.Egress = append(spec.Egress, networkingv1.NetworkPolicyEgressRule{Ports: tcp(edgeHTTPS), To: edgePods})
 		}
 	}
 	return spec
 }
+
+// edgeHTTPS is NPM's TLS container port, where a NodePort's 443 traffic arrives.
+const edgeHTTPS = 443
 
 func dnsPorts() []networkingv1.NetworkPolicyPort {
 	return []networkingv1.NetworkPolicyPort{

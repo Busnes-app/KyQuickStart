@@ -10,6 +10,7 @@ import (
 	"github.com/Busnes-app/kyquickstart/internal/engine"
 	"github.com/Busnes-app/kyquickstart/internal/kube"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
+	"github.com/Busnes-app/kyquickstart/internal/suite"
 )
 
 // euroOffice is KyDrive's document editor, on a cluster beside KyDrive on Docker. They share
@@ -71,4 +72,22 @@ func (s *session) editorSteps(d kubeDriver) []engine.Step {
 		"jwt_secret": func(ctx context.Context) ([]byte, error) { return drive.appSecret(ctx, "kydrive", editorSecret) },
 	}
 	return kube.Steps(a)
+}
+
+// driveWithoutEditor is KyDrive as the plan next deploys it, when removing euro-office from a
+// plan that holds KyDrive: uninstall and unmanage redeploy it first, so it is never left
+// pointing at an editor that is gone. nil for any other app or without KyDrive.
+func (s *session) driveWithoutEditor(name string, next *stack.Stack, state string, trust trustFlag) (*catalog.App, error) {
+	if _, ok := s.placed["kydrive"]; name != euroOffice || !ok {
+		return nil, nil
+	}
+	if s.stopped("kydrive") {
+		return nil, suite.Errorf(suite.AppStopped, "removing %s redeploys kydrive without it, which would start kydrive again; run kyquickstart start kydrive first", euroOffice)
+	}
+	ns, err := newSession(next, state, trust, s.o)
+	if err != nil {
+		return nil, err
+	}
+	drive := ns.cat["kydrive"]
+	return &drive, nil
 }

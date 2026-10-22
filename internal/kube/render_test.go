@@ -488,7 +488,7 @@ func TestRenderEuroOffice(t *testing.T) {
 	}
 	p := o.Policy.Spec
 	if len(p.PolicyTypes) != 2 || len(p.Egress) != 2 || len(p.Egress[0].Ports) != 2 || p.Egress[0].To[0].PodSelector.MatchLabels["k8s-app"] != "kube-dns" ||
-		len(p.Egress[1].Ports) != 0 || p.Egress[1].To[0].NamespaceSelector.MatchLabels[nsNameLabel] != "kyq-npm" || !maps.Equal(p.Egress[1].To[0].PodSelector.MatchLabels, selector("npm")) {
+		len(p.Egress[1].Ports) != 1 || p.Egress[1].Ports[0].Port.IntValue() != 443 || p.Egress[1].To[0].NamespaceSelector.MatchLabels[nsNameLabel] != "kyq-npm" || !maps.Equal(p.Egress[1].To[0].PodSelector.MatchLabels, selector("npm")) {
 		t.Fatalf("policy = %+v", p)
 	}
 	// Without an edge on the cluster, only DNS.

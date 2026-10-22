@@ -40,6 +40,9 @@ type Manifest struct {
 	ChatOIDC *ChatOIDC `yaml:"chat_oidc"`
 	// PodSecurity is the app namespace's enforced level: restricted (the default) or baseline.
 	PodSecurity string `yaml:"pod_security"`
+	// DenyPaths are what an app with one route answers 404 for at the edge, like a route
+	// role's deny_paths.
+	DenyPaths []string `yaml:"deny_paths,omitempty"`
 }
 
 // OIDC is the app's client in KyIdentity. Paths are relative to the app's public origin.
@@ -441,6 +444,12 @@ func (m Manifest) validate(dir string) error {
 			return fmt.Errorf("oidc.scim_token_file %q must be /run/secrets/<one of secrets>", f)
 		}
 	}
+	if err := check(m.DenyPaths, denyPath); err != nil {
+		return fmt.Errorf("deny_paths: %w must be a unique regular expression anchored at ^/", err)
+	}
+	if len(m.DenyPaths) > 0 && len(m.Routes) > 0 {
+		return fmt.Errorf("deny_paths: an app with routes sets them per role")
+	}
 	if m.PodSecurity != "restricted" && m.PodSecurity != "baseline" {
 		return fmt.Errorf("pod_security %q must be restricted or baseline", m.PodSecurity)
 	}
@@ -679,6 +688,9 @@ var (
 	mediaRE     = regexp.MustCompile(`^[1-9][0-9]{0,4}/(tcp|udp)$`)
 )
 
+// denyPath is an anchored regular expression NPM can take as a location.
+func denyPath(p string) bool { _, err := regexp.Compile(p); return denyRE.MatchString(p) && err == nil }
+
 // validateRoutes checks routes, media and chat_oidc against the rendered Compose file:
 // every role reference names a role, every role a service publishing its port.
 func (m Manifest) validateRoutes(compose []byte, c composeFile) error {
@@ -698,7 +710,7 @@ func (m Manifest) validateRoutes(compose []byte, c composeFile) error {
 		if err := check(r.Paths, func(p string) bool { return exactPathRE.MatchString(p) && !strings.Contains(p, "/../") }); err != nil {
 			return fmt.Errorf("routes: role %s: paths %w must be a unique exact absolute path", r.Role, err)
 		}
-		if err := check(r.DenyPaths, func(p string) bool { _, err := regexp.Compile(p); return denyRE.MatchString(p) && err == nil }); err != nil {
+		if err := check(r.DenyPaths, denyPath); err != nil {
 			return fmt.Errorf("routes: role %s: deny_paths %w must be a unique regular expression anchored at ^/", r.Role, err)
 		}
 		roles[r.Role] = r
