@@ -105,6 +105,12 @@ func (d deployStep) Apply(ctx context.Context) error {
 	if err := upsert(ctx, cs.NetworkingV1().NetworkPolicies(ns), "network policy", o.Policy, nil); err != nil {
 		return err
 	}
+	// An app that relies on its egress policy runs only where the cluster enforces it.
+	if d.a.Catalog.Kubernetes.Egress == "edge" {
+		if err := d.a.Client.proveEgress(ctx, ns, d.a.ReleaseSet); err != nil {
+			return err
+		}
+	}
 	for _, c := range o.Claims {
 		// A claim's spec is immutable once bound: create it if missing, never rewrite it.
 		have, found, err := getOwned(ctx, cs.CoreV1().PersistentVolumeClaims(ns), "claim", c.Name)

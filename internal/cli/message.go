@@ -241,6 +241,9 @@ func routePaths(edges []stack.Edge, cat catalog.Catalog) []stack.Edge {
 			if role == "" {
 				role = app.Primary()
 			}
+			if len(app.Routes) == 0 {
+				out[i].Routes[j].DenyPaths = app.DenyPaths
+			}
 			for _, cr := range app.Routes {
 				if cr.Role == role {
 					out[i].Routes[j].Paths, out[i].Routes[j].DenyPaths = cr.Paths, cr.DenyPaths

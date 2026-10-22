@@ -40,6 +40,9 @@ type Manifest struct {
 	ChatOIDC *ChatOIDC `yaml:"chat_oidc"`
 	// PodSecurity is the app namespace's enforced level: restricted (the default) or baseline.
 	PodSecurity string `yaml:"pod_security"`
+	// DenyPaths are what an app with one route answers 404 for at the edge, like a route
+	// role's deny_paths.
+	DenyPaths []string `yaml:"deny_paths,omitempty"`
 }
 
 // OIDC is the app's client in KyIdentity. Paths are relative to the app's public origin.
@@ -142,6 +145,19 @@ type Kubernetes struct {
 	// SuiteRunner adds the suite runner (kyquickstart serve) as a sidecar sharing only its
 	// socket directory with the app, which runs as the runner's uid and is told the socket.
 	SuiteRunner bool `yaml:"suite_runner"`
+	// SecretsDir is where the secrets are mounted, read-only; empty is /run/secrets.
+	SecretsDir string `yaml:"secrets_dir,omitempty"`
+	// Egress "edge" limits outbound traffic to cluster DNS and this cluster's edge; empty
+	// leaves it open.
+	Egress string `yaml:"egress,omitempty"`
+}
+
+// SecretsMount is where the app's secrets are mounted.
+func (k Kubernetes) SecretsMount() string {
+	if k.SecretsDir == "" {
+		return "/run/secrets"
+	}
+	return k.SecretsDir
 }
 
 const (
@@ -162,6 +178,9 @@ type Volume struct {
 	Name  string `yaml:"name"`
 	Mount string `yaml:"mount"`
 	Size  string `yaml:"size"`
+	// Seed copies the image's content at Mount, owners and modes kept, into the empty claim
+	// on first start; root apps only.
+	Seed bool `yaml:"seed,omitempty"`
 }
 
 // App is a validated manifest with its rendered Compose file. Compose and Services are
@@ -425,6 +444,12 @@ func (m Manifest) validate(dir string) error {
 			return fmt.Errorf("oidc.scim_token_file %q must be /run/secrets/<one of secrets>", f)
 		}
 	}
+	if err := check(m.DenyPaths, denyPath); err != nil {
+		return fmt.Errorf("deny_paths: %w must be a unique regular expression anchored at ^/", err)
+	}
+	if len(m.DenyPaths) > 0 && len(m.Routes) > 0 {
+		return fmt.Errorf("deny_paths: an app with routes sets them per role")
+	}
 	if m.PodSecurity != "restricted" && m.PodSecurity != "baseline" {
 		return fmt.Errorf("pod_security %q must be restricted or baseline", m.PodSecurity)
 	}
@@ -474,6 +499,10 @@ func (k Kubernetes) validate(images map[string]string, baseline, edge bool) erro
 		return fmt.Errorf("suite_runner needs run_as %d: the socket admits its own uid only", SuiteRunnerUID)
 	case k.SuiteRunner && k.Env["KY_SUITE_RUNNER_SOCKET"] != SuiteRunnerSocket:
 		return fmt.Errorf("suite_runner needs env KY_SUITE_RUNNER_SOCKET %s", SuiteRunnerSocket)
+	case k.SecretsDir != "" && (!mountRE.MatchString(k.SecretsDir) || k.SecretsDir == "/tmp"):
+		return fmt.Errorf("secrets_dir %q must be an absolute path other than /tmp", k.SecretsDir)
+	case k.Egress != "" && (k.Egress != "edge" || edge):
+		return fmt.Errorf("egress %q must be edge, and not on an edge component", k.Egress)
 	}
 	if err := check(k.Capabilities, func(c string) bool { return slices.Contains(baselineCaps, c) }); err != nil {
 		return fmt.Errorf("capabilities: %w must be unique and one of %v", err, baselineCaps)
@@ -499,15 +528,17 @@ func (k Kubernetes) validate(images map[string]string, baseline, edge bool) erro
 	if !sizeRE.MatchString(k.Resources.Memory) {
 		return fmt.Errorf("resources.memory %q must look like 64Mi or 1Gi", k.Resources.Memory)
 	}
-	mounts := map[string]bool{"/tmp": true, "/run/secrets": true, SuiteRunnerMount: k.SuiteRunner}
+	mounts := map[string]bool{"/tmp": true, k.SecretsMount(): true, SuiteRunnerMount: k.SuiteRunner}
 	for _, v := range k.Volumes {
 		switch {
 		case !volRE.MatchString(v.Name):
 			return fmt.Errorf("volumes: name %q must match %s", v.Name, volRE)
 		case !mountRE.MatchString(v.Mount) || mounts[v.Mount]:
-			return fmt.Errorf("volumes: mount %q must be a unique absolute path, not /tmp, /run/secrets or the runner's", v.Mount)
+			return fmt.Errorf("volumes: mount %q must be a unique absolute path, not /tmp, the secrets' or the runner's", v.Mount)
 		case !sizeRE.MatchString(v.Size):
 			return fmt.Errorf("volumes: size %q must look like 1Gi", v.Size)
+		case v.Seed && k.RunAs != 0:
+			return fmt.Errorf("volumes: %s: seed copies as root; only a root app (run_as 0) seeds its claims", v.Name)
 		}
 		mounts[v.Mount] = true
 	}
@@ -657,6 +688,9 @@ var (
 	mediaRE     = regexp.MustCompile(`^[1-9][0-9]{0,4}/(tcp|udp)$`)
 )
 
+// denyPath is an anchored regular expression NPM can take as a location.
+func denyPath(p string) bool { _, err := regexp.Compile(p); return denyRE.MatchString(p) && err == nil }
+
 // validateRoutes checks routes, media and chat_oidc against the rendered Compose file:
 // every role reference names a role, every role a service publishing its port.
 func (m Manifest) validateRoutes(compose []byte, c composeFile) error {
@@ -676,7 +710,7 @@ func (m Manifest) validateRoutes(compose []byte, c composeFile) error {
 		if err := check(r.Paths, func(p string) bool { return exactPathRE.MatchString(p) && !strings.Contains(p, "/../") }); err != nil {
 			return fmt.Errorf("routes: role %s: paths %w must be a unique exact absolute path", r.Role, err)
 		}
-		if err := check(r.DenyPaths, func(p string) bool { _, err := regexp.Compile(p); return denyRE.MatchString(p) && err == nil }); err != nil {
+		if err := check(r.DenyPaths, denyPath); err != nil {
 			return fmt.Errorf("routes: role %s: deny_paths %w must be a unique regular expression anchored at ^/", r.Role, err)
 		}
 		roles[r.Role] = r

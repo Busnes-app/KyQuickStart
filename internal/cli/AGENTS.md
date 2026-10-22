@@ -74,6 +74,14 @@ Plain terminal planning and command orchestration for the operator-run installer
   stops the app (decision 11). A cold `backup` says it stops the app and, on failure, whether
   it runs again. `backupLines` adds
   the backup, restore and password-record lines to apply's handover.
+- `direct.go` owns `cloudflare-direct` eligibility: `directApps` (allowed apps by container
+  port, checked against their templates) and `directRefused` (reasons); any other app is
+  refused as unassessed. `withRoute` refuses first (`plan`, `review`, every command);
+  `directOrigins` sets each route's `Origin`; `edgeNetworks` gives `sshDriver.edgeNets`, so
+  every Docker deploy of a routed app joins the edge network (`dockerhost.App.EdgeNetwork`).
+  A direct edge has no NPM: `connect`, `preflight`, `deploySteps`, `verify-edge` (connector
+  steps' `Verify`) and uninstall (cloudflared redeployed without the app's routes) skip it.
+  `{{edge_address}}` is `Edge.TrustedAddress()`. Guided `plan` offers it on Docker targets only.
 - Product adapter discovery, bounded reports and activation verification: `product.go`; only implemented product interfaces enter its registry.
 - `integration.go` owns guided setup selections and unattended `integrate-stack` dispatch,
   which skips installed apps' entries (`apply` runs those).

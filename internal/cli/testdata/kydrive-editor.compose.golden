@@ -1,0 +1,59 @@
+# From KyDrive v0.4.2's docker-compose.yml. It runs as the target user, who owns its secrets
+# and bind directories, with data under /data rather than /app/data: KyDrive's setup socket
+# refuses a parent directory (/app) owned by another user.
+services:
+  app:
+    image: ghcr.io/busnes-app/kydrive-server:0.4.2@sha256:1b2eec75dd4d197934c98f109ff8f913b4025f39eda1e56b0076cd70428b3e2c
+    platform: linux/amd64
+    user: "${KYQ_UID:?}:${KYQ_GID:?}"
+    restart: unless-stopped
+    # Lets uploads, backups and restic finish on shutdown.
+    stop_grace_period: 20m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    # /tmp holds restic packs and SQLite temp files. The image's unused VOLUME paths are
+    # tmpfs, so Docker leaves no anonymous volumes behind.
+    tmpfs: [/tmp, "/app/data:size=1m", "/app/backups:size=1m"]
+    mem_limit: 1g
+    memswap_limit: 1g
+    cpus: 2
+    pids_limit: 256
+    # Only on the address the edge forwards to; see docs/guided-setup.md for its firewall.
+    ports: ["192.0.2.1:18443:8080"]
+    secrets: [session_secret, scim_token, editor_secret]
+    # KY_SESSION_SECRET has no file form: read it from the secret, never from Compose.
+    entrypoint: ["/bin/sh", "-c", "s=$$(cat /run/secrets/session_secret) || exit 1; KY_SESSION_SECRET=$$s; export KY_SESSION_SECRET; unset s; e=$$(cat /run/secrets/editor_secret) || exit 1; KYDRIVE_EDITOR_SECRET=$$e; export KYDRIVE_EDITOR_SECRET; unset e; exec /app/kydrive-server"]
+    environment:
+      KY_ENV: production
+      KY_HOST: 0.0.0.0
+      KY_PORT: "8080"
+      KY_APP_NAME: KyDrive
+      KY_APP_URL: "https://drive.example.com"
+      KY_DB_DRIVER: sqlite
+      KY_DATA_DIR: /data
+      KY_BACKUP_DIR: /backups
+      # apply-setup writes the KyIdentity issuer, client and secret; only setup's accounts sign in.
+      KY_SSO_ENABLED: "true"
+      KY_SSO_AUTO_PROVISION: "false"
+      KY_SCIM_ENABLED: "true"
+      KY_SCIM_TOKEN_FILE: /run/secrets/scim_token
+      KYDRIVE_EDITOR_URL: "https://office.example.com"
+      GOMEMLIMIT: 768MiB
+    volumes: ["./data:/data", "./backups:/backups"]
+    # start_interval checks every 2 s while it starts, so apply and restore see it healthy (and
+    # restore replays KyIdentity's removals) seconds after it answers rather than after 30 s.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+      start_interval: 2s
+secrets:
+  session_secret:
+    file: ./secrets/session_secret
+  scim_token:
+    file: ./secrets/scim_token
+  editor_secret:
+    file: ./secrets/editor_secret

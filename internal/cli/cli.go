@@ -189,7 +189,18 @@ func Run(ctx context.Context, args []string, o Options) error {
 			return errors.New("stack.yaml has no edges")
 		}
 		for _, e := range s.edges {
-			for _, step := range s.npms[e.Target].Steps(e) {
+			var steps []engine.Step
+			what := "NPM"
+			if e.Direct() {
+				// cloudflared's configuration, credential copy, container and health.
+				if steps, err = s.drivers[e.Target].connectorSteps(ctx, e, s.o.ReleaseSet, s.redact); err != nil {
+					return fmt.Errorf("edge %s: %w", e.Target, err)
+				}
+				what = "cloudflared"
+			} else {
+				steps = s.npms[e.Target].Steps(e)
+			}
+			for _, step := range steps {
 				if err := step.Verify(ctx); err != nil {
 					return fmt.Errorf("%s: %w", step.ID(), err)
 				}
@@ -197,7 +208,7 @@ func Run(ctx context.Context, args []string, o Options) error {
 			if err := edge.VerifyRoutes(ctx, e, expected); err != nil {
 				return fmt.Errorf("edge %s: %w", e.Target, err)
 			}
-			fmt.Fprintf(o.Out, "%s: NPM and product forwarded-header checks passed\n", e.Target)
+			fmt.Fprintf(o.Out, "%s: %s and product forwarded-header checks passed\n", e.Target, what)
 		}
 		return nil
 	}
@@ -399,6 +410,11 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 			}
 		}
 	}
+	if drive, ok, err := editorPlan(st, cat); err != nil {
+		return nil, err
+	} else if ok {
+		cat["kydrive"] = drive
+	}
 	// A cluster edge's egress policy admits an upstream off the cluster by address only.
 	for _, e := range st.Edges {
 		for _, r := range e.Routes {
@@ -424,7 +440,7 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 	if err := messagePlan(st, cat); err != nil {
 		return nil, err
 	}
-	s.edges = routePaths(st.Edges, cat)
+	s.edges = directOrigins(routePaths(st.Edges, cat))
 	if err := s.composeClients(st); err != nil {
 		return nil, err
 	}
@@ -432,8 +448,12 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 }
 
 // withRoute fills app's route references from its one edge route: the URL host, and on Docker
-// the address it publishes on and its edge's egress_address. It needs no connection.
+// the address it publishes on and its edge's trusted address. It needs no connection, and
+// first refuses an app a cloudflare-direct edge may not route.
 func withRoute(st *stack.Stack, name string, t stack.Target, app catalog.App) (catalog.App, error) {
+	if err := directRoute(st, name); err != nil {
+		return app, err
+	}
 	for _, a := range st.Apps {
 		if a.Name != name {
 			continue
@@ -480,7 +500,7 @@ func withRoute(st *stack.Stack, name string, t stack.Target, app catalog.App) (c
 	if err != nil || ip.IsUnspecified() || ip.Zone() != "" {
 		return app, fmt.Errorf("app %q publishes its port on its route's forward_host, which must be an IP address of %s", name, t.Name)
 	}
-	if app.UsesEdgeAddress() && edges[0].EgressAddress == "" {
+	if app.UsesEdgeAddress() && edges[0].TrustedAddress() == "" {
 		return app, fmt.Errorf("app %q trusts exactly the address its edge connects from: set egress_address on edge %s to the edge's own address as %s sees it (for NPM on a cluster, the IP of the node running NPM)", name, edges[0].Target, t.Name)
 	}
 	addr := ip.String()
@@ -490,7 +510,7 @@ func withRoute(st *stack.Stack, name string, t stack.Target, app catalog.App) (c
 	if app.Kubernetes != nil {
 		app.Kubernetes = app.Kubernetes.WithHost(hosts[0])
 	}
-	return app.WithRoute(catalog.Route{Host: hosts[0], Forward: addr + ":" + strconv.Itoa(routes[0].ForwardPort), ForwardAddr: addr, EdgeAddress: edges[0].EgressAddress}), nil
+	return app.WithRoute(catalog.Route{Host: hosts[0], Forward: addr + ":" + strconv.Itoa(routes[0].ForwardPort), ForwardAddr: addr, EdgeAddress: edges[0].TrustedAddress()}), nil
 }
 
 func (s *session) connect(ctx context.Context, trust trustFlag) error {
@@ -504,9 +524,16 @@ func (s *session) connect(ctx context.Context, trust trustFlag) error {
 			k.edge, k.nodePorts, k.upstreams, k.runnerImage = s.edgeApp(t.Name), s.nodePorts(t.Name), s.upstreams(t.Name), s.o.RunnerImage
 			d = k
 		}
+		if h, ok := d.(sshDriver); ok {
+			h.edgeNets = edgeNetworks(s.plan, t.Name)
+			d = h
+		}
 		s.drivers[t.Name] = d
 	}
 	for _, e := range s.edges {
+		if e.Direct() { // no NPM
+			continue
+		}
 		token, tunnel, err := s.drivers[e.Target].edgeAccess(ctx, e)
 		if err != nil {
 			return fmt.Errorf("edge %s: %w", e.Target, err)
@@ -632,7 +659,12 @@ func (s *session) preflight(ctx context.Context) error {
 			if err := s.drivers[e.Target].checkConnector(ctx, e); err != nil {
 				failed++
 				fmt.Fprintf(s.o.Out, "FAIL  %-12s connector        %s\n", e.Target, err)
+			} else if e.Direct() {
+				fmt.Fprintf(s.o.Out, "ok    %-12s edge             cloudflared network, address and tunnel credential checked\n", e.Target)
 			}
+		}
+		if e.Direct() {
+			continue
 		}
 		if err := s.npms[e.Target].Preflight(ctx, e); err != nil {
 			failed++
@@ -734,6 +766,9 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 			steps = append(steps, noteStep{id: name + ".upgrade", note: note})
 		}
 		app := d.steps(name, s.cat[name], s.o.ReleaseSet, s.redact)
+		if k, ok := d.(kubeDriver); ok && name == euroOffice {
+			app = s.editorSteps(k)
+		}
 		for _, i := range s.integrations {
 			if i.Product == name && i.Target == s.placed[name].Name && i.ChatClient != "" {
 				before, setup, err := s.messageSteps(d, i)
@@ -766,7 +801,11 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 	}
 	var routes []engine.Step // the routes of routedFirst apps, after their setup
 	for _, e := range s.edges {
-		for _, st := range s.npms[e.Target].Steps(e) {
+		var npm []engine.Step
+		if !e.Direct() {
+			npm = s.npms[e.Target].Steps(e)
+		}
+		for _, st := range npm {
 			if slices.Contains(routedFirst, edge.RouteApp(st)) {
 				routes = append(routes, st)
 			} else {

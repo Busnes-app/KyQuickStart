@@ -25,6 +25,8 @@ type App struct {
 	ReleaseSet    string
 	Redact        *engine.Redactor
 	ForceRecreate bool // connector credential replacement requires a fresh process
+	// EdgeNetwork is a cloudflare-direct edge's Docker network, which service "app" joins.
+	EdgeNetwork string
 	// Only, when set, is the one service deploy starts: restore starts its services in order.
 	Only string
 	// Restoring is set by restore alone: deploy refuses an app with an unfinished restore
@@ -54,7 +56,7 @@ func hashOf(parts ...string) string {
 
 // Steps returns the app's install steps: secrets (when it declares any), deploy, health.
 func Steps(a App) []engine.Step {
-	ov := override(a.Catalog.Services, labels(a.ReleaseSet, a.Catalog.Version))
+	ov := a.override(labels(a.ReleaseSet, a.Catalog.Version))
 	hash := hashOf(string(a.Catalog.Compose), string(ov))
 	steps := []engine.Step{deployStep{a: a, override: ov, hash: hash}, healthStep{a: a, hash: hash}}
 	if len(a.Catalog.Secrets) > 0 {

@@ -51,6 +51,9 @@ func verifyRoute(ctx context.Context, client *http.Client, endpoint string, expe
 	req.Header.Set("X-Forwarded-Proto", "http")
 	req.Header.Set("X-Forwarded-Scheme", "http")
 	req.Header.Set("Forwarded", "for="+spoof+";proto=http")
+	// Cloudflare overwrites these; a direct edge's product must not see the forged value.
+	req.Header.Set("CF-Connecting-IP", spoof)
+	req.Header.Set("True-Client-IP", spoof)
 	res, err := client.Do(req)
 	if err != nil {
 		return errors.New("public HTTPS status request failed")
