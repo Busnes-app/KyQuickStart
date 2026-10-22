@@ -303,6 +303,10 @@ func (n *NPM) config(e stack.Edge, r stack.Route, cert int) hostConfig {
 }
 `, port)
 	const closed = " {\n  return 404;\n}\n"
+	if r.Webhook {
+		// KyIdentity retries a 503 but holds a 502 or 504 for an administrator.
+		advanced += "proxy_connect_timeout 2s;\nproxy_read_timeout 4s;\nerror_page 502 504 =503 @kyq_unavailable;\nlocation @kyq_unavailable {\n  return 503;\n}\n"
+	}
 	// The catalog's paths alone, or everything but its denied paths.
 	for _, p := range r.Paths {
 		advanced += "location = " + p + proxy

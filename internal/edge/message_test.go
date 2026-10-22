@@ -88,3 +88,24 @@ func TestServerNameForeignHost(t *testing.T) {
 		t.Fatal("adopted a host marked for another role")
 	}
 }
+
+// A webhook route answers an unreachable or slow receiver with 503, which KyIdentity retries;
+// other path routes keep nginx's 502 and 504.
+func TestWebhookRouteAnswers503(t *testing.T) {
+	e, routes := messageRoutes()
+	n := &NPM{installation: testID}
+	r := routes["server_name"]
+	if adv := n.config(e, r, 1).Advanced; strings.Contains(adv, "error_page") || strings.Contains(adv, "proxy_connect_timeout") {
+		t.Fatalf("a path route without webhook:\n%s", adv)
+	}
+	r.Webhook = true
+	adv := n.config(e, r, 1).Advanced
+	for _, want := range []string{"proxy_connect_timeout 2s;\n", "proxy_read_timeout 4s;\n", "error_page 502 504 =503 @kyq_unavailable;\n", "location @kyq_unavailable {\n  return 503;\n}\n"} {
+		if !strings.Contains(adv, want) {
+			t.Errorf("webhook route lacks %q:\n%s", want, adv)
+		}
+	}
+	if strings.Index(adv, "error_page") > strings.Index(adv, "location = ") {
+		t.Errorf("error_page after the locations:\n%s", adv)
+	}
+}

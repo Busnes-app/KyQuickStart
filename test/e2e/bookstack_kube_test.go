@@ -314,7 +314,7 @@ func TestKubernetesBookStack(t *testing.T) {
 	// AC8: L, assigned with no role, gets Editor; U, never assigned, is refused.
 	app := admin.app("bookstack")
 	people := map[string]string{}
-	for _, n := range []string{"leaver", "unassigned", "admin-a", "early", "restored"} {
+	for _, n := range []string{"leaver", "unassigned", "admin-a", "early", "restored", "outage"} {
 		people[n] = admin.createPerson(n, n+"@example.test", n+"-Password-1")
 	}
 	admin.assign(app, people["leaver"])
@@ -431,7 +431,33 @@ func TestKubernetesBookStack(t *testing.T) {
 		t.Error("AC10: KyIdentity let E sign in after the unassignment")
 	}
 
-	bookstackBackupRestore(t, ctx, bookstackOps{connected: connected, plan: plan, work: work, state: state, run: run, apply: apply, bs: bs, admin: admin, app: app,
+	// A removal while the receiver is down: the edge answers 503, KyIdentity retries, and the
+	// roles go once it is back, with no administrator step.
+	admin.assign(app, people["outage"])
+	if _, ok := bookstackSignIn(t, ctx, transport, "outage", []byte("outage-Password-1")); !ok {
+		t.Fatal("outage person was refused")
+	}
+	docker(t, "stop", "kyq-bookstack-directory-1")
+	r, err := plain.Post("https://"+bookstackHosts["directory"]+":30443/kyq/directory", "application/scim+json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Body.Close()
+	if r.StatusCode != 503 {
+		t.Errorf("the edge answered %d for a stopped receiver, want 503", r.StatusCode)
+	}
+	removed = time.Now()
+	admin.change("DELETE", "/api/admin/app-registry/"+app+"/assignments/users/"+people["outage"], nil)
+	time.Sleep(20 * time.Second) // KyIdentity's first delivery attempt meets the outage
+	if _, roles := bookstackAccount(t, ctx, transport, service, people["outage"]); len(roles) == 0 {
+		t.Fatal("the removal applied while the receiver was down")
+	}
+	docker(t, "start", "kyq-bookstack-directory-1")
+	took = waitRoles(t, ctx, transport, service, people["outage"], removed)
+	t.Logf("receiver outage: roles [] %s after the unassignment, the receiver down for its first 20 s", took.Round(time.Second))
+	resync(t, ctx, connected)
+
+	bookstackBackupRestore(t, ctx, bookstackOps{plan: plan, work: work, state: state, run: run, apply: apply, bs: bs, admin: admin, app: app,
 		transport: transport, service: service, person: people["restored"], ids: ids, people: slices.Collect(maps.Values(people)), owners: [2][]byte{adminPW, everydayPW}, secrets: secrets})
 
 	// AC5: no secret in any apply, backup or restore output, nor under the state directory.
@@ -559,7 +585,6 @@ type bookstackOps struct {
 	apply                                   func(label string) string
 	bs                                      bookstackTarget
 	admin                                   *identityAdmin
-	connected                               *kube.Client
 	transport                               http.RoundTripper
 	ids, people                             []string
 	owners                                  [2][]byte
@@ -638,9 +663,6 @@ func bookstackBackupRestore(t *testing.T, ctx context.Context, o bookstackOps) {
 	removed := time.Now()
 	o.admin.change("PUT", "/api/admin/users/"+o.person, map[string]string{"status": "disabled"})
 	waitRoles(t, ctx, o.transport, o.service, o.person, removed)
-	// Nothing in flight when the target fails: a delivery the down edge answers 502 is held by
-	// KyIdentity as uncertain until an administrator resumes it (a documented residual).
-	resync(t, ctx, o.connected)
 	docker(t, "compose", "-p", "kyq-bookstack", "down")
 	docker(t, "exec", o.bs.name, "rm", "-rf", o.bs.root+"/bookstack")
 	start := time.Now()

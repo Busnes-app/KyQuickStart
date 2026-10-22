@@ -574,3 +574,28 @@ func TestRemovalReplayThroughDockerIdentity(t *testing.T) {
 		}
 	}
 }
+
+// A replay interrupted while it retries reports the cancellation, not restore_incomplete.
+func TestReplayCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := newFixture(t, "../catalog/testdata/apps")
+	f.o.Catalog = catalog.Embedded()
+	drivePlan(t, f, "192.0.2.1")
+	s, err := load(f.state, nil, f.o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.cs.CoreV1().Pods("kyq-kyidentity").Create(ctx, &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "app-1", Labels: map[string]string{"app.kubernetes.io/name": "kyidentity", managed.Label: managed.Value}},
+		Status:     corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
+	}, metav1.CreateOptions{})
+	s.drivers["k1"] = kubeDriver{c: kube.Fake(f.cs, "https://k1.test", func(_ context.Context, _, _, _ string, _ []string, o remotecommand.StreamOptions) error {
+		io.WriteString(o.Stdout, `{"schema":"kyidentity.resync-system/1","clientId":"kydrive","systemId":"s1","status":"failed","pending":2,"failed":1}`+"\n")
+		cancel() // Ctrl-C while the refused delivery waits for its retry
+		return errors.New("exit status 1")
+	})}
+	if err := s.replayRemovals(ctx, "kydrive"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled replay: %v", err)
+	}
+}

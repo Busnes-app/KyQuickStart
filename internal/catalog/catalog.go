@@ -78,6 +78,10 @@ type RouteRole struct {
 	Port      int      `yaml:"port"`
 	Paths     []string `yaml:"paths"`
 	DenyPaths []string `yaml:"deny_paths"`
+	// Webhook marks paths that only take KyIdentity's directory events at a receiver that
+	// only removes access: the edge answers an unreachable or slow upstream with 503, which
+	// KyIdentity retries, where a 502 or 504 would hold the person's later changes.
+	Webhook bool `yaml:"webhook"`
 }
 
 // Media are <port>/<tcp|udp> entries published on the plan's media_address.
@@ -700,6 +704,8 @@ func (m Manifest) validateRoutes(compose []byte, c composeFile) error {
 			return fmt.Errorf("routes: role %s: service %q does not publish port %d", r.Role, r.Service, r.Port)
 		case len(r.Paths) > 0 && len(r.DenyPaths) > 0:
 			return fmt.Errorf("routes: role %s: paths and deny_paths exclude each other", r.Role)
+		case r.Webhook && len(r.Paths) == 0:
+			return fmt.Errorf("routes: role %s: webhook needs paths", r.Role)
 		}
 		if err := check(r.Paths, func(p string) bool { return exactPathRE.MatchString(p) && !strings.Contains(p, "/../") }); err != nil {
 			return fmt.Errorf("routes: role %s: paths %w must be a unique exact absolute path", r.Role, err)

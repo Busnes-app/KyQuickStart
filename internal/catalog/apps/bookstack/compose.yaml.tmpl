@@ -50,8 +50,13 @@ services:
       OIDC_FETCH_AVATAR: "false"
       OIDC_DUMP_USER_DETAILS: "false"
     networks: [default, db]
-    # data: bookstack.setup's files from the plan and KyIdentity's export, never replaced.
-    volumes: [./config:/config, "./data:/kyq:ro"]
+    # bookstack.setup's sign-in files from the plan and KyIdentity's export, never replaced;
+    # not data's directory_secret, which only the receiver reads.
+    volumes:
+      - ./config:/config
+      - ./data/oidc_issuer:/kyq/oidc_issuer:ro
+      - ./data/oidc_client_id:/kyq/oidc_client_id:ro
+      - ./data/oidc_client_secret:/kyq/oidc_client_secret:ro
     depends_on:
       mariadb: {condition: service_healthy}
     healthcheck:

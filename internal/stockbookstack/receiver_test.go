@@ -31,10 +31,12 @@ type fakeBookStack struct {
 	users map[int]*User
 	calls []string
 	down  bool
-	stuck bool // a role update that does not take
+	stuck bool          // a role update that does not take
+	delay time.Duration // before every answer
 }
 
 func (f *fakeBookStack) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	time.Sleep(f.delay)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, r.Method+" "+r.URL.Path)
@@ -317,4 +319,21 @@ func TestMapRoles(t *testing.T) {
 func scan(path, format string, id *int) bool {
 	_, err := fmt.Sscanf(path, format, id)
 	return err == nil
+}
+
+// A slow BookStack is a 503 within the deadline, which KyIdentity retries, never a timeout it
+// would hold as uncertain.
+func TestReceiverDeadline(t *testing.T) {
+	saved := Deadline
+	Deadline = 100 * time.Millisecond
+	defer func() { Deadline = saved }()
+	rc, f, log := newReceiver(t)
+	f.delay = 300 * time.Millisecond
+	start := time.Now()
+	if got := send(rc, "user.updated", user("user-ann", false), []byte(testSecret), time.Now()); got != 503 || time.Since(start) > 250*time.Millisecond {
+		t.Fatalf("slow BookStack: %d after %s", got, time.Since(start))
+	}
+	if !strings.Contains(log.String(), "retry") {
+		t.Fatalf("log: %s", log)
+	}
 }

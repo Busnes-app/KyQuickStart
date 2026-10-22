@@ -37,7 +37,7 @@ oidc:
 # and ignores a trailing slash.
 routes:
   - {role: app, service: bookstack, port: 80, deny_paths: ["^/(index.php/)?my-account/?$", "^/(index.php/)?my-account/delete/?$"]}
-  - {role: directory, service: directory, port: 8080, paths: [/kyq/directory]}
+  - {role: directory, service: directory, port: 8080, paths: [/kyq/directory], webhook: true}
 # MariaDB as a dump (its data directory is not backed up raw); BookStack's /config without
 # logs, caches and sessions (a restore signs everyone out); the installer's files in data and
 # the receiver's token, which the restored database still accepts.

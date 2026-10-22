@@ -55,7 +55,7 @@ func TestBookStackEntry(t *testing.T) {
 		t.Errorf("images %v, pending %v", a.Images, a.PendingImages)
 	}
 	if len(a.Routes) != 2 || a.Primary() != "app" || a.Routes[0].Service != "bookstack" || a.Routes[0].Port != 80 ||
-		a.Routes[1].Role != "directory" || a.Routes[1].Service != "directory" || !slices.Equal(a.Routes[1].Paths, []string{"/kyq/directory"}) {
+		a.Routes[1].Role != "directory" || a.Routes[1].Service != "directory" || !slices.Equal(a.Routes[1].Paths, []string{"/kyq/directory"}) || !a.Routes[1].Webhook || a.Routes[0].Webhook {
 		t.Fatalf("routes %+v", a.Routes)
 	}
 	deny := func(path string) bool {
@@ -100,6 +100,7 @@ func TestDirectoryRoleRefused(t *testing.T) {
 		{"paths lack directory_path", "paths: [/kyq/directory]", "paths: [/kyq/other]", `oidc.directory_role "directory"`},
 		{"primary named", "directory_role: directory", "directory_role: app", `oidc.directory_role "app"`},
 		{"unpinned pending image", "pending_images: [kyoffboard]", "pending_images: [mariadb]", "pending_images"},
+		{"webhook without paths", "deny_paths: [", "webhook: true, deny_paths: [", "webhook needs paths"},
 		{"unknown secret format", "secret_formats: {app_key: laravel}", "secret_formats: {app_key: hex}", "secret_formats"},
 	} {
 		_, err := Load(bookstackFS(t, func(s string) string {
@@ -208,6 +209,9 @@ func TestBookStackComposeHygiene(t *testing.T) {
 		if env[k] != v {
 			t.Errorf("bookstack %s = %q, want %q", k, env[k], v)
 		}
+	}
+	if !slices.Equal(a.Nested, []string{"./data/oidc_client_id", "./data/oidc_client_secret", "./data/oidc_issuer"}) {
+		t.Errorf("BookStack mounts %v of data, want its three sign-in files", a.Nested)
 	}
 	if c.Services["standard"].Environment["AUTH_METHOD"] != "standard" || len(c.Services["standard"].Ports) != 0 {
 		t.Error("the bootstrap BookStack must be standard-auth with no published port")

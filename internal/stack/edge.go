@@ -79,6 +79,7 @@ type Route struct {
 	// Paths and DenyPaths come from the app's catalog route, never the plan.
 	Paths     []string `yaml:"-" json:"-"`
 	DenyPaths []string `yaml:"-" json:"-"`
+	Webhook   bool     `yaml:"-" json:"-"`
 }
 
 // URLHost is the host an app's route is reached at: its hostname, plus the port when clients

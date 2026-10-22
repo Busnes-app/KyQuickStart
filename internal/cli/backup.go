@@ -524,8 +524,11 @@ type resyncReport struct {
 func (s *session) replayRemovals(ctx context.Context, name string) error {
 	start := time.Now()
 	client, detail := retryRefused(ctx, func(ctx context.Context) (string, string) { return s.resync(ctx, name) })
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if detail != "" {
-		return suite.Errorf(suite.RestoreIncomplete, "%s is restored but stopped: KyIdentity's %s connector did not deliver the replay of removals (%s), and until it does someone removed after the snapshot could sign in. Fix the connector, then rerun kyquickstart restore %s, which starts the app and replays again", name, client, detail, name)
+		return suite.Errorf(suite.RestoreIncomplete, "%s is restored but stopped: KyIdentity's %s connector did not deliver the replay of removals (%s), and until it does someone removed after the snapshot could sign in. A delivery KyIdentity sent while %s was down may be held for you: in KyIdentity's admin console open Suite sync, then the %s connector's Deliveries, confirm the old request finished and choose Resume delivery. Fix the connector, then rerun kyquickstart restore %s, which starts the app and replays again", name, client, detail, name, client, name)
 	}
 	fmt.Fprintf(s.o.Out, "%s: KyIdentity replayed its %s connector's state, removals included, and delivered it (%s).\n", name, client, time.Since(start).Round(time.Second))
 	return nil

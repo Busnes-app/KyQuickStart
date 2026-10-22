@@ -189,7 +189,7 @@ chown kyq `+base)
 		})
 	}
 	patch(t, filepath.Join(dir, "compose.yaml.tmpl"), [][2]string{
-		{`    volumes: [./config:/config, "./data:/kyq:ro"]` + "\n", `    volumes: [./config:/config, "./data:/kyq:ro", "` + ca + `:/etc/ssl/certs/ca-certificates.crt:ro"]` + "\n" +
+		{"      - ./data/oidc_client_secret:/kyq/oidc_client_secret:ro\n", "      - ./data/oidc_client_secret:/kyq/oidc_client_secret:ro\n      - " + ca + ":/etc/ssl/certs/ca-certificates.crt:ro\n" +
 			`    extra_hosts: ["` + catalogIdentityHost + ":" + gateway + `"]` + "\n"},
 	})
 	return bookstackTarget{name: name, port: port, root: base + "/root", fp: fp, forward: gateway, ports: ports, relay: relay, receiver: receiver, local: local}

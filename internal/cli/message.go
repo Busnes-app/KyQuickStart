@@ -243,7 +243,7 @@ func routePaths(edges []stack.Edge, cat catalog.Catalog) []stack.Edge {
 			}
 			for _, cr := range app.Routes {
 				if cr.Role == role {
-					out[i].Routes[j].Paths, out[i].Routes[j].DenyPaths = cr.Paths, cr.DenyPaths
+					out[i].Routes[j].Paths, out[i].Routes[j].DenyPaths, out[i].Routes[j].Webhook = cr.Paths, cr.DenyPaths, cr.Webhook
 				}
 			}
 		}
@@ -431,7 +431,8 @@ func (s *session) messageSteps(d driver, i stack.Integration) (before []engine.S
 }
 
 // directoryRetry spaces retryRefused's resyncs after a failed delivery, for at most
-// refusedWindow.
+// refusedWindow: a restore whose replay keeps failing reports restore_incomplete up to
+// 10 minutes later than its first resync.
 var directoryRetry, refusedWindow = 10 * time.Second, resyncWait
 
 // directoryStep (<app>.directory), after the routes, waits until KyIdentity's connector has

@@ -21,6 +21,11 @@ const DirectoryPath = "/kyq/directory"
 // MaxBody bounds a directory event, read before its signature is checked.
 const MaxBody = 64 << 10
 
+// Deadline bounds the BookStack calls of one event. KyIdentity holds a person's later changes
+// once a delivery outlasts its 5 s client timeout, until an administrator resumes it; a 503
+// before then is retried instead.
+var Deadline = 3 * time.Second
+
 // Receiver takes KyIdentity's signed suite-webhook events for BookStack's client and only ever
 // removes roles: a removed person loses every role, a demoted one the admin role. It never
 // grants a role, deletes an account or touches the service account. Each action is idempotent,
@@ -73,7 +78,9 @@ func (rc *Receiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	status, user, outcome := rc.handle(r.Context(), ev.Type, e)
+	ctx, cancel := context.WithTimeout(r.Context(), Deadline)
+	defer cancel()
+	status, user, outcome := rc.handle(ctx, ev.Type, e)
 	rc.log(ev.ID, ev.Type, outcome, user)
 	w.WriteHeader(status)
 }
