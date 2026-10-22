@@ -53,7 +53,7 @@ func Upgrade(ctx context.Context, state string, r Request, o Options) error {
 
 // Status reports every installed app; it reads targets and changes nothing.
 func Status(ctx context.Context, state string, o Options) (suite.Status, error) {
-	return status(ctx, state, nil, o)
+	return status(ctx, state, nil, o, false)
 }
 
 // Catalog lists this release set's apps for the plan at state; it connects to nothing.
@@ -75,7 +75,8 @@ func Catalog(state string, o Options) (suite.Catalog, error) {
 	return out, nil
 }
 
-// suiteCommand parses an install, uninstall, unmanage, upgrade or status command line.
+// suiteCommand parses an install, uninstall, unmanage, upgrade, stop, start, restart, logs or
+// status command line.
 func suiteCommand(ctx context.Context, cmd string, args []string, o Options) error {
 	fl := flag.NewFlagSet(cmd, flag.ContinueOnError)
 	fl.SetOutput(o.Out)
@@ -90,6 +91,11 @@ func suiteCommand(ctx context.Context, cmd string, args []string, o Options) err
 		fl.BoolVar(&r.AcknowledgeNoBackup, "acknowledge-no-backup", false, "upgrade data without a pre-upgrade backup")
 	}
 	asJSON := fl.Bool("json", false, "status: print JSON")
+	tail, service := 200, ""
+	if cmd == "logs" {
+		fl.IntVar(&tail, "tail", tail, "lines per container, 1-10000")
+		fl.StringVar(&service, "service", "", "one Compose service or pod container")
+	}
 	// App names and flags may come in any order.
 	for rest := args; ; rest = fl.Args()[1:] {
 		if err := fl.Parse(rest); err != nil {
@@ -110,11 +116,15 @@ func suiteCommand(ctx context.Context, cmd string, args []string, o Options) err
 		return remove(ctx, *state, r, trust, o, cmd == "unmanage")
 	case "upgrade":
 		return upgrade(ctx, *state, r, trust, o)
+	case "stop", "start", "restart":
+		return lifecycle(ctx, *state, cmd, r, trust, o)
+	case "logs":
+		return logs(ctx, *state, r, service, tail, trust, o)
 	}
 	if len(r.Apps) > 0 {
 		return ErrUsage
 	}
-	st, err := status(ctx, *state, trust, o)
+	st, err := status(ctx, *state, trust, o, true)
 	if err != nil {
 		return err
 	}
@@ -125,7 +135,11 @@ func suiteCommand(ctx context.Context, cmd string, args []string, o Options) err
 	}
 	fmt.Fprintf(o.Out, "plan revision %d, owner %s\n", st.Runner.PlanRevision, st.Runner.PlanOwner)
 	for _, a := range st.Apps {
-		fmt.Fprintf(o.Out, "%-16s %-10s %-12s %s\n", a.Name, a.Version, a.Target, a.State)
+		line := fmt.Sprintf("%-16s %-10s %-12s %-10s %s", a.Name, a.Version, a.Target, a.State, a.Workload)
+		if a.Stopped {
+			line += " (kyquickstart stop)"
+		}
+		fmt.Fprintln(o.Out, line)
 	}
 	return nil
 }
@@ -233,6 +247,9 @@ func upgrade(ctx context.Context, state string, r Request, trust trustFlag, o Op
 	}
 	if len(s.order) == 0 {
 		return suite.Errorf(suite.InvalidRequest, "no apps are installed")
+	}
+	if err := s.refuseStopped(); err != nil {
+		return err
 	}
 	if err := s.runnerImage(); err != nil {
 		return err
@@ -463,7 +480,9 @@ func (n noteStep) Apply(context.Context) error           { return nil }
 func (n noteStep) Verify(context.Context) error          { return nil }
 func (n noteStep) Note() string                          { return n.note }
 
-func status(ctx context.Context, state string, trust trustFlag, o Options) (suite.Status, error) {
+// status reads every installed app; live adds the CLI's workload read and stop intent, which
+// the runner's wire leaves out.
+func status(ctx context.Context, state string, trust trustFlag, o Options, live bool) (suite.Status, error) {
 	s, err := load(state, trust, o)
 	if err != nil {
 		return suite.Status{}, err
@@ -508,6 +527,12 @@ func status(ctx context.Context, state string, trust trustFlag, o Options) (suit
 			return suite.Status{}, fmt.Errorf("%s: %w", name, err)
 		}
 		a := suite.App{Name: name, Category: s.cat[name].Category, Version: installedVersion(deployed, s.cat[name], o.ReleaseSet), Target: t.Name, State: "unknown"}
+		if live {
+			if a.Workload, err = s.drivers[t.Name].workload(ctx, name, s.cat[name]); err != nil {
+				return suite.Status{}, fmt.Errorf("%s: %w", name, err)
+			}
+			a.Stopped = s.stopped(name)
+		}
 		files, _ := filepath.Glob(filepath.Join(dir, name+".*.json"))
 		for _, f := range files {
 			id := strings.TrimSuffix(filepath.Base(f), ".json")

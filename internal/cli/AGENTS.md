@@ -16,6 +16,19 @@ Plain terminal planning and command orchestration for the operator-run installer
   and plan publication. The exported `Install`, `Uninstall`, `Unmanage`, `Upgrade` and `Status`
   take a context, state directory and `Options` (with `Progress`) so the suite runner calls
   them without flag parsing; they return `internal/suite` errors and status.
+- `lifecycle.go` owns `stop`, `start`, `restart` and `logs` (Docker and Kubernetes, one app
+  each) through the drivers' `lifecycleStep`, `workload` and `logs`. Stop, start and restart
+  run under `operate` (lock, `guard`, marker), refuse an app its target does not hold as
+  managed (`not_installed`) and, on Docker, an unfinished restore; stop and start are plan
+  changes (`owned_by_runner` under the runner) that publish `stopped` once the app is in that
+  state, and change nothing on an app already there. While an app is `stopped`, `apply`,
+  `upgrade`, `restart` and Docker `backup` (`dockerhost.App.Stopped`) refuse `app_stopped`
+  (`refuseStopped`); a container or Deployment stopped by hand without it is still repaired by
+  apply. `logs` takes no lock, reads the marker for `guard`, redacts the app's catalog
+  `secrets` read through `appSecret` and fails if one cannot be read; on Kubernetes it needs
+  `get pods/log`, which preflight does not require, and names it when refused. CLI `status`
+  adds each app's live `workload` and `stopped`; the exported `Status` (the runner's) leaves
+  them out, since KyYard decodes status strictly.
 - `handoff.go` owns `handoff` (grant, `--revoke`) and `pull-plan`: it reaches the runner only
   through the KyYard target driver's `execRunner` (`docker exec` over SSH, or `pods/exec` into
   the one runner pod `--runner-pod` selects, permission-checked first), holds every target lock

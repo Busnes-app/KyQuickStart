@@ -35,6 +35,7 @@ const (
 	BackupUnsupported  Code = "backup_unsupported"  // a backup volume is a named Docker volume
 	RestoreRefused     Code = "restore_refused"     // nothing was changed
 	RestoreIncomplete  Code = "restore_incomplete"  // restored and running, but the removal replay did not deliver
+	AppStopped         Code = "app_stopped"         // stopped with kyquickstart stop; start it first
 	StepFailed         Code = "step_failed"
 	OwnedByRunner      Code = "owned_by_runner"     // the CLI may not change a plan the runner owns
 	OwnedByCLI         Code = "owned_by_cli"        // the runner acts only on a plan handed to it
@@ -86,6 +87,10 @@ type App struct {
 	State      string  `json:"state"` // installed, failed or unknown
 	Health     *Health `json:"health"`
 	LastResult *Result `json:"last_result"`
+	// The CLI's alone (KyYard decodes the runner's status strictly): the live workload,
+	// running, stopped, missing or unknown, and whether kyquickstart stop stopped the app.
+	Workload string `json:"workload,omitempty"`
+	Stopped  bool   `json:"stopped,omitempty"`
 }
 
 type Health struct {

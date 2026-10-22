@@ -35,6 +35,9 @@ type driver interface {
 	deployed(ctx context.Context, name string) (managed.Deployed, error)
 	removeSteps(name string, app catalog.App) []engine.Step
 	unmanageSteps(name string, app catalog.App) []engine.Step
+	lifecycleStep(name string, app catalog.App, op, run string) engine.Step // stop, start or restart
+	workload(ctx context.Context, name string, app catalog.App) (string, error)
+	logs(ctx context.Context, name, service string, tail int) ([]byte, error)
 	edgeAccess(context.Context, stack.Edge) ([]byte, edge.Dial, error) // NPM token, and tunnel for kube://
 	edgeSecrets() edge.Secrets                                         // referenced edge credentials; nil on Docker
 	appSecret(ctx context.Context, app, name string) ([]byte, error)   // a secret the target generated for app
@@ -50,6 +53,7 @@ type sshDriver struct {
 		remote.Runner
 		Close() error
 	}
+	stopped map[string]bool // the plan's apps stopped with kyquickstart stop
 }
 
 func (d sshDriver) preflight(ctx context.Context) []finding {
@@ -77,7 +81,7 @@ func (d sshDriver) steps(name string, app catalog.App, releaseSet string, redact
 }
 
 func (d sshDriver) app(name string, app catalog.App, releaseSet string) dockerhost.App {
-	return dockerhost.App{Name: name, Root: d.t.Root, Runner: d.c, Catalog: app, ReleaseSet: releaseSet}
+	return dockerhost.App{Name: name, Root: d.t.Root, Runner: d.c, Catalog: app, ReleaseSet: releaseSet, Stopped: d.stopped[name]}
 }
 
 func (d sshDriver) deployed(ctx context.Context, name string) (managed.Deployed, error) {
@@ -90,6 +94,25 @@ func (d sshDriver) removeSteps(name string, app catalog.App) []engine.Step {
 
 func (d sshDriver) unmanageSteps(name string, app catalog.App) []engine.Step {
 	return dockerhost.UnmanageSteps(d.app(name, app, ""))
+}
+
+func (d sshDriver) lifecycleStep(name string, app catalog.App, op, run string) engine.Step {
+	a := d.app(name, app, "")
+	switch op {
+	case "stop":
+		return dockerhost.StopStep(a)
+	case "start":
+		return dockerhost.StartStep(a)
+	}
+	return dockerhost.RestartStep(a, run)
+}
+
+func (d sshDriver) workload(ctx context.Context, name string, app catalog.App) (string, error) {
+	return dockerhost.State(ctx, d.app(name, app, ""))
+}
+
+func (d sshDriver) logs(ctx context.Context, name, service string, tail int) ([]byte, error) {
+	return dockerhost.Logs(ctx, d.app(name, catalog.App{}, ""), service, tail)
 }
 
 func (d sshDriver) close() error { return d.c.Close() }
@@ -172,6 +195,25 @@ func (d kubeDriver) removeSteps(name string, app catalog.App) []engine.Step {
 
 func (d kubeDriver) unmanageSteps(name string, app catalog.App) []engine.Step {
 	return kube.UnmanageSteps(kube.App{Name: name, Client: d.c, Catalog: app})
+}
+
+func (d kubeDriver) lifecycleStep(name string, app catalog.App, op, run string) engine.Step {
+	a := kube.App{Name: name, Client: d.c, Catalog: app}
+	switch op {
+	case "stop":
+		return kube.StopStep(a)
+	case "start":
+		return kube.StartStep(a)
+	}
+	return kube.RestartStep(a, run)
+}
+
+func (d kubeDriver) workload(ctx context.Context, name string, _ catalog.App) (string, error) {
+	return d.c.State(ctx, name)
+}
+
+func (d kubeDriver) logs(ctx context.Context, name, service string, tail int) ([]byte, error) {
+	return d.c.Logs(ctx, name, service, int64(tail))
 }
 
 func (d kubeDriver) close() error { return nil }
