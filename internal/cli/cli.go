@@ -205,10 +205,11 @@ func Run(ctx context.Context, args []string, o Options) error {
 					return fmt.Errorf("%s: %w", step.ID(), err)
 				}
 			}
-			if err := edge.VerifyRoutes(ctx, e, expected); err != nil {
+			scope, err := edge.VerifyRoutes(ctx, e, expected)
+			if err != nil {
 				return fmt.Errorf("edge %s: %w", e.Target, err)
 			}
-			fmt.Fprintf(o.Out, "%s: %s and product forwarded-header checks passed\n", e.Target, what)
+			fmt.Fprintf(o.Out, "%s: %s and product forwarded-header checks passed for its %s routes\n", e.Target, what, scope)
 		}
 		return nil
 	}
@@ -432,6 +433,9 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 		}
 	}
 	if err := routedNeedsSetup(st); err != nil {
+		return nil, err
+	}
+	if err := exposurePlan(st, cat); err != nil {
 		return nil, err
 	}
 	if err := calendarAccounts(st); err != nil {

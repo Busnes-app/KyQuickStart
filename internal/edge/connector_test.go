@@ -99,6 +99,20 @@ func TestCloudflareLocalIngressHasVerifiedTLSAndCatchAll(t *testing.T) {
 	}
 }
 
+// The tunnel never carries an internal route's name, on frp or Cloudflare.
+func TestConnectorLeavesOutInternalRoutes(t *testing.T) {
+	for _, provider := range []string{"frp", "cloudflare"} {
+		e := testEdge()
+		e.Provider = provider
+		e.Connector = &stack.Connector{Network: "npm-net", NPMHost: "npm", FRPServer: "frp.example.com", FRPPort: 7000, TunnelID: "12345678-1234-1234-1234-123456789012"}
+		e.Routes = append(e.Routes, stack.Route{App: "kypulse", Hostname: "pulse.lan.example.com", Exposure: "internal"})
+		b, _, _ := connectorConfig(e)
+		if !strings.Contains(string(b), "hello.example.com") || strings.Contains(string(b), "pulse.lan.example.com") {
+			t.Errorf("%s config:\n%s", provider, b)
+		}
+	}
+}
+
 func directEdge() stack.Edge {
 	return stack.Edge{Target: "nas", Provider: "cloudflare-direct", ConnectorCIDR: "172.30.0.3/32",
 		Connector: &stack.Connector{Network: "edge-net", TunnelID: "12345678-1234-1234-1234-123456789012"},

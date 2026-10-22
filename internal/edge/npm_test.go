@@ -280,6 +280,22 @@ location / {
 	}
 }
 
+// On a tunnel edge an internal route is configured as on a lan edge: allow_cidrs only, no
+// connector trust and no PROXY-protocol listener; its external neighbour keeps the tunnel's.
+func TestInternalRouteOnTunnelEdge(t *testing.T) {
+	e := testEdge()
+	e.AllowCIDRs, e.ClientPort = []string{"192.168.1.0/24"}, 443
+	e.Routes = append(e.Routes, stack.Route{App: "kypulse", Hostname: "pulse.lan.example.com", ForwardHost: "app", ForwardPort: 8080, ForwardScheme: "http", CertificateID: 1, Exposure: "internal"})
+	n := &NPM{installation: testID}
+	internal, external := n.config(e, e.Routes[1], 1).Advanced, n.config(e, e.Routes[0], 1).Advanced
+	if !strings.Contains(internal, "allow 192.168.1.0/24;\ndeny all;") || strings.Contains(internal, "proxy_protocol") || strings.Contains(internal, "172.30.0.3") {
+		t.Fatalf("internal route:\n%s", internal)
+	}
+	if !strings.Contains(external, "listen 8443 ssl proxy_protocol;") || strings.Contains(external, "allow 192.168.1.0/24") {
+		t.Fatalf("external route:\n%s", external)
+	}
+}
+
 // A kube:// NPM is reached only through the supplied tunnel, as plain HTTP inside it.
 func TestKubeTunnel(t *testing.T) {
 	var hostHeader string
