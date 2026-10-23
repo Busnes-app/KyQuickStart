@@ -10,11 +10,11 @@ import (
 
 // renderedHashes are the hashes of every Kubernetes catalog app's objects as origin/master
 // before KyYard rendered them: adding a field for one app must not redeploy the others.
-// kyidentity's changed only with its image pin and version (now 0.4.6).
+// kyidentity's changed only with its image pin and version (now 0.4.7).
 var renderedHashes = map[string]string{
 	"euro-office": "a65a4a42bbe42da10dc46343eac3260d5dcf030b79e42f80cf270256f355e3e0",
 	"kycalendar":  "6afd512799d26b78d2431b482f8e850fa8394d875b14ab77529e32b47b460627",
-	"kyidentity":  "6f86bc9f29a3a3db1276c053d23256a21c953c94f6a2052bfc04abe42cc24be1",
+	"kyidentity":  "baa6fccea060bf39969c6d1e405ad991c25b801ec67d0b211cfa11ecb2edabc0",
 	"kynotes":     "048c95d97187c8258ecc7c6bcca37e4ce7ba44ddec5c52066d6726a6f0a8873f",
 	"kypulse":     "c48e95ecc6b3a18057a4ca2f1f2d4bde070cdddfcccaeb7e171d68cca4e24bd1",
 	"kyrecovery":  "6a7567dde69a4929683285afe0a577cb6482ee206f13f651111c9ca4199cb650",

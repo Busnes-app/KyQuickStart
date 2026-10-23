@@ -49,18 +49,18 @@ func TestKyIdentityEntry(t *testing.T) {
 	}
 	a := cat["kyidentity"]
 	k := a.Kubernetes
-	if a.Category != "ky" || a.Version != "0.4.6" || a.PodSecurity != "restricted" || a.OIDC != nil || len(a.Compose) == 0 || len(a.Secrets) != 0 {
+	if a.Category != "ky" || a.Version != "0.4.7" || a.PodSecurity != "restricted" || a.OIDC != nil || len(a.Compose) == 0 || len(a.Secrets) != 0 {
 		t.Fatalf("manifest = %+v", a.Manifest)
 	}
-	if !strings.HasPrefix(a.Images[k.Image], "ghcr.io/busnes-app/kyidentity-server:0.4.6@sha256:2136581c85c66c354c5cfbe84a209832f020410d1835890f0ec3382256e1ed67") || k.RunAs != 100 || k.WritableRoot || len(k.Capabilities) != 0 {
+	if !strings.HasPrefix(a.Images[k.Image], "ghcr.io/busnes-app/kyidentity-server:0.4.7@sha256:3c6f77e405331dd96bff6431f644b1f6f0db3b69e91860b74c6b4852a7d4160b") || k.RunAs != 100 || k.WritableRoot || len(k.Capabilities) != 0 {
 		t.Fatalf("kubernetes = %+v", k)
 	}
 	if k.Env["KYIDENTITY_ISSUER_URL"] != "https://"+HostRef || k.ReadinessPath != "/readyz" || k.Ports[0] != 5867 || k.Volumes[0].Mount != k.Env["KYIDENTITY_DATA_DIR"] {
 		t.Fatalf("env %v, probe %s, volumes %+v", k.Env, k.ReadinessPath, k.Volumes)
 	}
-	// 0.4.4..0.4.6 rewrite no data: an upgrade from 0.4.3 needs only an acknowledgement.
-	if a.Upgrade.Allows("0.4.5", "0.4.6") != nil || a.Upgrade.Allows("0.4.3", "0.4.6") != nil {
-		t.Fatal("0.4.3 or 0.4.5 cannot upgrade to 0.4.6")
+	// 0.4.4..0.4.7 rewrite no data: an upgrade from 0.4.3 needs only an acknowledgement.
+	if a.Upgrade.Allows("0.4.6", "0.4.7") != nil || a.Upgrade.Allows("0.4.3", "0.4.7") != nil {
+		t.Fatal("0.4.3 or 0.4.6 cannot upgrade to 0.4.7")
 	}
 	if a.Upgrade.MigratesData || a.Upgrade.MinFrom != "0.4.0" || a.Backup.Volumes[0] != "data" {
 		t.Fatalf("upgrade %+v, backup %+v", a.Upgrade, a.Backup)
