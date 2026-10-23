@@ -592,7 +592,7 @@ kyquickstart itself does not use it, but the human steps it prints do (the Cloud
 KyDNS token Secrets, NPM's admin port-forward, reading break-glass and owner passwords).
 `preflight` warns when a plan with a Kubernetes target finds no `kubectl` on `PATH`.
 
-The catalog's `kyidentity` app installs KyIdentity 0.4.6 on a Kubernetes target from its
+The catalog's `kyidentity` app installs KyIdentity 0.4.7 on a Kubernetes target from its
 attested release image (`internal/catalog/apps/kyidentity/manifest.yaml` records the digest).
 It needs an edge route: its issuer is `https://<route hostname>`, plus `:<client_port>` on an
 internal route whose edge's `client_port` is not 443, and a plan without exactly one route for it is refused. Select its setup with an `integrations` entry that names no
@@ -674,7 +674,8 @@ changed intent fails with the product's refusal. `integrate-stack` skips install
   `data` volume is declared; `kyquickstart backup` covers Docker apps only).
 - 0.4.4's resync replays removals and it ships `resync-system`, which `kyquickstart restore`
   runs after restoring an app whose people come from KyIdentity. An upgrade from 0.4.3 needs
-  only `--acknowledge-no-backup`: 0.4.6 adds one defaulted column and rewrites no data.
+  only `--acknowledge-no-backup`: 0.4.6 adds one defaulted column, 0.4.7 changes no schema, and
+  neither rewrites people, access or content.
 - 0.4.6 sends a removal (disable, unassignment, deletion) made before KyIdentity first
   delivered the person to an app; 0.4.5 and earlier dropped it and kept no record, so no
   resync can replay it. **After upgrading from 0.4.5 or earlier**, check each app's accounts
@@ -683,6 +684,8 @@ changed intent fails with the product's refusal. `integrate-stack` skips install
   one at their next KyIdentity sign-in; until then no app signs them in. The owner's accounts
   from setup are not affected. The bootstrap administrator is flagged too, but `apply` has
   already disabled `kyq-bootstrap` (above), so nobody signs in with it.
+- 0.4.7 never gives up on a removal: one to an app that is down retries (at most 30 minutes
+  apart) until the app is back, and the provisioning alert opens while one is stuck.
 
 ## Catalog KyRecovery on Kubernetes
 
