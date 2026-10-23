@@ -49,7 +49,7 @@ func TestLANVerificationNeedsAnAllowedClient(t *testing.T) {
 	defer l.Close()
 	e := stack.Edge{Provider: "lan", AllowCIDRs: []string{"127.0.0.0/8"}, ClientPort: l.Addr().(*net.TCPAddr).Port,
 		Routes: []stack.Route{{Hostname: "127.0.0.1", StatusPath: "/api/status"}}}
-	_, err = VerifyRoutes(context.Background(), e, netip.MustParseAddr("192.168.1.50"))
+	_, _, err = VerifyRoutes(context.Background(), e, netip.MustParseAddr("192.168.1.50"))
 	if err == nil || !strings.Contains(err.Error(), "outside allow_cidrs") {
 		t.Fatalf("outside client: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestLANVerificationNeedsAnAllowedClient(t *testing.T) {
 		}
 		dialled <- err == nil
 	}()
-	_, err = VerifyRoutes(context.Background(), e, netip.MustParseAddr("127.0.0.1"))
+	_, _, err = VerifyRoutes(context.Background(), e, netip.MustParseAddr("127.0.0.1"))
 	l.Close() // ends an Accept that never came
 	if err == nil || !<-dialled {
 		t.Fatalf("allowed client did not probe client_port: %v", err)
@@ -75,11 +75,24 @@ func TestMixedEdgeVerifiesOneSidePerClient(t *testing.T) {
 	external := stack.Route{Hostname: "notes.example.com", Exposure: "external"}
 	e := stack.Edge{Provider: "cloudflare", AllowCIDRs: []string{"192.168.1.0/24"}, ClientPort: 443}
 	e.Routes = []stack.Route{external}
-	if _, err := VerifyRoutes(context.Background(), e, netip.MustParseAddr("192.168.1.50")); err == nil || !strings.Contains(err.Error(), "inside allow_cidrs") {
+	if _, _, err := VerifyRoutes(context.Background(), e, netip.MustParseAddr("192.168.1.50")); err == nil || !strings.Contains(err.Error(), "inside allow_cidrs") {
 		t.Fatalf("LAN client on an edge with no internal routes: %v", err)
 	}
 	e.Routes = []stack.Route{internal}
-	if _, err := VerifyRoutes(context.Background(), e, netip.MustParseAddr("203.0.113.9")); err == nil || !strings.Contains(err.Error(), "outside allow_cidrs") {
+	if _, _, err := VerifyRoutes(context.Background(), e, netip.MustParseAddr("203.0.113.9")); err == nil || !strings.Contains(err.Error(), "outside allow_cidrs") {
 		t.Fatalf("outside client on an edge with only internal routes: %v", err)
+	}
+}
+
+// A route without a status path is skipped, and a failing route does not stop the others.
+func TestVerifyRoutesSkipsAndChecksEveryRoute(t *testing.T) {
+	e := stack.Edge{Provider: "lan", AllowCIDRs: []string{"127.0.0.0/8"}, ClientPort: 1,
+		Routes: []stack.Route{{Hostname: "id.invalid"}, {Hostname: "a.invalid", StatusPath: "/s"}, {Hostname: "b.invalid", StatusPath: "/s"}}}
+	scope, skipped, err := VerifyRoutes(context.Background(), e, netip.MustParseAddr("127.0.0.1"))
+	if scope != "internal" || len(skipped) != 1 || skipped[0] != "id.invalid" {
+		t.Fatalf("scope %q, skipped %v", scope, skipped)
+	}
+	if err == nil || !strings.Contains(err.Error(), "route a.invalid") || !strings.Contains(err.Error(), "route b.invalid") {
+		t.Fatalf("both failing routes not reported: %v", err)
 	}
 }

@@ -7,6 +7,8 @@ version: 0.4.3
 # certificate names KyYard-server, so that spelling is the one that verifies).
 images:
   kyyard: ghcr.io/busnes-app/kyyard:0.4.3@sha256:94c1b9cff3cff2f42e636680979f3535ac07220c99e6f4479b857683d2820756
+# verify-edge reads the suite proxy contract here (clientIp, proxyHeadersTrusted, scheme).
+status_path: /api/installer/network
 # Manages the suite's installation: administrators only, never on the public connection.
 exposure: internal
 # Its setup needs KyIdentity's issuer, client and signed directory.

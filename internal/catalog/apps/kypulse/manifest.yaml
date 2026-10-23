@@ -5,6 +5,8 @@ version: 0.4.2
 # Release image of v0.4.2, attested by release-image.yml@refs/tags/v0.4.2 (gh attestation verify).
 images:
   kypulse: ghcr.io/busnes-app/kypulse-server:0.4.2@sha256:4d7232d53e07476592379b7c688c8f50b073e498d89b5c08b94cc3404ed3cc16
+# verify-edge reads the suite proxy contract here (clientIp, proxyHeadersTrusted, scheme).
+status_path: /api/installer/network
 # Monitoring for administrators: never on the public connection.
 exposure: internal
 # Its setup needs KyIdentity's issuer, client and signed directory.
