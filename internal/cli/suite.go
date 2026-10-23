@@ -270,6 +270,22 @@ func upgrade(ctx context.Context, state string, r Request, trust trustFlag, o Op
 }
 
 // remove uninstalls or unmanages one app, disabling its public routes first.
+// withoutApp drops app name on target from the plan: the app, its routes, edges left with no
+// routes, the allow-list of a tunnel edge left with no internal route, and its setup selection
+// (an integration must select an installed app).
+func withoutApp(st *stack.Stack, name, target string) {
+	st.Apps = slices.DeleteFunc(st.Apps, func(a stack.App) bool { return a.Name == name })
+	for i := range st.Edges {
+		e := &st.Edges[i]
+		e.Routes = slices.DeleteFunc(e.Routes, func(r stack.Route) bool { return r.App == name })
+		if e.Provider != "lan" && !slices.ContainsFunc(e.Routes, func(r stack.Route) bool { return r.Exposure == "internal" }) {
+			e.AllowCIDRs, e.ClientPort = nil, 0
+		}
+	}
+	st.Edges = slices.DeleteFunc(st.Edges, func(e stack.Edge) bool { return len(e.Routes) == 0 })
+	st.Integrations = slices.DeleteFunc(st.Integrations, func(i stack.Integration) bool { return i.Product == name && i.Target == target })
+}
+
 func remove(ctx context.Context, state string, r Request, trust trustFlag, o Options, unmanage bool) error {
 	name, err := oneApp(r)
 	if err != nil {
@@ -293,13 +309,7 @@ func remove(ctx context.Context, state string, r Request, trust trustFlag, o Opt
 		}
 	}
 	routed := func(r stack.Route) bool { return r.App == name }
-	next, data, err := changePlan(state, s.revision, func(st *stack.Stack) {
-		st.Apps = slices.DeleteFunc(st.Apps, func(a stack.App) bool { return a.Name == name })
-		for i := range st.Edges {
-			st.Edges[i].Routes = slices.DeleteFunc(st.Edges[i].Routes, routed)
-		}
-		st.Edges = slices.DeleteFunc(st.Edges, func(e stack.Edge) bool { return len(e.Routes) == 0 })
-	})
+	next, data, err := changePlan(state, s.revision, func(st *stack.Stack) { withoutApp(st, name, t.Name) })
 	if err != nil {
 		return err
 	}
