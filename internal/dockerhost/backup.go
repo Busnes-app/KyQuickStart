@@ -440,12 +440,12 @@ func (s Store) pending() string { return path.Join(s.App.dir(), ".restore-pendin
 // Pending reads the restore in progress: its snapshot and last finished stage, "" if none.
 func (s Store) Pending(ctx context.Context) (id, stage string, err error) {
 	f := remote.Quote(s.pending())
-	out, err := s.App.Runner.Run(ctx, "if test -e "+f+"; then head -c 256 "+f+"; fi", nil)
+	out, err := s.App.Runner.Run(ctx, "if test -e "+f+" || test -L "+f+"; then test ! -L "+f+" && test -s "+f+" || exit 1; head -c 256 "+f+"; fi", nil)
 	if err != nil || len(out) == 0 {
 		return "", "", err
 	}
 	id, stage, ok := strings.Cut(strings.TrimSpace(string(out)), " ")
-	if !ok || !snapshotIDRE.MatchString(id) || stage != "files" && stage != "dump" {
+	if !ok || !snapshotIDRE.MatchString(id) || stage != "preparing" && stage != "files" && stage != "dump" {
 		return "", "", fmt.Errorf("%s is not a restore record; inspect it by hand", s.pending())
 	}
 	return id, stage, nil
@@ -464,7 +464,9 @@ func refuseUnfinishedRestore(ctx context.Context, a App) error {
 
 // SetPending records the restore's last finished stage.
 func (s Store) SetPending(ctx context.Context, id, stage string) error {
-	_, err := s.App.Runner.Run(ctx, "umask 077; printf '%s %s\\n' "+remote.Quote(id)+" "+remote.Quote(stage)+" > "+remote.Quote(s.pending()), nil)
+	cmd := "umask 077; t=$(mktemp " + remote.Quote(s.pending()+".XXXXXX") + ") || exit 1\n" +
+		"{ printf '%s %s\\n' " + remote.Quote(id) + " " + remote.Quote(stage) + " > \"$t\" && mv -f \"$t\" " + remote.Quote(s.pending()) + "; }; s=$?; rm -f \"$t\"; exit \"$s\""
+	_, err := s.App.Runner.Run(ctx, cmd, nil)
 	return err
 }
 

@@ -28,6 +28,11 @@ func (s secretsStep) exists(ctx context.Context, name string) (bool, error) {
 }
 
 func (s secretsStep) Inspect(ctx context.Context) (bool, error) {
+	if !s.a.Restoring {
+		if err := refuseUnfinishedRestore(ctx, s.a); err != nil {
+			return false, err
+		}
+	}
 	for _, n := range s.a.Catalog.Secrets {
 		if ok, err := s.exists(ctx, n); err != nil || !ok {
 			return false, err

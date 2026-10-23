@@ -293,11 +293,17 @@ func (s *session) restoreLocked(ctx context.Context, st dockerhost.Store, r rest
 		if r.snapshot != "" && !strings.HasPrefix(pendingID, r.snapshot) {
 			return refuse("a restore of snapshot %s is in progress; rerun kyquickstart restore %s --snapshot %s to finish it", pendingID, r.app, pendingID)
 		}
-		fmt.Fprintf(out, "Resuming the restore of %s from snapshot %s (%s restored).\n", r.app, pendingID, stage)
-		if err := s.confirm(in, r); err != nil {
-			return err
+		if stage == "preparing" {
+			if r.snapshot == "" || !r.replace {
+				return refuse("%s's restored files were not completely published; keep the app stopped and rerun kyquickstart restore %s --snapshot %s --replace to preserve the partial files and retry extraction", r.app, r.app, pendingID)
+			}
+		} else {
+			fmt.Fprintf(out, "Resuming the restore of %s from snapshot %s (%s restored).\n", r.app, pendingID, stage)
+			if err := s.confirm(in, r); err != nil {
+				return err
+			}
+			return s.finishRestore(ctx, st, pendingID, stage)
 		}
-		return s.finishRestore(ctx, st, pendingID, stage)
 	}
 	// Refusals that need no repository come first: the server is not contacted for them.
 	var occupied []string
@@ -314,6 +320,11 @@ func (s *session) restoreLocked(ctx context.Context, st dockerhost.Store, r rest
 		}
 		if len(occupied) > 0 && !r.replace {
 			return refuse("%s already has %s; rerun with --replace to move them aside (nothing is deleted). Nothing was changed", r.app, strings.Join(occupied, ", "))
+		}
+		if r.app == "kydrive" {
+			if err := st.CheckDriveRestoreReset(ctx); err != nil {
+				return refuse("%s", err)
+			}
 		}
 	}
 	has, err := st.HasPassword(ctx)
@@ -364,6 +375,12 @@ func (s *session) restoreLocked(ctx context.Context, st dockerhost.Store, r rest
 		return err
 	}
 	start := time.Now()
+	// Fence every ordinary startup before the first restored file can be published.
+	if r.app == "kydrive" {
+		if err := st.SetPending(ctx, snap.ID, "preparing"); err != nil {
+			return err
+		}
+	}
 	if len(occupied) > 0 {
 		aside, err := st.MoveAside(ctx, time.Now().UTC().Format("20060102T150405Z"))
 		if err != nil {
@@ -446,6 +463,11 @@ func (s *session) finishRestore(ctx context.Context, st dockerhost.Store, id, st
 		}
 		replayed = true
 		return nil
+	}
+	if name == "kydrive" {
+		if err := st.ResetDriveRestore(ctx); err != nil {
+			return suite.Errorf(suite.RestoreIncomplete, "%s", s.redact.Redact(err.Error()))
+		}
 	}
 	e := &engine.Engine{Dir: s.state + "/results", Out: s.o.Out, Redact: s.redact, Progress: s.o.Progress}
 	order := b.RestoreOrder
