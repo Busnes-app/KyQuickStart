@@ -47,3 +47,29 @@ func TestExposurePlan(t *testing.T) {
 		})
 	}
 }
+
+// Catalog routes get their app's status path; a plan's own path stays, and routes of apps
+// without one, or a multi-route app's other routes, get none (verify-edge skips them).
+func TestRouteStatusPaths(t *testing.T) {
+	cat, err := catalog.Load(catalog.Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := []stack.Edge{{Routes: []stack.Route{
+		{App: "kynotes", StatusPath: "/api/status"},
+		{App: "kycalendar", StatusPath: "/custom"},
+		{App: "kyidentity", StatusPath: "/api/status"},
+		{App: "kymessage", StatusPath: "/api/status"},
+		{App: "kymessage", Role: cat["kymessage"].Routes[1].Role, StatusPath: "/api/status"},
+		{App: "hello", StatusPath: "/api/status"},
+	}}}
+	got := routePaths(in, cat)[0].Routes
+	for i, want := range []string{"/api/v1/installer/network", "/custom", "", "/api/installer/network", "", "/api/status"} {
+		if got[i].StatusPath != want {
+			t.Errorf("route %d (%s %s): status path %q, want %q", i, got[i].App, got[i].Role, got[i].StatusPath, want)
+		}
+	}
+	if in[0].Routes[0].StatusPath != "/api/status" {
+		t.Error("routePaths changed the plan's routes")
+	}
+}

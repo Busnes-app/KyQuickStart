@@ -6,6 +6,8 @@ version: 0.4.2
 # Busnes-app/KyDNS-server release.yml@refs/tags/v0.4.2 (gh attestation verify).
 images:
   kydns: ghcr.io/busnes-app/kydns-server:0.4.2@sha256:ceb83f29134bb611343d1adf94f85088f5f6c7101863a2c9b170e76591a5405b
+# verify-edge reads the suite proxy contract here (clientIp, proxyHeadersTrusted, scheme).
+status_path: /api/v1/installer/network
 # The LAN's DNS administration: never on the public connection.
 exposure: internal
 # Its setup needs KyIdentity's issuer and client.

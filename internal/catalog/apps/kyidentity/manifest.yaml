@@ -2,6 +2,8 @@ name: kyidentity
 description: KyIdentity, the suite's identity provider (OIDC, MFA, SCIM); every other app signs in through it
 category: ky
 version: 0.4.6
+# No status_path: 0.4.6 does not report the suite proxy contract (KyIdentity-server#140),
+# so verify-edge skips its route.
 # Release image of v0.4.6, attested by release-image.yml@refs/tags/v0.4.6 (gh attestation verify;
 # source commit f647faf = v0.4.6^{commit}). It advertises setup amendments, disable-user,
 # resync-system (its resync replays removals, which kyquickstart restore requires),

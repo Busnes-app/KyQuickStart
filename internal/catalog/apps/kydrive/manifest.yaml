@@ -9,6 +9,8 @@ images:
 # Generated on the target. The session secret signs sessions; the SCIM token is the bearer
 # KyIdentity's SCIM connector must present, and KyDrive's setup refuses to run without one.
 secrets: [session_secret, scim_token]
+# verify-edge reads the suite proxy contract here (clientIp, proxyHeadersTrusted, scheme).
+status_path: /healthz
 # Its setup needs KyIdentity's issuer and client.
 depends_on: [kyidentity]
 health:

@@ -6,6 +6,8 @@ version: 0.4.2
 # Busnes-app/KyCalendar release-image.yml@refs/tags/v0.4.2 (gh attestation verify).
 images:
   kycalendar: ghcr.io/busnes-app/kycalendar:0.4.2@sha256:7ed435458a08c9dd02674657cc55aa6aaef96a254256c14880e27fc93c1cf75b
+# verify-edge reads the suite proxy contract here (clientIp, proxyHeadersTrusted, scheme).
+status_path: /api/installer/network
 # Its setup needs KyIdentity's issuer, client and signed directory.
 depends_on: [kyidentity]
 health:

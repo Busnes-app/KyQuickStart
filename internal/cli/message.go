@@ -231,7 +231,12 @@ func withRoutes(st *stack.Stack, name string, t stack.Target, app catalog.App) (
 	return app.WithRoute(c), nil
 }
 
-// routePaths copies each route of a multi-route app with its catalog paths and deny_paths.
+// routePaths copies each route of a multi-route app with its catalog paths and deny_paths, and
+// gives a catalog app's routes the catalog's status path: its primary route keeps a status
+// path the plan set, and takes the catalog's instead of the default; any other route, or an
+// app without one, gets none, which verify-edge skips.
+const defaultStatusPath = "/api/status" // stack's default for a route without status_path
+
 func routePaths(edges []stack.Edge, cat catalog.Catalog) []stack.Edge {
 	out := slices.Clone(edges)
 	for i := range out {
@@ -244,6 +249,14 @@ func routePaths(edges []stack.Edge, cat catalog.Catalog) []stack.Edge {
 			}
 			if len(app.Routes) == 0 {
 				out[i].Routes[j].DenyPaths = app.DenyPaths
+			}
+			if _, ok := cat[r.App]; ok {
+				switch {
+				case role != app.Primary() || app.StatusPath == "":
+					out[i].Routes[j].StatusPath = ""
+				case r.StatusPath == "" || r.StatusPath == defaultStatusPath:
+					out[i].Routes[j].StatusPath = app.StatusPath
+				}
 			}
 			for _, cr := range app.Routes {
 				if cr.Role == role {
