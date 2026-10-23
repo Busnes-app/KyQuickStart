@@ -264,9 +264,29 @@ func TestDependencyReleaseWorkflow(t *testing.T) {
 		runs += s.Run + "\n"
 	}
 	for _, want := range []string{"internal/appversion/VERSION", `--author='^dependabot\[bot\]'`,
-		"gh run list --workflow ci.yml --branch master", "gh release create", "gh workflow run release-image.yml"} {
+		"gh run list --workflow ci.yml --branch master", "gh release create", "gh workflow run release-image.yml",
+		// The catalog follows the Ky apps' releases, and a followed app counts like Dependabot.
+		"go run ./scripts/catalog-follow", "go test -count=1 ./internal/catalog/...", "HEAD:refs/heads/master",
+		"gh workflow run ci.yml", `--author='^github-actions\[bot\]' --grep='^catalog: follow '`} {
 		if !strings.Contains(runs, want) {
 			t.Errorf("release runs no %q", want)
 		}
+	}
+	// A followed catalog's CI is a dispatched run, so the gate must not require a push.
+	if strings.Contains(runs, "--event push") {
+		t.Error("the CI gate accepts only push runs; a catalog-follow commit's CI is dispatched")
+	}
+	ci, err := os.ReadFile("../../.github/workflows/ci.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var on struct {
+		On map[string]any `yaml:"on"`
+	}
+	if err := yaml.Unmarshal(ci, &on); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := on.On["workflow_dispatch"]; !ok {
+		t.Error("ci.yml cannot be dispatched on a catalog-follow commit")
 	}
 }
