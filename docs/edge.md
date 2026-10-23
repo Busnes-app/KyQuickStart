@@ -586,7 +586,7 @@ These values must describe the current request after the product's own proxy han
 `verify-edge` sends forged forwarding headers through public HTTPS and requires the expected
 client address and HTTPS scheme. A missing G11 implementation fails verification. It checks
 every route and lists each one that failed. It skips, and names, the routes whose product
-reports no status: catalog apps without a `status_path` (KyIdentity 0.4.6, NPM) and the
+reports no status: catalog apps without a `status_path` (KyIdentity, whose 0.4.7 status needs `TRUSTED_PROXY_CIDRS` the catalog does not set yet, and NPM) and the
 non-primary routes of a multi-route app (KyMessages' Matrix and chat hosts). The check
 does not grant administrator access, verify SSO, or certify the complete installation.
 
