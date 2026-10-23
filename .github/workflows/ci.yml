@@ -4,6 +4,9 @@ on:
   push:
     branches: [master]
   pull_request:
+  # dependency-release.yml dispatches it on a catalog-follow commit, which its
+  # GITHUB_TOKEN push does not trigger.
+  workflow_dispatch:
 
 permissions:
   contents: read
