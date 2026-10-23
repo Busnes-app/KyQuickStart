@@ -587,6 +587,11 @@ server. Connector credentials stay in protected target files, never in the wizar
 
 ## Catalog KyIdentity on Kubernetes
 
+Kubernetes targets also need `kubectl` on the workstation, at the cluster's minor version:
+kyquickstart itself does not use it, but the human steps it prints do (the Cloudflare and
+KyDNS token Secrets, NPM's admin port-forward, reading break-glass and owner passwords).
+`preflight` warns when a plan with a Kubernetes target finds no `kubectl` on `PATH`.
+
 The catalog's `kyidentity` app installs KyIdentity 0.4.6 on a Kubernetes target from its
 attested release image (`internal/catalog/apps/kyidentity/manifest.yaml` records the digest).
 It needs an edge route: its issuer is `https://<route hostname>`, plus `:<client_port>` on an

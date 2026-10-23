@@ -12,6 +12,7 @@ import (
 	"maps"
 	"net/netip"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -205,11 +206,14 @@ func Run(ctx context.Context, args []string, o Options) error {
 					return fmt.Errorf("%s: %w", step.ID(), err)
 				}
 			}
-			scope, err := edge.VerifyRoutes(ctx, e, expected)
+			scope, skipped, err := edge.VerifyRoutes(ctx, e, expected)
+			if len(skipped) > 0 {
+				fmt.Fprintf(o.Out, "%s: not checked (their products report no proxy status): %s\n", e.Target, strings.Join(skipped, ", "))
+			}
 			if err != nil {
 				return fmt.Errorf("edge %s: %w", e.Target, err)
 			}
-			fmt.Fprintf(o.Out, "%s: %s and product forwarded-header checks passed for its %s routes\n", e.Target, what, scope)
+			fmt.Fprintf(o.Out, "%s: %s checks passed, and product forwarded-header checks for every checked %s route\n", e.Target, what, scope)
 		}
 		return nil
 	}
@@ -656,6 +660,12 @@ func (s *session) preflight(ctx context.Context) error {
 				failed++
 			}
 			fmt.Fprintf(s.o.Out, "%s  %-12s %-16s %s\n", mark, t.Name, f.Check, f.Detail)
+		}
+	}
+	// Not a failure: kyquickstart does not need it, but the human steps it prints do.
+	if slices.ContainsFunc(s.targets, stack.Target.Kubernetes) {
+		if _, err := exec.LookPath("kubectl"); err != nil {
+			fmt.Fprintf(s.o.Out, "warn  %-12s %-16s %s\n", "workstation", "kubectl", "not on PATH: the printed Kubernetes steps (secrets, port-forward, passwords) need it at the cluster's minor version")
 		}
 	}
 	for _, e := range s.edges {

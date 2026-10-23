@@ -6,6 +6,8 @@ version: 0.4.2
 # Busnes-app/KyNotes-server release-image.yml@refs/tags/v0.4.2 (gh attestation verify).
 images:
   kynotes: ghcr.io/busnes-app/kynotes-server:0.4.2@sha256:85f49161f9e5879d9998507ac5b1ef07e3c5e884854e162173791b7292a06ad9
+# verify-edge reads the suite proxy contract here (clientIp, proxyHeadersTrusted, scheme).
+status_path: /api/v1/installer/network
 # Its setup needs KyIdentity's issuer, client and signed directory.
 depends_on: [kyidentity]
 health:
