@@ -5,6 +5,8 @@ version: 0.4.2
 # Release image of v0.4.2, attested by release-image.yml@refs/tags/v0.4.2 (gh attestation verify).
 images:
   kyrecovery: ghcr.io/busnes-app/kyrecovery-server:0.4.2@sha256:61bd690877d202579dd14952cd37d6232ce988e71406083b7438d66321e19eae
+# verify-edge reads the suite proxy contract here (clientIp, proxyHeadersTrusted, scheme).
+status_path: /api/installer/network
 # The suite's backup store and its ceremony: administrators and the suite's own apps only.
 exposure: internal
 # Its setup needs KyIdentity's issuer, client and signed directory.

@@ -38,6 +38,10 @@ type Manifest struct {
 	Media *Media `yaml:"media"`
 	// ChatOIDC is a second, everyday-only KyIdentity client at one of the app's routes.
 	ChatOIDC *ChatOIDC `yaml:"chat_oidc"`
+	// StatusPath is where the app's primary route reports the suite proxy contract
+	// (clientIp, proxyHeadersTrusted, scheme) for verify-edge. Empty: it has none, and
+	// verify-edge skips its routes.
+	StatusPath string `yaml:"status_path,omitempty"`
 	// Exposure internal keeps every route of the app off the public connection: an app for
 	// administrators and the suite itself. Empty allows either.
 	Exposure string `yaml:"exposure,omitempty"`
@@ -423,6 +427,9 @@ func (m Manifest) validate(dir string) error {
 		if !stack.ValidName(d) || d == m.Name {
 			return fmt.Errorf("depends_on %q is not another app", d)
 		}
+	}
+	if m.StatusPath != "" && (!strings.HasPrefix(m.StatusPath, "/") || strings.ContainsAny(m.StatusPath, "?# \x00\r\n")) {
+		return fmt.Errorf("status_path %q must be an absolute request path", m.StatusPath)
 	}
 	if m.Exposure != "" && m.Exposure != "internal" {
 		return fmt.Errorf("exposure %q must be internal or empty", m.Exposure)

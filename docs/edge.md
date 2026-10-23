@@ -390,6 +390,13 @@ On a Kubernetes edge, NPM can request a Let's Encrypt certificate through a DNS-
 the names never need to be public on port 80. A route then names the certificate instead of
 giving `certificate_id`; each route has exactly one of the two.
 
+Create the route names' DNS records before the first `apply`: product setups (KyNotes',
+kyPulse's) reach KyIdentity at its route hostname from their pods, and fail until it resolves.
+If a LAN resolver serves its own copy of the zone (split horizon, such as KyDNS for the same
+domain), public records never reach LAN clients or pods: use `lan_dns` below, or add the
+names there. A lookup made before a record exists can stay cached as "no such name" for the
+zone's SOA minimum, so wait that long, or flush the resolver, before rerunning.
+
 ```yaml
 edges:
   - target: k80
@@ -429,8 +436,8 @@ limited to **Include > Specific zone > `example.com`**. Then store it
 in the cluster from a hidden prompt, so it never appears on a command line or in shell history:
 
 ```sh
-# in bash; the namespace exists once the npm app has been applied
-read -rs CF_TOKEN && printf %s "$CF_TOKEN" | kubectl -n kyq-edge create secret generic cloudflare-dns --from-file=api_token=/dev/stdin; unset CF_TOKEN
+# from any shell (bash, zsh, fish); the namespace exists once the npm app has been applied
+bash -c 'read -rsp "Cloudflare token: " T && echo && printf %s "$T" | kubectl -n kyq-edge create secret generic cloudflare-dns --from-file=api_token=/dev/stdin'
 kubectl -n kyq-edge label secret cloudflare-dns ky.managed-by=kyquickstart
 ```
 
@@ -484,8 +491,8 @@ installation and revoked on its own with `kydns token rm <id>`:
 
 ```sh
 kydns token add kyquickstart-k80   # prints the token once
-# in bash, paste it at the hidden prompt
-read -rs KYDNS_API_TOKEN && printf %s "$KYDNS_API_TOKEN" | kubectl -n kyq-edge create secret generic kydns-api --from-file=token=/dev/stdin; unset KYDNS_API_TOKEN
+# from any shell, paste it at the hidden prompt
+bash -c 'read -rsp "KyDNS token: " T && echo && printf %s "$T" | kubectl -n kyq-edge create secret generic kydns-api --from-file=token=/dev/stdin'
 kubectl -n kyq-edge label secret kydns-api ky.managed-by=kyquickstart
 ```
 
@@ -567,7 +574,9 @@ host is kept so the change is reversible; delete it in NPM yourself once it is n
 Removing a whole edge from `stack.yaml` does not disable its hosts.
 
 The product must already trust its NPM peer according to the suite proxy contract. Product
-configuration through `apply-setup` is still pending. Its status endpoint must return:
+configuration through `apply-setup` is still pending. Its status endpoint (the catalog
+manifest's `status_path`, such as `/api/installer/network`; a plan's own `status_path` for
+other apps) must return:
 
 ```json
 {"clientIp":"203.0.113.10","proxyHeadersTrusted":true,"scheme":"https"}
@@ -575,7 +584,10 @@ configuration through `apply-setup` is still pending. Its status endpoint must r
 
 These values must describe the current request after the product's own proxy handling.
 `verify-edge` sends forged forwarding headers through public HTTPS and requires the expected
-client address and HTTPS scheme. A missing G11 implementation fails verification. The check
+client address and HTTPS scheme. A missing G11 implementation fails verification. It checks
+every route and lists each one that failed. It skips, and names, the routes whose product
+reports no status: catalog apps without a `status_path` (KyIdentity 0.4.6, NPM) and the
+non-primary routes of a multi-route app (KyMessages' Matrix and chat hosts). The check
 does not grant administrator access, verify SSO, or certify the complete installation.
 
 ## Test scope

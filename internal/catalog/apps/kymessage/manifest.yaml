@@ -18,6 +18,8 @@ images:
 # Generated on the target. KY_SESSION_SECRET has no file form; the console's entrypoint reads it.
 # matrix-init writes the Matrix stack's own secrets under matrix/secrets.
 secrets: [session_secret]
+# verify-edge reads the suite proxy contract here (clientIp, proxyHeadersTrusted, scheme).
+status_path: /api/installer/network
 # Its setup and MAS need KyIdentity's issuer and two clients.
 depends_on: [kyidentity]
 health:

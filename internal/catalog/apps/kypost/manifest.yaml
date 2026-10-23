@@ -6,6 +6,8 @@ version: 0.4.2
 # Busnes-app/KyPost-Server release-image.yml@refs/tags/v0.4.2 (gh attestation verify).
 images:
   kypost: ghcr.io/busnes-app/kypost-server:0.4.2@sha256:23b596719edbbf81859047264893509cef7a90b6eb7ac48038bc353e9f3d2353
+# verify-edge reads the suite proxy contract here (clientIp, proxyHeadersTrusted, scheme).
+status_path: /api/installer/network
 # No secrets: KyPost generates its own keys in /kypost/private at first start.
 # Its setup needs KyIdentity's issuer and client.
 depends_on: [kyidentity]
