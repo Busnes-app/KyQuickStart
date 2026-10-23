@@ -25,15 +25,16 @@ func release(t *testing.T, args ...string) ([]byte, error) {
 	return exec.Command("sh", append([]string{script}, args...)...).CombinedOutput()
 }
 
+// A dependency release's four-part version (X.Y.Z.N) is the stamp; three parts share the path.
 func TestReleaseBinariesStampThePin(t *testing.T) {
-	pin := "ghcr.io/busnes-app/kyquickstart-runner:9.8.7@" + digest
+	pin := "ghcr.io/busnes-app/kyquickstart-runner:9.8.7.1@" + digest
 	dist := filepath.Join(t.TempDir(), "dist")
-	if out, err := release(t, "9.8.7", pin, dist); err != nil {
+	if out, err := release(t, "9.8.7.1", pin, dist); err != nil {
 		t.Fatalf("release-binaries.sh: %v\n%s", err, out)
 	}
 	var want, got []string
 	for _, p := range []string{"linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64"} {
-		want = append(want, "kyquickstart-9.8.7-"+p)
+		want = append(want, "kyquickstart-9.8.7.1-"+p)
 	}
 	entries, _ := os.ReadDir(dist)
 	for _, e := range entries {
@@ -45,7 +46,7 @@ func TestReleaseBinariesStampThePin(t *testing.T) {
 	}
 	for _, name := range want {
 		f := filepath.Join(dist, name)
-		goos, goarch, _ := strings.Cut(strings.TrimPrefix(name, "kyquickstart-9.8.7-"), "-")
+		goos, goarch, _ := strings.Cut(strings.TrimPrefix(name, "kyquickstart-9.8.7.1-"), "-")
 		info, err := buildinfo.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)
@@ -64,8 +65,8 @@ func TestReleaseBinariesStampThePin(t *testing.T) {
 			t.Errorf("%s does not carry %s", name, pin)
 		}
 	}
-	host := filepath.Join(dist, "kyquickstart-9.8.7-"+runtime.GOOS+"-"+runtime.GOARCH)
-	for args, want := range map[string]string{"version": "9.8.7\n", "version --runner-image": pin + "\n"} {
+	host := filepath.Join(dist, "kyquickstart-9.8.7.1-"+runtime.GOOS+"-"+runtime.GOARCH)
+	for args, want := range map[string]string{"version": "9.8.7.1\n", "version --runner-image": pin + "\n"} {
 		if out, err := exec.Command(host, strings.Fields(args)...).Output(); err != nil || string(out) != want {
 			t.Errorf("%s: %q %v, want %q", args, out, err, want)
 		}
@@ -79,6 +80,11 @@ func TestReleaseBinariesRefuse(t *testing.T) {
 		"v prefix":       {"v9.8.7", pin("kyquickstart-runner", "v9.8.7", digest)},
 		"empty version":  {"", good},
 		"short version":  {"9.8", pin("kyquickstart-runner", "9.8", digest)},
+		"fourth zero":    {"9.8.7.0", pin("kyquickstart-runner", "9.8.7.0", digest)},
+		"fourth leading": {"9.8.7.01", pin("kyquickstart-runner", "9.8.7.01", digest)},
+		"five parts":     {"9.8.7.1.1", pin("kyquickstart-runner", "9.8.7.1.1", digest)},
+		"other line":     {"9.8.7.1", pin("kyquickstart-runner", "9.8.7", digest)},
+		"fourth literal": {"9.8.7.1", pin("kyquickstart-runner", "9.8.7x1", digest)},
 		"other tag":      {"9.8.7", pin("kyquickstart-runner", "9.8.6", digest)},
 		"dot is literal": {"9.8.7", pin("kyquickstart-runner", "9x8x7", digest)},
 		"no digest":      {"9.8.7", "ghcr.io/busnes-app/kyquickstart-runner:9.8.7"},
@@ -110,13 +116,18 @@ func TestReleaseBinariesRefuse(t *testing.T) {
 	}
 }
 
-// A source build pins no runner image, so it cannot install KyYard.
+// A source build reports internal/appversion/VERSION and pins no runner image, so it cannot
+// install KyYard.
 func TestReleaseSourceBuildPinsNothing(t *testing.T) {
+	line, err := os.ReadFile("../../internal/appversion/VERSION")
+	if err != nil {
+		t.Fatal(err)
+	}
 	bin := filepath.Join(t.TempDir(), "kyquickstart")
 	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}
-	if out, err := exec.Command(bin, "version").Output(); err != nil || string(out) != "dev\n" {
+	if out, err := exec.Command(bin, "version").Output(); err != nil || string(out) != strings.TrimSpace(string(line))+"\n" {
 		t.Errorf("version: %q %v", out, err)
 	}
 	out, err := exec.Command(bin, "version", "--runner-image").CombinedOutput()
@@ -199,7 +210,7 @@ func TestReleaseWorkflow(t *testing.T) {
 	}
 
 	for job, wants := range map[string][]string{
-		"publish": {`grep -qx 'var version = "dev"'`, `grep -qx 'var runnerImage = ""'`, `git rev-parse "$GITHUB_SHA^{commit}"`, "check-runs?filter=latest"},
+		"publish": {"internal/appversion/VERSION", `grep -qx 'var runnerImage = ""'`, `git rev-parse "$GITHUB_SHA^{commit}"`, "check-runs?filter=latest"},
 		"binaries": {"scripts/release-binaries.sh", `git rev-parse "$GITHUB_SHA^{commit}"`, "gh attestation verify",
 			"release-image.yml@refs/tags/$TAG", "gh release upload", "gh release download", "gh release delete-asset", "version --runner-image"},
 	} {
@@ -217,6 +228,45 @@ func TestReleaseWorkflow(t *testing.T) {
 	for _, s := range []string{"Decide whether this release may move stable", "Promote the verified digest to stable"} {
 		if !slices.Contains(steps["promote"], s) || slices.Contains(steps["publish"], s) {
 			t.Errorf("step %q must run in promote only", s)
+		}
+	}
+}
+
+// dependency-release.yml publishes vX.Y.Z.N from master and dispatches release-image.yml on it.
+func TestDependencyReleaseWorkflow(t *testing.T) {
+	b, err := os.ReadFile("../../.github/workflows/dependency-release.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var w workflow
+	if err := yaml.Unmarshal(b, &w); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.Permissions) != 1 || w.Permissions["contents"] != "read" {
+		t.Errorf("top-level permissions %v, want contents: read", w.Permissions)
+	}
+	j, ok := w.Jobs["release"]
+	if !ok {
+		t.Fatal("no release job")
+	}
+	if len(j.Permissions) != 2 || j.Permissions["contents"] != "write" || j.Permissions["actions"] != "write" {
+		t.Errorf("release permissions %v, want contents and actions: write", j.Permissions)
+	}
+	pinned := regexp.MustCompile(`@[0-9a-f]{40}$`)
+	runs := ""
+	for _, s := range j.Steps {
+		if s.Uses != "" && !pinned.MatchString(s.Uses) {
+			t.Errorf("%s is not pinned to a commit", s.Uses)
+		}
+		if strings.Contains(s.Run, "${{") {
+			t.Errorf("step %q expands an expression in run:; pass it through env:", s.Name)
+		}
+		runs += s.Run + "\n"
+	}
+	for _, want := range []string{"internal/appversion/VERSION", `--author='^dependabot\[bot\]'`,
+		"gh run list --workflow ci.yml --branch master", "gh release create", "gh workflow run release-image.yml"} {
+		if !strings.Contains(runs, want) {
+			t.Errorf("release runs no %q", want)
 		}
 	}
 }

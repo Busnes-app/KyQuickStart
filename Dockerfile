@@ -7,9 +7,12 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
-# The release set; release-image.yml passes the tag's version.
-ARG VERSION=dev
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/kyquickstart ./cmd/kyquickstart \
+# The release set: release-image.yml passes the tag's version (X.Y.Z or X.Y.Z.N); other
+# builds report internal/appversion/VERSION.
+ARG VERSION=
+RUN CGO_ENABLED=0 go build -trimpath \
+    -ldflags="-s -w -X github.com/Busnes-app/kyquickstart/internal/appversion.release=${VERSION}" \
+    -o /out/kyquickstart ./cmd/kyquickstart \
  && mkdir -p /out/root/state /out/root/run/kyquickstart \
  && chmod 0700 /out/root/state /out/root/run/kyquickstart \
  && chown 10001:10001 /out/root/state /out/root/run/kyquickstart

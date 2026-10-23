@@ -58,7 +58,8 @@ offboarding acceptance. Test each configured integration before calling the suit
 
 ## Install a release
 
-Each release `vX.Y.Z` publishes `kyquickstart-X.Y.Z-linux-amd64`, `kyquickstart-X.Y.Z-linux-arm64`,
+Each release `vX.Y.Z` (or `vX.Y.Z.N`, a daily dependency release; substitute the whole version
+below) publishes `kyquickstart-X.Y.Z-linux-amd64`, `kyquickstart-X.Y.Z-linux-arm64`,
 `kyquickstart-X.Y.Z-darwin-amd64` and `kyquickstart-X.Y.Z-darwin-arm64`, each attested and
 pinned to the attested `kyquickstart-runner:X.Y.Z` image. Download one, verify it before running
 it, then verify the runner image it pins (POSIX shell):
@@ -87,7 +88,7 @@ Requires Go 1.26.6 or later. A source build pins no runner image, so it cannot i
 make build
 make ci             # tidy check, vet, race tests
 make e2e            # needs Docker; real SSH, kind and edge containers
-make workflow-lint  # needs Docker; actionlint and zizmor on the release workflow
+make workflow-lint  # needs Docker; actionlint and zizmor on the release workflows
 ```
 
 ## Try it
@@ -112,7 +113,7 @@ Choosing `finish` saves the plan without touching any server.
 | `stop`, `start`, `restart`, `logs` | Control one installed app on Docker or Kubernetes (suspend/resume there); `status` adds its live state ([guided setup](docs/guided-setup.md#managing-apps)) |
 | `integrate-identity`, `integrate-product`, `integrate-stack` | Configure existing Ky products against KyIdentity |
 | `review` | Show the saved plan |
-| `version` | Print the release set; `--runner-image` prints the runner image a release binary pins |
+| `version` | Print the release set (`internal/appversion/VERSION` in a source build); `--runner-image` prints the runner image a release binary pins |
 
 ## Documentation
 

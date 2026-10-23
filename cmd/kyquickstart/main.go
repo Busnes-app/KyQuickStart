@@ -10,13 +10,11 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/Busnes-app/kyquickstart/internal/appversion"
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/cli"
 	"github.com/Busnes-app/kyquickstart/internal/runner"
 )
-
-// version is the release set, set at build time with -ldflags "-X main.version=...".
-var version = "dev"
 
 // runnerImage is the attested kyquickstart-runner image KyYard's pod runs beside it, pinned by
 // digest, which a release build sets with -ldflags "-X main.runnerImage=...". Empty in source
@@ -30,7 +28,7 @@ func main() {
 func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	o := cli.Options{Catalog: catalog.Embedded(), ReleaseSet: version, Out: os.Stdout, RunnerImage: runnerImage, Stdin: os.Stdin}
+	o := cli.Options{Catalog: catalog.Embedded(), ReleaseSet: appversion.String(), Out: os.Stdout, RunnerImage: runnerImage, Stdin: os.Stdin}
 	if fi, err := os.Stdin.Stat(); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
 		o.In = os.Stdin
 	}
