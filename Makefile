@@ -20,8 +20,13 @@ ci: tidy-check lint test-race
 # Needs Docker. goolm is the test-only Matrix client's pure-Go Olm. The kind TLS helper runs the
 # test executable in distroless. test/e2e measured 33.7 min on the workstation and 35.9 min on
 # GitHub's runner (2026-10-21, PR #66: whole job 38 min): 60m leaves room for a slower runner.
+# E2E_RUN, E2E_SKIP and E2E_PKGS select a shard (ci.yml splits the suite over four jobs);
+# unset, `make e2e` runs everything.
+E2E_RUN ?=
+E2E_SKIP ?=
+E2E_PKGS ?= ./test/e2e/ ./internal/edge/
 e2e:
-	CGO_ENABLED=0 go test -tags e2e,goolm -count=1 -v -timeout 60m ./test/e2e/ ./internal/edge/
+	CGO_ENABLED=0 go test -tags e2e,goolm -count=1 -v -timeout 60m -run '$(E2E_RUN)' -skip '$(E2E_SKIP)' $(E2E_PKGS)
 
 # Needs Docker. Gates the publishing workflows; zizmor 1.31.1, offline, no network.
 ZIZMOR := ghcr.io/zizmorcore/zizmor@sha256:42d409dbb851d4c5d35a058cf042b828bea1e3f2884378c526eb0974780e18d9
