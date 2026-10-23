@@ -205,6 +205,15 @@ accounts and data, after its whole target directory is lost. Nothing runs on a s
 nothing is pruned. Kubernetes apps (KyIdentity, KyNotes, KyCalendar, the edge) are refused, and
 `upgrade` still gates data migrations on `backup_required`.
 
+**KyDrive restore gate.** Snapshot restore requires a released KyDrive image advertising
+`restore-reset`. The catalog pins 0.4.3, which advertises it; an image without it (0.4.2 and
+earlier) is refused before replacing data, while backups and snapshot listing remain available.
+The installer never substitutes an unpublished image. With a capable image, it runs the
+product's offline grant reset before startup: browser sessions, app passwords, device links,
+service tokens and sharing links must be recreated. Accounts, files and workspace ACLs remain.
+The probe has no data mounts; reset has only the restored data directory, runs as its target
+owner and has no network or published ports.
+
 **The rest-server is yours.** Run [rest-server](https://github.com/restic/rest-server) 0.14.0 on
 another machine than the app's target (the installer never deploys it), with TLS and
 `--append-only --private-repos`, and one htpasswd user per Docker target. Append-only means the
@@ -293,6 +302,13 @@ refused without `--snapshot`:
    and before that, is `restore_incomplete` (or the step's error) with the app **stopped**: fix
    the connector and rerun `restore`, which starts the app and replays again.
 5. It runs the app's setup read-only check and reports the app restored.
+
+For Drive, an atomically published `preparing` marker fences startup before any current
+files move aside or restored files become visible. An interrupted publication is not a
+completed restore: rerun the named snapshot with `--replace` and confirm again to preserve
+partial files and repeat extraction. Completed-file resumes stop any running Drive before
+resetting grants again. Empty or malformed markers fail closed; ordinary apply cannot mint
+replacement secrets over an incomplete restore.
 
 A rerun of `restore` after any step died resumes from `<root>/<app>/.restore-pending`, or
 refuses naming what to do (`--replace` when files were already moved into place, removing a
@@ -1080,7 +1096,7 @@ Limits:
 
 ## Catalog KyDrive on Docker
 
-The catalog's `kydrive` app installs KyDrive 0.4.2 from its attested release image on a Docker
+The catalog's `kydrive` app installs KyDrive 0.4.3 from its attested release image on a Docker
 target; it has no Kubernetes deployment, and placing it on a cluster is refused. It depends on
 the catalog `kyidentity` in the same plan, which may run on another target. Its one route may
 sit on the cluster's `lan` edge: NPM reaches the Docker host over the LAN.
@@ -1166,7 +1182,8 @@ graceful restart and its live `--check`.
   certificate through the system roots.
 - Backups: with a destination on its target, `kyquickstart backup kydrive` snapshots `data`,
   `backups` and both secrets cold (see "Backups and restore on Docker"); restore needs KyIdentity
-  v0.4.4 or later. KyDrive's own `KYDRIVE_BULK_BACKUP_REPOSITORY` stays unset: the installer's
+  v0.4.4 or later and a released Drive image advertising `restore-reset` (the current 0.4.2
+  catalog pin is refused). KyDrive's own `KYDRIVE_BULK_BACKUP_REPOSITORY` stays unset: the installer's
   snapshot is the independent copy, and the `backups` directory, on the same disk as `data`, is not.
 - With `euro-office` in the plan, see "Catalog Euro-Office on Kubernetes".
 - Not yet: recovery pairing;
@@ -1202,7 +1219,7 @@ run every product as the target user with no capabilities, which this editor can
 
 - **The connection.** KyDrive's Compose file gains `KYDRIVE_EDITOR_URL: https://<office route
   URL host>` and a Compose secret, `editor_secret`. Its entrypoint exports that secret as
-  `KYDRIVE_EDITOR_SECRET` beside the session secret, because KyDrive 0.4.2 reads both only from
+  `KYDRIVE_EDITOR_SECRET` beside the session secret, because KyDrive 0.4.3 reads both only from
   the environment. Neither secret appears in Compose or in `docker inspect`. Without
   `euro-office`, KyDrive's Compose file and every step input are unchanged, byte for byte.
 - **The shared secret.** `kydrive.secrets` generates `editor_secret` on KyDrive's target with

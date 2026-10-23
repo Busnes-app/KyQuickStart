@@ -74,6 +74,13 @@ Plain terminal planning and command orchestration for the operator-run installer
   stops the app (decision 11). A cold `backup` says it stops the app and, on failure, whether
   it runs again. `backupLines` adds
   the backup, restore and password-record lines to apply's handover.
+  KyDrive requires the pinned image's `restore-reset` capability before replacing data and
+  uses `dockerhost.Store.ResetDriveRestore` before every startup/replay, including resume;
+  older pinned images are refused, never replaced with unpublished ones. An atomic
+  `preparing` fence precedes publication; incomplete extraction requires the same snapshot
+  with explicit `--replace`, preserving partial files before retry. `files` is recorded
+  only after complete publication. Empty/symlink/malformed fences and ordinary secret
+  generation over a pending restore fail closed.
 - `direct.go` owns `cloudflare-direct` eligibility: `directApps` (allowed apps by container
   port, checked against their templates) and `directRefused` (reasons); any other app is
   refused as unassessed. `withRoute` refuses first (`plan`, `review`, every command);
