@@ -376,6 +376,10 @@ edge compatibility: `docs/redirect.md`.
   replay; until that replay is delivered (`.restore-pending`), every command but `restore` that
   touches the app (`apply`, `install`, `upgrade`, `backup`, `unmanage`) refuses.
   A snapshot's symlinked volume, secret, dump or any directory above them is refused.
+  KyDrive additionally requires native offline `restore-reset` before startup; the pinned
+  image is capability-checked without data/network access, and reset sees only its restored
+  data as the target owner. A `preparing` marker fences interrupted publication before any
+  restored data becomes visible. `internal/cli/AGENTS.md` owns resume and refusal details.
 - Secrets are generated once on their targets and read back on re-run; the workstation state
   directory never holds a secret.
   Docker generation uses the target's `/dev/urandom` and private temporary files, with
