@@ -18,7 +18,8 @@ const (
 
 var (
 	versionLine = regexp.MustCompile(`(?m)^version: (\S+)$`)
-	kyImage     = regexp.MustCompile(`ghcr\.io/busnes-app/([a-z0-9-]+):([0-9.]+)@sha256:[0-9a-f]{64}`)
+	// A whole images: entry, "  key: ghcr.io/busnes-app/name:version@digest".
+	kyImage = regexp.MustCompile(`(?m)^( +[a-z0-9-]+: )ghcr\.io/busnes-app/([a-z0-9-]+):([0-9.]+)@sha256:[0-9a-f]{64}$`)
 )
 
 // Unpinned copies fsys with every Ky app's release pin (its version and the
@@ -53,11 +54,11 @@ func unpin(b []byte) []byte {
 	pinned := false
 	s := kyImage.ReplaceAllStringFunc(string(b), func(ref string) string {
 		m := kyImage.FindStringSubmatch(ref)
-		if m[2] != version {
+		if m[3] != version {
 			return ref
 		}
 		pinned = true
-		return "ghcr.io/busnes-app/" + m[1] + ":" + Version + "@" + Digest
+		return m[1] + "ghcr.io/busnes-app/" + m[2] + ":" + Version + "@" + Digest
 	})
 	if !pinned {
 		return b
