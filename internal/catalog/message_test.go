@@ -11,6 +11,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/Busnes-app/kyquickstart/internal/catalog/catalogtest"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -73,7 +74,7 @@ func messageCompose(t *testing.T) (App, map[string]composeService, map[string]ma
 // AC4: six roles, the console primary, the media ports and both clients.
 func TestKyMessageEntry(t *testing.T) {
 	a, _, _ := messageCompose(t)
-	if a.Version != "0.4.4" || a.Images["kymessage"] != "ghcr.io/busnes-app/kymessage-server:0.4.4@sha256:3ecb7a412877bbdd782bc1a3ef0f0af7fbab859cd8a77abb7f787d67122d35b0" {
+	if !VersionAtLeast(a.Version, "0.4.4") || !kyPin(a, "kymessage", "kymessage-server") {
 		t.Fatalf("version %s, image %s", a.Version, a.Images["kymessage"])
 	}
 	var roles []string
@@ -253,12 +254,14 @@ func TestNoTagOnlyImage(t *testing.T) {
 }
 
 // AC4: every other app renders byte for byte as on origin/master (testdata/rendered.golden.yaml
-// was written by origin/master 890b571's catalog.go; KyIdentity's image line since follows its 0.4.7 pin).
+// was written by origin/master 890b571's catalog.go). Ky release pins are replaced
+// (catalogtest.Unpinned), so following a release does not touch the golden.
 func TestRenderedGolden(t *testing.T) {
 	sub := fstest.MapFS{}
-	fs.WalkDir(Embedded(), ".", func(p string, d fs.DirEntry, err error) error {
+	unpinned := catalogtest.Unpinned(Embedded())
+	fs.WalkDir(unpinned, ".", func(p string, d fs.DirEntry, err error) error {
 		if !d.IsDir() && !strings.HasPrefix(p, "kymessage/") {
-			b, _ := fs.ReadFile(Embedded(), p)
+			b, _ := fs.ReadFile(unpinned, p)
 			sub[p] = &fstest.MapFile{Data: b}
 		}
 		return err
