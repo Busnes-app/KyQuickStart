@@ -2,6 +2,8 @@ module github.com/Busnes-app/kyquickstart
 
 go 1.26.6
 
+toolchain go1.26.10
+
 require (
 	github.com/Busnes-app/ky-primitives v0.10.0
 	github.com/google/uuid v1.6.0

@@ -1,16 +1,18 @@
 name: kyidentity
 description: KyIdentity, the suite's identity provider (OIDC, MFA, SCIM); every other app signs in through it
 category: ky
-version: 0.4.6
-# No status_path: 0.4.6 does not report the suite proxy contract (KyIdentity-server#140),
-# so verify-edge skips its route.
-# Release image of v0.4.6, attested by release-image.yml@refs/tags/v0.4.6 (gh attestation verify;
-# source commit f647faf = v0.4.6^{commit}). It advertises setup amendments, disable-user,
+version: 0.4.7
+# No status_path yet: 0.4.7 serves the suite proxy contract at /api/installer/network
+# (KyIdentity-server#141), but reports proxyHeadersTrusted only for a peer in TRUSTED_PROXY_CIDRS,
+# which this catalog does not set (it defaults to empty), so verify-edge would fail its route.
+# verify-edge skips it until the catalog passes the edge's address.
+# Release image of v0.4.7, attested by release-image.yml@refs/tags/v0.4.7 (gh attestation verify;
+# source commit 84ba819 = v0.4.7^{commit}). It advertises setup amendments, disable-user,
 # resync-system (its resync replays removals, which kyquickstart restore requires),
 # installer-verified-email (MAS's chat sign-in needs it) and mail-relay. 0.4.6 sends a removal
-# made before the person's first delivery instead of dropping it.
+# made before the person's first delivery instead of dropping it; 0.4.7 never gives up on one.
 images:
-  kyidentity: ghcr.io/busnes-app/kyidentity-server:0.4.6@sha256:2136581c85c66c354c5cfbe84a209832f020410d1835890f0ec3382256e1ed67
+  kyidentity: ghcr.io/busnes-app/kyidentity-server:0.4.7@sha256:3c6f77e405331dd96bff6431f644b1f6f0db3b69e91860b74c6b4852a7d4160b
 health:
   timeout_seconds: 300
 # Its signing, session and encryption keys are generated in the data directory on first start.
@@ -19,7 +21,9 @@ backup:
 upgrade:
   # Migrations run at startup; the release notes cover upgrades from 0.4.x only. 0.4.4 and 0.4.5
   # change no schema; 0.4.6 adds one defaulted column and flags an unchanged bootstrap password
-  # (once), rewriting no existing data, so an upgrade needs only an acknowledgement.
+  # (once); 0.4.7 changes no schema and marks pending creates and updates already at their
+  # attempt budget failed (once) so the reconcile pass re-queues them. None rewrites people,
+  # access or content, so an upgrade needs only an acknowledgement.
   min_from: 0.4.0
   migrates_data: false
   note: >-
