@@ -22,7 +22,7 @@ type Manifest struct {
 	Description string            `yaml:"description,omitempty"`
 	Name        string            `yaml:"name"`
 	Category    string            `yaml:"category"` // ky, edge or third-party
-	Version     string            `yaml:"version"`  // release the images pin, MAJOR.MINOR.PATCH
+	Version     string            `yaml:"version"`  // release the images pin, MAJOR.MINOR.PATCH[.N]
 	Images      map[string]string `yaml:"images"`
 	Secrets     []string          `yaml:"secrets"`
 	DependsOn   []string          `yaml:"depends_on"`
@@ -223,7 +223,9 @@ var (
 	// No segment starts with a dot, so no . or .. components.
 	urlPathRE = regexp.MustCompile(`^/([A-Za-z0-9_~-][A-Za-z0-9._~-]*/?)*$`)
 	skipRE    = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)+$`)
-	versionRE = regexp.MustCompile(`^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$`)
+	// MAJOR.MINOR.PATCH, or MAJOR.MINOR.PATCH.N for a Ky product's automated dependency
+	// release (N from 1; X.Y.Z orders as X.Y.Z.0).
+	versionRE = regexp.MustCompile(`^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})(?:\.([1-9][0-9]{0,8}))?$`)
 )
 
 // HostRef in a kubernetes.env value stands for the URL host of the app's route: its hostname,
@@ -438,7 +440,7 @@ func (m Manifest) validate(dir string) error {
 		return fmt.Errorf("health.timeout_seconds %d must be 1-1800", m.Health.TimeoutSeconds)
 	}
 	if !versionRE.MatchString(m.Version) {
-		return fmt.Errorf("version %q must be MAJOR.MINOR.PATCH", m.Version)
+		return fmt.Errorf("version %q must be MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH.N", m.Version)
 	}
 	if err := m.Upgrade.validate(m.Version); err != nil {
 		return fmt.Errorf("upgrade.%w", err)
@@ -626,7 +628,7 @@ func (u Upgrade) validate(version string) error {
 func (u Upgrade) Allows(installed, version string) error {
 	switch {
 	case !versionRE.MatchString(installed):
-		return fmt.Errorf("installed version %q is not MAJOR.MINOR.PATCH", installed)
+		return fmt.Errorf("installed version %q is not MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH.N", installed)
 	case compareVersions(installed, version) > 0:
 		return fmt.Errorf("installed %s is newer than %s; downgrades are refused", installed, version)
 	case u.MinFrom != "" && compareVersions(installed, u.MinFrom) < 0:
@@ -779,18 +781,18 @@ func check(list []string, ok func(string) bool) error {
 	return nil
 }
 
-// VersionAtLeast reports whether v is a MAJOR.MINOR.PATCH version no older than min.
+// VersionAtLeast reports whether v is a MAJOR.MINOR.PATCH[.N] version no older than min.
 func VersionAtLeast(v, min string) bool {
 	return versionRE.MatchString(v) && compareVersions(v, min) >= 0
 }
 
-// compareVersions orders two strings that match versionRE.
+// compareVersions orders two strings that match versionRE; a missing fourth part is 0.
 func compareVersions(a, b string) int {
 	parts := func(v string) []int {
 		m := versionRE.FindStringSubmatch(v)
-		p := make([]int, 3)
+		p := make([]int, 4)
 		for i := range p {
-			p[i], _ = strconv.Atoi(m[i+1])
+			p[i], _ = strconv.Atoi(m[i+1]) // Atoi("") is 0
 		}
 		return p
 	}
