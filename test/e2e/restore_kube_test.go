@@ -141,7 +141,7 @@ func TestKubernetesRestore(t *testing.T) {
 
 	// AC5a: on KyIdentity 0.4.3 restore is refused before any restic call, nothing changed.
 	outputs = append(outputs, refuseUntouched(t, ctx, state, catalogDir, trust, drive, id[:8], "restore needs KyIdentity v0.4.4 or later, which replays removals on resync; installed: 0.4.3. Upgrade KyIdentity first")...)
-	// The catalog's KyIdentity (0.4.7) replays removals; it needs only an acknowledgement.
+	// The catalog's KyIdentity (0.4.6 or later) replays removals; it needs only an acknowledgement.
 	upgradeIdentity(t, ctx, cs, connected, name, state, catalogDir, trust, certPEM, &outputs)
 	snaps := snapshots(t, b.dest, "kydrive", b.pw)
 	if len(snaps) != 1 || snaps[0].ID != id || strings.Join(snaps[0].Paths, " ") != "/kyq/secrets/scim_token /kyq/secrets/session_secret /kyq/volumes/backups /kyq/volumes/data" {
@@ -348,17 +348,32 @@ func identity043(t *testing.T, cluster, catalogDir string) {
 		t.Fatal(err)
 	}
 	m, _ := os.ReadFile(filepath.Join(dir, "manifest.yaml"))
-	for _, r := range [][2]string{
-		{"\nversion: 0.4.7\n", "\nversion: 0.4.3\n"},
-		{"  kyidentity: ghcr.io/busnes-app/kyidentity-server:0.4.7@sha256:3c6f77e405331dd96bff6431f644b1f6f0db3b69e91860b74c6b4852a7d4160b\n", "  kyidentity: " + identity043Image + "\n"},
+	// The pin moves with scripts/catalog-follow; whatever it is, it is replaced.
+	v := regexp.QuoteMeta(identityVersion(t, m))
+	for _, r := range []struct {
+		re   *regexp.Regexp
+		with string
+	}{
+		{regexp.MustCompile(`\nversion: ` + v + `\n`), "\nversion: 0.4.3\n"},
+		{regexp.MustCompile(`\n  kyidentity: ghcr\.io/busnes-app/kyidentity-server:` + v + `@sha256:[0-9a-f]{64}\n`), "\n  kyidentity: " + identity043Image + "\n"},
 	} {
-		if bytes.Count(m, []byte(r[0])) != 1 {
-			t.Fatalf("the catalog's KyIdentity manifest changed; update the 0.4.3 copy for %q", r[0])
+		if len(r.re.FindAllIndex(m, -1)) != 1 {
+			t.Fatalf("the catalog's KyIdentity manifest changed; update the 0.4.3 copy for %s", r.re)
 		}
-		m = bytes.Replace(m, []byte(r[0]), []byte(r[1]), 1)
+		m = r.re.ReplaceAll(m, []byte(r.with))
 	}
 	os.WriteFile(filepath.Join(dir, "manifest.yaml"), m, 0o600)
 	kindLoad(t, cluster, identity043Image)
+}
+
+// identityVersion is the version line of KyIdentity's catalog manifest m.
+func identityVersion(t *testing.T, m []byte) string {
+	t.Helper()
+	v := regexp.MustCompile(`(?m)^version: (\S+)$`).FindSubmatch(m)
+	if v == nil {
+		t.Fatal("KyIdentity's catalog manifest has no version line")
+	}
+	return string(v[1])
 }
 
 const identity043Image = "ghcr.io/busnes-app/kyidentity-server:0.4.3@sha256:dbf81b355d6307f23b3501c40ad368b06f9ea2fdfdd6e1d09f40d5de87bbc419"
@@ -380,13 +395,13 @@ func upgradeIdentity(t *testing.T, ctx context.Context, cs kubernetes.Interface,
 		t.Fatalf("upgrade kyidentity: %v", err)
 	}
 	if !strings.Contains(out, "check each app's accounts for people disabled") {
-		t.Errorf("upgrade kyidentity did not print 0.4.6's upgrade note:\n%s", out)
+		t.Errorf("upgrade kyidentity did not print its upgrade note:\n%s", out)
 	}
 	ns, err := cs.CoreV1().Namespaces().Get(ctx, "kyq-kyidentity", metav1.GetOptions{})
-	if err != nil || ns.Labels[managed.VersionLabel] != "0.4.7" {
+	if err != nil || ns.Labels[managed.VersionLabel] != identityVersion(t, real) {
 		t.Fatalf("KyIdentity's deployment record after the upgrade: %v %v", ns.Labels, err)
 	}
-	t.Logf("kyquickstart upgrade kyidentity 0.4.3 -> 0.4.7 took %s", time.Since(start).Round(time.Second))
+	t.Logf("kyquickstart upgrade kyidentity 0.4.3 -> %s took %s", identityVersion(t, real), time.Since(start).Round(time.Second))
 	dep, err := cs.AppsV1().Deployments("kyq-kyidentity").Get(ctx, "app", metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)

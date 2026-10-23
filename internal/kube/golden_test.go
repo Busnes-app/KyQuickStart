@@ -6,23 +6,24 @@ import (
 	"testing"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
+	"github.com/Busnes-app/kyquickstart/internal/catalog/catalogtest"
 )
 
 // renderedHashes are the hashes of every Kubernetes catalog app's objects as origin/master
 // before KyYard rendered them: adding a field for one app must not redeploy the others.
-// kyidentity's changed only with its image pin and version (now 0.4.7).
+// Ky release pins are replaced (catalogtest.Unpinned), so following a release changes none.
 var renderedHashes = map[string]string{
 	"euro-office": "a65a4a42bbe42da10dc46343eac3260d5dcf030b79e42f80cf270256f355e3e0",
-	"kycalendar":  "6afd512799d26b78d2431b482f8e850fa8394d875b14ab77529e32b47b460627",
-	"kyidentity":  "baa6fccea060bf39969c6d1e405ad991c25b801ec67d0b211cfa11ecb2edabc0",
-	"kynotes":     "048c95d97187c8258ecc7c6bcca37e4ce7ba44ddec5c52066d6726a6f0a8873f",
-	"kypulse":     "c48e95ecc6b3a18057a4ca2f1f2d4bde070cdddfcccaeb7e171d68cca4e24bd1",
-	"kyrecovery":  "6a7567dde69a4929683285afe0a577cb6482ee206f13f651111c9ca4199cb650",
+	"kycalendar":  "c5e3721b8abdba2f1b54fcdf4b84c88a46a725a7b7ec462bd0ec03d1ba56c11a",
+	"kyidentity":  "b755041ee024e1107ef2c1a5c8a93d2e9ad26c52a70eb4af891130ed0a3a5581",
+	"kynotes":     "a7ecd435bce5bc8723663d3ac5ef3e49bdcb14dbd8dac2d77d62615db93755e7",
+	"kypulse":     "fab5ed6131eaae41282490f5ae10c1a10e50226da589d9268c26641fc4301d0a",
+	"kyrecovery":  "09835a4368382e048c9fe8333de5eda876dc01e4bd76479b855f7823fff5baec",
 	"npm":         "70adde3f158ad6e8fd04a589d963bd1cf5c16dfb0019c8545cb6e34797c999f1",
 }
 
 func TestRenderGolden(t *testing.T) {
-	cat, err := catalog.Load(catalog.Embedded())
+	cat, err := catalog.Load(catalogtest.Unpinned(catalog.Embedded()))
 	if err != nil {
 		t.Fatal(err)
 	}

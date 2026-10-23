@@ -273,12 +273,30 @@ edge compatibility: `docs/redirect.md`.
   with `internal/appversion/VERSION`, and any commit on which a ci.yml job in its `REQUIRED` list
   did not pass; attestations are pinned to `release-image.yml@refs/tags/<tag>`, and `:stable` moves
   only to the highest non-prerelease, four-part ones included.
-- `dependency-release.yml` runs daily at 23:00 UTC: if Dependabot commits landed on `master` since
-  the newest release on the current line and the push CI run on `master`'s tip succeeded, it
-  publishes the next `vX.Y.Z.N` (one per day however many PRs merged) and dispatches
-  `release-image.yml` on it, since a `GITHUB_TOKEN` release raises no release event. Run by hand,
-  it releases `master` without the Dependabot condition. It waits while the line in `VERSION` has
+- `dependency-release.yml` runs daily at 23:00 UTC. First it follows the Ky apps
+  (`scripts/catalog-follow`, below); then, if Dependabot or catalog-follow commits landed on
+  `master` since the newest release on the current line and the newest ci.yml run on `master`'s
+  tip (pushed or dispatched) succeeded, it publishes the next `vX.Y.Z.N` (one per day however
+  many PRs merged) and dispatches `release-image.yml` on it, since a `GITHUB_TOKEN` release raises
+  no release event. Run by hand, it follows the apps too and releases `master` without the
+  Dependabot condition. It waits while the line in `VERSION` has
   no `vX.Y.Z` release: bump `VERSION` and publish `vX.Y.Z` by hand for a new line.
+- `scripts/catalog-follow` keeps the Ky apps' pins current. For each manifest whose
+  `ghcr.io/busnes-app` image is tagged with its `version`, it takes the newest published,
+  non-prerelease release of the image's repository (its `sources` table) on the pin's
+  `MAJOR.MINOR` line, resolves the tag's digest from the registry, verifies it with
+  `gh attestation verify` pinned to that repository's release workflow at the tag (KyDNS:
+  `release.yml`, the rest `release-image.yml`), and rewrites only `version`, the image and one
+  `# catalog-follow:` comment line above `images:`. Human comments, `upgrade` rules and docs are
+  not touched: an app's release that changes its upgrade rules, `status_path` or other fields
+  needs a human PR. A newer `MAJOR.MINOR` only warns; an app that does not resolve, verify or
+  load keeps its pin with a warning. The workflow tests `./internal/catalog/...` and builds,
+  commits as `github-actions[bot]` ("catalog: follow <app> v<version>, ..."), pushes to `master`
+  (the ruleset only forbids deletion and force-push) and dispatches `ci.yml` on it, since a
+  `GITHUB_TOKEN` push starts no workflow; that run's check runs satisfy `release-image.yml`'s
+  `REQUIRED` gate. A new Ky image in the catalog needs a `sources` entry
+  (`TestSourcesCoverCatalog`). Tests never name a Ky pin: entry tests check the image is tagged
+  with the manifest's version, and golden tests render `catalogtest.Unpinned(catalog.Embedded())`.
 
 ## Local Contracts
 
@@ -511,7 +529,8 @@ calls and kind nodes must carry their own explicit bounds.
   every answer with KyYard's client types (`internal/runner/kyyard_test.go`).
   `cmd/kyquickstart/release_test.go` runs `scripts/release-binaries.sh` (the stamp in all four
   binaries, its refusals) and checks `release-image.yml`'s and `dependency-release.yml`'s job
-  graph, permissions and pins.
+  graph, permissions and pins. `scripts/catalog-follow`'s tests run it on a temporary catalog
+  with fake releases, registry and attestations.
 - `make workflow-lint`: needs Docker (CI runs it in `vulncheck`); actionlint v1.7.12 on every
   workflow and offline, digest-pinned zizmor (medium and up) on `release-image.yml` and
   `dependency-release.yml`.
@@ -520,7 +539,7 @@ calls and kind nodes must carry their own explicit bounds.
   KyIdentity and `euro-office` with KyDrive on an sshd target: baseline pod and its capabilities,
   seeded claims, the copied secret, `/healthcheck` through the edge, a signed KyDrive callback
   (200/401), egress through the edge only, a skipped rerun and a restart. Not part of `make e2e`.
-- `make e2e`: needs Docker; runs `apply` against an sshd container on the local Docker socket and
+- `make e2e`: needs Docker (in CI split by `E2E_RUN`/`E2E_SKIP` over four `e2e (<shard>)` jobs, summarised by the `e2e` job that `release-image.yml` requires; a new slow kind test should get a shard or join one); runs `apply` against an sshd container on the local Docker socket and
   against a kind cluster (`go run sigs.k8s.io/kind@v0.33.0`), including drift and stale-lock cases.
   Also runs disposable NPM, frpc/frps and cloudflared container tests in `internal/edge`, and
   `TestKubernetesNPMEdge`: catalog NPM on kind with claims, bootstrap, policy probes, a routed
