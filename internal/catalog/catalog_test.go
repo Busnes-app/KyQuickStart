@@ -3,6 +3,7 @@ package catalog
 import (
 	"maps"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -42,6 +43,12 @@ func TestEmbeddedLoads(t *testing.T) {
 	}
 }
 
+// kyPin reports whether a's image key is its Ky release pin: repo tagged with a.Version, by
+// digest. scripts/catalog-follow moves pins, so the entry tests do not name one.
+func kyPin(a App, key, repo string) bool {
+	return regexp.MustCompile(`^ghcr\.io/busnes-app/` + regexp.QuoteMeta(repo) + `:` + regexp.QuoteMeta(a.Version) + `@sha256:[0-9a-f]{64}$`).MatchString(a.Images[key])
+}
+
 func TestKyIdentityEntry(t *testing.T) {
 	cat, err := Load(Embedded())
 	if err != nil {
@@ -49,18 +56,18 @@ func TestKyIdentityEntry(t *testing.T) {
 	}
 	a := cat["kyidentity"]
 	k := a.Kubernetes
-	if a.Category != "ky" || a.Version != "0.4.6" || a.PodSecurity != "restricted" || a.OIDC != nil || len(a.Compose) == 0 || len(a.Secrets) != 0 {
+	if a.Category != "ky" || !VersionAtLeast(a.Version, "0.4.6") || a.PodSecurity != "restricted" || a.OIDC != nil || len(a.Compose) == 0 || len(a.Secrets) != 0 {
 		t.Fatalf("manifest = %+v", a.Manifest)
 	}
-	if !strings.HasPrefix(a.Images[k.Image], "ghcr.io/busnes-app/kyidentity-server:0.4.6@sha256:2136581c85c66c354c5cfbe84a209832f020410d1835890f0ec3382256e1ed67") || k.RunAs != 100 || k.WritableRoot || len(k.Capabilities) != 0 {
+	if !kyPin(a, k.Image, "kyidentity-server") || k.RunAs != 100 || k.WritableRoot || len(k.Capabilities) != 0 {
 		t.Fatalf("kubernetes = %+v", k)
 	}
 	if k.Env["KYIDENTITY_ISSUER_URL"] != "https://"+HostRef || k.ReadinessPath != "/readyz" || k.Ports[0] != 5867 || k.Volumes[0].Mount != k.Env["KYIDENTITY_DATA_DIR"] {
 		t.Fatalf("env %v, probe %s, volumes %+v", k.Env, k.ReadinessPath, k.Volumes)
 	}
-	// 0.4.4..0.4.6 rewrite no data: an upgrade from 0.4.3 needs only an acknowledgement.
-	if a.Upgrade.Allows("0.4.5", "0.4.6") != nil || a.Upgrade.Allows("0.4.3", "0.4.6") != nil {
-		t.Fatal("0.4.3 or 0.4.5 cannot upgrade to 0.4.6")
+	// 0.4.4 and later rewrite no data: an upgrade from 0.4.3 needs only an acknowledgement.
+	if a.Upgrade.Allows("0.4.5", a.Version) != nil || a.Upgrade.Allows("0.4.3", a.Version) != nil {
+		t.Fatalf("0.4.3 or 0.4.5 cannot upgrade to %s", a.Version)
 	}
 	if a.Upgrade.MigratesData || a.Upgrade.MinFrom != "0.4.0" || a.Backup.Volumes[0] != "data" {
 		t.Fatalf("upgrade %+v, backup %+v", a.Upgrade, a.Backup)
@@ -74,10 +81,10 @@ func TestKyRecoveryEntry(t *testing.T) {
 	}
 	a := cat["kyrecovery"]
 	k, o := a.Kubernetes, a.OIDC
-	if a.Category != "ky" || a.Version != "0.4.2" || a.PodSecurity != "restricted" || len(a.Compose) == 0 || len(a.Secrets) != 0 || len(a.DependsOn) != 1 || a.DependsOn[0] != "kyidentity" {
+	if a.Category != "ky" || !VersionAtLeast(a.Version, "0.4.2") || a.PodSecurity != "restricted" || len(a.Compose) == 0 || len(a.Secrets) != 0 || len(a.DependsOn) != 1 || a.DependsOn[0] != "kyidentity" {
 		t.Fatalf("manifest = %+v", a.Manifest)
 	}
-	if !strings.HasPrefix(a.Images[k.Image], "ghcr.io/busnes-app/kyrecovery-server:0.4.2@sha256:") || k.RunAs != 10001 || k.ReadinessPath != "/healthz" || k.Ports[0] != 8095 || k.Volumes[0].Mount != k.Env["KYRECOVERY_DATA_DIR"] || k.UsesHost() {
+	if !kyPin(a, k.Image, "kyrecovery-server") || k.RunAs != 10001 || k.ReadinessPath != "/healthz" || k.Ports[0] != 8095 || k.Volumes[0].Mount != k.Env["KYRECOVERY_DATA_DIR"] || k.UsesHost() {
 		t.Fatalf("kubernetes = %+v", k)
 	}
 	// Admin-only, with the signed directory KyRecovery's setup requires.
@@ -96,14 +103,14 @@ func TestKyPulseEntry(t *testing.T) {
 	}
 	a := cat["kypulse"]
 	k, o := a.Kubernetes, a.OIDC
-	if a.Category != "ky" || a.Version != "0.4.2" || a.PodSecurity != "restricted" || len(a.Compose) == 0 || len(a.Secrets) != 0 || len(a.DependsOn) != 1 || a.DependsOn[0] != "kyidentity" {
+	if a.Category != "ky" || !VersionAtLeast(a.Version, "0.4.2") || a.PodSecurity != "restricted" || len(a.Compose) == 0 || len(a.Secrets) != 0 || len(a.DependsOn) != 1 || a.DependsOn[0] != "kyidentity" {
 		t.Fatalf("manifest = %+v", a.Manifest)
 	}
 	// It binds loopback unless both are set.
 	if k.Env["KYPULSE_ENV"] != "production" || k.Env["KYPULSE_HOST"] != "0.0.0.0" || k.Env["KYPULSE_APP_URL"] != "https://{{host}}" || k.Env["KYPULSE_SSO_AUTO_PROVISION"] != "false" {
 		t.Fatalf("env = %v", k.Env)
 	}
-	if !strings.HasPrefix(a.Images[k.Image], "ghcr.io/busnes-app/kypulse-server:0.4.2@sha256:") || k.RunAs != 10001 || k.ReadinessPath != "/healthz" || k.Ports[0] != 8080 || k.Volumes[0].Mount != k.Env["KYPULSE_DATA_DIR"] || k.Volumes[1].Mount+"/audit.key" != k.Env["KYPULSE_AUDIT_KEY_FILE"] {
+	if !kyPin(a, k.Image, "kypulse-server") || k.RunAs != 10001 || k.ReadinessPath != "/healthz" || k.Ports[0] != 8080 || k.Volumes[0].Mount != k.Env["KYPULSE_DATA_DIR"] || k.Volumes[1].Mount+"/audit.key" != k.Env["KYPULSE_AUDIT_KEY_FILE"] {
 		t.Fatalf("kubernetes = %+v", k)
 	}
 	if o.AdminRole != "kypulse.admin" || o.UserRole != "" || o.RedirectPaths[0] != "/api/sso/kysignon/callback" || o.DirectoryPath != "/api/sso/kysignon/sync" || len(o.LogoutPaths) != 0 || o.BackchannelLogoutPath != "" || o.Public {
@@ -123,10 +130,10 @@ func TestKyNotesEntry(t *testing.T) {
 	}
 	a := cat["kynotes"]
 	k, o := a.Kubernetes, a.OIDC
-	if a.Category != "ky" || a.Version != "0.4.2" || a.PodSecurity != "restricted" || len(a.Compose) == 0 || len(a.Secrets) != 0 || !slices.Equal(a.DependsOn, []string{"kyidentity"}) {
+	if a.Category != "ky" || !VersionAtLeast(a.Version, "0.4.2") || a.PodSecurity != "restricted" || len(a.Compose) == 0 || len(a.Secrets) != 0 || !slices.Equal(a.DependsOn, []string{"kyidentity"}) {
 		t.Fatalf("manifest = %+v", a.Manifest)
 	}
-	if a.Images[k.Image] != "ghcr.io/busnes-app/kynotes-server:0.4.2@sha256:85f49161f9e5879d9998507ac5b1ef07e3c5e884854e162173791b7292a06ad9" ||
+	if !kyPin(a, k.Image, "kynotes-server") ||
 		k.RunAs != 65532 || k.ReadinessPath != "/healthz" || !slices.Equal(k.Ports, []int{8080}) || k.TerminationGraceSeconds != 1020 || k.UsesHost() {
 		t.Fatalf("kubernetes = %+v", k)
 	}
@@ -149,10 +156,10 @@ func TestKyCalendarEntry(t *testing.T) {
 	}
 	a := cat["kycalendar"]
 	k, o := a.Kubernetes, a.OIDC
-	if a.Category != "ky" || a.Version != "0.4.2" || a.PodSecurity != "restricted" || len(a.Compose) == 0 || len(a.Secrets) != 0 || !slices.Equal(a.DependsOn, []string{"kyidentity"}) {
+	if a.Category != "ky" || !VersionAtLeast(a.Version, "0.4.2") || a.PodSecurity != "restricted" || len(a.Compose) == 0 || len(a.Secrets) != 0 || !slices.Equal(a.DependsOn, []string{"kyidentity"}) {
 		t.Fatalf("manifest = %+v", a.Manifest)
 	}
-	if a.Images[k.Image] != "ghcr.io/busnes-app/kycalendar:0.4.2@sha256:7ed435458a08c9dd02674657cc55aa6aaef96a254256c14880e27fc93c1cf75b" ||
+	if !kyPin(a, k.Image, "kycalendar") ||
 		k.RunAs != 10001 || k.ReadinessPath != "/api/installer/network" || !slices.Equal(k.Ports, []int{8080}) || k.TerminationGraceSeconds != 1200 || !k.UsesHost() {
 		t.Fatalf("kubernetes = %+v", k)
 	}
@@ -183,8 +190,8 @@ func TestKyDNSEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := cat["kydns"]
-	if a.Category != "ky" || a.Version != "0.4.2" || a.Kubernetes != nil || len(a.Secrets) != 0 || !slices.Equal(a.DependsOn, []string{"kyidentity"}) ||
-		a.Images["kydns"] != "ghcr.io/busnes-app/kydns-server:0.4.2@sha256:ceb83f29134bb611343d1adf94f85088f5f6c7101863a2c9b170e76591a5405b" {
+	if a.Category != "ky" || !VersionAtLeast(a.Version, "0.4.2") || a.Kubernetes != nil || len(a.Secrets) != 0 || !slices.Equal(a.DependsOn, []string{"kyidentity"}) ||
+		!kyPin(a, "kydns", "kydns-server") {
 		t.Fatalf("manifest = %+v", a.Manifest)
 	}
 	if o := a.OIDC; o.Name != "KyDNS" || o.AdminRole != "kydns.admin" || o.UserRole != "" || o.SCIMTokenFile != "" || o.Public || o.BackchannelLogoutPath != "" ||
@@ -248,10 +255,10 @@ func TestKyYardEntry(t *testing.T) {
 	}
 	a := cat["kyyard"]
 	k, o := a.Kubernetes, a.OIDC
-	if a.Category != "ky" || a.Version != "0.4.3" || a.PodSecurity != "restricted" || len(a.Compose) == 0 || len(a.Secrets) != 0 || !slices.Equal(a.DependsOn, []string{"kyidentity"}) {
+	if a.Category != "ky" || !VersionAtLeast(a.Version, "0.4.3") || a.PodSecurity != "restricted" || len(a.Compose) == 0 || len(a.Secrets) != 0 || !slices.Equal(a.DependsOn, []string{"kyidentity"}) {
 		t.Fatalf("manifest = %+v", a.Manifest)
 	}
-	if a.Images[k.Image] != "ghcr.io/busnes-app/kyyard:0.4.3@sha256:94c1b9cff3cff2f42e636680979f3535ac07220c99e6f4479b857683d2820756" ||
+	if !kyPin(a, k.Image, "kyyard") ||
 		k.RunAs != 10001 || k.ReadinessPath != "/health/ready" || !slices.Equal(k.Ports, []int{9273}) || k.TerminationGraceSeconds != 1200 ||
 		!k.SuiteRunner || k.Resources.CPURequest != "50m" || k.Resources.Memory != "512Mi" ||
 		len(k.Volumes) != 1 || k.Volumes[0] != (Volume{Name: "data", Mount: "/data", Size: "10Gi"}) {
@@ -287,10 +294,10 @@ func TestKyDriveEntry(t *testing.T) {
 	}
 	a := cat["kydrive"]
 	o := a.OIDC
-	if a.Category != "ky" || a.Version != "0.4.2" || a.Kubernetes != nil || !slices.Equal(a.Services, []string{"app"}) || !slices.Equal(a.DependsOn, []string{"kyidentity"}) {
+	if a.Category != "ky" || !VersionAtLeast(a.Version, "0.4.2") || a.Kubernetes != nil || !slices.Equal(a.Services, []string{"app"}) || !slices.Equal(a.DependsOn, []string{"kyidentity"}) {
 		t.Fatalf("manifest = %+v", a.Manifest)
 	}
-	if a.Images["kydrive"] != "ghcr.io/busnes-app/kydrive-server:0.4.2@sha256:1b2eec75dd4d197934c98f109ff8f913b4025f39eda1e56b0076cd70428b3e2c" {
+	if !kyPin(a, "kydrive", "kydrive-server") {
 		t.Fatalf("image = %s", a.Images["kydrive"])
 	}
 	// KyDrive refuses a directory webhook and requires its SCIM token in setup.
@@ -362,10 +369,10 @@ func TestKyPostEntry(t *testing.T) {
 	}
 	a := cat["kypost"]
 	o := a.OIDC
-	if a.Category != "ky" || a.Version != "0.4.2" || a.Kubernetes != nil || len(a.Secrets) != 0 || len(a.Binds) != 0 || !slices.Equal(a.Services, []string{"app"}) || !slices.Equal(a.DependsOn, []string{"kyidentity"}) || a.Health.TimeoutSeconds != 300 {
+	if a.Category != "ky" || !VersionAtLeast(a.Version, "0.4.2") || a.Kubernetes != nil || len(a.Secrets) != 0 || len(a.Binds) != 0 || !slices.Equal(a.Services, []string{"app"}) || !slices.Equal(a.DependsOn, []string{"kyidentity"}) || a.Health.TimeoutSeconds != 300 {
 		t.Fatalf("manifest = %+v", a.Manifest)
 	}
-	if a.Images["kypost"] != "ghcr.io/busnes-app/kypost-server:0.4.2@sha256:23b596719edbbf81859047264893509cef7a90b6eb7ac48038bc353e9f3d2353" {
+	if !kyPin(a, "kypost", "kypost-server") {
 		t.Fatalf("image = %s", a.Images["kypost"])
 	}
 	if o.Name != "KyPost" || !slices.Equal(o.RedirectPaths, []string{"/api/auth/oidc/callback"}) || o.AdminRole != "kypost.admin" || o.UserRole != "kypost.user" ||
