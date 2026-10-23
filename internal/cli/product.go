@@ -33,10 +33,12 @@ var productAdapters = map[string]productAdapter{
 	"kyyard":     {"/app/kyyard-server", "", yardSetup},
 }
 
+// validateProductTarget refuses an existing product's setup that needs a runtime user on a
+// cluster: Kubernetes exec cannot switch users. An installed catalog app is not checked here:
+// its pod already runs as that user (the manifest's kubernetes.run_as).
 func validateProductTarget(product string, target stack.Target) error {
-	// Kubernetes exec cannot switch users, so a required runtime user needs Docker.
-	if productAdapters[product].runtimeUser != "" && target.Kubernetes() {
-		return errors.New("this product's setup must run as its service user, which requires a Docker target")
+	if user := productAdapters[product].runtimeUser; user != "" && target.Kubernetes() {
+		return fmt.Errorf("%s's setup must run as its service user %s, which Kubernetes exec cannot select: use a Docker target, or install %s from the catalog on %s", product, user, product, target.Name)
 	}
 	return nil
 }

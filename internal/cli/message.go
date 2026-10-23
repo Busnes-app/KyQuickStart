@@ -81,7 +81,8 @@ func messagePlan(st *stack.Stack, cat catalog.Catalog) error {
 		case i.ChatClient != i.Product+"-"+o.ClientSuffix:
 			return fmt.Errorf("integration %s: chat_client must be %s-%s, the KyIdentity client of %s", i.Product, i.Product, o.ClientSuffix, o.Name)
 		case st.InstallationID == "":
-			return fmt.Errorf("%s derives its chat provider ID from installation_id, which this plan lacks; run kyquickstart plan, which gives the plan one", i.Product)
+			// apply would add one, but only after this check: say what to write instead.
+			return fmt.Errorf("%s derives its chat provider ID from installation_id, which this plan lacks: add the line installation_id: %s to stack.yaml (a fresh one; kyquickstart plan also writes one)", i.Product, stack.NewInstallationID())
 		}
 		for _, k := range st.Integrations {
 			if k.Product == "kyidentity" && k.Identity != nil && k.Installed(st) {
