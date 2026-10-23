@@ -206,8 +206,8 @@ nothing is pruned. Kubernetes apps (KyIdentity, KyNotes, KyCalendar, the edge) a
 `upgrade` still gates data migrations on `backup_required`.
 
 **KyDrive restore gate.** Snapshot restore requires a released KyDrive image advertising
-`restore-reset`. The catalog still pins 0.4.2, which lacks that capability, so Drive snapshot
-restore is refused before replacing data; backups and snapshot listing remain available.
+`restore-reset`. The catalog pins 0.4.3, which advertises it; an image without it (0.4.2 and
+earlier) is refused before replacing data, while backups and snapshot listing remain available.
 The installer never substitutes an unpublished image. With a capable image, it runs the
 product's offline grant reset before startup: browser sessions, app passwords, device links,
 service tokens and sharing links must be recreated. Accounts, files and workspace ACLs remain.
@@ -1096,7 +1096,7 @@ Limits:
 
 ## Catalog KyDrive on Docker
 
-The catalog's `kydrive` app installs KyDrive 0.4.2 from its attested release image on a Docker
+The catalog's `kydrive` app installs KyDrive 0.4.3 from its attested release image on a Docker
 target; it has no Kubernetes deployment, and placing it on a cluster is refused. It depends on
 the catalog `kyidentity` in the same plan, which may run on another target. Its one route may
 sit on the cluster's `lan` edge: NPM reaches the Docker host over the LAN.
@@ -1219,7 +1219,7 @@ run every product as the target user with no capabilities, which this editor can
 
 - **The connection.** KyDrive's Compose file gains `KYDRIVE_EDITOR_URL: https://<office route
   URL host>` and a Compose secret, `editor_secret`. Its entrypoint exports that secret as
-  `KYDRIVE_EDITOR_SECRET` beside the session secret, because KyDrive 0.4.2 reads both only from
+  `KYDRIVE_EDITOR_SECRET` beside the session secret, because KyDrive 0.4.3 reads both only from
   the environment. Neither secret appears in Compose or in `docker inspect`. Without
   `euro-office`, KyDrive's Compose file and every step input are unchanged, byte for byte.
 - **The shared secret.** `kydrive.secrets` generates `editor_secret` on KyDrive's target with

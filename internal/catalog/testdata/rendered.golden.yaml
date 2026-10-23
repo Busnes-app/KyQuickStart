@@ -160,7 +160,7 @@ kydrive:
         # refuses a parent directory (/app) owned by another user.
         services:
           app:
-            image: ghcr.io/busnes-app/kydrive-server:0.4.2@sha256:1b2eec75dd4d197934c98f109ff8f913b4025f39eda1e56b0076cd70428b3e2c
+            image: ghcr.io/busnes-app/kydrive-server:0.4.3@sha256:ac6445ce8f593ca2ebf8388baa5c8e33a46bd03f30bb0f56b94d258d525a26d9
             platform: linux/amd64
             user: "${KYQ_UID:?}:${KYQ_GID:?}"
             restart: unless-stopped

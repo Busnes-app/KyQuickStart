@@ -287,10 +287,10 @@ func TestKyDriveEntry(t *testing.T) {
 	}
 	a := cat["kydrive"]
 	o := a.OIDC
-	if a.Category != "ky" || a.Version != "0.4.2" || a.Kubernetes != nil || !slices.Equal(a.Services, []string{"app"}) || !slices.Equal(a.DependsOn, []string{"kyidentity"}) {
+	if a.Category != "ky" || a.Version != "0.4.3" || a.Kubernetes != nil || !slices.Equal(a.Services, []string{"app"}) || !slices.Equal(a.DependsOn, []string{"kyidentity"}) {
 		t.Fatalf("manifest = %+v", a.Manifest)
 	}
-	if a.Images["kydrive"] != "ghcr.io/busnes-app/kydrive-server:0.4.2@sha256:1b2eec75dd4d197934c98f109ff8f913b4025f39eda1e56b0076cd70428b3e2c" {
+	if a.Images["kydrive"] != "ghcr.io/busnes-app/kydrive-server:0.4.3@sha256:ac6445ce8f593ca2ebf8388baa5c8e33a46bd03f30bb0f56b94d258d525a26d9" {
 		t.Fatalf("image = %s", a.Images["kydrive"])
 	}
 	// KyDrive refuses a directory webhook and requires its SCIM token in setup.
