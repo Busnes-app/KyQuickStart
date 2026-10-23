@@ -1,7 +1,7 @@
 # The suite runner: kyquickstart serve beside KyYard (docs/kyyard-runner.compose.yaml). A static
 # binary on distroless, no shell: the serve-* commands that handoff and pull-plan run through
 # docker exec are subcommands of the same binary.
-FROM golang:1.26.6@sha256:0d1d3a794be25f809dd2cb3160d8c73276c4056a9f8242a138e908ddeee7b6b6 AS build
+FROM golang:1.26.10@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
