@@ -516,7 +516,7 @@ calls and kind nodes must carry their own explicit bounds.
   KyIdentity and `euro-office` with KyDrive on an sshd target: baseline pod and its capabilities,
   seeded claims, the copied secret, `/healthcheck` through the edge, a signed KyDrive callback
   (200/401), egress through the edge only, a skipped rerun and a restart. Not part of `make e2e`.
-- `make e2e`: needs Docker; runs `apply` against an sshd container on the local Docker socket and
+- `make e2e`: needs Docker (in CI split by `E2E_RUN`/`E2E_SKIP` over four `e2e (<shard>)` jobs, summarised by the `e2e` job that `release-image.yml` requires; a new slow kind test should get a shard or join one); runs `apply` against an sshd container on the local Docker socket and
   against a kind cluster (`go run sigs.k8s.io/kind@v0.33.0`), including drift and stale-lock cases.
   Also runs disposable NPM, frpc/frps and cloudflared container tests in `internal/edge`, and
   `TestKubernetesNPMEdge`: catalog NPM on kind with claims, bootstrap, policy probes, a routed
