@@ -45,7 +45,7 @@ kycalendar:
         # Docker variant of this product's pinned manifest; bind data belongs to the SSH user.
         services:
           app:
-            image: ghcr.io/busnes-app/kycalendar:0.4.2@sha256:7ed435458a08c9dd02674657cc55aa6aaef96a254256c14880e27fc93c1cf75b
+            image: ghcr.io/busnes-app/kycalendar:999.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000000
             platform: linux/amd64
             user: "${KYQ_UID:?}:${KYQ_GID:?}"
             restart: unless-stopped
@@ -125,7 +125,7 @@ kydns:
         # data, so the installer places its setup files from the host (the image has no shell).
         services:
           app:
-            image: ghcr.io/busnes-app/kydns-server:0.4.2@sha256:ceb83f29134bb611343d1adf94f85088f5f6c7101863a2c9b170e76591a5405b
+            image: ghcr.io/busnes-app/kydns-server:999.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000000
             platform: linux/amd64
             user: "${KYQ_UID:?}:${KYQ_GID:?}"
             restart: unless-stopped
@@ -160,7 +160,7 @@ kydrive:
         # refuses a parent directory (/app) owned by another user.
         services:
           app:
-            image: ghcr.io/busnes-app/kydrive-server:0.4.2@sha256:1b2eec75dd4d197934c98f109ff8f913b4025f39eda1e56b0076cd70428b3e2c
+            image: ghcr.io/busnes-app/kydrive-server:999.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000000
             platform: linux/amd64
             user: "${KYQ_UID:?}:${KYQ_GID:?}"
             restart: unless-stopped
@@ -218,7 +218,7 @@ kyidentity:
         # Docker variant of this product's pinned manifest; bind data belongs to the SSH user.
         services:
           app:
-            image: ghcr.io/busnes-app/kyidentity-server:0.4.7@sha256:3c6f77e405331dd96bff6431f644b1f6f0db3b69e91860b74c6b4852a7d4160b
+            image: ghcr.io/busnes-app/kyidentity-server:999.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000000
             platform: linux/amd64
             user: "${KYQ_UID:?}:${KYQ_GID:?}"
             restart: unless-stopped
@@ -280,7 +280,7 @@ kynotes:
         # Docker variant of this product's pinned manifest; bind data belongs to the SSH user.
         services:
           app:
-            image: ghcr.io/busnes-app/kynotes-server:0.4.2@sha256:85f49161f9e5879d9998507ac5b1ef07e3c5e884854e162173791b7292a06ad9
+            image: ghcr.io/busnes-app/kynotes-server:999.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000000
             platform: linux/amd64
             user: "${KYQ_UID:?}:${KYQ_GID:?}"
             restart: unless-stopped
@@ -348,7 +348,7 @@ kypost:
         # start from the image's kypost-owned 0700 directories, so nothing needs a chown.
         services:
           app:
-            image: ghcr.io/busnes-app/kypost-server:0.4.2@sha256:23b596719edbbf81859047264893509cef7a90b6eb7ac48038bc353e9f3d2353
+            image: ghcr.io/busnes-app/kypost-server:999.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000000
             platform: linux/amd64
             user: kypost
             restart: unless-stopped
@@ -402,7 +402,7 @@ kypulse:
         # Docker variant of this product's pinned manifest; bind data belongs to the SSH user.
         services:
           app:
-            image: ghcr.io/busnes-app/kypulse-server:0.4.2@sha256:4d7232d53e07476592379b7c688c8f50b073e498d89b5c08b94cc3404ed3cc16
+            image: ghcr.io/busnes-app/kypulse-server:999.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000000
             platform: linux/amd64
             user: "${KYQ_UID:?}:${KYQ_GID:?}"
             restart: unless-stopped
@@ -472,7 +472,7 @@ kyrecovery:
         # Docker variant of this product's pinned manifest; bind data belongs to the SSH user.
         services:
           app:
-            image: ghcr.io/busnes-app/kyrecovery-server:0.4.2@sha256:61bd690877d202579dd14952cd37d6232ce988e71406083b7438d66321e19eae
+            image: ghcr.io/busnes-app/kyrecovery-server:999.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000000
             platform: linux/amd64
             user: "${KYQ_UID:?}:${KYQ_GID:?}"
             restart: unless-stopped
@@ -528,7 +528,7 @@ kyyard:
         # Docker variant of this product's pinned manifest; bind data belongs to the SSH user.
         services:
           app:
-            image: ghcr.io/busnes-app/kyyard:0.4.3@sha256:94c1b9cff3cff2f42e636680979f3535ac07220c99e6f4479b857683d2820756
+            image: ghcr.io/busnes-app/kyyard:999.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000000
             platform: linux/amd64
             user: "${KYQ_UID:?}:${KYQ_GID:?}"
             restart: unless-stopped
