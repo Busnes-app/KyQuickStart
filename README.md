@@ -17,8 +17,8 @@ Docker apps back up to an off-host restic
 rest-server with `kyquickstart backup` and come back with `kyquickstart restore`
 ([guided setup](docs/guided-setup.md#backups-and-restore-on-docker)); restoring an app whose
 people come from KyIdentity needs KyIdentity v0.4.4 or later (the catalog's is v0.4.7).
-Drive snapshot restores require native `restore-reset`; the current 0.4.2 catalog image
-lacks it and is refused before replacing data. Backups and snapshot listing still work.
+Drive snapshot restores require native `restore-reset`, which the catalog's KyDrive v0.4.3
+advertises; an image without it is refused before replacing data.
 `integrate-product` connects already-running Ky products to KyIdentity. Open requirements are
 listed under [Unfinished](docs/redirect.md#dispositions).
 
