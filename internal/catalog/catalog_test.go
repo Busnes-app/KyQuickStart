@@ -463,6 +463,11 @@ func TestLoadRejects(t *testing.T) {
 
 		"no version":            {strings.Replace(manifest, "version: 2.4.0\n", "", 1), compose, "version"},
 		"v-prefixed version":    {strings.Replace(manifest, "2.4.0", "v2.4.0", 1), compose, "MAJOR.MINOR.PATCH"},
+		"fourth part zero":      {strings.Replace(manifest, "2.4.0", "2.4.0.0", 1), compose, "MAJOR.MINOR.PATCH.N"},
+		"fourth part leading 0": {strings.Replace(manifest, "2.4.0", "2.4.0.01", 1), compose, "MAJOR.MINOR.PATCH.N"},
+		"five parts":            {strings.Replace(manifest, "2.4.0", "2.4.0.1.1", 1), compose, "MAJOR.MINOR.PATCH.N"},
+		"min_from newer .N":     {manifest + "upgrade:\n  min_from: 2.4.0.1\n", compose, "min_from"},
+		"no_skip bad .N":        {manifest + "upgrade:\n  no_skip: [2.3.0.0]\n", compose, "no_skip"},
 		"min_from newer":        {manifest + "upgrade:\n  min_from: 2.5.0\n", compose, "min_from"},
 		"no_skip at target":     {manifest + "upgrade:\n  no_skip: [2.4.0]\n", compose, "no_skip"},
 		"no_skip before min":    {manifest + "upgrade:\n  min_from: 2.0.0\n  no_skip: [1.9.0]\n", compose, "no_skip"},
@@ -659,10 +664,37 @@ func TestCompareVersions(t *testing.T) {
 	for _, c := range []struct {
 		a, b string
 		want int
-	}{{"1.2.3", "1.2.3", 0}, {"1.10.0", "1.9.9", 1}, {"0.9.0", "1.0.0", -1}, {"2.0.10", "2.0.2", 1}} {
+	}{{"1.2.3", "1.2.3", 0}, {"1.10.0", "1.9.9", 1}, {"0.9.0", "1.0.0", -1}, {"2.0.10", "2.0.2", 1},
+		{"1.2.3.1", "1.2.3", 1}, {"1.2.3", "1.2.3.1", -1}, {"1.2.3.10", "1.2.3.9", 1}, {"1.2.3.4", "1.2.4", -1}, {"1.2.3.2", "1.2.3.2", 0}} {
 		if got := compareVersions(c.a, c.b); got != c.want {
 			t.Errorf("compareVersions(%s, %s) = %d, want %d", c.a, c.b, got, c.want)
 		}
+	}
+}
+
+// A Ky product's automated dependency release adds a fourth number: X.Y.Z.N pins, upgrades
+// from X.Y.Z and is gated by three-part min_from and no_skip.
+func TestFourPartVersion(t *testing.T) {
+	m := strings.Replace(manifest, "version: 2.4.0", "version: 2.4.0.2", 1) +
+		"upgrade:\n  min_from: 2.0.0.1\n  no_skip: [2.2.0, 2.4.0.1]\n"
+	cat, err := Load(fstest.MapFS{"a/manifest.yaml": {Data: []byte(m)}, "a/compose.yaml.tmpl": {Data: []byte(compose)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := cat["a"].Upgrade
+	for installed, want := range map[string]string{
+		"2.4.0.1": "",
+		"2.4.0":   "would skip 2.4.0.1",
+		"2.0.0":   "min_from 2.0.0.1",
+		"2.4.0.3": "downgrades",
+	} {
+		err := u.Allows(installed, cat["a"].Version)
+		if want == "" && err != nil || want != "" && (err == nil || !strings.Contains(err.Error(), want)) {
+			t.Errorf("%s: err = %v, want %q", installed, err, want)
+		}
+	}
+	if !VersionAtLeast("0.4.7.1", "0.4.7") || VersionAtLeast("0.4.6.9", "0.4.7") || VersionAtLeast("0.4.7.0", "0.4.7") {
+		t.Error("VersionAtLeast does not order the fourth part")
 	}
 }
 
@@ -696,14 +728,19 @@ func TestThirdPartyNeedsCompose(t *testing.T) {
 func TestUpgradeAllows(t *testing.T) {
 	u := Upgrade{MinFrom: "2.0.0", NoSkip: []string{"2.2.0"}}
 	for installed, want := range map[string]string{
-		"2.2.0":  "",
-		"2.2.5":  "",
-		"2.4.0":  "",
-		"2.1.9":  "would skip 2.2.0",
-		"1.9.0":  "min_from 2.0.0",
-		"2.5.0":  "downgrades",
-		"2.0":    "not MAJOR.MINOR.PATCH",
-		"2.10.0": "downgrades",
+		"2.2.0":    "",
+		"2.2.5":    "",
+		"2.4.0":    "",
+		"2.1.9":    "would skip 2.2.0",
+		"1.9.0":    "min_from 2.0.0",
+		"2.5.0":    "downgrades",
+		"2.0":      "not MAJOR.MINOR.PATCH",
+		"2.10.0":   "downgrades",
+		"2.2.0.3":  "",
+		"2.1.9.9":  "would skip 2.2.0",
+		"2.4.0.1":  "downgrades",
+		"2.4.0.0":  "not MAJOR.MINOR.PATCH",
+		"2.3.0.01": "not MAJOR.MINOR.PATCH",
 	} {
 		err := u.Allows(installed, "2.4.0")
 		if want == "" && err != nil || want != "" && (err == nil || !strings.Contains(err.Error(), want)) {

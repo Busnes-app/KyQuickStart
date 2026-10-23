@@ -263,6 +263,22 @@ edge compatibility: `docs/redirect.md`.
   verified), `binaries` (`scripts/release-binaries.sh`, the only home of the release `-ldflags`,
   stamps `main.runnerImage` with the verified digest; the four binaries are attested, uploaded
   and re-verified after download) and `promote` (`:stable`), each with only the permissions it uses.
+- The release set has one source: `internal/appversion/VERSION` (`X.Y.Z`, the release line). Go
+  code calls `appversion.String()`; release builds (the image's `VERSION` build arg and
+  `scripts/release-binaries.sh`) set the tag's full version through
+  `-ldflags -X …/internal/appversion.release`, so releases report `X.Y.Z` or `X.Y.Z.N` and source
+  builds report the line.
+- Publishing a GitHub release `vX.Y.Z` or `vX.Y.Z.N` runs `release-image.yml` (a dispatch on a
+  published release's tag runs it too). It refuses a malformed tag, a tag whose `X.Y.Z` disagrees
+  with `internal/appversion/VERSION`, and any commit on which a ci.yml job in its `REQUIRED` list
+  did not pass; attestations are pinned to `release-image.yml@refs/tags/<tag>`, and `:stable` moves
+  only to the highest non-prerelease, four-part ones included.
+- `dependency-release.yml` runs daily at 23:00 UTC: if Dependabot commits landed on `master` since
+  the newest release on the current line and the push CI run on `master`'s tip succeeded, it
+  publishes the next `vX.Y.Z.N` (one per day however many PRs merged) and dispatches
+  `release-image.yml` on it, since a `GITHUB_TOKEN` release raises no release event. Run by hand,
+  it releases `master` without the Dependabot condition. It waits while the line in `VERSION` has
+  no `vX.Y.Z` release: bump `VERSION` and publish `vX.Y.Z` by hand for a new line.
 
 ## Local Contracts
 
@@ -407,7 +423,8 @@ edge compatibility: `docs/redirect.md`.
   receives them. Runner access on targets is exactly the installer's: one `restrict`ed
   authorized_keys line, or a ServiceAccount bound to the preflight permission list.
 - Deployments record their catalog version (`kyquickstart/version` in `compose.kyq.yaml` or on
-  the app namespace), which outlives uninstall. `apply`, `install` and `upgrade` gate a version
+  the app namespace), which outlives uninstall. Catalog versions are `MAJOR.MINOR.PATCH`, or
+  `MAJOR.MINOR.PATCH.N` for a Ky product's dependency release (`X.Y.Z` orders as `X.Y.Z.0`). `apply`, `install` and `upgrade` gate a version
   change on the manifest's upgrade rules: `migrates_data` is always `backup_required` (a
   `kyquickstart backup` does not lift it yet); any other upgrade needs an explicit, recorded
   acknowledgement. The manifest's `upgrade.note` is printed and recorded with it.
@@ -489,9 +506,11 @@ calls and kind nodes must carry their own explicit bounds.
 - `make ci`: tidy check, gofmt, vet (including the `e2e,goolm` tags), race tests. Runner tests decode
   every answer with KyYard's client types (`internal/runner/kyyard_test.go`).
   `cmd/kyquickstart/release_test.go` runs `scripts/release-binaries.sh` (the stamp in all four
-  binaries, its refusals) and checks `release-image.yml`'s job graph, permissions and pins.
+  binaries, its refusals) and checks `release-image.yml`'s and `dependency-release.yml`'s job
+  graph, permissions and pins.
 - `make workflow-lint`: needs Docker (CI runs it in `vulncheck`); actionlint v1.7.12 on every
-  workflow and offline, digest-pinned zizmor (medium and up) on `release-image.yml`.
+  workflow and offline, digest-pinned zizmor (medium and up) on `release-image.yml` and
+  `dependency-release.yml`.
 - `go test -tags e2e ./test/e2e -run '^TestDockerKy'`: pinned-image Docker startup/readiness/native capabilities/restart for every new template, plus KyYard's private runner socket, credential isolation and container recreation.
 - With `KYQ_TEST_EURO_OFFICE=1`, `TestKubernetesEuroOffice` (own kind cluster, 5 GiB node) installs NPM,
   KyIdentity and `euro-office` with KyDrive on an sshd target: baseline pod and its capabilities,
