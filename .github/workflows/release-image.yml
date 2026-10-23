@@ -1,12 +1,17 @@
 name: publish release image
 
-# A published release vX.Y.Z publishes the suite runner's immutable :X.Y.Z image and
-# attests and verifies it (publish), builds the kyquickstart binaries pinned to that digest
-# and attests, uploads and re-verifies them (binaries), then moves :stable (promote). Each
-# job holds only the permissions it uses. Image steps copied from KyYard's release-image.yml.
+# A published release vX.Y.Z (or vX.Y.Z.N, from dependency-release.yml) publishes the suite
+# runner's immutable :X.Y.Z[.N] image and attests and verifies it (publish), builds the
+# kyquickstart binaries pinned to that digest and attests, uploads and re-verifies them
+# (binaries), then moves :stable (promote). Each job holds only the permissions it uses.
+# Image steps copied from KyYard's release-image.yml.
+#
+# A release created by a workflow's GITHUB_TOKEN raises no release event, so
+# dependency-release.yml dispatches this workflow on the release's tag instead.
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 # Serialised so two releases cannot race to move :stable. Never cancelled: a run
 # that pushed :X.Y.Z must finish attesting it.
@@ -29,27 +34,50 @@ jobs:
       checks: read
     env:
       IMAGE_NAME: ghcr.io/busnes-app/kyquickstart-runner
+      # The release event names its tag; a dispatch runs on the tag's ref.
+      TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
     # Read only after this job succeeds, so only after the attestation verified.
     outputs:
       digest: ${{ steps.build.outputs.digest }}
       version: ${{ steps.version.outputs.value }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
       # Red, not skipped: a skipped job is green and leaves a release with no image.
+      # A dispatch must run on a tag that has a published release, so it can only
+      # build what a release event would have.
       - name: Validate release version
         id: version
         env:
-          TAG: ${{ github.event.release.tag_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          EVENT_PRERELEASE: ${{ github.event.release.prerelease }}
         run: |
           set -euo pipefail
-          if [[ ! "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-            echo "::error::release tag must be v<major>.<minor>.<patch>, got: $TAG" >&2
+          if [[ ! "$TAG" =~ ^v(([0-9]+\.[0-9]+\.[0-9]+)(\.[1-9][0-9]*)?)$ ]]; then
+            echo "::error::release tag must be v<major>.<minor>.<patch> or v<major>.<minor>.<patch>.<n>, got: $TAG" >&2
             exit 1
           fi
           echo "value=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          echo "line=${BASH_REMATCH[2]}" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT" = release ]; then
+            echo "prerelease=$EVENT_PRERELEASE" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$REF_TYPE" != tag ]; then
+            echo "::error::dispatch this workflow on a release tag, not a branch" >&2
+            exit 1
+          fi
+          release="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '{draft, prerelease}')"
+          if [ "$(jq -r .draft <<< "$release")" != false ]; then
+            echo "::error::$TAG has no published release" >&2
+            exit 1
+          fi
+          echo "prerelease=$(jq -r .prerelease <<< "$release")" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: refs/tags/${{ github.event.release.tag_name }}
+          ref: refs/tags/${{ env.TAG }}
           persist-credentials: false
 
       # A branch named like the tag must not stand in for it: build only the
@@ -64,17 +92,23 @@ jobs:
             exit 1
           fi
 
-      # The binary's only version source is main.version, stamped from the tag at build
-      # time (VERSION build arg below); the built image is checked against the tag before
-      # it is attested. A constant here would be a second source to disagree. Likewise
-      # main.runnerImage: only the binaries job stamps it, with this run's digest.
-      - name: Require the version source to be the build stamp
+      # internal/appversion/VERSION is the only version source. The binary reports the
+      # tag's full version (the VERSION build arg below and scripts/release-binaries.sh
+      # stamp it); the tag's X.Y.Z must be the file's, and the built image is checked
+      # against the tag before it is attested. main.runnerImage has no source at all:
+      # only the binaries job stamps it, with this run's digest.
+      - name: Require the tag to match internal/appversion/VERSION
+        env:
+          LINE: ${{ steps.version.outputs.line }}
         run: |
           set -euo pipefail
-          grep -qx 'var version = "dev"' cmd/kyquickstart/main.go || {
-            echo "::error::cmd/kyquickstart/main.go must keep var version = \"dev\" for the release stamp" >&2
+          file="$(tr -d '[:space:]' < internal/appversion/VERSION)"
+          echo "tag line: $LINE; internal/appversion/VERSION: ${file:-<empty>}"
+          if [ "$file" != "$LINE" ]; then
+            echo "::error::$TAG is on the $LINE line, but internal/appversion/VERSION says ${file:-nothing}" >&2
+            echo "Bump internal/appversion/VERSION in the commit you tag." >&2
             exit 1
-          }
+          fi
           grep -qx 'var runnerImage = ""' cmd/kyquickstart/main.go || {
             echo "::error::cmd/kyquickstart/main.go must keep var runnerImage = \"\" for the release stamp" >&2
             exit 1
@@ -167,7 +201,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DIGEST: ${{ steps.build.outputs.digest }}
-          TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
           gh attestation verify "oci://$IMAGE_NAME@$DIGEST" --repo "$GITHUB_REPOSITORY" \
@@ -187,11 +220,12 @@ jobs:
     env:
       PIN: ghcr.io/busnes-app/kyquickstart-runner:${{ needs.publish.outputs.version }}@${{ needs.publish.outputs.digest }}
       VERSION: ${{ needs.publish.outputs.version }}
-      TAG: ${{ github.event.release.tag_name }}
+      # The release event names its tag; a dispatch runs on the tag's ref.
+      TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: refs/tags/${{ github.event.release.tag_name }}
+          ref: refs/tags/${{ env.TAG }}
           persist-credentials: false
 
       - name: Require the checkout to be the released commit
@@ -297,6 +331,8 @@ jobs:
       attestations: read
     env:
       IMAGE_NAME: ghcr.io/busnes-app/kyquickstart-runner
+      # The release event names its tag; a dispatch runs on the tag's ref.
+      TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
     steps:
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -311,7 +347,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.publish.outputs.version }}
-          PRERELEASE: ${{ github.event.release.prerelease }}
+          PRERELEASE: ${{ needs.publish.outputs.prerelease }}
         run: |
           set -euo pipefail
           if [ "$PRERELEASE" = "true" ]; then
@@ -322,7 +358,7 @@ jobs:
           # A failed lookup must stop here: an empty list would make this release "highest".
           tags="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" \
             --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name')"
-          published="$(printf '%s\n' "$tags" | sed 's/^v//' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true)"
+          published="$(printf '%s\n' "$tags" | sed 's/^v//' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+(\.[1-9][0-9]*)?$' || true)"
           highest="$(printf '%s\n%s\n' "$published" "$VERSION" | sort -V | tail -n1)"
           echo "highest published release: $highest; this release: $VERSION"
           if [ "$highest" != "$VERSION" ]; then
@@ -339,7 +375,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DIGEST: ${{ needs.publish.outputs.digest }}
-          TAG: ${{ github.event.release.tag_name }}
           VERSION: ${{ needs.publish.outputs.version }}
         run: |
           set -euo pipefail

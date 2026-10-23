@@ -28,4 +28,5 @@ ZIZMOR := ghcr.io/zizmorcore/zizmor@sha256:42d409dbb851d4c5d35a058cf042b828bea1e
 workflow-lint:
 	go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 	docker run --rm --network none -v "$(CURDIR)/.github:/src/.github:ro" $(ZIZMOR) \
-		--offline --min-severity medium /src/.github/workflows/release-image.yml
+		--offline --min-severity medium /src/.github/workflows/release-image.yml \
+		/src/.github/workflows/dependency-release.yml
