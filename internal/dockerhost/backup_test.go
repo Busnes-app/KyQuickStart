@@ -368,3 +368,32 @@ func TestRestoreDumpRefusesASymlinkedDump(t *testing.T) {
 		t.Fatal("restore_command got the host file")
 	}
 }
+
+func TestRestorePendingFailsClosedAndPublishesAtomically(t *testing.T) {
+	st, _ := backupFixture(t, false)
+	ctx := context.Background()
+	if err := os.WriteFile(st.pending(), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.Pending(ctx); err == nil {
+		t.Fatal("empty restore fence treated as no restore")
+	}
+	id := strings.Repeat("a", 64)
+	if err := st.SetPending(ctx, id, "preparing"); err != nil {
+		t.Fatal(err)
+	}
+	bin := realTemp(t)
+	if err := os.WriteFile(filepath.Join(bin, "mv"), []byte("#!/bin/sh\nexit 7\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if err := st.SetPending(ctx, id, "files"); err == nil {
+		t.Fatal("failed marker publication succeeded")
+	}
+	if pending, stage, err := st.Pending(ctx); err != nil || pending != id || stage != "preparing" {
+		t.Fatalf("failed publication lost the existing fence: %q %q %v", pending, stage, err)
+	}
+	if tmp, _ := filepath.Glob(st.pending() + ".*"); len(tmp) != 0 {
+		t.Fatalf("marker temporary files left: %v", tmp)
+	}
+}
