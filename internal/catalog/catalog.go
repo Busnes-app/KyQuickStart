@@ -50,7 +50,23 @@ type Manifest struct {
 	// DenyPaths are what an app with one route answers 404 for at the edge, like a route
 	// role's deny_paths.
 	DenyPaths []string `yaml:"deny_paths,omitempty"`
+	// NativeMail renders the Compose template twice more, with .Mail "native" and
+	// "receiver", for a plan's opt-in mail block (KyPost's). Nil: the app has none.
+	NativeMail *NativeMail `yaml:"native_mail,omitempty"`
 }
+
+// NativeMail is what the installer checks of the operator's receiver inputs before deploying
+// the "receiver" rendering.
+type NativeMail struct {
+	// MaddySHA256 is the one receiver executable the product accepts, hex SHA-256.
+	MaddySHA256 string `yaml:"maddy_sha256"`
+}
+
+// Mail modes: the renderings of an app with native_mail besides its ordinary one.
+const (
+	MailNative   = "native"
+	MailReceiver = "receiver"
+)
 
 // OIDC is the app's client in KyIdentity. Paths are relative to the app's public origin.
 type OIDC struct {
@@ -204,6 +220,18 @@ type App struct {
 	Nested []string
 	// Init are the services in a Compose profile: one-shot runs, never part of up.
 	Init []string
+	// Files are the catalog's files/ beside the template, by path below the app's directory
+	// (rspamd/rspamd.conf). Deploy writes those its Compose file binds (Nested), readable by
+	// every uid: a sidecar running as its own user reads them through the bind.
+	Files map[string][]byte
+	// mail are the native_mail renderings, by mode.
+	mail map[string]rendering
+}
+
+// rendering is one rendering of an app's Compose template.
+type rendering struct {
+	compose                       []byte
+	services, binds, nested, init []string
 }
 
 type Catalog map[string]App
@@ -222,6 +250,7 @@ var (
 	roleRE  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$`) // KyIdentity's app-role grammar
 	// No segment starts with a dot, so no . or .. components.
 	urlPathRE = regexp.MustCompile(`^/([A-Za-z0-9_~-][A-Za-z0-9._~-]*/?)*$`)
+	sha256RE  = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	skipRE    = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)+$`)
 	// MAJOR.MINOR.PATCH, or MAJOR.MINOR.PATCH.N for a Ky product's automated dependency
 	// release (N from 1; X.Y.Z orders as X.Y.Z.0).
@@ -250,6 +279,16 @@ const MediaAddressRef = "{{media_address}}"
 // HostnameRef stands for the route's hostname alone, without a client port.
 const HostnameRef = "{{hostname}}"
 
+// The mail references a "receiver" rendering writes; WithMail replaces them from the plan.
+const (
+	SMTPAddressRef  = "{{smtp_address}}"  // mail.receiver.smtp_address, where host port 25 publishes
+	MailHostnameRef = "{{mail_hostname}}" // mail.receiver.hostname
+	MaddyBinaryRef  = "{{maddy_binary}}"  // mail.receiver.maddy_binary
+	ReceivingTLSRef = "{{receiving_tls}}" // mail.receiver.tls_dir
+)
+
+var mailRefs = []string{SMTPAddressRef, MailHostnameRef, MaddyBinaryRef, ReceivingTLSRef}
+
 // routeRefs are every route reference a Compose template may write; {{host:<role>}} and
 // {{forward:<role>}} name a role of routes.
 var routeRefs = []string{HostRef, ForwardRef, ForwardAddrRef, EdgeAddressRef, MediaAddressRef, HostnameRef, "{{host:", "{{forward:", "{{hostname:"}
@@ -273,6 +312,10 @@ var routeFuncs = template.FuncMap{
 	"forward_addr":  func() string { return ForwardAddrRef },
 	"edge_address":  func() string { return EdgeAddressRef },
 	"media_address": func() string { return MediaAddressRef },
+	"smtp_address":  func() string { return SMTPAddressRef },
+	"mail_hostname": func() string { return MailHostnameRef },
+	"maddy_binary":  func() string { return MaddyBinaryRef },
+	"receiving_tls": func() string { return ReceivingTLSRef },
 }
 
 // roleRefRE finds {{host:<role>}} and {{forward:<role>}} in a rendered Compose file.
@@ -355,21 +398,129 @@ func loadApp(fsys fs.FS, dir string) (App, error) {
 	if err != nil {
 		return App{}, fmt.Errorf("compose.yaml.tmpl: %w", err)
 	}
-	var buf bytes.Buffer
-	if err := t.Execute(&buf, m); err != nil {
-		return App{}, fmt.Errorf("compose.yaml.tmpl: %w", err)
-	}
-	c, err := checkCompose(buf.Bytes(), m.Images)
+	files, err := loadFiles(fsys, dir)
 	if err != nil {
-		return App{}, fmt.Errorf("compose.yaml.tmpl: %w", err)
+		return App{}, err
+	}
+	modes := []string{""}
+	if m.NativeMail != nil {
+		modes = append(modes, MailNative, MailReceiver)
+	}
+	app := App{Manifest: m, Files: files}
+	for _, mode := range modes {
+		r, err := m.render(t, mode, files)
+		if err != nil {
+			if mode != "" {
+				return App{}, fmt.Errorf("compose.yaml.tmpl (.Mail %s): %w", mode, err)
+			}
+			return App{}, fmt.Errorf("compose.yaml.tmpl: %w", err)
+		}
+		if mode == "" {
+			app.Compose, app.Services, app.Binds, app.Nested, app.Init = r.compose, r.services, r.binds, r.nested, r.init
+			continue
+		}
+		if app.mail == nil {
+			app.mail = map[string]rendering{}
+		}
+		app.mail[mode] = r
+	}
+	if len(app.Files) == 0 {
+		app.Files = nil
+	}
+	return app, nil
+}
+
+// templateData is what a Compose template sees: the manifest, and the mail mode ("" for the
+// ordinary rendering).
+type templateData struct {
+	Manifest
+	Mail string
+}
+
+// render executes t for mail mode and checks the result. Only a "receiver" rendering may
+// write the mail references or bind a file of files/, and every file of files/ must be bound
+// by some rendering.
+func (m Manifest) render(t *template.Template, mode string, files map[string][]byte) (rendering, error) {
+	var buf bytes.Buffer
+	if err := t.Execute(&buf, templateData{m, mode}); err != nil {
+		return rendering{}, err
+	}
+	b := buf.Bytes()
+	c, err := checkCompose(b, m.Images)
+	if err != nil {
+		return rendering{}, err
 	}
 	if err := m.validateBackup(&c); err != nil {
-		return App{}, fmt.Errorf("manifest.yaml: backup: %w", err)
+		return rendering{}, fmt.Errorf("manifest.yaml: backup: %w", err)
 	}
-	if err := m.validateRoutes(buf.Bytes(), c); err != nil {
-		return App{}, fmt.Errorf("manifest.yaml: %w", err)
+	if err := m.validateRoutes(b, c); err != nil {
+		return rendering{}, fmt.Errorf("manifest.yaml: %w", err)
 	}
-	return App{Manifest: m, Compose: buf.Bytes(), Services: c.services, Binds: c.binds, Nested: c.nested, Init: c.init}, nil
+	for _, ref := range mailRefs {
+		if bytes.Contains(b, []byte(ref)) != (mode == MailReceiver) {
+			return rendering{}, fmt.Errorf("%s belongs in the receiver rendering, which must write every mail reference", ref)
+		}
+	}
+	for name := range files {
+		if mode == MailReceiver && !slices.Contains(c.nested, "./"+name) {
+			return rendering{}, fmt.Errorf("files/%s is bound by no service", name)
+		}
+	}
+	for _, n := range c.nested {
+		if _, ok := files[strings.TrimPrefix(n, "./")]; ok && mode != MailReceiver {
+			return rendering{}, fmt.Errorf("only the receiver rendering binds files/%s", strings.TrimPrefix(n, "./"))
+		}
+	}
+	return rendering{b, c.services, c.binds, c.nested, c.init}, nil
+}
+
+// loadFiles reads an app's files/ directory: regular files at most 64 KiB, by path below it.
+func loadFiles(fsys fs.FS, dir string) (map[string][]byte, error) {
+	files := map[string][]byte{}
+	root := path.Join(dir, "files")
+	err := fs.WalkDir(fsys, root, func(p string, e fs.DirEntry, err error) error {
+		if errors.Is(err, fs.ErrNotExist) && p == root {
+			return fs.SkipDir
+		}
+		if err != nil || e.IsDir() {
+			return err
+		}
+		name := strings.TrimPrefix(p, root+"/")
+		b, err := fs.ReadFile(fsys, p)
+		switch {
+		case err != nil:
+			return err
+		case !e.Type().IsRegular() || len(b) > 64<<10 || !bindRE.MatchString("./"+name) || !strings.Contains(name, "/"):
+			return fmt.Errorf("files/%s must be a regular file of at most 64 KiB inside a bind directory, ./<name>/<path>", name)
+		}
+		files[name] = b
+		return nil
+	})
+	return files, err
+}
+
+// MailModes reports whether the app has native_mail renderings.
+func (a App) MailModes() bool { return a.mail != nil }
+
+// MailRefs are the plan's values for a receiver rendering's mail references.
+type MailRefs struct {
+	SMTPAddress, Hostname, MaddyBinary, TLSDir string
+}
+
+// WithMail returns a copy rendered for mail mode, MailNative or MailReceiver, its mail
+// references replaced by r (a receiver's). It must precede WithRoute, which fills the routes.
+func (a App) WithMail(mode string, r MailRefs) (App, error) {
+	v, ok := a.mail[mode]
+	if !ok {
+		return a, fmt.Errorf("app %s has no native mail rendering %q", a.Name, mode)
+	}
+	if (mode == MailReceiver) != (r != MailRefs{}) {
+		return a, errors.New("only the receiver rendering takes mail references")
+	}
+	a.Compose = []byte(strings.NewReplacer(SMTPAddressRef, r.SMTPAddress, MailHostnameRef, r.Hostname, MaddyBinaryRef, r.MaddyBinary, ReceivingTLSRef, r.TLSDir).Replace(string(v.compose)))
+	a.Services, a.Binds, a.Nested, a.Init = v.services, v.binds, v.nested, v.init
+	a.mail = nil
+	return a, nil
 }
 
 // UsesRoute reports whether the app's Compose file takes anything from its route.
@@ -464,6 +615,9 @@ func (m Manifest) validate(dir string) error {
 	}
 	if len(m.DenyPaths) > 0 && len(m.Routes) > 0 {
 		return fmt.Errorf("deny_paths: an app with routes sets them per role")
+	}
+	if n := m.NativeMail; n != nil && (!sha256RE.MatchString(n.MaddySHA256) || m.Kubernetes != nil) {
+		return fmt.Errorf("native_mail needs maddy_sha256, 64 lowercase hex digits, and runs on Docker only (no kubernetes)")
 	}
 	if m.PodSecurity != "restricted" && m.PodSecurity != "baseline" {
 		return fmt.Errorf("pod_security %q must be restricted or baseline", m.PodSecurity)
@@ -813,7 +967,7 @@ var bindRE = regexp.MustCompile(`^\./([a-z][a-z0-9-]{0,30})((/[A-Za-z0-9_][A-Za-
 
 // publishRE is a ports entry: an explicit address reference, then host:container[/proto].
 // A bare or wildcard publication would bypass the address the plan chose.
-var publishRE = regexp.MustCompile(`^(\{\{forward(:[a-z][a-z0-9_]{0,31})?\}\}|(\{\{forward_addr\}\}|\{\{media_address\}\}|127\.0\.0\.1):[1-9][0-9]{0,4}):([1-9][0-9]{0,4})(/(tcp|udp))?$`)
+var publishRE = regexp.MustCompile(`^(\{\{forward(:[a-z][a-z0-9_]{0,31})?\}\}|(\{\{forward_addr\}\}|\{\{media_address\}\}|\{\{smtp_address\}\}|127\.0\.0\.1):[1-9][0-9]{0,4}):([1-9][0-9]{0,4})(/(tcp|udp))?$`)
 
 // checkCompose returns the sorted service names, the named volumes and the bind directories,
 // refusing builds, any image the manifest does not pin, any other relative bind source and
@@ -859,7 +1013,7 @@ func checkCompose(b []byte, images map[string]string) (composeFile, error) {
 			short, _ := p.(string)
 			m := publishRE.FindStringSubmatch(short)
 			if m == nil {
-				return composeFile{}, fmt.Errorf("service %s: port %v must publish on {{forward}}, {{forward_addr}} or {{media_address}} as host:container[/proto]", name, p)
+				return composeFile{}, fmt.Errorf("service %s: port %v must publish on {{forward}}, {{forward_addr}}, {{media_address}} or {{smtp_address}} as host:container[/proto]", name, p)
 			}
 			port, _ := strconv.Atoi(m[4])
 			out.ports[name] = append(out.ports[name], port)

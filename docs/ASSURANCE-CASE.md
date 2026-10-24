@@ -61,7 +61,13 @@ operator's job ([README](../README.md#targets)).
 4. **Catalog → registries.** Images are referenced only by digest, and catalog-follow moves a pin
    only after `gh attestation verify` against the product's release workflow at the tag
    (`scripts/catalog-follow/main.go`).
-5. **KyYard → suite runner.** A Unix socket, mode 0600, in a 0700 state volume, as uid 10001
+5. **Internet → KyPost's receiver (opt-in).** Only a plan whose KyPost has native mail with
+   `receiver` and `publish_port_25: true` publishes a mail port: TCP 25 on that one
+   `smtp_address`, to KyPost's Maddy, which runs only the operator's executable with KyPost's
+   pinned hash (checked at preflight and again by KyPost at every start), and Rspamd, with no
+   published port, in KyPost's network namespace. No other rendering of any app writes
+   `{{smtp_address}}` (`internal/catalog/catalog.go`, `render`; `TestKyPostMailRenderings`).
+6. **KyYard → suite runner.** A Unix socket, mode 0600, in a 0700 state volume, as uid 10001
    (`internal/runner/server.go`, `internal/runner/state.go`). The runner acts only on targets
    marked with its own ID and never changes its own pod (`runner_host`).
 
@@ -92,7 +98,7 @@ operator's job ([README](../README.md#targets)).
 | Man-in-the-middle on SSH | Pinned host keys, changed key refused, host asked only for the pinned key types | `internal/remote/ssh.go` (`hostKeyCallback`, `hostKeyAlgorithms`) |
 | Weak or leaked secrets | 32 bytes from the target's `/dev/urandom`; on Docker written once into a private file (`ln` refuses replacement); read back only from a regular 0600 file owned by the user, under no symlinked directory and no parent others can write to without the sticky bit | `internal/dockerhost/secrets.go` (`generateSecret`), `internal/kube/generate.go`, `internal/remote/secret.go` (`ReadSecret`) |
 | Secrets in output | Every secret read back is registered with the redactor; step errors and `logs` output pass through it. Every byte any occurrence of any secret covers is replaced, matches found before any replacement, so secrets that overlap or share a prefix leave no fragment; `TestRedactLeavesNoPartOfOverlappingSecrets` and `FuzzRedact` check it | `internal/engine/redact.go`, `internal/cli/lifecycle.go`, `internal/engine/engine_test.go` |
-| Unintended network exposure | A Compose `ports:` entry must name the plan's forward address or `127.0.0.1`; no bare or wildcard publication | `internal/catalog/catalog.go` |
+| Unintended network exposure | A Compose `ports:` entry must name the plan's forward, media or SMTP address or `127.0.0.1`; no bare or wildcard publication. Port 25 only in KyPost's receiver rendering, after the operator's explicit confirmation | `internal/catalog/catalog.go`, `internal/stack/mail.go` |
 | Supply-chain substitution | Digest-pinned images; attestation-checked pin updates; release workflows pin every action by commit | `internal/catalog/catalog.go` (`imageRE`), `scripts/catalog-follow/main.go`, `.github/workflows/release-image.yml` |
 | Tampered release | Attested binaries and image, verified before upload and again after download; repeatable binaries | [VERIFYING-RELEASES.md](VERIFYING-RELEASES.md) |
 | Vulnerable dependencies | `govulncheck` on every push and pull request (`vulncheck` job); Dependabot; daily dependency releases | `.github/workflows/ci.yml`, `.github/workflows/dependency-release.yml` |
@@ -110,6 +116,9 @@ operator's job ([README](../README.md#targets)).
 - **macOS binaries are not signed or notarized**; the attestation is the only check
   ([README](../README.md#install-a-release)).
 - **No independent security audit** has been done.
+- **KyPost's opt-in receiver is internet-facing SMTP.** KyPost qualifies that profile for a
+  dedicated test domain only; its parser, Maddy and Rspamd face any sender. KyQuickStart's part
+  is to open it only on request, on one address, with the pinned engine.
 
 ## Evidence
 

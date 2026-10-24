@@ -22,6 +22,10 @@ this one wins.
   (`allow_cidrs` clients only) or external (the public connection), one tunnel edge may carry
   both, the catalog keeps KyRecovery, kyPulse, KyDNS and KyYard internal, and optional plan
   `domains` keep internal and external names apart ([edge](edge.md#internal-and-external-routes-exposure)).
+- Amendment (owner, 2026-10-24): KyPost's opt-in native mail, an option of an existing catalog
+  app: native mailboxes and domains, KyIdentity's directory, and KyPost's bundled Maddy receiver
+  with Rspamd on TCP 25 (Docker only). Not the Cloudflare Email Routing profile; the outgoing
+  relay stays manual in KyPost's UI ([guided setup](guided-setup.md#kypost-native-mail)).
 
 ## What KyQuickStart does now
 
@@ -95,6 +99,9 @@ target markers from earlier builds stay valid.
   per-route opt-in or Cloudflare Access for admin-only apps; a live tunnel through every
   eligible product.
 - A KyPost setting for private mail hosts (`SANDBOX_PRIVATE_HOSTS`).
+- KyPost native mail: an end-to-end run that receives and sends real mail (only unit tests
+  cover it), its bulk backup (`KYPOST_BULK_BACKUP_REPOSITORY`), KyPost's Cloudflare receiving
+  profile, and KyPost's own production-MX gates, which keep the Maddy profile to a test domain.
 - Internal and external routes on one tunnel edge: covered by unit tests (validation, NPM host
   config, connector configuration, `verify-edge` selection, wizard); no e2e or live tunnel run.
 
@@ -107,6 +114,9 @@ target markers from earlier builds stay valid.
 - `stack.yaml` gains an optional `stopped` field, written by `kyquickstart stop`. Builds older
   than this redirect refuse a plan that carries it, so `handoff` refuses while an app is stopped.
 - New error code `app_stopped` (HTTP 422 from the runner).
+- `stack.yaml` gains an optional `mail` block on an app (KyPost native mail). Builds older than
+  it, the suite runner's included, refuse a plan that carries one; plans without it are
+  unchanged, and so are webmail KyPost's deployment and setup inputs.
 - Remote SSH negotiates the pinned host-key type, or ed25519 first on first contact, so a
   fingerprint from `ssh-keyscan -t ed25519` matches on servers that also hold ECDSA keys.
 - Third-party apps are installed only by KyQuickStart-AI, as labelled test installs outside the
@@ -157,7 +167,7 @@ There are **no removal candidates**: no test shows an incompatibility.
 | KyYard | Verified on Kubernetes (`TestKubernetesKyYard` asserts untrusted) | Loopback only on Kubernetes; `{{edge_address}}` on Docker | Docker through an edge is untested | Verified (Kubernetes); Unverified (Docker) |
 | KyNotes | Verified: CI `notesSignOn` | Loopback default | – | Verified |
 | KyCalendar | Verified: CI `calendarSignOn` | Unset | CalDAV clients untested | Verified; CalDAV Unverified |
-| KyPost | Verified: CI `postSignOn` (asserts untrusted) | Empty | No mail listener; IMAP/SMTP outbound only; private mail hosts refused | Verified; mail-host setting Fixable |
+| KyPost | Verified: CI `postSignOn` (asserts untrusted) | Empty | Webmail: no mail listener, IMAP/SMTP outbound only, private mail hosts refused. Native mail's receiver: SMTP on `smtp_address:25`, outside the edge | Verified; mail-host setting Fixable; native mail Unverified |
 | KyDrive | Verified: CI and pilot (hlwcdocker02 behind K80; SCIM through the edge) | Unset. WebDAV behind a proxy needs it (KyDrive README) | The published port is reachable on the LAN; firewall rule open | Verified; trust Fixable; Euro-Office `/healthcheck` and signed callback verified (`TestKubernetesEuroOffice`), editing Unverified |
 | KyMessages | Verified: CI (six routes, path blocks, MAS sign-in, encrypted sync, LiveKit `/rtc/validate` over HTTP) | `{{edge_address}}`; untrusted behind the CI Docker NAT | WebSocket upgrade enabled (`internal/edge/npm.go`) but never exercised; media 7881/tcp and 7882/udp go straight to `media_address`, no TURN | Verified (HTTP); WebSocket and media Unverified |
 | KyDNS | Fails closed in CI: KyDNS sees gateway 172.22.0.1, not the edge 172.18.0.2 | `egress_address` only; a gateway value is refused by `kydns.gate` | DNS over UDP and TCP 53 verified on the forward address; direct requests get 403 | Unverified (edge) |

@@ -155,6 +155,18 @@ func (a App) writeCompose(ctx context.Context, override []byte) error {
 			return fmt.Errorf("write %s: %w", f.name, err)
 		}
 	}
+	// Catalog configuration a sidecar reads as its own uid through a file bind: readable by
+	// all, inside the private bind directory, replaced atomically and never through a symlink.
+	for _, f := range a.files() {
+		file := path.Join(dir, f.name)
+		if err := trustedDir(ctx, a.Runner, path.Dir(file)); err != nil {
+			return err
+		}
+		cmd := "umask 022; t=$(mktemp " + remote.Quote(path.Join(path.Dir(file), ".kyq.XXXXXX")) + ") && { cat > \"$t\" && chmod 644 \"$t\" && mv -f \"$t\" " + remote.Quote(file) + "; s=$?; rm -f \"$t\"; exit $s; }"
+		if _, err := a.Runner.Run(ctx, cmd, f.body); err != nil {
+			return fmt.Errorf("write %s: %w", f.name, err)
+		}
+	}
 	return nil
 }
 

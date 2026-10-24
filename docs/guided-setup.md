@@ -1466,8 +1466,9 @@ Limits and unproven:
 
 ## Catalog KyPost on Docker
 
-The catalog's `kypost` app installs KyPost 0.4.2, a webmail client for mail accounts the owner
-already has, from its attested release image (`ghcr.io/busnes-app/kypost-server:0.4.2@sha256:23b5…2353`,
+The catalog's `kypost` app installs KyPost, by default a webmail client for mail accounts the
+owner already has (native mail on the owner's own domains is an opt-in, chosen at install:
+[KyPost native mail](#kypost-native-mail)), from its attested release image (`ghcr.io/busnes-app/kypost-server:0.4.2@sha256:23b5…2353`,
 built by `Busnes-app/KyPost-Server` `release-image.yml@refs/tags/v0.4.2` from commit
 `621b4d18`). Docker only: a plan placing it on a cluster is refused by `plan`, `review` and
 `apply` before any connection. It depends on the catalog `kyidentity`, which may run on another
@@ -1552,7 +1553,7 @@ account, the assignment rule above, the mail-port facts and the first-start mode
   `docker exec --user kypost kyq-kypost-app-1 cat /kypost/config/first-run-password.txt`. Sign in
   once and change it; only then delete the file (the same command with `rm`). Apply never reads
   it.
-- Offboarding: KyPost has no directory, so disabling or unassigning someone in KyIdentity stops
+- Offboarding: webmail KyPost has no directory, so disabling or unassigning someone in KyIdentity stops
   new sign-ins but not a live KyPost session. Sessions live in memory: `docker restart
   kyq-kypost-app-1` on the target ends every one (the kind test proves it).
 - Pairing with KyRecovery, after its custodian ceremony, with a fresh one-time code from
@@ -1560,10 +1561,12 @@ account, the assignment rule above, the mail-port facts and the first-start mode
 
 Limits and residuals:
 
-- No directory: KyPost verifies the signed webhook only against its own pairing key or SSO
-  client secret, while KyIdentity signs with a secret it generates. Handing KyIdentity KyPost's
-  pairing key would also give it KyPost's pickup and device-pairing authority, so the catalog
-  gives KyPost no `directory_path`. Back-channel logout is not registered either.
+- No directory for webmail: KyPost verifies the signed webhook only against its own pairing key
+  or SSO client secret, while KyIdentity's first setup signs with a secret it generates. Handing
+  KyIdentity KyPost's pairing key would also give it KyPost's pickup and device-pairing
+  authority, so the catalog gives KyPost no `directory_path`. Native mail adds the directory on
+  a later pass signed with the client secret instead (below). Back-channel logout is not
+  registered either.
 - Forwarded headers are untrusted (`TRUSTED_PROXY_CIDRS` empty), so no client can spoof its
   address, but KyPost sees the edge as every client: everyone shares one rate-limit bucket, and
   `verify-edge` fails for its route. The Docker NAT on a host can also hide the edge's own
@@ -1574,10 +1577,161 @@ Limits and residuals:
 - The port is published only on the forward address, but, as for KyDrive, that does not limit
   who on the LAN may connect: see the firewall note under KyDrive.
 - Unproven: separation of the admin account from mail (an upstream gate in this mode), and real
-  IMAP/SMTP mail exchange; the kind test proves sign-in and sessions only. Not configured: native
-  mail and receiving, KyRecovery pairing, bulk restic backups, mobile or desktop pairing, push
+  IMAP/SMTP mail exchange; the kind test proves sign-in and sessions only. Not configured unless
+  chosen: native mail and receiving (below). Never configured: KyRecovery pairing, bulk restic backups, mobile or desktop pairing, push
   relays, CAPTCHA and Kubernetes placement. kyPulse does not watch it (no readiness path on
   Docker).
+
+## KyPost native mail
+
+Opt-in, and fixed at KyPost's first install. With a `mail` block on the `kypost` app, KyPost
+stores mail itself in one mailbox per person on the owner's own domains, instead of reading
+existing IMAP accounts. This follows KyPost's operator guide `docs/guides/NATIVE_MAIL.md`
+(sections 1-9) and its installer contract `docs/INSTALLER_SETUP.md`, both of KyPost v0.4.3. Scope: native mailboxes, their domains and
+the bundled Maddy receiver on TCP 25 with Rspamd (KyPost's profile B). Not offered: the
+Cloudflare Email Routing profile (A), any outgoing relay (the operator's own, set in KyPost's
+UI), DNS changes and Kubernetes.
+
+**KyPost's own limits, which apply here unchanged.** The Maddy profile is a controlled
+qualification profile for a dedicated test domain; KyPost keeps public production MX gated
+(tombstone pruning, capacity recovery, hard volume quotas, power-loss and packaging/licensing
+checks). Use a dedicated test domain first, keep the current MX and DNS recorded for rollback,
+and change a production domain's MX only under your own approved cutover plan. Restore-hold
+release is off by default, and outgoing messages in the `uncertain` or `submitting` state have
+no retry tool. KyQuickStart sets no `KYPOST_BULK_BACKUP_REPOSITORY`: KyPost's sealed backups
+hold mailboxes only up to 64 MiB each and 256 MiB in all, so real mail volumes outgrow them.
+
+```yaml
+apps:
+  - name: kypost
+    target: docker02
+    mail:
+      domains: [mail-test.example.com]     # 1 to 32; lowercase ASCII, as KyPost accepts
+      receiver:                            # leave out on the first apply (below)
+        hostname: mx.mail-test.example.com # the MX target, named by the certificate
+        smtp_address: 203.0.113.5          # an IPv4 address of docker02; host TCP 25 publishes here
+        maddy_binary: /opt/kypost-receiving/maddy
+        tls_dir: /srv/kypost-receiving/tls
+        publish_port_25: true              # required: the confirmation that 25 is public
+integrations:
+  - product: kypost                        # required with mail: domains and directory go here
+    target: docker02
+    bundle: /kypost/private/installer/<a setup UUID>/setup.json
+    identity_client: kypost
+```
+
+`plan` asks the same: "Mail mode: imap/native" (default `imap`) on KyPost's Docker target, the
+domains, "Deploy the receiver now?" (default `no`) and, for the receiver, its hostname, address,
+binary, TLS directory and a separate yes to publishing TCP port 25; `review` lists the choice,
+marking port 25 as public.
+
+Refused before anything changes:
+
+- Converting an installed KyPost either way. A Docker target whose `kypost/compose.yaml` shows
+  webmail refuses a plan with `mail` (KyPost converts no IMAP account; native mail needs a fresh
+  KyPost with new KyIdentity identities, so uninstalling is not enough: its volumes stay). One
+  that shows native mail refuses a plan without it (native users would lose their mailboxes).
+  Without a Compose file, an existing `kyq-kypost_state` volume (an uninstall leaves it) of no
+  recorded mode refuses native mail too. KyPost's guide supports enabling native mail on an
+  existing deployment, but its installer contract asks for new identities and a new deployment;
+  KyQuickStart takes the stricter reading.
+- A `mail` block on any other app, on a Kubernetes target (KyPost is Docker only; the receiver
+  needs the host's port 25 and its files) or without the `kypost` integration.
+- A receiver without `publish_port_25: true`, with a wildcard, loopback or IPv6 address, or with
+  a path holding anything but letters, digits, `.`, `_`, `-` and `/`.
+- The receiver before its spool exists: on a first install, or while
+  `/kypost/state/receiving` is missing in the running container.
+
+What apply does, besides KyPost's ordinary steps:
+
+- `kypost.deploy` renders KyPost's native configuration: `KYPOST_NATIVE_MAIL=true`, receiving
+  and receiver off, and no mail port. With `receiver`, it adds KyPost v0.4.3's
+  `docker-compose.receiving.yml` and `docker-compose.rspamd.yml` as they ship: all three native
+  flags, `KYPOST_RECEIVING_HOSTNAME`, the Maddy binary and TLS directory mounted read-only at
+  KyPost's fixed paths, `smtp_address:25` published to the container's 2525, and Rspamd
+  (`rspamd/rspamd:4.2.2@sha256:3352…756de`, KyPost's pin) in KyPost's network namespace as uid
+  11333, read-only, no capabilities, 512 MiB, with no published port. Its configuration is
+  KyPost's `scripts/rspamd/rspamd.conf` of v0.4.3 byte for byte, shipped in the catalog
+  (`internal/catalog/apps/kypost/files/rspamd/rspamd.conf`) and written mode 0644 into the app's
+  private `rspamd` directory. Nothing else in KyPost's container changes: still `kypost`, read-only,
+  no capabilities.
+- `kypost.setup` adds `"domains"` to KyPost's version-1 bundle (no secret: the client secret
+  stays in its file beside it). The bundle may be replaced as domains are added; KyPost keeps
+  every domain and its challenge, and a domain left out of the plan is not retired (retire it
+  in KyPost's UI). apply prints KyPost's reported TXT records after the handover, each checked to
+  be its domain's `_kypost-mail` challenge, and KyPost's pending list.
+- `kyidentity.directory.kypost`, after the edges: KyIdentity's signed suite directory to
+  `https://<KyPost route>/api/sync/webhook`, as a later pass of the setup that registered
+  KyPost's client (`<installer>/directory-kypost.json` in KyIdentity's container). It is signed
+  with that client's own secret file, which KyPost accepts as the sync secret: no new secret is
+  made and KyPost's pairing key never leaves it. From then on, a person assigned to KyPost with
+  exactly one primary email on a verified domain gets a mailbox, and removing someone in
+  KyIdentity ends their KyPost sessions (their mailbox stays).
+
+Preflight, with the receiver, on the Docker target (read-only): Linux x86_64; `smtp_address` is
+one of the host's addresses; `maddy_binary` is a regular executable, not a symlink, writable by
+neither group nor others, with KyPost's pinned SHA-256 `6ea4b951…d5e2`; `tls_dir` is a real
+directory holding `fullchain.pem` (readable by uid 1000) and `privkey.pem` (owned by uid 1000,
+mode 0600 or 0400). The certificate's name and dates are KyPost's own check when the receiver
+starts.
+
+### Operator flow
+
+1. Plan with `mail.domains` and no receiver, then `apply`. Port 25 stays closed.
+2. Publish each TXT record apply printed, exactly, and keep it published while the domain is in
+   use (without it KyPost stops that domain's mailboxes, receiving and sending). As the owner's
+   admin, Admin → Server → Mail domain → Verify.
+3. Configure the outgoing relay in Admin → Server → Mail domain → 2. Configure outgoing delivery
+   (an implicit-TLS SMTP account you own, usually port 465; KyPost refuses STARTTLS and
+   plaintext), tick Relay sending domains, then Check saved relay. It checks TLS and login only.
+   Publish SPF, DKIM, MAIL FROM and DMARC as your relay provider specifies; KyPost signs no DKIM.
+4. Mailboxes: the owner's admin (`kypost.admin`) gets none, by KyPost's design. Give the owner's
+   everyday identity, and every mail user, exactly one primary email in KyIdentity on a
+   verified domain (plain ASCII). Confirm the mailbox in Admin → Server → Mail addresses.
+5. On the target, get Maddy exactly as KyPost's guide says, outside any checkout:
+
+   ```sh
+   d=$(mktemp -d)
+   curl -fL https://github.com/foxcpp/maddy/releases/download/v0.9.5/maddy-0.9.5-x86_64-linux-musl.tar.zst -o "$d/maddy.tar.zst"
+   echo "665cb3ffc43dcad0b904bb2792f31cd1025e484b0bacaf4ece06e2bd0091d5e2  $d/maddy.tar.zst" | sha256sum -c -
+   tar --zstd -xf "$d/maddy.tar.zst" -C "$d"
+   echo "6ea4b951f15b91fd81d98957e4d4bad7a0cec6d6e1d66b011c765cc9a14e05db  $d/maddy-0.9.5-x86_64-linux-musl/maddy" | sha256sum -c -
+   sudo install -d -m 755 /opt/kypost-receiving
+   sudo install -m 755 "$d/maddy-0.9.5-x86_64-linux-musl/maddy" /opt/kypost-receiving/maddy
+   ```
+
+   The hash pins content; the upstream signature is not verified, and Maddy's GPLv3 obligations
+   are yours to review. KyQuickStart downloads nothing. Put the receiving hostname's certificate
+   in `tls_dir` as `fullchain.pem` and `privkey.pem`, the key owned by uid 1000 with mode 0600.
+6. Create the receiving spool, once (it refuses an existing one; never delete it to retry):
+
+   ```sh
+   docker exec --user kypost -e KYPOST_NATIVE_RECEIVING=true kyq-kypost-app-1 kypost-server receiving init
+   ```
+
+7. Add `receiver` to the plan (or rerun `plan`) and `apply` again. Publish the printed MX and A
+   records (IPv4 only: add no AAAA), open TCP 25 to `smtp_address` with no TCP proxy in front
+   (Rspamd's SPF checks and automatic sender blocks need the sender's real address; check that
+   `/kypost/logs/receiver.log` shows outside addresses), and check from outside: STARTTLS and the
+   certificate on port 25, ordinary and PGP mail with an attachment, an unknown address refused.
+   Rspamd refuses scores of 15 and above before acceptance, which can refuse legitimate mail; a
+   scanner outage defers senders with 451.
+8. Run KyPost's configuration report and resolve every failed check, then make its
+   `externalChecks` observations yourself (HTTPS and forwarded address, receiver TLS and
+   reachability, actual incoming and outgoing mail, a restore on another host):
+
+   ```sh
+   docker exec --user kypost kyq-kypost-app-1 kypost-server setup-status
+   ```
+
+After renewing the certificate (copy the files in, then `mv`) or adding a domain, restart the
+receiver: `docker exec kyq-kypost-app-1 supervisorctl -c /etc/supervisord.conf restart receiver`.
+Removing `receiver` from the plan closes port 25 and stops Maddy and Rspamd; restore your
+previous MX first. Mail Maddy accepted waits in the spool until the receiver returns.
+
+Not tested end to end: the unit tests cover the renderings, refusals, bundle, report checks,
+directory pass and preflight checks; no CI or e2e run has received or sent real mail through
+this profile.
 
 ## Catalog KyMessages on Docker
 
