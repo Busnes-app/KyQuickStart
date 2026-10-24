@@ -135,7 +135,9 @@ type fakePost struct {
 	placed       []string // placeScript's mode and path, in order
 	calls        []string // kypost-server arguments
 	applied      bool
-	mutableCheck bool // --check reports an applied change
+	mutableCheck bool   // --check reports an applied change
+	dns          string // the report's dns array; empty is []
+	spool        bool   // the receiving spool exists
 }
 
 // postArgs runs the shell words of cmd after KyPost's container lookup, as the target's shell
@@ -172,6 +174,12 @@ func (p *fakePost) exec(t *testing.T) func(string, []byte) ([]byte, error) {
 			}
 			p.placed = append(p.placed, args[4]+" "+args[5])
 			return nil, fakePlace(p.files, args[4], args[5], stdin)
+		case args[0] == "test":
+			p.calls = append(p.calls, strings.Join(args, " "))
+			if !p.spool || !slices.Equal(args, []string{"test", "-d", postSpool}) {
+				return nil, errors.New("no such directory")
+			}
+			return nil, nil
 		case args[0] != "/usr/local/bin/kypost-server":
 			return nil, errors.New("unexpected binary " + args[0])
 		}
@@ -187,7 +195,11 @@ func (p *fakePost) exec(t *testing.T) func(string, []byte) ([]byte, error) {
 		if !check && !p.applied || check && p.mutableCheck {
 			p.applied, applied, unchanged = true, `["sso"]`, `[]`
 		}
-		return []byte(`{"version":1,"applied":` + applied + `,"unchanged":` + unchanged + `,"dns":[],"pending":["relay","receiving","everyday-assignment","backup-restore","https-proxy"],"configurationApplied":true}`), nil
+		dns := p.dns
+		if dns == "" {
+			dns = "[]"
+		}
+		return []byte(`{"version":1,"applied":` + applied + `,"unchanged":` + unchanged + `,"dns":` + dns + `,"pending":["relay","receiving","everyday-assignment","backup-restore","https-proxy"],"configurationApplied":true}`), nil
 	}
 }
 

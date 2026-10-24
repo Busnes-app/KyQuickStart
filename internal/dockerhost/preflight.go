@@ -99,3 +99,41 @@ func AddressCheck(ctx context.Context, r remote.Runner, app, addr string) Findin
 	}
 	return Finding{"media address", true, app + ": " + addr + " is this host's"}
 }
+
+// ReceiverChecks are the read-only checks of a native-mail receiver's inputs on the host: a
+// Linux x86_64 host (KyPost's only qualified engine), smtp_address one of its addresses, the
+// operator's Maddy executable exactly the pinned one, and the TLS directory as KyPost's
+// receiver reads it as the container's kypost (uid 1000). None follows a symlink.
+func ReceiverChecks(ctx context.Context, r remote.Runner, app string, rc stack.MailReceiver, maddySHA256 string) []Finding {
+	f := []Finding{}
+	if out, err := r.Run(ctx, "uname -sm", nil); err != nil || strings.TrimSpace(string(out)) != "Linux x86_64" {
+		f = append(f, Finding{"mail receiver", false, app + ": its receiver runs on Linux x86_64 only"})
+	} else {
+		f = append(f, Finding{"mail receiver", true, app + ": Linux x86_64"})
+	}
+	addr := AddressCheck(ctx, r, app, rc.SMTPAddress)
+	addr.Check = "smtp address"
+	if !addr.OK {
+		addr.Detail = app + ": smtp_address " + rc.SMTPAddress + " is not an address of this host; set it to the one whose TCP 25 the internet reaches (ip -4 addr)"
+	}
+	f = append(f, addr)
+	bin := remote.Quote(rc.MaddyBinary)
+	cmd := "f=" + bin + `; [ -f "$f" ] && [ ! -L "$f" ] && [ -x "$f" ] && test -n "$(find "$f" -prune ! -perm -020 ! -perm -002)" && [ "$(sha256sum < "$f" | cut -d ' ' -f 1)" = ` + remote.Quote(maddySHA256) + " ]"
+	if _, err := r.Run(ctx, cmd, nil); err != nil {
+		f = append(f, Finding{"maddy binary", false, app + ": want " + rc.MaddyBinary + " a regular executable file, not a symlink, writable by neither group nor others, with SHA-256 " + maddySHA256 + " (Maddy 0.9.5, maddy-0.9.5-x86_64-linux-musl; see docs/guided-setup.md)"})
+	} else {
+		f = append(f, Finding{"maddy binary", true, app + ": " + rc.MaddyBinary + " is the pinned Maddy 0.9.5"})
+	}
+	// uid 1000 traverses the directory and reads both files; the key is its own, owner-only.
+	cmd = "d=" + remote.Quote(rc.TLSDir) + `; [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/fullchain.pem" ] && [ ! -L "$d/fullchain.pem" ] && [ -f "$d/privkey.pem" ] && [ ! -L "$d/privkey.pem" ] || exit 1
+set -- $(stat -c '%u %a' "$d" "$d/fullchain.pem" "$d/privkey.pem") || exit 1
+[ "$1" = 1000 ] || [ $(( 0$2 & 1 )) = 1 ] || exit 1
+[ "$3" = 1000 ] || [ $(( 0$4 & 4 )) = 4 ] || exit 1
+[ "$5" = 1000 ] && case $6 in 600|400) ;; *) exit 1;; esac`
+	if _, err := r.Run(ctx, cmd, nil); err != nil {
+		f = append(f, Finding{"receiver tls", false, app + ": want " + rc.TLSDir + " a directory (not a symlink) holding regular files fullchain.pem, readable by uid 1000, and privkey.pem, owned by uid 1000 with mode 0600; the certificate must name " + rc.Hostname})
+	} else {
+		f = append(f, Finding{"receiver tls", true, app + ": " + rc.TLSDir + " holds fullchain.pem and uid 1000's private privkey.pem"})
+	}
+	return f
+}

@@ -288,6 +288,7 @@ type session struct {
 	bootstrapNote string              // printed after apply while KyIdentity keeps its bootstrap admin
 	pulseTargets  []pulseTarget       // kyPulse's targets, when the plan installs it
 	handover      string              // printed after apply: what installed apps leave to a human
+	postRecords   string              // KyPost's mail DNS records from its setup report, printed after apply
 }
 
 // load validates everything that needs no connection.
@@ -448,6 +449,9 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 	if err := messagePlan(st, cat); err != nil {
 		return nil, err
 	}
+	if err := mailPlan(st); err != nil {
+		return nil, err
+	}
 	s.edges = directOrigins(routePaths(st.Edges, cat))
 	if err := s.composeClients(st); err != nil {
 		return nil, err
@@ -460,6 +464,10 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 // first refuses an app a cloudflare-direct edge may not route.
 func withRoute(st *stack.Stack, name string, t stack.Target, app catalog.App) (catalog.App, error) {
 	if err := directRoute(st, name); err != nil {
+		return app, err
+	}
+	app, err := withMail(st, name, t, app)
+	if err != nil {
 		return app, err
 	}
 	for _, a := range st.Apps {
@@ -652,6 +660,11 @@ func (s *session) preflight(ctx context.Context) error {
 			if host, ok := s.drivers[t.Name].(sshDriver); ok && a.Target == t.Name && a.MediaAddress != "" {
 				findings = append(findings, finding(dockerhost.AddressCheck(ctx, host.c, a.Name, a.MediaAddress)))
 			}
+			if host, ok := s.drivers[t.Name].(sshDriver); ok && a.Target == t.Name {
+				for _, f := range mailFindings(ctx, host, a.Name, a.Mail, s.cat[a.Name].NativeMail) {
+					findings = append(findings, finding(f))
+				}
+			}
 		}
 		for _, f := range findings {
 			mark := "ok  "
@@ -702,7 +715,7 @@ func (s *session) apply(ctx context.Context, publish func() error) error {
 	if err := s.operate(ctx, "", s.deploySteps, publish); err != nil {
 		return err
 	}
-	fmt.Fprint(s.o.Out, s.handover+s.bootstrapNote)
+	fmt.Fprint(s.o.Out, s.handover+s.postRecords+s.bootstrapNote)
 	if s.demo {
 		fmt.Fprintln(s.o.Out, "Demo deployment passed its driver checks. Suite SSO, administrator access and backups are not configured.")
 		if t, ok := s.placed["hello"]; ok {
@@ -758,6 +771,9 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 		return nil, err
 	}
 	if err := s.refuseMovedServerName(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.refuseMailChange(ctx); err != nil {
 		return nil, err
 	}
 	var steps, held, connectors []engine.Step

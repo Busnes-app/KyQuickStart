@@ -63,23 +63,6 @@ func postSetup(ctx context.Context, exec identityExec, bundle string, check bool
 	return json.Marshal(r)
 }
 
-// postBundle is the catalog KyPost's native version-1 setup: sign-in through KyIdentity, the
-// client secret in a file beside the bundle. autoProvision creates an account at first sign-in
-// for whoever KyIdentity lets through; KyIdentity's assignment to the client is the gate.
-func postBundle(f clientCredentials, secretFile string) any {
-	type sso struct {
-		Enabled       bool   `json:"enabled"`
-		IssuerURL     string `json:"issuerUrl"`
-		ClientID      string `json:"clientId"`
-		AutoProvision bool   `json:"autoProvision"`
-	}
-	return struct {
-		Version          int    `json:"version"`
-		SSO              sso    `json:"sso"`
-		ClientSecretFile string `json:"clientSecretFile"`
-	}{1, sso{true, f.IssuerURL, f.ClientID, true}, secretFile}
-}
-
 // postContainer is the catalog KyPost's container: Compose project kyq-kypost, service app.
 const postContainer = "kyq-kypost-app-1"
 

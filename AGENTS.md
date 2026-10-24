@@ -349,8 +349,15 @@ edge compatibility: `docs/redirect.md`.
   read-only check of its first setup; a plan whose owner usernames KyCalendar would refuse is
   refused before connecting.
   KyPost's bundle is its own native version-1 JSON (KyIdentity sign-in with `autoProvision`, the
-  client secret in a file beside it), placed and applied as `kypost`; it has no directory, SCIM or
-  generated secrets, and its container runs as `kypost` with no capabilities.
+  client secret in a file beside it), placed and applied as `kypost`; webmail KyPost has no
+  directory, SCIM or generated secrets, and its container runs as `kypost` with no capabilities.
+  An app's optional `mail` block (KyPost only, Docker only, owner amendment 2026-10-24) selects
+  native mail at first install: its catalog's `native_mail` renderings (`.Mail` `native`, or
+  `receiver` with Maddy, Rspamd and `{{smtp_address}}:25`, only with `publish_port_25: true`),
+  `domains` in the bundle (replaceable, secret-free), TXT records printed from KyPost's report
+  and `kyidentity.directory.<app>`, a later pass of the client's setup whose suite webhook is
+  signed with the client's own secret file. Apply refuses converting an installed KyPost
+  either way, native mail over earlier KyPost data, and the receiver before KyPost's spool exists.
   KyRecovery's custodian ceremony stays human and apply prints it as outstanding. kyPulse's
   bundle registers every other routed app's readiness path as a monitoring target; that bundle
   is replaced as targets change, since kyPulse keeps omitted targets and refuses edited ones.
@@ -497,8 +504,10 @@ edge compatibility: `docs/redirect.md`.
   `forward_port` per service port, and writes `{{host "<role>"}}`,
   `{{forward "<role>"}}` and `{{hostname "<role>"}}`; `media` ports publish on the app's
   `media_address` (`{{media_address}}`, one LAN IPv4 of the target, checked at preflight). Every
-  `ports:` entry starts with `{{forward…}}`, `{{forward_addr}}`, `{{media_address}}` or
-  `127.0.0.1`: no bare or wildcard publication. A service in a Compose profile is a one-shot run
+  `ports:` entry starts with `{{forward…}}`, `{{forward_addr}}`, `{{media_address}}`,
+  `{{smtp_address}}` (a `receiver` rendering's alone) or `127.0.0.1`: no bare or wildcard
+  publication. Files in an app's catalog `files/` are written mode 0644 by deploy where its
+  Compose file binds them inside a bind directory, and are part of the deploy's input. A service in a Compose profile is a one-shot run
   (`compose run --rm`), never part of `up` or health; a bind source inside a bind directory
   must exist before deploy starts the app.
   Compose runs with `KYQ_UID`/`KYQ_GID` set to the target user's; `./<name>` bind directories
