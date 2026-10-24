@@ -392,6 +392,11 @@ func guided(ctx context.Context, args []string, o Options) error {
 				return err
 			}
 		}
+		if t, _ := st.Target(placement); app.NativeMail != nil && !t.Kubernetes() {
+			if a.Mail, err = askMailbox(p, o.Out, name, placement); err != nil {
+				return err
+			}
+		}
 		st.Apps = append(st.Apps, a)
 	}
 	for _, app := range st.Apps {
@@ -665,6 +670,14 @@ func showPlan(out io.Writer, st *stack.Stack, cat catalog.Catalog) {
 		if m := cat[a.Name].Media; m != nil && a.MediaAddress != "" {
 			fmt.Fprintf(out, "  Call media on %s: %s, open to the LAN, not through the edge; no TURN, federation closed\n", a.MediaAddress, strings.Join(m.Ports, ", "))
 		}
+		if m := a.Mail; m != nil {
+			fmt.Fprintf(out, "  Native mail for %s (fixed at install); KyIdentity's directory creates the mailboxes\n", strings.Join(m.Domains, ", "))
+			if r := m.Receiver; r != nil {
+				fmt.Fprintf(out, "  Receiver: Maddy and Rspamd for %s on %s:25, PUBLIC TCP port 25; binary %s, TLS %s\n", r.Hostname, r.SMTPAddress, r.MaddyBinary, r.TLSDir)
+			} else {
+				fmt.Fprintln(out, "  No receiver yet: no mail port is published")
+			}
+		}
 	}
 	for _, e := range st.Existing {
 		fmt.Fprintf(out, "Existing %s on %s: %s — integration pending, no adoption or changes\n", e.Product, e.Target, e.URL)
@@ -778,6 +791,7 @@ func seedAnswers(a map[string]string, st *stack.Stack) {
 		if app.MediaAddress != "" {
 			a["app."+app.Name+".media_address"] = app.MediaAddress
 		}
+		mailAnswers(a, app)
 	}
 	for i, e := range st.Existing {
 		k := fmt.Sprintf("existing.%d.", i)

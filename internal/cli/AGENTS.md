@@ -126,7 +126,15 @@ Plain terminal planning and command orchestration for the operator-run installer
   `upgrade` naming it (`runner_host`); `guard` refuses a workstation `apply`/`upgrade`
   (`session.deploys`) that would redeploy it while the runner owns the plan.
 - `post.go` maps KyPost native capability/configuration reports, requires nonmutating inspection, preserves external readiness blockers and runs Docker setup explicitly as `kypost`.
-  It also holds the catalog KyPost's native bundle (`postBundle`) and handover (`postHandover`).
+  It also holds the catalog KyPost's webmail handover (`postHandover`). `postmail.go` owns its
+  opt-in native mail: `withMail` (first in `withRoute`: the `native` or `receiver` rendering,
+  refused on Kubernetes or another app), `mailPlan` (needs KyPost's installed integration),
+  `postBundle` (with `domains`), `postRecords` (TXT challenges from the report, each checked,
+  plus MX/A once the receiver is planned), `directoryPassStep` (`kyidentity.directory.<app>`,
+  a connector after the edges), `refuseMailChange` (in `deploySteps`: no IMAP/native conversion,
+  no native mail over a `kyq-<app>_state` volume without a Compose file, no receiver before
+  `/kypost/state/receiving`), `mailFindings` (preflight: `dockerhost.ReceiverChecks`),
+  `askMailbox` (guided) and `postNativeText` (handover).
 - KyCalendar uses the common contract and graceful activation; owned issuer bindings and application grants remain separate from personal calendars and CalDAV, and sign-in settings are read-only in its administration screen.
 - KyMessages uses the common contract and graceful activation; exact console grants stay
   separate from Matrix chat. `message.go` owns the catalog KyMessages (Docker only):
@@ -176,8 +184,11 @@ Plain terminal planning and command orchestration for the operator-run installer
   everyday username; any other report is a fixed refusal). `calendarAccounts` (plan, review
   and apply) refuses owner usernames KyCalendar's setup would refuse. KyPost's step sets
   `native` to `postBundle`, its version-1 bundle (sign-in with `autoProvision`, `clientSecretFile`
-  beside it), placed and applied as `kypost` through `postSetup`; KyPost has no directory (it
-  cannot verify KyIdentity's generated webhook secret), so no directory secret. `recoveryCeremony`,
+  beside it), placed and applied as `kypost` through `postSetup`; KyPost cannot verify
+  KyIdentity's generated webhook secret, so its client has no directory secret. With native mail
+  the step also sets `mail` (domains in the bundle and its input, bundle `replace`) and `report`
+  (`postRecords`), and its connector is `directoryPassStep`, signed with the client secret file.
+  `setupPass` builds both that pass and `scimPass`. `recoveryCeremony`,
   `pulseHandover`, `calendarHandover`, `driveHandover`, `postHandover`, `dnsHandover` and `yardHandover` are what apply prints.
   KyDNS's distroless image has no shell, so `hostPlace` runs `placeScript` on its Docker host
   over SSH as the target user, mapping the bundle's `/data/installer/<uuid>/` to
