@@ -221,6 +221,31 @@ func TestRedactorIgnoresShortValues(t *testing.T) {
 	}
 }
 
+// Attack: a secret that shares its start, or its end, with another registered secret. Each
+// was replaced in turn, so whichever went first broke up the other and part of it was left
+// in the output (the fuzz finding: "abcdefgh" then "abcdefghij" gave "[redacted]ij").
+// Nothing of either may survive, in either order.
+func TestRedactLeavesNoPartOfOverlappingSecrets(t *testing.T) {
+	for _, c := range []struct{ text, a, b, want string }{
+		{"abcdefghij", "abcdefgh", "abcdefghij", "[redacted]"},                 // shared prefix
+		{"xxabcdefghij", "cdefghij", "xxabcdefghij", "[redacted]"},             // shared suffix
+		{"xxxxAAAABBBB", "xxxxAAAA", "AAAABBBB", "[redacted]"},                 // overlap
+		{"pw=s3cr3t-pa55w0rd!", "s3cr3t-pa55", "t-pa55w0rd", "pw=[redacted]!"}, // overlap mid-text
+		{"aaaaaaaaaaa end", "aaaaaaaa", "zzzzzzzz", "[redacted] end"},          // overlapping self-matches
+		{"AAAAAAAABBBBBBBB", "AAAAAAAA", "BBBBBBBB", "[redacted]"},             // touching
+		{"key1=AAAAAAAA key2=AAAAAAAA", "AAAAAAAA", "zzzzzzzz", "key1=[redacted] key2=[redacted]"},
+	} {
+		for _, order := range [][2]string{{c.a, c.b}, {c.b, c.a}} {
+			r := &Redactor{}
+			r.Add(order[0])
+			r.Add(order[1])
+			if got := r.Redact(c.text); got != c.want {
+				t.Errorf("secrets %q then %q: Redact(%q) = %q, want %q", order[0], order[1], c.text, got, c.want)
+			}
+		}
+	}
+}
+
 func TestLongFailureRedactsBeforeBounding(t *testing.T) {
 	e, out, _ := newEngine(t)
 	secret := "Zq7Kp2VwN9bRt4LmQ8sHc3JdF6gA1eUoT5iYk0nBvXa" // 43 bytes

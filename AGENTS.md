@@ -549,8 +549,10 @@ calls and kind nodes must carry their own explicit bounds.
   with fake releases, registry and attestations.
 - Fuzz targets (`fuzz_test.go`; their seeds also run in `make ci`): `FuzzParse` (`internal/stack`:
   an accepted plan marshals, parses again and marshals to the same bytes, as handoff pull
-  rewrites it), `FuzzRedact` (`internal/engine`: no registered secret survives, except one
-  sharing text with the `[redacted]` marker; text without a secret is unchanged) and
+  rewrites it), `FuzzRedact` (`internal/engine`: output equals a byte-coverage model, so no
+  part of an overlapping secret survives, and does not depend on the order secrets were added;
+  no registered secret survives, except one sharing text with the `[redacted]` marker; text
+  without a secret is unchanged) and
   `FuzzStartRequest` (`internal/runner`). CI's `test (ubuntu-latest, stable)` leg runs each for a
   fixed execution count after `make ci`; a crasher found later goes under the package's
   `testdata/fuzz/<Target>/`.
