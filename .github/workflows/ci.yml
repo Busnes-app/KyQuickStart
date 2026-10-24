@@ -27,6 +27,13 @@ jobs:
           go-version: ${{ matrix.go }}
           check-latest: true
       - run: make ci
+      # Bounded fuzzing on one leg only, about 15 s each; minimizing a large input is capped.
+      - if: matrix.os == 'ubuntu-latest' && matrix.go == 'stable'
+        run: go test -fuzz=FuzzParse -fuzztime=150000x -fuzzminimizetime=5s ./internal/stack
+      - if: matrix.os == 'ubuntu-latest' && matrix.go == 'stable'
+        run: go test -fuzz=FuzzRedact -fuzztime=600000x ./internal/engine
+      - if: matrix.os == 'ubuntu-latest' && matrix.go == 'stable'
+        run: go test -fuzz=FuzzStartRequest -fuzztime=100000x -fuzzminimizetime=5s ./internal/runner
 
   vulncheck:
     runs-on: ubuntu-latest
