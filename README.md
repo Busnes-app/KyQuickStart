@@ -44,10 +44,10 @@ Docker targets, or an existing Kubernetes cluster, working kubeconfig and persis
 StorageClass for Kubernetes. KyQuickStart does **not** install Docker or Kubernetes.
 Supply DNS/HTTPS and edge configuration as described in the guided setup.
 
-No GitHub release is published as of 2026-10-20. The release-download recipe below becomes
-usable once a release exists; placeholders such as `vX.Y.Z` are not real download names.
-Until then, clone this repository and use `make build` with the Go version in `go.mod`.
-A source binary cannot install the KyYard runner because it has no released image pin.
+Releases are on the [GitHub releases page](https://github.com/Busnes-app/KyQuickStart/releases);
+[install one](#install-a-release), or clone this repository and use `make build` with the Go
+version in `go.mod`. A source binary cannot install the KyYard runner because it has no released
+image pin.
 
 Run `./kyquickstart plan --demo --state ./demo` to explore without installing an app.
 Saving a plan does not deploy it. Follow [guided setup](docs/guided-setup.md) to select a
@@ -77,6 +77,9 @@ pin="$(./kyquickstart-X.Y.Z-<os>-<arch> version --runner-image)"
 gh attestation verify "oci://ghcr.io/busnes-app/kyquickstart-runner@${pin#*@}" --repo Busnes-app/KyQuickStart \
   --cert-identity https://github.com/Busnes-app/KyQuickStart/.github/workflows/release-image.yml@refs/tags/vX.Y.Z
 ```
+
+[Verifying releases](docs/VERIFYING-RELEASES.md) checks the commit each one was built from and
+shows how to rebuild the binaries to the same bytes.
 
 The macOS binaries are not signed or notarized. `gh release download` leaves no quarantine flag;
 a browser download gets one and Gatekeeper blocks the binary. After the attestation verifies, clear
@@ -126,6 +129,9 @@ Choosing `finish` saves the plan without touching any server.
 - [Suite runner (KyYard manages the suite)](docs/superpowers/specs/2026-10-16-suite-runner-design.md)
 - [Third-party catalog and admission rules](docs/superpowers/specs/2026-10-06-third-party-catalog-design.md)
 - [Installer architecture](docs/superpowers/specs/2026-10-06-installer-architecture-design.md)
+- [Verifying releases](docs/VERIFYING-RELEASES.md): check a release's attestation and source commit, and rebuild its binaries to the same bytes
+- [Assurance case](docs/ASSURANCE-CASE.md): threat model, trust boundaries, and why the security requirements hold
+- [Contributing](CONTRIBUTING.md): process, tests and coding standard
 
 ## License
 
