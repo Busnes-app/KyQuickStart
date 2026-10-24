@@ -263,6 +263,11 @@ edge compatibility: `docs/redirect.md`.
   verified), `binaries` (`scripts/release-binaries.sh`, the only home of the release `-ldflags`,
   stamps `main.runnerImage` with the verified digest; the four binaries are attested, uploaded
   and re-verified after download) and `promote` (`:stable`), each with only the permissions it uses.
+  The binaries are built `-trimpath -buildvcs=false`, so they rebuild to the same bytes from any
+  directory or tarball; how users verify and rebuild a release: `docs/VERIFYING-RELEASES.md`.
+- Contribution process, test policy and coding standard: `CONTRIBUTING.md`. Threat model, trust
+  boundaries and the weaknesses table: `docs/ASSURANCE-CASE.md`, updated by any change that moves
+  a trust boundary or security requirement.
 - The release set has one source: `internal/appversion/VERSION` (`X.Y.Z`, the release line). Go
   code calls `appversion.String()`; release builds (the image's `VERSION` build arg and
   `scripts/release-binaries.sh`) set the tag's full version through
@@ -525,6 +530,8 @@ calls and kind nodes must carry their own explicit bounds.
 ## Verification
 
 - `make build`: builds the workstation `kyquickstart` binary.
+- CI's `release binaries are repeatable` step (`test`, ubuntu 1.26.x leg): `scripts/release-binaries.sh`
+  from the checkout and from a `git archive` copy elsewhere must give identical bytes.
 - `make ci`: tidy check, gofmt, vet (including the `e2e,goolm` tags), race tests. Runner tests decode
   every answer with KyYard's client types (`internal/runner/kyyard_test.go`).
   `cmd/kyquickstart/release_test.go` runs `scripts/release-binaries.sh` (the stamp in all four

@@ -26,6 +26,21 @@ jobs:
         with:
           go-version: ${{ matrix.go }}
           check-latest: true
+      # The release binaries must not depend on where, or from what, they are built: build them
+      # with scripts/release-binaries.sh from this checkout and from a git archive copy (no .git)
+      # in another directory, and require identical bytes. docs/VERIFYING-RELEASES.md shows users
+      # how to repeat this against a release.
+      - name: release binaries are repeatable
+        if: matrix.os == 'ubuntu-latest' && matrix.go == '1.26.x'
+        run: |
+          set -euo pipefail
+          pin="ghcr.io/busnes-app/kyquickstart-runner:0.0.0@sha256:$(printf '0%.0s' $(seq 64))"
+          mkdir -p "$RUNNER_TEMP/elsewhere/src"
+          git archive HEAD | tar -x -C "$RUNNER_TEMP/elsewhere/src"
+          sh scripts/release-binaries.sh 0.0.0 "$pin" "$RUNNER_TEMP/a"
+          sh "$RUNNER_TEMP/elsewhere/src/scripts/release-binaries.sh" 0.0.0 "$pin" "$RUNNER_TEMP/elsewhere/b"
+          (cd "$RUNNER_TEMP" && sha256sum a/* elsewhere/b/*)
+          for f in "$RUNNER_TEMP"/a/*; do cmp "$f" "$RUNNER_TEMP/elsewhere/b/${f##*/}"; done
       - run: make ci
       # Bounded fuzzing on one leg only, about 15 s each; minimizing a large input is capped.
       - if: matrix.os == 'ubuntu-latest' && matrix.go == 'stable'

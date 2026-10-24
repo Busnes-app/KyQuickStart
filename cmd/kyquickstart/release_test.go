@@ -60,6 +60,10 @@ func TestReleaseBinariesStampThePin(t *testing.T) {
 				t.Errorf("%s: build setting %s=%q, want %q", name, k, settings[k], v)
 			}
 		}
+		// No VCS stamp: a rebuild from a tarball or a dirty clone must give the same bytes.
+		if vcs, ok := settings["vcs"]; ok {
+			t.Errorf("%s: build info records vcs=%q; release binaries are built with -buildvcs=false", name, vcs)
+		}
 		// -trimpath keeps -ldflags out of the build info, so the stamp is checked in the bytes.
 		if b, _ := os.ReadFile(f); !bytes.Contains(b, []byte(pin)) {
 			t.Errorf("%s does not carry %s", name, pin)
