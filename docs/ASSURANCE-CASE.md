@@ -116,8 +116,9 @@ operator's job ([README](../README.md#targets)).
 - **Tests:** `make ci` runs the whole suite under the race detector on Linux and macOS, two Go
   versions each. The e2e suite (`make e2e`, four CI shards) installs onto real sshd containers
   and kind clusters, including drift, stale-lock and refusal cases.
-- **Static analysis:** `go vet` (with and without the `e2e,goolm` tags), `govulncheck`, and
-  `actionlint` and `zizmor` on the workflows (`make workflow-lint`).
+- **Static analysis:** CodeQL (GitHub default setup, Go and Actions) on every push and pull
+  request, `go vet` (with and without the `e2e,goolm` tags), `govulncheck`, and `actionlint`
+  and `zizmor` on the workflows (`make workflow-lint`).
 - **Dynamic analysis:** the race detector on the full suite and the e2e suite against real
   targets.
 - **Review:** the `main: green checks` ruleset requires a pull request into `master` with
