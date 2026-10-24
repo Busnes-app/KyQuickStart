@@ -27,9 +27,13 @@ fi
 mkdir -- "$out"
 out=$(cd -- "$out" && pwd)
 cd -- "$(dirname -- "$0")/.."
+# -trimpath and -buildvcs=false make the bytes a function of the source tree, the Go version and
+# the two stamps alone: not of the build directory, a .git directory or untracked files beside
+# it (OUTDIR inside the checkout made every binary after the first record vcs.modified=true). CI
+# builds twice and compares; docs/VERIFYING-RELEASES.md shows users how to rebuild a release.
 for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
 	goos=${target%/*} goarch=${target#*/}
-	GOFLAGS='' CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch go build -trimpath \
+	GOFLAGS='' CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch go build -trimpath -buildvcs=false \
 		-ldflags="-s -w -X github.com/Busnes-app/kyquickstart/internal/appversion.release=$version -X main.runnerImage=$image" \
 		-o "$out/kyquickstart-$version-$goos-$goarch" ./cmd/kyquickstart
 done
