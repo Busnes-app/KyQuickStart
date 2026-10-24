@@ -253,8 +253,9 @@ func TestDependencyReleaseWorkflow(t *testing.T) {
 	if !ok {
 		t.Fatal("no release job")
 	}
-	if len(j.Permissions) != 2 || j.Permissions["contents"] != "write" || j.Permissions["actions"] != "write" {
-		t.Errorf("release permissions %v, want contents and actions: write", j.Permissions)
+	if len(j.Permissions) != 3 || j.Permissions["contents"] != "write" || j.Permissions["actions"] != "write" ||
+		j.Permissions["pull-requests"] != "write" {
+		t.Errorf("release permissions %v, want contents, actions and pull-requests: write", j.Permissions)
 	}
 	pinned := regexp.MustCompile(`@[0-9a-f]{40}$`)
 	runs := ""
@@ -270,11 +271,17 @@ func TestDependencyReleaseWorkflow(t *testing.T) {
 	for _, want := range []string{"internal/appversion/VERSION", `--author='^dependabot\[bot\]'`,
 		"gh run list --workflow ci.yml --branch master", "gh release create", "gh workflow run release-image.yml",
 		// The catalog follows the Ky apps' releases, and a followed app counts like Dependabot.
-		"go run ./scripts/catalog-follow", "go test -count=1 ./internal/catalog/...", "HEAD:refs/heads/master",
-		"gh workflow run ci.yml", `--author='^github-actions\[bot\]' --grep='^catalog: follow '`} {
+		"go run ./scripts/catalog-follow", "go test -count=1 ./internal/catalog/...",
+		// master takes changes only through a PR with green checks, and a merge commit keeps the
+		// github-actions[bot] commit the gate below looks for.
+		`"HEAD:refs/heads/$branch"`, "gh pr create", "--merge --match-head-commit", "gh workflow run ci.yml",
+		`--author='^github-actions\[bot\]' --grep='^catalog: follow '`} {
 		if !strings.Contains(runs, want) {
 			t.Errorf("release runs no %q", want)
 		}
+	}
+	if strings.Contains(runs, "refs/heads/master") {
+		t.Error("release pushes to master; master's ruleset refuses it, the follow goes through a PR")
 	}
 	// A followed catalog's CI is a dispatched run, so the gate must not require a push.
 	if strings.Contains(runs, "--event push") {
