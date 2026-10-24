@@ -531,6 +531,13 @@ calls and kind nodes must carry their own explicit bounds.
   binaries, its refusals) and checks `release-image.yml`'s and `dependency-release.yml`'s job
   graph, permissions and pins. `scripts/catalog-follow`'s tests run it on a temporary catalog
   with fake releases, registry and attestations.
+- Fuzz targets (`fuzz_test.go`; their seeds also run in `make ci`): `FuzzParse` (`internal/stack`:
+  an accepted plan marshals, parses again and marshals to the same bytes, as handoff pull
+  rewrites it), `FuzzRedact` (`internal/engine`: no registered secret survives, except one
+  sharing text with the `[redacted]` marker; text without a secret is unchanged) and
+  `FuzzStartRequest` (`internal/runner`). CI's `test (ubuntu-latest, stable)` leg runs each for a
+  fixed execution count after `make ci`; a crasher found later goes under the package's
+  `testdata/fuzz/<Target>/`.
 - `make workflow-lint`: needs Docker (CI runs it in `vulncheck`); actionlint v1.7.12 on every
   workflow and offline, digest-pinned zizmor (medium and up) on `release-image.yml` and
   `dependency-release.yml`.

@@ -41,6 +41,10 @@ v1 in `../../docs/superpowers/specs/2026-10-16-suite-runner-design.md`.
 
 - `make ci`: HTTP tests over a temporary socket (every endpoint, busy, id_conflict, repeats,
   limits, unknown fields, startup and shutdown), import hardening, keygen and `--pod-volumes`.
+- `FuzzStartRequest` (`fuzz_test.go`) posts arbitrary bodies to `handleStart` on a runner with
+  no plan: every answer decodes as KyYard's, is a 400/413 `invalid_request` or a 409
+  `owned_by_cli` with a message of at most 512 bytes, nothing is recorded, and an accepted
+  request names its file inside `operations/` and re-encodes to an equal request that passes.
 - `make e2e`: builds the image, hands a plan to a runner container over the sshd fixture and to
   the documented runner pod in kind (a test-only curl container shares its socket), installs
   and uninstalls through the socket, pulls the plan back, checks the CLI refusal and revokes.
