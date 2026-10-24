@@ -1,15 +1,16 @@
 name: kymessage
 description: KyMessages, the suite's chat and calls (Matrix, Element, LiveKit); signs in through KyIdentity
 category: ky
-version: 0.4.4
+version: 0.4.5
 # kymessage: release image of v0.4.4 (commit b0f2001e3d3fd80093e6b2f5bd341168dc7517dd), attested by
 # Busnes-app/KyMessage-Server release-image.yml@refs/tags/v0.4.4 (gh attestation verify; the
 # attested gitCommit is v0.4.4^{commit}).
 # The other five are the stock upstream images KyMessage's docker-compose.matrix.yml pins, by
 # tag and digest in v0.4.4 (unchanged since v0.4.3); no attestation was found for them
 # (provenance: KyMessage's compose).
+# catalog-follow: v0.4.5 attested by Busnes-app/KyMessage-Server release-image.yml@refs/tags/v0.4.5
 images:
-  kymessage: ghcr.io/busnes-app/kymessage-server:0.4.4@sha256:3ecb7a412877bbdd782bc1a3ef0f0af7fbab859cd8a77abb7f787d67122d35b0
+  kymessage: ghcr.io/busnes-app/kymessage-server:0.4.5@sha256:e8f95f8a293f21df28d5c06b40df63be1bd87eb3aee44d86b410600cb6edd9c2
   postgres: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
   synapse: ghcr.io/element-hq/synapse:v1.162.0@sha256:6b84a7bbac36f080b2d2e51e0289cf1b08b349598ea44a558df38d558f2c2311
   mas: ghcr.io/element-hq/matrix-authentication-service:1.26.0@sha256:e089f1048a1d4a9a492ed17b9fe759100f1bd619407b001f5927928d88b780c4
