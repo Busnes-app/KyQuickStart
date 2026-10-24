@@ -8,10 +8,14 @@ name: dependency release
 #
 # First it follows the Ky apps: scripts/catalog-follow moves each catalog pin to
 # the newest attested patch or .N release on the pin's MAJOR.MINOR line, and any
-# change is tested, committed to master as github-actions[bot] ("catalog: follow
-# ...") and run through ci.yml. A followed app counts like a Dependabot change, so
-# a KyQuickStart release carries the newest app releases. A newer MAJOR.MINOR
-# only warns: its upgrade rules need a human PR.
+# change is tested, committed as github-actions[bot] ("catalog: follow ...") to the
+# catalog-follow branch, and opened as a pull request: master's ruleset takes
+# changes only through a PR with green checks. ci.yml runs on the branch, the PR
+# merges when it passes, and ci.yml runs again on the merge commit, whose result
+# the release gate reads. A red run leaves the PR open; tomorrow force-pushes a
+# fresh follow onto it. A followed app counts like a Dependabot change, so a
+# KyQuickStart release carries the newest app releases. A newer MAJOR.MINOR only
+# warns: its upgrade rules need a human PR.
 #
 # The line (X.Y.Z) is internal/appversion/VERSION. A bumped line is released by
 # hand first (publish vX.Y.Z); until then this workflow releases nothing. The
@@ -32,11 +36,12 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
-    # ci.yml's e2e job alone takes about 40 minutes.
-    timeout-minutes: 120
+    # ci.yml's e2e job alone takes about 40 minutes, and a follow runs it twice.
+    timeout-minutes: 180
     permissions:
       contents: write
       actions: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -73,40 +78,78 @@ jobs:
           git add internal/catalog/apps
           git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
             commit -q -m "$subject" -m "$body" -m "Each pin is the digest its release workflow attested (scripts/catalog-follow)."
-          # Plain push: if master moved meanwhile it is refused, and tomorrow retries.
-          if ! git push -q "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/master; then
-            echo "::warning::master moved while following the catalog; nothing pushed, tomorrow retries"
+          # Force: the branch only ever holds the newest follow, one commit on master.
+          branch=catalog-follow
+          if ! git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/$branch"; then
+            echo "::warning::could not push $branch; nothing followed, tomorrow retries"
             git reset -q --hard HEAD~1
             exit 0
           fi
           sha="$(git rev-parse HEAD)"
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
-          { echo "Pushed \`$subject\` as \`$sha\`:"; printf '%s\n' "$body" | sed 's/^/- /'; } >> "$GITHUB_STEP_SUMMARY"
+          pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --base master --state open \
+            --json number --jq '.[0].number // empty')"
+          pr_body="$(printf '%s\n\nOpened by dependency-release.yml; it merges this PR itself once ci.yml passes.\n' "$body")"
+          if [ -n "$pr" ]; then
+            gh pr edit "$pr" --repo "$GITHUB_REPOSITORY" --title "$subject" --body "$pr_body"
+          else
+            url="$(gh pr create --repo "$GITHUB_REPOSITORY" --base master --head "$branch" --title "$subject" --body "$pr_body")"
+            pr="${url##*/}"
+          fi
+          printf 'sha=%s\npr=%s\n' "$sha" "$pr" >> "$GITHUB_OUTPUT"
+          { echo "Opened \`$subject\` as #$pr (\`$sha\`):"; printf '%s\n' "$body" | sed 's/^/- /'; } >> "$GITHUB_STEP_SUMMARY"
 
-      # A GITHUB_TOKEN push starts no workflow, but a dispatch does: run CI on the
-      # pushed commit, so its check runs satisfy release-image.yml's REQUIRED gate.
-      # The outcome is judged by the next step's CI gate, not here.
-      - name: Run CI on the followed catalog
+      # A GITHUB_TOKEN push or PR starts no workflow, but a dispatch does. ci.yml on
+      # the branch head supplies the PR's required checks; ci.yml on the merge commit
+      # supplies the check runs release-image.yml's REQUIRED gate reads, and the next
+      # step judges that run's outcome.
+      - name: Merge the followed catalog
         if: steps.follow.outputs.sha != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHA: ${{ steps.follow.outputs.sha }}
+          PR: ${{ steps.follow.outputs.pr }}
         run: |
           set -euo pipefail
-          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref master
-          id=""
-          for _ in $(seq 30); do
-            sleep 10
-            id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --event workflow_dispatch --commit "$SHA" \
-              --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
-            [ -z "$id" ] || break
-          done
-          if [ -z "$id" ]; then
-            echo "::warning::no ci.yml run started on $SHA (master moved?); its push CI decides"
+          # Dispatches ci.yml on ref $1 and prints the conclusion of its run on commit $2.
+          ci_on() {
+            gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$1" >&2
+            local id=""
+            for _ in $(seq 30); do
+              sleep 10
+              id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --event workflow_dispatch --commit "$2" \
+                --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+              [ -z "$id" ] || break
+            done
+            if [ -z "$id" ]; then
+              echo absent
+              return
+            fi
+            gh run watch "$id" --repo "$GITHUB_REPOSITORY" --interval 60 > /dev/null || true
+            gh run view "$id" --repo "$GITHUB_REPOSITORY" --json conclusion --jq .conclusion
+          }
+          ci="$(ci_on catalog-follow "$SHA")"
+          if [ "$ci" != success ]; then
+            echo "::warning::ci.yml on the followed catalog is $ci; #$PR stays open, tomorrow retries"
             exit 0
           fi
-          gh run watch "$id" --repo "$GITHUB_REPOSITORY" --interval 60 > /dev/null || true
-          gh run view "$id" --repo "$GITHUB_REPOSITORY" --json conclusion --jq '"ci.yml on the followed catalog: \(.conclusion)"'
+          # A merge commit keeps the github-actions[bot] commit the release gate looks for.
+          if ! gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --merge --match-head-commit "$SHA"; then
+            echo "::warning::#$PR did not merge; it stays open, tomorrow retries"
+            exit 0
+          fi
+          merged="$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json mergeCommit --jq .mergeCommit.oid)"
+          echo "ci.yml on merge commit $merged: $(ci_on master "$merged")"
+          echo "Merged #$PR as \`$merged\`" >> "$GITHUB_STEP_SUMMARY"
+
+      # The release is cut from master as it is now, with the followed catalog in it.
+      - name: Update to master
+        if: steps.follow.outputs.sha != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git fetch -q "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" master
+          git checkout -q --detach FETCH_HEAD
 
       - name: Decide the next release
         id: next
