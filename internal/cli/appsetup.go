@@ -138,7 +138,11 @@ func (s *session) composeClients(st *stack.Stack) error {
 		case "kycalendar":
 			s.handover += calendarRuntimeHandover(s.state, host, n.Admin.Username, n.Everyday.Username, s.placed["kycalendar"])
 		case "kypost":
-			s.handover += fmt.Sprintf(postHandover, host, n.Admin.Username, n.Everyday.Username, postContainer, s.placed["kypost"].Name)
+			if m := mailOf(st, "kypost"); m != nil {
+				s.handover += postNativeText(host, n.Admin.Username, n.Everyday.Username, s.placed["kypost"].Name, m)
+			} else {
+				s.handover += fmt.Sprintf(postHandover, host, n.Admin.Username, n.Everyday.Username, postContainer, s.placed["kypost"].Name)
+			}
 		case "kymessage":
 			s.handover += messageHandover(st, i.Product, s.placed[i.Product], n.Admin.Username, n.Everyday.Username)
 		case "kypulse":
@@ -433,6 +437,10 @@ type clientSetupStep struct {
 	place     func(ctx context.Context, args []string, input []byte) error
 	native    func(clientCredentials, string) any // KyPost's own bundle from the export and secret file; nil for ky.product-setup/1
 	after     func(context.Context) error         // KyMessages' chat client recheck; nil for any other app
+	// mail is KyPost's plan mail block: its bundle names the domains, may be replaced as they
+	// change (it holds no secret) and report reads the setup's report. Nil for any other app.
+	mail   *stack.Mail
+	report func([]byte) error
 }
 
 // everydayUser is the owner's everyday account, whose subject KyIdentity's read-only
@@ -453,6 +461,9 @@ func (s clientSetupStep) InputHash() string {
 	}
 	if s.scimToken != "" {
 		in = append(in, s.scimToken)
+	}
+	if s.mail != nil {
+		in = append(in, s.mail.Domains)
 	}
 	b, err := json.Marshal(in)
 	if err != nil {
@@ -508,9 +519,10 @@ func (s clientSetupStep) run(ctx context.Context, check bool) error {
 		everyday = []map[string]string{{"issuer": frame.IssuerURL, "subject": subject, "username": s.everyday.Username}}
 	}
 	mode, bundleMode := "write", "write"
-	if s.targets != nil {
-		// kyPulse's targets follow the plan: it keeps a target the bundle omits and refuses an
-		// edited one, so its bundle may be replaced. Secrets never are.
+	if s.targets != nil || s.mail != nil {
+		// kyPulse's targets and KyPost's mail domains follow the plan: kyPulse keeps a target
+		// the bundle omits and refuses an edited one, KyPost keeps a domain and adds new ones,
+		// so their bundles may be replaced. Secrets never are.
 		bundleMode = "replace"
 	}
 	if check {
@@ -558,8 +570,14 @@ func (s clientSetupStep) run(ctx context.Context, check bool) error {
 			return fmt.Errorf("%s's %s is missing, unsafe or differs from KyIdentity's current client; retained secrets are never replaced", s.name, f.name)
 		}
 	}
-	if _, err := s.setup(ctx, s.exec, s.i.Bundle, check); err != nil {
+	report, err := s.setup(ctx, s.exec, s.i.Bundle, check)
+	if err != nil {
 		return err
+	}
+	if s.report != nil {
+		if err := s.report(report); err != nil {
+			return err
+		}
 	}
 	if s.after != nil {
 		if err := s.after(ctx); err != nil {
@@ -711,17 +729,25 @@ func (s scimStep) run(ctx context.Context, check bool) error {
 // preparation generated them, the paths of the client secret and the accounts' passwords.
 func scimPass(src stack.Integration, parent, id string, scim stack.IdentitySCIM) []byte {
 	n, scope := src.Identity, path.Dir(src.Bundle)
-	type account struct {
-		stack.IdentityAccount
-		PasswordFile string `json:"passwordFile"`
-	}
 	type client struct {
 		stack.IdentityClient
 		SecretFile string `json:"secretFile"`
 	}
 	c := client{n.Clients[slices.IndexFunc(n.Clients, func(c stack.IdentityClient) bool { return c.ID == id })], path.Join(scope, "client-"+id+".secret")}
 	c.SCIM = &scim
-	b := map[string]any{"schema": n.Schema, "setupId": n.SetupID, "clients": []client{c}}
+	return setupPass(src, parent, c)
+}
+
+// setupPass is a later pass of src's setup (KyIdentity's first, or an amendment of parent)
+// carrying client c: that setup's ID and, as its preparation generated them, the paths of the
+// accounts' passwords.
+func setupPass(src stack.Integration, parent string, c any) []byte {
+	n, scope := src.Identity, path.Dir(src.Bundle)
+	type account struct {
+		stack.IdentityAccount
+		PasswordFile string `json:"passwordFile"`
+	}
+	b := map[string]any{"schema": n.Schema, "setupId": n.SetupID, "clients": []any{c}}
 	if parent != "" {
 		b["extends"] = parent
 	} else {
@@ -830,7 +856,26 @@ func (s *session) setupSteps(d driver, i stack.Integration) (steps []engine.Step
 		// It admits only the identities its setup names, and creates none at sign-in.
 		step.everyday = &everydayUser{Bundle: first.Bundle, Username: first.Identity.Everyday.Username}
 	case "kypost":
-		step.native = postBundle
+		step.native = postBundle(nil)
+		if m := mailOf(s.plan, i.Product); m != nil {
+			step.native, step.mail = postBundle(m.Domains), m
+			target := s.placed[i.Product].Name
+			step.report = func(b []byte) (err error) {
+				s.postRecords, err = postRecords(b, m, target)
+				return err
+			}
+			host, err := routeHost(s.plan, i.Product)
+			if err != nil {
+				return nil, nil, err
+			}
+			identityPlace, err := place(identity, source, "")
+			if err != nil {
+				return nil, nil, err
+			}
+			installer := path.Dir(path.Dir(source.Bundle))
+			return []engine.Step{step}, directoryPassStep{app: i.Product, file: path.Join(installer, "directory-"+i.IdentityClient+".json"),
+				bundle: directoryPass(source, parent, i.IdentityClient, "https://"+host+"/api/sync/webhook"), place: identityPlace, exec: export}, nil
+		}
 	}
 	if o.SCIMTokenFile == "" {
 		return []engine.Step{step}, nil, nil

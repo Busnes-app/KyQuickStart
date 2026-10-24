@@ -16,7 +16,8 @@ var updateGolden = flag.Bool("update-golden", false, "rewrite testdata/steps.gol
 // Every step's input hash and KyIdentity's intent (its clients and connectors) for the Docker
 // and Kubernetes Ky app plans, byte for byte those of origin/master 8ace9f6 except
 // kydrive.deploy and kydrive.health, whose healthcheck gained start_interval: backup and
-// restore change no other deployment or setup input. Ky release pins are replaced
+// restore change no other deployment or setup input. KyPost's native mail plans add their own
+// entries and leave the others alone. Ky release pins are replaced
 // (catalogtest.Unpinned), so following a release changes no hash here.
 func TestStepInputsGolden(t *testing.T) {
 	ctx := context.Background()
@@ -72,6 +73,19 @@ func TestStepInputsGolden(t *testing.T) {
 	postPlan(t, f, "      clients: []\n")
 	id = &fakeIdentity{}
 	record("kypost", id, postSession(t, f, id, &fakePost{files: map[string]string{}}))
+
+	// KyPost's native mail, without and then with its receiver, on a host with no earlier data.
+	for name, mail := range map[string]string{"kypost-native": postMailNative, "kypost-receiver": postMailReceiver} {
+		f = newF()
+		f.h.fail = "docker volume inspect"
+		postMailPlan(t, f, mail)
+		if mail == postMailReceiver {
+			os.MkdirAll(f.h.root+"/kypost", 0o700)
+			os.WriteFile(f.h.root+"/kypost/compose.yaml", []byte("services:\n  app:\n    environment:\n      KYPOST_NATIVE_MAIL: \"true\"\n"), 0o600)
+		}
+		id = &fakeIdentity{}
+		record(name, id, postSession(t, f, id, &fakePost{files: map[string]string{}, spool: true}))
+	}
 
 	b, err := json.MarshalIndent(got, "", "  ")
 	if err != nil {

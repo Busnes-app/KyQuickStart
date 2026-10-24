@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path"
+	"strings"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/engine"
@@ -45,6 +46,24 @@ func (a App) binds() []string {
 	return out
 }
 
+// catalogFile is one of the catalog's files/ that the app's Compose file binds.
+type catalogFile struct {
+	name string // below the app's directory
+	body []byte
+}
+
+// files are the catalog files the app's Compose file binds, in Nested order.
+func (a App) files() []catalogFile {
+	var out []catalogFile
+	for _, n := range a.Catalog.Nested {
+		name := strings.TrimPrefix(n, "./")
+		if b, ok := a.Catalog.Files[name]; ok {
+			out = append(out, catalogFile{name, b})
+		}
+	}
+	return out
+}
+
 func hashOf(parts ...string) string {
 	h := sha256.New()
 	for _, p := range parts {
@@ -57,7 +76,11 @@ func hashOf(parts ...string) string {
 // Steps returns the app's install steps: secrets (when it declares any), deploy, health.
 func Steps(a App) []engine.Step {
 	ov := a.override(labels(a.ReleaseSet, a.Catalog.Version))
-	hash := hashOf(string(a.Catalog.Compose), string(ov))
+	parts := []string{string(a.Catalog.Compose), string(ov)}
+	for _, f := range a.files() {
+		parts = append(parts, f.name, string(f.body))
+	}
+	hash := hashOf(parts...)
 	steps := []engine.Step{deployStep{a: a, override: ov, hash: hash}, healthStep{a: a, hash: hash}}
 	if len(a.Catalog.Secrets) > 0 {
 		steps = append([]engine.Step{secretsStep{a}}, steps...)

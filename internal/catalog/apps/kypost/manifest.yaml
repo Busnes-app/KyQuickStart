@@ -7,6 +7,8 @@ version: 0.4.3
 # catalog-follow: v0.4.3 attested by Busnes-app/KyPost-Server release-image.yml@refs/tags/v0.4.3
 images:
   kypost: ghcr.io/busnes-app/kypost-server:0.4.3@sha256:0a7d641d899b2331af95d9a5a769dac808dbb0b17ef45a817975bf7c54905388
+  # Native mail's receiver only: KyPost v0.4.3's docker-compose.rspamd.yml pin, unchanged.
+  rspamd: rspamd/rspamd:4.2.2@sha256:33526f94cfbb5ab5485805ad9d6eddb6a52aca6529aad0ce99b67b01c2e756de
 # verify-edge reads the suite proxy contract here (clientIp, proxyHeadersTrusted, scheme).
 status_path: /api/installer/network
 # No secrets: KyPost generates its own keys in /kypost/private at first start.
@@ -17,14 +19,20 @@ health:
   timeout_seconds: 300
 # KyPost creates an account at first sign-in for anyone KyIdentity assigns to it, binding
 # (issuer, subject), never a username; kypost.admin in the token's roles makes an
-# administrator. No directory: KyPost verifies the signed webhook only against its own pairing
-# key or client secret, and KyIdentity signs with a secret it generates. No SCIM. Sign-out is
-# local, and a restart ends every session.
+# administrator. No directory_path: KyPost verifies the signed webhook only against its own
+# pairing key or client secret, and KyIdentity's first setup signs with a secret it generates.
+# Native mail adds the directory on a later setup pass (kyidentity.directory.kypost), signed
+# with the client secret itself. No SCIM. Sign-out is local, and a restart ends every session.
 oidc:
   name: KyPost
   redirect_paths: [/api/auth/oidc/callback]
   admin_role: kypost.admin
   user_role: kypost.user
+# Opt-in native mail (a plan's kypost mail block): KyPost's docs/guides/NATIVE_MAIL.md. KyPost
+# accepts exactly this Maddy 0.9.5 executable (scripts/start-receiving.sh of v0.4.3), which
+# the operator supplies; KyQuickStart checks it before deploying the receiver.
+native_mail:
+  maddy_sha256: 6ea4b951f15b91fd81d98957e4d4bad7a0cec6d6e1d66b011c765cc9a14e05db
 # Settings and accounts, its generated keys, and the mail state. Logs and the re-downloadable
 # Ollama model are left out.
 backup:

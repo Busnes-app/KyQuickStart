@@ -140,6 +140,8 @@ type App struct {
 	MediaAddress string `yaml:"media_address,omitempty" json:",omitempty"`
 	// Stopped is the operator's `kyquickstart stop`: commands that would start the app refuse.
 	Stopped bool `yaml:"stopped,omitempty" json:",omitempty"`
+	// Mail is KyPost's opt-in native mail; nil keeps it webmail for existing IMAP accounts.
+	Mail *Mail `yaml:"mail,omitempty" json:",omitempty"`
 }
 
 // MediaAddress accepts one unicast IPv4 address a LAN client can reach.
@@ -287,6 +289,11 @@ func (s *Stack) validate() error {
 		}
 		if a.MediaAddress != "" && !MediaAddress(a.MediaAddress) {
 			return fmt.Errorf("app %q: media_address %q must be one IPv4 address of its target: not a hostname, IPv6, unspecified, loopback, link-local, multicast or broadcast", a.Name, a.MediaAddress)
+		}
+		if a.Mail != nil {
+			if err := a.Mail.validate(); err != nil {
+				return fmt.Errorf("app %q: %w", a.Name, err)
+			}
 		}
 		apps[a.Name] = true
 		for _, n := range a.NodePorts {

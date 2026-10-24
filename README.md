@@ -10,7 +10,10 @@ administrator and everyday logins. New catalog apps and standalone features are 
 **Status:** pre-release. The catalog holds the ten Ky products, Euro-Office (KyDrive's optional editor, Kubernetes only) and Nginx Proxy Manager, the edge on
 a Kubernetes target ([docs/edge.md](docs/edge.md)). Each product's placement and setup are in
 [guided setup](docs/guided-setup.md); KyDrive, KyPost, KyDNS and KyMessages run on Docker only
-([placement](docs/redirect.md#placement)). KyYard, with the suite runner in its pod, installs
+([placement](docs/redirect.md#placement)). KyPost is webmail for existing IMAP accounts unless
+its plan opts into [native mail](docs/guided-setup.md#kypost-native-mail) at install: mailboxes
+on your own domains and, in a second apply, KyPost's Maddy receiver on public TCP 25, which
+KyPost itself qualifies for a dedicated test domain only. KyYard, with the suite runner in its pod, installs
 from a [release binary](#install-a-release), which carries the digest of the runner image it was
 released with; source builds refuse it ([KyYard](docs/guided-setup.md#catalog-kyyard-on-kubernetes)).
 Docker apps back up to an off-host restic

@@ -1,6 +1,13 @@
 # From KyPost v0.4.2's docker-compose.yml, without its root entrypoint: the same bootstrap,
 # migration and supervisor run as kypost (uid 1000) with no capabilities. The named volumes
 # start from the image's kypost-owned 0700 directories, so nothing needs a chown.
+{{- if .Mail}}
+# Native mail (a plan's kypost mail block), as KyPost's docs/guides/NATIVE_MAIL.md sections 4
+# and 9 set it. "receiver" adds docker-compose.receiving.yml and docker-compose.rspamd.yml of
+# KyPost v0.4.3: the operator's Maddy binary and TLS directory read-only, host port 25 on
+# smtp_address to the receiver's 2525, and the pinned Rspamd sidecar in KyPost's network
+# namespace. Only that rendering publishes a mail port.
+{{- end}}
 services:
   app:
     image: {{ .Images.kypost }}
@@ -18,18 +25,39 @@ services:
     memswap_limit: 8g
     cpus: 4
     pids_limit: 512
+{{- if eq .Mail "receiver"}}
+    # The web port only on the address the edge forwards to; SMTP from the internet on
+    # smtp_address:25, which the operator confirmed with publish_port_25.
+    ports: ["{{forward}}:5866", "{{smtp_address}}:25:2525"]
+{{- else}}
     # Only on the address the edge forwards to; KyPost opens no mail port.
     ports: ["{{forward}}:5866"]
+{{- end}}
     entrypoint: ["/bin/sh", "-c", "kypost-server --mode bootstrap-admin && kypost-server migrate-native && exec supervisord -c /etc/supervisord.conf"]
     environment:
       WEB_PORT: "5866"
       # Its OIDC callback, and Secure cookies.
       SERVER_BASE_URL: "https://{{host}}"
       TUNING_FILE: /kypost/config/TUNING.md
+{{- if eq .Mail "receiver"}}
+      # Native mailboxes, receiving through the bundled Maddy and Rspamd's scan.
+      KYPOST_NATIVE_MAIL: "true"
+      KYPOST_NATIVE_RECEIVING: "true"
+      KYPOST_NATIVE_RECEIVER: "true"
+      KYPOST_RECEIVING_HOSTNAME: "{{mail_hostname}}"
+      KYPOST_RECEIVING_RSPAMD: "true"
+{{- else if .Mail}}
+      # Native mailboxes from KyIdentity's directory; receiving waits for the spool and the
+      # receiver, so no mail port yet.
+      KYPOST_NATIVE_MAIL: "true"
+      KYPOST_NATIVE_RECEIVING: "false"
+      KYPOST_NATIVE_RECEIVER: "false"
+{{- else}}
       # A webmail client for existing IMAP/SMTP accounts: no native mail, receiving or receiver.
       KYPOST_NATIVE_MAIL: "false"
       KYPOST_NATIVE_RECEIVING: "false"
       KYPOST_NATIVE_RECEIVER: "false"
+{{- end}}
       KYPOST_BACKUP_DEPOSIT_INTERVAL: 24h
       KYPOST_BACKUP_KEEP: "7"
     volumes:
@@ -38,12 +66,51 @@ services:
       - state:/kypost/state
       - logs:/kypost/logs
       - ollama-models:/kypost/ollama-models
+{{- if eq .Mail "receiver"}}
+      # The operator's files; preflight checks both before deploy, so Docker creates neither.
+      - "{{maddy_binary}}:/opt/kypost/receiving/maddy:ro"
+      - "{{receiving_tls}}:/opt/kypost/receiving/tls:ro"
+{{- end}}
     healthcheck:
       test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:5866/api/health"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 180s
+{{- if eq .Mail "receiver"}}
+  # docker-compose.rspamd.yml of KyPost v0.4.3, its service kypost-server here app. Its
+  # configuration is that release's scripts/rspamd/rspamd.conf (files/rspamd/rspamd.conf).
+  rspamd:
+    image: {{ .Images.rspamd }}
+    # Loopback scan channel; scanner has no KyPost files or credentials.
+    network_mode: service:app
+    user: "11333:11333"
+    entrypoint: [rspamd]
+    command: ["-f", "-c", "/etc/rspamd/rspamd.conf"]
+    volumes:
+      - ./rspamd/rspamd.conf:/etc/rspamd/rspamd.conf:ro
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m,uid=11333,gid=11333,mode=0700
+      - /var/lib/rspamd:rw,noexec,nosuid,size=32m,uid=11333,gid=11333,mode=0700
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 64
+    depends_on:
+      app:
+        condition: service_started
+        restart: true
+    healthcheck:
+      test: ["CMD", "rspamc", "-h", "127.0.0.1:11333", "-t", "2", "-E"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+    stop_grace_period: 15s
+{{- end}}
 volumes:
   config: {}
   private: {}

@@ -79,5 +79,37 @@
     "npm.deploy": "5b4fc27ca3b26f710406e632ff0f3e814f90e42500164caa0e51d7ad7288eed9",
     "npm.health": "5b4fc27ca3b26f710406e632ff0f3e814f90e42500164caa0e51d7ad7288eed9",
     "npm.secrets": "1b0d3a28cae4aadd5f9666de25a3eafe9258f32d9627fe4cbeb1625850a57c90"
+  },
+  "kypost-native": {
+    "intent": "{\"schema\":\"kyidentity.setup/1\",\"setupId\":\"271333e2-c221-4601-b249-563b3d828530\",\"admin\":{\"username\":\"owner-admin\",\"email\":\"admin@example.test\"},\"everyday\":{\"username\":\"owner\",\"email\":\"owner@example.test\"},\"clients\":[{\"id\":\"kypost\",\"name\":\"KyPost\",\"redirectUris\":[\"https://post.example.com/api/auth/oidc/callback\"],\"postLogoutUris\":null,\"administratorRole\":\"kypost.admin\",\"everydayRole\":\"kypost.user\"}]}",
+    "kyidentity.deploy": "0be37ccb66c67900697f95df3006eb40a17d9c856b162d06b0fcde1904770480",
+    "kyidentity.directory.kypost": "93244d430a595daea4bc1c92306656928075a62aae6a60f7dbc27bcaceeba7a1",
+    "kyidentity.health": "0be37ccb66c67900697f95df3006eb40a17d9c856b162d06b0fcde1904770480",
+    "kyidentity.retire-bootstrap": "kyq-bootstrap owner-admin",
+    "kyidentity.secrets": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "kyidentity.setup": "d14c85599cd780b0dd6187b932bc43add547536d791749fd2eafd269928c950a",
+    "kypost.deploy": "c25519d4c87d9ec3d4286fe4bcb977314793f89b4c99f58ca702eb37cb0324c6",
+    "kypost.health": "c25519d4c87d9ec3d4286fe4bcb977314793f89b4c99f58ca702eb37cb0324c6",
+    "kypost.setup": "f3eb8d6a52e33f4da5d22e15b946d6c1379b47eee5929a2bb771f1ee876814a3",
+    "npm.bootstrap": "3846c1c4be7a7cb2af2e3b8a6f849519ec9f6b63cfa25b1b6386b7ce37ac7e49",
+    "npm.deploy": "5b4fc27ca3b26f710406e632ff0f3e814f90e42500164caa0e51d7ad7288eed9",
+    "npm.health": "5b4fc27ca3b26f710406e632ff0f3e814f90e42500164caa0e51d7ad7288eed9",
+    "npm.secrets": "1b0d3a28cae4aadd5f9666de25a3eafe9258f32d9627fe4cbeb1625850a57c90"
+  },
+  "kypost-receiver": {
+    "intent": "{\"schema\":\"kyidentity.setup/1\",\"setupId\":\"271333e2-c221-4601-b249-563b3d828530\",\"admin\":{\"username\":\"owner-admin\",\"email\":\"admin@example.test\"},\"everyday\":{\"username\":\"owner\",\"email\":\"owner@example.test\"},\"clients\":[{\"id\":\"kypost\",\"name\":\"KyPost\",\"redirectUris\":[\"https://post.example.com/api/auth/oidc/callback\"],\"postLogoutUris\":null,\"administratorRole\":\"kypost.admin\",\"everydayRole\":\"kypost.user\"}]}",
+    "kyidentity.deploy": "0be37ccb66c67900697f95df3006eb40a17d9c856b162d06b0fcde1904770480",
+    "kyidentity.directory.kypost": "93244d430a595daea4bc1c92306656928075a62aae6a60f7dbc27bcaceeba7a1",
+    "kyidentity.health": "0be37ccb66c67900697f95df3006eb40a17d9c856b162d06b0fcde1904770480",
+    "kyidentity.retire-bootstrap": "kyq-bootstrap owner-admin",
+    "kyidentity.secrets": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "kyidentity.setup": "d14c85599cd780b0dd6187b932bc43add547536d791749fd2eafd269928c950a",
+    "kypost.deploy": "623a2b53b36df74e53c860a67197f8d2c8e7da8d5e46ef83d2e1e89240f065a3",
+    "kypost.health": "623a2b53b36df74e53c860a67197f8d2c8e7da8d5e46ef83d2e1e89240f065a3",
+    "kypost.setup": "f3eb8d6a52e33f4da5d22e15b946d6c1379b47eee5929a2bb771f1ee876814a3",
+    "npm.bootstrap": "3846c1c4be7a7cb2af2e3b8a6f849519ec9f6b63cfa25b1b6386b7ce37ac7e49",
+    "npm.deploy": "5b4fc27ca3b26f710406e632ff0f3e814f90e42500164caa0e51d7ad7288eed9",
+    "npm.health": "5b4fc27ca3b26f710406e632ff0f3e814f90e42500164caa0e51d7ad7288eed9",
+    "npm.secrets": "1b0d3a28cae4aadd5f9666de25a3eafe9258f32d9627fe4cbeb1625850a57c90"
   }
 }
