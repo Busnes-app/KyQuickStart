@@ -12,13 +12,15 @@ import (
 // renderedHashes are the hashes of every Kubernetes catalog app's objects as origin/master
 // before KyYard rendered them: adding a field for one app must not redeploy the others.
 // Ky release pins are replaced (catalogtest.Unpinned), so following a release changes none.
+// The non-root apps' hashes moved once, on purpose, with #105's fsGroup fix: apply redeploys
+// them, and their init container repairs the modes.
 var renderedHashes = map[string]string{
 	"euro-office": "a65a4a42bbe42da10dc46343eac3260d5dcf030b79e42f80cf270256f355e3e0",
-	"kycalendar":  "c5e3721b8abdba2f1b54fcdf4b84c88a46a725a7b7ec462bd0ec03d1ba56c11a",
-	"kyidentity":  "b755041ee024e1107ef2c1a5c8a93d2e9ad26c52a70eb4af891130ed0a3a5581",
-	"kynotes":     "a7ecd435bce5bc8723663d3ac5ef3e49bdcb14dbd8dac2d77d62615db93755e7",
-	"kypulse":     "fab5ed6131eaae41282490f5ae10c1a10e50226da589d9268c26641fc4301d0a",
-	"kyrecovery":  "09835a4368382e048c9fe8333de5eda876dc01e4bd76479b855f7823fff5baec",
+	"kycalendar":  "f7d7c5f8b06cc519da9816cc9ef994417b96f270fbf833ce735fc35a78972255",
+	"kyidentity":  "b7d69ba3eec7187b26382dc56d35ea6f065ee9ecf0a273df125729b79d16a214",
+	"kynotes":     "39571af36235862a812d81c61d2cc38731d09269de36e8910c81241a9bf26611",
+	"kypulse":     "804b6d0d7c8754ed8aeb6e57399aac76aac3130c72a42061166cf9f07024814d",
+	"kyrecovery":  "2195bf34bc103d1d443dc041c9b21371b3bc4261b56b8de35b14cd158154140f",
 	"npm":         "70adde3f158ad6e8fd04a589d963bd1cf5c16dfb0019c8545cb6e34797c999f1",
 }
 

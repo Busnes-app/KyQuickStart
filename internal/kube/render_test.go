@@ -6,6 +6,8 @@ import (
 	"maps"
 	"net/netip"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -91,7 +93,7 @@ func TestRenderPrivateVolumes(t *testing.T) {
 		t.Fatalf("init containers = %+v", pod.InitContainers)
 	}
 	init := pod.InitContainers[0]
-	if init.Image != CredentialGeneratorImage || !slices.Equal(init.Command, []string{"mkdir", "-p", "-m", "700", "/volumes/data/private"}) ||
+	if init.Image != CredentialGeneratorImage || !slices.Equal(init.Command, privateInit("/volumes/data/private")) ||
 		init.SecurityContext != pod.Containers[0].SecurityContext || init.Resources.Limits.Memory().String() != "16Mi" ||
 		len(init.VolumeMounts) != 1 || init.VolumeMounts[0].Name != "vol-data" || init.VolumeMounts[0].MountPath != "/volumes/data" {
 		t.Fatalf("init = %+v", init)
@@ -103,6 +105,56 @@ func TestRenderPrivateVolumes(t *testing.T) {
 	}
 	if npm := render(App{Name: "npm", Catalog: npmApp(t)}).Deployment.Spec.Template.Spec; len(npm.InitContainers) != 0 || npm.Containers[0].VolumeMounts[2].SubPath != "" {
 		t.Fatal("a root app's claims changed")
+	}
+}
+
+// privateInit is the private-volumes command for dirs: each created 0700 and, on every start,
+// everything inside it stripped of group and other access.
+func privateInit(dirs ...string) []string {
+	return append([]string{"/bin/sh", "-ec", `mkdir -p -m 700 "$@"; chmod -R go-rwx "$@"`, "private-volumes"}, dirs...)
+}
+
+// The private-volumes script, run twice on a tree as an fsGroup pass leaves it (0660 files,
+// 2770 directories): everything becomes the owner's alone, a symlink's target is not touched
+// and nothing is loosened.
+func TestPrivateScriptTightens(t *testing.T) {
+	root := t.TempDir()
+	priv, sub, outside := filepath.Join(root, "private"), filepath.Join(root, "private", "sub"), filepath.Join(root, "outside")
+	os.MkdirAll(sub, 0o700)
+	for f, mode := range map[string]os.FileMode{"session.key": 0o660, "sub/db": 0o660, "sub/run.sh": 0o750, "own.key": 0o600} {
+		os.WriteFile(filepath.Join(priv, f), nil, 0o600)
+		os.Chmod(filepath.Join(priv, f), mode)
+	}
+	os.WriteFile(outside, nil, 0o644)
+	os.Symlink(outside, filepath.Join(priv, "link"))
+	os.Chmod(sub, 0o2770)
+	os.Chmod(priv, 0o2770)
+	fresh := filepath.Join(root, "fresh")
+	for range 2 {
+		if b, err := exec.Command("sh", "-ec", privateScript, "private-volumes", priv, fresh).CombinedOutput(); err != nil {
+			t.Fatalf("%v: %s", err, b)
+		}
+	}
+	for f, want := range map[string]os.FileMode{
+		"private": 0o700, "private/sub": 0o700, "private/session.key": 0o600, "private/sub/db": 0o600,
+		"private/sub/run.sh": 0o700, "private/own.key": 0o600, "outside": 0o644, "fresh": 0o700,
+	} {
+		if fi, err := os.Stat(filepath.Join(root, f)); err != nil || fi.Mode().Perm() != want {
+			t.Errorf("%s: %v %v, want %v", f, fi.Mode(), err, want)
+		}
+	}
+}
+
+// #105: with fsGroup's default Always policy the kubelet makes every 0600 key 0660 at each
+// mount. A non-root pod keeps fsGroup (a root-owned claim root needs it) but only for a
+// mismatched root; a root app sets neither.
+func TestRenderFSGroupOnRootMismatch(t *testing.T) {
+	sc := renderHello(fixture(t), "rs-1", "").Deployment.Spec.Template.Spec.SecurityContext
+	if sc.FSGroup == nil || *sc.FSGroup != 65532 || sc.FSGroupChangePolicy == nil || *sc.FSGroupChangePolicy != corev1.FSGroupChangeOnRootMismatch {
+		t.Fatalf("pod security context = %+v", sc)
+	}
+	if npm := render(App{Name: "npm", Catalog: npmApp(t)}).Deployment.Spec.Template.Spec.SecurityContext; npm.FSGroup != nil || npm.FSGroupChangePolicy != nil {
+		t.Fatalf("root app's pod security context = %+v", npm)
 	}
 }
 
@@ -202,7 +254,7 @@ func TestRenderKyNotes(t *testing.T) {
 	if *sc.RunAsUser != 65532 || *sc.RunAsGroup != 65532 || !*sc.RunAsNonRoot || !*sc.ReadOnlyRootFilesystem || *sc.AllowPrivilegeEscalation || !*pod.SecurityContext.RunAsNonRoot {
 		t.Fatalf("security context = %+v", sc)
 	}
-	if len(pod.InitContainers) != 1 || pod.InitContainers[0].Name != "private-volumes" || !slices.Equal(pod.InitContainers[0].Command, []string{"mkdir", "-p", "-m", "700", "/volumes/data/private", "/volumes/backups/private"}) {
+	if len(pod.InitContainers) != 1 || pod.InitContainers[0].Name != "private-volumes" || !slices.Equal(pod.InitContainers[0].Command, privateInit("/volumes/data/private", "/volumes/backups/private")) {
 		t.Fatalf("init = %+v", pod.InitContainers)
 	}
 	mounts := map[string]string{}
@@ -239,7 +291,7 @@ func TestRenderKyCalendar(t *testing.T) {
 	if *sc.RunAsUser != 10001 || *sc.RunAsGroup != 10001 || !*sc.RunAsNonRoot || !*sc.ReadOnlyRootFilesystem || *sc.AllowPrivilegeEscalation || !*pod.SecurityContext.RunAsNonRoot {
 		t.Fatalf("security context = %+v", sc)
 	}
-	if len(pod.InitContainers) != 1 || pod.InitContainers[0].Name != "private-volumes" || !slices.Equal(pod.InitContainers[0].Command, []string{"mkdir", "-p", "-m", "700", "/volumes/data/private", "/volumes/backups/private"}) {
+	if len(pod.InitContainers) != 1 || pod.InitContainers[0].Name != "private-volumes" || !slices.Equal(pod.InitContainers[0].Command, privateInit("/volumes/data/private", "/volumes/backups/private")) {
 		t.Fatalf("init = %+v", pod.InitContainers)
 	}
 	mounts := map[string]string{}
@@ -424,8 +476,8 @@ func TestRenderKyYard(t *testing.T) {
 	if len(claims) != 2 || claims["vol-data"] != "10Gi" || claims["runner-state"] != "1Gi" {
 		t.Fatalf("claims = %v", claims)
 	}
-	if init := pod.InitContainers; len(init) != 1 || !slices.Equal(init[0].Command, []string{"mkdir", "-p", "-m", "700", "/volumes/data/private", "/volumes/runner-socket/sock"}) ||
-		len(init[0].VolumeMounts) != 2 || init[0].VolumeMounts[1].Name != "runner-socket" {
+	if init := pod.InitContainers; len(init) != 1 || !slices.Equal(init[0].Command, privateInit("/volumes/data/private", "/volumes/runner-socket/sock", "/volumes/runner-state/runner")) ||
+		len(init[0].VolumeMounts) != 3 || init[0].VolumeMounts[1].Name != "runner-socket" || init[0].VolumeMounts[2].Name != "runner-state" || init[0].VolumeMounts[2].MountPath != "/volumes/runner-state" {
 		t.Fatalf("init = %+v", init)
 	}
 	if a.namespaceLabels()[podSecurity] != "restricted" {

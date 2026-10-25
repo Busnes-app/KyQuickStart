@@ -20,12 +20,13 @@ v1 in `../../docs/superpowers/specs/2026-10-16-suite-runner-design.md`.
 - The socket is created as `ky-primitives/applysetup.StartLocal` creates its own, using
   `keyfile` for the directory checks; access is its 0600 mode in a 0700 directory.
 - `--pod-volumes` (Kubernetes): the state and socket directories are subdirectories the runner
-  creates and checks strictly, and their parent, the kubelet's world-writable volume root, must
+  creates if missing and checks strictly, and their parent, the kubelet's world-writable volume root, must
   be a mount point owned by root or the runner; ancestors above it are checked as usual.
   Residual risk: another container mounting that volume could rename the subdirectory; in the
   runner pod, or the catalog KyYard's pod where the runner is container `runner`
-  (`internal/kube` renders it for `kubernetes.suite_runner`), only the runner mounts `/state`,
-  and only KyYard (uid 10001) shares the socket.
+  (`internal/kube` renders it for `kubernetes.suite_runner`), only the runner mounts `/state`
+  (after the `private-volumes` init container, which keeps `/state/runner` owner-only), and
+  only KyYard (uid 10001) shares the socket.
 - The runner never changes the app whose pod it runs in (`internal/cli`, `runner_host`, a 422).
 - `plan/` is the CLI state directory and holds no secret; the key, kubeconfigs and
   `runner.json` live beside it. Import accepts only the listed names, regular files, bounded
