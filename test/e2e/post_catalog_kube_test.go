@@ -156,13 +156,14 @@ func checkCatalogPost(t *testing.T, out string, d driveTarget, port int, get, co
 	}
 	var env []string
 	json.Unmarshal([]byte(docker(t, "inspect", c, "--format", "{{json .Config.Env}}")), &env)
-	for _, want := range []string{"KYPOST_NATIVE_MAIL=false", "KYPOST_NATIVE_RECEIVING=false", "KYPOST_NATIVE_RECEIVER=false", "SSL_CERT_FILE=/test-ca/ca.pem", "SERVER_BASE_URL=https://" + catalogPostURLHost} {
+	// The edge has no egress_address yet, so KyPost trusts no proxy.
+	for _, want := range []string{"KYPOST_NATIVE_MAIL=false", "KYPOST_NATIVE_RECEIVING=false", "KYPOST_NATIVE_RECEIVER=false", "SSL_CERT_FILE=/test-ca/ca.pem", "SERVER_BASE_URL=https://" + catalogPostURLHost, "TRUSTED_PROXY_CIDRS="} {
 		if !slices.Contains(env, want) {
 			t.Errorf("env lacks %s", want)
 		}
 	}
 	for _, e := range env {
-		for _, forbidden := range []string{"TRUSTED_PROXY_CIDRS=", "PAIRING_SECRET", "BOOTSTRAP_ADMIN_PASS", "POW_SECRET"} {
+		for _, forbidden := range []string{"PAIRING_SECRET", "BOOTSTRAP_ADMIN_PASS", "POW_SECRET"} {
 			if strings.HasPrefix(e, forbidden) {
 				t.Errorf("KyPost runs with %s", forbidden)
 			}

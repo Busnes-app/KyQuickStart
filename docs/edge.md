@@ -61,9 +61,11 @@ requests from: a single IP literal, no prefix, hostname, zone, loopback or unspe
 For NPM on a cluster, pods leave through their node's address, so it is the IP of the node
 running NPM. It is not derived: if NPM moves node, set it again and rerun `apply`.
 
-An app whose Compose file writes `{{edge_address}}` (catalog KyDNS) trusts forwarded headers
-from exactly that address. `plan`, `review` and `apply` refuse it until its route's edge sets
-the field. A wrong address fails closed: the app refuses the edge (KyDNS answers 403) and
+An app whose Compose file writes `{{edge_address}}` (catalog KyDNS, KyMessages and KyYard)
+trusts forwarded headers from exactly that address. `plan`, `review` and `apply` refuse it until
+its route's edge sets the field. The other Docker Ky products write `{{edge_prefix}}`: the same
+address as a `/32` or `/128`, or nothing without the field, when they ignore forwarded headers
+([guided setup](guided-setup.md#forwarded-headers-trusted-proxy)). A wrong address fails closed: the app refuses the edge (KyDNS answers 403) and
 apply's `kydns.edge`, asking from NPM's pod, fails. An
 address other peers share fails open, so apply's `kydns.gate` refuses it. A Docker host that
 hides client addresses behind one gateway is such a case, and KyDNS is not supported there
@@ -161,9 +163,9 @@ edge until you run `docker network disconnect kyq-edge-net <container>`.
 it to any `X-Forwarded-For` the client sent, so a product trusting cloudflared must take the
 last `X-Forwarded-For` entry, or `CF-Connecting-IP`, never the first. `verify-edge` sends forged
 `X-Forwarded-For`, `X-Real-IP`, `Forwarded`, `CF-Connecting-IP` and `True-Client-IP` and passes
-only when the product reports the real address over HTTPS. None of the eligible products
-trusts forwarded headers today: each sees cloudflared as every client, so `verify-edge` fails
-for them, as it does through NPM, and per-address rate limits share one bucket.
+only when the product reports the real address over HTTPS. Each eligible product trusts
+cloudflared's address alone and walks `X-Forwarded-For` from the right (read from their pinned
+sources); through a real tunnel this is unverified.
 
 **Which apps.** Without NPM, an app's whole origin is public. The installer allows only:
 
@@ -596,7 +598,7 @@ These values must describe the current request after the product's own proxy han
 `verify-edge` sends forged forwarding headers through public HTTPS and requires the expected
 client address and HTTPS scheme. A missing G11 implementation fails verification. It checks
 every route and lists each one that failed. It skips, and names, the routes whose product
-reports no status: catalog apps without a `status_path` (KyIdentity, whose 0.4.7 status needs `TRUSTED_PROXY_CIDRS` the catalog does not set yet, and NPM) and the
+reports no status: catalog apps without a `status_path` (KyIdentity, which does not trust the edge on Kubernetes, and NPM) and the
 non-primary routes of a multi-route app (KyMessages' Matrix and chat hosts). The check
 does not grant administrator access, verify SSO, or certify the complete installation.
 

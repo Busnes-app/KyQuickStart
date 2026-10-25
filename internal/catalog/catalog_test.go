@@ -163,7 +163,8 @@ func TestKyCalendarEntry(t *testing.T) {
 		k.RunAs != 10001 || k.ReadinessPath != "/api/installer/network" || !slices.Equal(k.Ports, []int{8080}) || k.TerminationGraceSeconds != 1200 || !k.UsesHost() {
 		t.Fatalf("kubernetes = %+v", k)
 	}
-	// Setup refuses SCIM, automatic provisioning and a set admin password; forwarded headers stay untrusted.
+	// Setup refuses SCIM, automatic provisioning and a set admin password; forwarded headers
+	// stay untrusted on Kubernetes (TestTrustedProxies).
 	for _, name := range []string{"KY_ADMIN_PASSWORD", "KY_SCIM_TOKEN", "KY_SCIM_ENABLED", "KY_TRUSTED_PROXIES"} {
 		if _, ok := k.Env[name]; ok {
 			t.Errorf("env sets %s", name)
@@ -361,7 +362,7 @@ func TestEuroOfficeEntry(t *testing.T) {
 }
 
 // KyPost runs on Docker only, without root or capabilities, publishing only its HTTP port on
-// the forward address, with no mail stack and no secret, proxy trust or break-glass in env.
+// the forward address, with no mail stack and no secret or break-glass in env.
 func TestKyPostEntry(t *testing.T) {
 	cat, err := Load(Embedded())
 	if err != nil {
@@ -419,10 +420,65 @@ func TestKyPostEntry(t *testing.T) {
 		t.Fatalf("env = %v", e)
 	}
 	for k := range e {
-		for _, forbidden := range []string{"TRUSTED_PROXY_CIDRS", "PAIRING_SECRET", "POW_SECRET", "BOOTSTRAP_ADMIN_", "ALLOW_INSECURE_HTTP", "TLS_", "SANDBOX_PRIVATE_HOSTS", "SMTP_", "CAPTCHA_",
+		for _, forbidden := range []string{"PAIRING_SECRET", "POW_SECRET", "BOOTSTRAP_ADMIN_", "ALLOW_INSECURE_HTTP", "TLS_", "SANDBOX_PRIVATE_HOSTS", "SMTP_", "CAPTCHA_",
 			"KYPOST_BACKUP_ALLOW_PRIVATE_RECOVERY", "KYPOST_BULK_BACKUP_REPOSITORY", "KYPOST_RECEIVING_"} {
 			if strings.HasPrefix(k, forbidden) {
 				t.Errorf("env sets %s", k)
+			}
+		}
+	}
+}
+
+// Issue #95: on Docker every Ky product trusts forwarded headers from exactly its edge's
+// address, a /32 or /128 (KyMessages, KyYard and KyDNS take the bare address and require it),
+// and from nothing when the edge names none. On Kubernetes none trusts the edge: only KyYard
+// names a proxy, its own loopback.
+func TestTrustedProxies(t *testing.T) {
+	cat, err := Load(Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix := map[string]string{
+		"kyidentity": "TRUSTED_PROXY_CIDRS", "kycalendar": "KY_TRUSTED_PROXIES", "kyrecovery": "KYRECOVERY_TRUSTED_PROXIES",
+		"kypulse": "KYPULSE_TRUSTED_PROXIES", "kypost": "TRUSTED_PROXY_CIDRS", "kynotes": "KYNOTES_SERVER_TRUSTED_PROXIES", "kydrive": "KY_TRUSTED_PROXIES",
+	}
+	bare := map[string]string{"kymessage": "KY_TRUSTED_PROXIES", "kyyard": "KY_TRUSTED_PROXIES", "kydns": "KYDNS_TRUSTED_PROXIES"}
+	for name, a := range cat {
+		if a.Category != "ky" {
+			continue
+		}
+		if k := a.Kubernetes; k != nil {
+			for key, v := range k.Env {
+				if strings.Contains(key, "TRUSTED_PROX") && !(name == "kyyard" && key == "KY_TRUSTED_PROXIES" && v == "127.0.0.1") {
+					t.Errorf("%s on Kubernetes sets %s=%s", name, key, v)
+				}
+			}
+		}
+		if len(a.Compose) == 0 {
+			continue
+		}
+		key, wantBare := bare[name]
+		if !wantBare {
+			if key = prefix[name]; key == "" {
+				t.Errorf("%s: no trusted-proxy expectation", name)
+				continue
+			}
+		}
+		if a.UsesEdgeAddress() != wantBare {
+			t.Errorf("%s: UsesEdgeAddress = %v", name, !wantBare)
+		}
+		for edge, want := range map[string]string{"192.0.2.8": "192.0.2.8/32", "fd00::8": "fd00::8/128", "": ""} {
+			if wantBare {
+				want = edge
+			}
+			var c struct {
+				Services map[string]struct{ Environment map[string]string }
+			}
+			if err := yaml.Unmarshal(a.WithRoute(Route{Host: "h.example.com", Forward: "192.0.2.9:1", ForwardAddr: "192.0.2.9", EdgeAddress: edge}).Compose, &c); err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			if got, ok := c.Services["app"].Environment[key]; !ok || got != want {
+				t.Errorf("%s edge %q: %s = %q, want %q", name, edge, key, got, want)
 			}
 		}
 	}

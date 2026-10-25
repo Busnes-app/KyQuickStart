@@ -78,7 +78,8 @@ target markers from earlier builds stay valid.
 **Unfinished** (the requirement stays; the work is not done)
 
 - Kubernetes backup and restore (`backup`/`restore` cover Docker apps only).
-- Trusted-proxy settings per product (see the edge table).
+- Trusted proxy on Kubernetes: no product trusts the edge there; the options and their costs are
+  in [guided setup](guided-setup.md#forwarded-headers-trusted-proxy).
 - A Docker-only edge. There is no fresh NPM on Docker, and a Docker NPM behind `docker-proxy`
   sees the gateway ([edge](edge.md#lan-clients-provider-lan)).
 - Other edge provisioning: DNS-01 on a Docker edge or through a provider other than Cloudflare,
@@ -158,23 +159,23 @@ There are **no removal candidates**: no test shows an incompatibility.
   Refused: KyNotes, KyMessages, KyDNS, KyRecovery, kyPulse, KyYard ([edge](edge.md)).
 - **frp and Cloudflare** have been tested with the demo app only ([edge](edge.md#test-scope)).
   For every product they are Unverified.
-- **Forwarded headers.** No product passes `verify-edge`. Each either ignores forwarded headers
-  by design or sees a Docker gateway instead of the edge.
-- **Trust fixes.**
-  - On Docker: trust `{{edge_address}}` where the KyDNS-style gate proves it.
-  - On Kubernetes: trust the pod network. A NetworkPolicy already admits only the edge's pods,
-    but whether the cluster's network plugin enforces it is unproven.
+- **Forwarded headers.** No product passes `verify-edge` in CI: on Kubernetes none trusts the
+  edge, and on Docker CI's host shows the products a gateway instead of the edge.
+- **Trust.** On Docker every Ky product trusts exactly its edge's `egress_address` (a `/32` or
+  `/128`; `TestDockerKyCatalog` proves the exact match on six pinned images). On Kubernetes none
+  does: no stable address only NPM connects from, and trusting the pod network is refused
+  ([guided setup](guided-setup.md#forwarded-headers-trusted-proxy)).
 
 | Product | lan edge (sign-in through it) | Forwarded headers | Protocols and boundaries | Class |
 | --- | --- | --- | --- | --- |
-| KyIdentity | Verified: CI and pilot 2026-10-18; the issuer carries `:30543` | Unset: the NPM pod is every client | Admin API refused to the everyday account (pilot) | Verified; trust Fixable |
-| KyRecovery | Verified: CI and pilot (role admin, everyday `access_denied`) | Unset | Ceremony at `/admin/ceremony` on the public route | Verified; trust Fixable |
-| kyPulse | Verified: CI and pilot; targets `ok` | Unset | Probes need the pod network in `allow_cidrs` | Verified; trust Fixable |
+| KyIdentity | Verified: CI and pilot 2026-10-18; the issuer carries `:30543` | Kubernetes unset: the NPM pod is every client; Docker `egress_address` | Admin API refused to the everyday account (pilot) | Verified; Kubernetes trust open |
+| KyRecovery | Verified: CI and pilot (role admin, everyday `access_denied`) | Kubernetes unset; Docker `egress_address` | Ceremony at `/admin/ceremony` on the public route | Verified; Kubernetes trust open |
+| kyPulse | Verified: CI and pilot; targets `ok` | Kubernetes unset; Docker `egress_address` | Probes need the pod network in `allow_cidrs` | Verified; Kubernetes trust open |
 | KyYard | Verified on Kubernetes (`TestKubernetesKyYard` asserts untrusted) | Loopback only on Kubernetes; `{{edge_address}}` on Docker | Docker through an edge is untested | Verified (Kubernetes); Unverified (Docker) |
-| KyNotes | Verified: CI `notesSignOn` | Loopback default | – | Verified |
-| KyCalendar | Verified: CI `calendarSignOn` | Unset | CalDAV clients untested | Verified; CalDAV Unverified |
-| KyPost | Verified: CI `postSignOn` (asserts untrusted) | Empty | Webmail: no mail listener, IMAP/SMTP outbound only, private mail hosts refused. Native mail's receiver: SMTP on `smtp_address:25`, outside the edge | Verified; mail-host setting Fixable; native mail Unverified |
-| KyDrive | Verified: CI and pilot (hlwcdocker02 behind K80; SCIM through the edge) | Unset. WebDAV behind a proxy needs it (KyDrive README) | The published port is reachable on the LAN; firewall rule open | Verified; trust Fixable; Euro-Office `/healthcheck` and signed callback verified (`TestKubernetesEuroOffice`), editing Unverified |
+| KyNotes | Verified: CI `notesSignOn` | Kubernetes loopback default; Docker `egress_address` | – | Verified |
+| KyCalendar | Verified: CI `calendarSignOn` | Kubernetes unset; Docker `egress_address` | CalDAV clients untested | Verified; CalDAV Unverified |
+| KyPost | Verified: CI `postSignOn` (asserts untrusted: the edge has no `egress_address` yet) | `egress_address`, empty without one | Webmail: no mail listener, IMAP/SMTP outbound only, private mail hosts refused. Native mail's receiver: SMTP on `smtp_address:25`, outside the edge | Verified; mail-host setting Fixable; native mail Unverified |
+| KyDrive | Verified: CI and pilot (hlwcdocker02 behind K80; SCIM through the edge) | `egress_address`, empty without one. WebDAV behind a proxy needs it (KyDrive README) | The published port is reachable on the LAN; firewall rule open | Verified; trust through an edge Unverified; Euro-Office `/healthcheck` and signed callback verified (`TestKubernetesEuroOffice`), editing Unverified |
 | KyMessages | Verified: CI (six routes, path blocks, MAS sign-in, encrypted sync, LiveKit `/rtc/validate` over HTTP) | `{{edge_address}}`; untrusted behind the CI Docker NAT | WebSocket upgrade enabled (`internal/edge/npm.go`) but never exercised; media 7881/tcp and 7882/udp go straight to `media_address`, no TURN | Verified (HTTP); WebSocket and media Unverified |
 | KyDNS | Fails closed in CI: KyDNS sees gateway 172.22.0.1, not the edge 172.18.0.2 | `egress_address` only; a gateway value is refused by `kydns.gate` | DNS over UDP and TCP 53 verified on the forward address; direct requests get 403 | Unverified (edge) |
 

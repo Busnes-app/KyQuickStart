@@ -18,6 +18,8 @@ services:
     environment:
       KYRECOVERY_DATA_DIR: "/app/data"
       KYRECOVERY_COOKIE_SECURE: "true"
+      # Forwarded headers only from the edge's own address; none without the edge's egress_address.
+      KYRECOVERY_TRUSTED_PROXIES: "{{edge_prefix}}"
       GOMEMLIMIT: "384MiB"
     volumes:
       - "./data:/app/data"

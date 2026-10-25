@@ -18,8 +18,17 @@ import (
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/dockerhost"
 	"github.com/Busnes-app/kyquickstart/internal/engine"
+	"github.com/Busnes-app/kyquickstart/internal/kube"
 	"github.com/Busnes-app/kyquickstart/internal/remote"
 	"go.yaml.in/yaml/v3"
+)
+
+// trustNet is a test network whose fixed addresses Docker never assigns (outside --ip-range):
+// edgeIP stands for the edge, otherIP for any other peer.
+const (
+	trustNet = "kyq-e2e-trust"
+	edgeIP   = "172.31.254.2"
+	otherIP  = "172.31.254.3"
 )
 
 // Real pinned images, private owned binds, actual Compose and native capabilities.
@@ -29,6 +38,11 @@ func TestDockerKyCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if docker(t, "network", "ls", "-q", "--filter", "name=^"+trustNet+"$") != "" {
+		t.Fatal("fixture network already exists; refusing to touch it")
+	}
+	docker(t, "network", "create", "--subnet", "172.31.254.0/24", "--ip-range", "172.31.254.128/25", trustNet)
+	t.Cleanup(func() { exec.Command("docker", "network", "rm", trustNet).Run() })
 	for _, name := range []string{"kyidentity", "kynotes", "kycalendar", "kyrecovery", "kypulse", "kyyard"} {
 		t.Run(name, func(t *testing.T) {
 			if existing := docker(t, "ps", "-aq", "--filter", "label=com.docker.compose.project=kyq-"+name); existing != "" {
@@ -40,7 +54,7 @@ func TestDockerKyCatalog(t *testing.T) {
 			}
 			port := listener.Addr().(*net.TCPAddr).Port
 			listener.Close()
-			app := cat[name].WithRoute(catalog.Route{Host: name + ".example.test", Forward: fmt.Sprintf("127.0.0.1:%d", port), ForwardAddr: "127.0.0.1", EdgeAddress: "192.0.2.2"})
+			app := cat[name].WithRoute(catalog.Route{Host: name + ".example.test", Forward: fmt.Sprintf("127.0.0.1:%d", port), ForwardAddr: "127.0.0.1", EdgeAddress: edgeIP})
 			root := t.TempDir()
 			runner := remote.Local{}
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -74,6 +88,7 @@ func TestDockerKyCatalog(t *testing.T) {
 				t.Fatal("expected one fixture container")
 			}
 			binary := map[string]string{"kyidentity": "/usr/local/bin/kyidentity", "kynotes": "/kynotes-server", "kycalendar": "/app/kycalendar", "kyrecovery": "/app/kyrecovery", "kypulse": "/app/kypulse", "kyyard": "/app/kyyard-server"}[name]
+			checkEdgeTrust(t, name, id, app.Kubernetes.Ports[0])
 			var caps struct{ Schema, Service string }
 			if err = json.Unmarshal([]byte(docker(t, "exec", id, binary, "apply-setup", "--capabilities")), &caps); err != nil || caps.Service != name {
 				t.Fatal("native setup unavailable", err)
@@ -88,6 +103,30 @@ func TestDockerKyCatalog(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// checkEdgeTrust proves issue #95 on the pinned image: the product believes forwarded headers
+// from the edge's exact address and from no other peer beside it.
+func checkEdgeTrust(t *testing.T, name, id string, port int) {
+	t.Helper()
+	docker(t, "network", "connect", trustNet, id)
+	app := docker(t, "inspect", id, "--format", "{{(index .NetworkSettings.Networks \""+trustNet+"\").IPAddress}}")
+	path := "/api/installer/network"
+	if name == "kynotes" {
+		path = "/api/v1/installer/network"
+	}
+	for peer, trusted := range map[string]bool{edgeIP: true, otherIP: false} {
+		out := docker(t, "run", "--rm", "--network", trustNet, "--ip", peer, kube.CredentialGeneratorImage,
+			"wget", "-qO-", "--header", "X-Forwarded-For: 203.0.113.7", "--header", "X-Forwarded-Proto: https", fmt.Sprintf("http://%s:%d%s", app, port, path))
+		var n struct {
+			ClientIP string `json:"clientIp"`
+			Trusted  bool   `json:"proxyHeadersTrusted"`
+		}
+		want := map[bool]string{true: "203.0.113.7", false: peer}[trusted]
+		if err := json.Unmarshal([]byte(out), &n); err != nil || n.Trusted != trusted || n.ClientIP != want {
+			t.Fatalf("%s from %s: %s, want trusted %v and client %s", name, peer, out, trusted, want)
+		}
 	}
 }
 
