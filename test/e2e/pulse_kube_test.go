@@ -25,8 +25,9 @@ const catalogPulseURLHost = catalogPulseHost + ":30443"
 
 const pulseSetupDir = "/app/data/installer/3d8f1a6b-7c2e-4b9d-a051-6e4f2c8b9a17"
 
-// pulseWatched are the routed apps kyPulse watches in that test: all but NPM and itself.
-var pulseWatched = []string{"hello", "kyidentity", "kyrecovery"}
+// pulseWatched are the routed apps kyPulse watches in that test, sorted: all but NPM and
+// itself. KyDrive, on Docker, is watched through its status_path.
+var pulseWatched = []string{"hello", "kydrive", "kyidentity", "kyrecovery"}
 
 // addCatalogPulse installs the catalog kyPulse behind the edge and selects its setup; apply
 // adds its client to the catalog KyIdentity's first setup beside KyRecovery's.
@@ -48,7 +49,7 @@ func checkCatalogPulse(t *testing.T, ctx context.Context, cs kubernetes.Interfac
 			t.Fatalf("%s = %q", id, status(out, id))
 		}
 	}
-	if !strings.Contains(out, "kyPulse at https://"+catalogPulseURLHost+"/ (sign in through KyIdentity as prepared-admin) watches: "+strings.Join(pulseWatched, ", ")+".") || !strings.Contains(out, "Not watched (no readiness path or single edge route): npm, kydrive.") {
+	if !strings.Contains(out, "kyPulse at https://"+catalogPulseURLHost+"/ (sign in through KyIdentity as prepared-admin) watches: hello, kyidentity, kyrecovery, kydrive.") || !strings.Contains(out, "Not watched (no readiness or status path, or not exactly one edge route): npm.") {
 		t.Fatal("kyPulse handover missing")
 	}
 	c, err := kube.Connect(kubeconfig, "")
