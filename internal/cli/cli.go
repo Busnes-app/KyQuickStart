@@ -169,6 +169,9 @@ func Run(ctx context.Context, args []string, o Options) error {
 		if err := s.runnerImage(); err != nil {
 			return err
 		}
+		if err := mailPasswordFiles(s.plan); err != nil {
+			return err
+		}
 	}
 	var publishPlan func() error
 	if cmd == "apply" {

@@ -66,8 +66,8 @@ func ownerUsername(u string) bool {
 }
 
 // messagePlan refuses, before any connection, a plan its chat stack could not install:
-// no installation_id (the provider ID derives from it), a missing or other chat client, an
-// owner username KyMessages' setup refuses, or an unsafe SMTP password file.
+// no installation_id (the provider ID derives from it), a missing or other chat client, or an
+// owner username KyMessages' setup refuses.
 func messagePlan(st *stack.Stack, cat catalog.Catalog) error {
 	for _, i := range st.Integrations {
 		o := cat[i.Product].ChatOIDC
@@ -94,6 +94,12 @@ func messagePlan(st *stack.Stack, cat catalog.Catalog) error {
 			}
 		}
 	}
+	return nil
+}
+
+// mailPasswordFiles checks each identity.mail.password_file before preflight or apply
+// connects. review does not, so a plan can be reviewed before the file exists.
+func mailPasswordFiles(st *stack.Stack) error {
 	for _, i := range st.Integrations {
 		if i.Identity != nil && i.Identity.Mail != nil && i.Identity.Mail.PasswordFile != "" {
 			pw, err := readMailPassword(i.Identity.Mail.PasswordFile)
