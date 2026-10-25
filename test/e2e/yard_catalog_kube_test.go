@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/cli"
 	"github.com/Busnes-app/kyquickstart/internal/kube"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
@@ -478,9 +479,12 @@ func checkCatalogYard(t *testing.T, ctx context.Context, cs kubernetes.Interface
 			t.Fatalf("container %s: ready %v, restarts %d", s.Name, s.Ready, s.RestartCount)
 		}
 	}
+	// KyYard enrolls agents with its own image, pinned without its tag: it cannot find that
+	// digest itself without a Docker socket.
+	agentImage, _ := catalog.PinnedImage(p.Spec.Containers[0].Image)
 	for _, e := range p.Spec.Containers[0].Env {
-		if e.Name == "KY_ADMIN_PASSWORD" || e.Name == "KY_AGENT_IMAGE" || e.Name == "KY_TRUSTED_PROXIES" && e.Value != "127.0.0.1" {
-			t.Fatalf("KyYard runs with %s", e.Name)
+		if e.Name == "KY_ADMIN_PASSWORD" || e.Name == "KY_AGENT_IMAGE" && e.Value != agentImage || e.Name == "KY_TRUSTED_PROXIES" && e.Value != "127.0.0.1" {
+			t.Fatalf("KyYard runs with %s=%q", e.Name, e.Value)
 		}
 	}
 

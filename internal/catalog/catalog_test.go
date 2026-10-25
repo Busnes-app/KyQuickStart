@@ -270,7 +270,7 @@ func TestKyYardEntry(t *testing.T) {
 		"KY_HOST": "0.0.0.0", "KY_PORT": "9273", "KY_ALLOW_PLAINTEXT_BIND": "true", "KY_TRUSTED_PROXIES": "127.0.0.1", "KY_APP_NAME": "KyYard",
 		"KY_APP_URL": "https://{{host}}", "KY_DB_DRIVER": "sqlite", "KY_DATA_DIR": "/data", "KY_DOCKER_SOCKET": "",
 		"KY_SSO_ENABLED": "false", "KY_SCIM_ENABLED": "false", "KY_BACKUP_DIR": "/data/backups", "KY_BACKUP_KEEP": "7",
-		"KY_BACKUP_DEPOSIT_INTERVAL": "24h", "KY_BACKUP_ALLOW_PRIVATE_RECOVERY": PrivateRecoveryRef, "KY_SUITE_RUNNER_SOCKET": "/run/kyquickstart/sock/runner.sock", "GOMEMLIMIT": "384MiB",
+		"KY_BACKUP_DEPOSIT_INTERVAL": "24h", "KY_BACKUP_ALLOW_PRIVATE_RECOVERY": PrivateRecoveryRef, "KY_AGENT_IMAGE": strings.Replace(a.Images["kyyard"], ":"+a.Version+"@", "@", 1), "KY_SUITE_RUNNER_SOCKET": "/run/kyquickstart/sock/runner.sock", "GOMEMLIMIT": "384MiB",
 	}
 	// Unset: a fixed admin password, the agent image, an external database and the keys KyYard
 	// generates into /data. The only trusted proxy is the pod's loopback.
@@ -841,5 +841,31 @@ func TestWithPrivateRecovery(t *testing.T) {
 		if a.Kubernetes != nil && a.Kubernetes.Env[env] != PrivateRecoveryRef {
 			t.Errorf("%s: WithPrivateRecovery changed the catalog's own env", name)
 		}
+	}
+}
+
+// KyYard finds its own digest only through a Docker socket, which the catalog never gives
+// it, so it enrolls agents with the image its manifest pins, without the tag.
+func TestPinnedImage(t *testing.T) {
+	for ref, want := range map[string]string{
+		"ghcr.io/busnes-app/kyyard:0.4.4@sha256:" + strings.Repeat("a", 64): "ghcr.io/busnes-app/kyyard@sha256:" + strings.Repeat("a", 64),
+		"registry:5000/x/y@sha256:" + strings.Repeat("b", 64):               "registry:5000/x/y@sha256:" + strings.Repeat("b", 64),
+		"registry:5000/x/y:1@sha256:" + strings.Repeat("c", 64):             "registry:5000/x/y@sha256:" + strings.Repeat("c", 64),
+	} {
+		if got, err := PinnedImage(ref); err != nil || got != want {
+			t.Errorf("PinnedImage(%q) = %q, %v; want %q", ref, got, err, want)
+		}
+	}
+	if _, err := PinnedImage("ghcr.io/busnes-app/kyyard:0.4.4"); err == nil {
+		t.Error("a tag without a digest was accepted")
+	}
+	cat, err := Load(Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := cat["kyyard"]
+	want, _ := PinnedImage(a.Images["kyyard"])
+	if a.Kubernetes.Env["KY_AGENT_IMAGE"] != want || !strings.Contains(string(a.Compose), `KY_AGENT_IMAGE: "`+want+`"`) {
+		t.Errorf("KyYard's KY_AGENT_IMAGE is not %s: env %q", want, a.Kubernetes.Env["KY_AGENT_IMAGE"])
 	}
 }

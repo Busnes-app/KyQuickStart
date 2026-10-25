@@ -1114,8 +1114,10 @@ What apply does:
   ServiceAccount token. `app` is KyYard: `/data` on a private 10Gi claim subdirectory,
   readiness `GET /health/ready`, a 20-minute termination grace (5 s drain plus a backup deposit
   on the wire), SQLite with keys it generates into `/data`, no local Docker connection
-  (`KY_DOCKER_SOCKET` empty), SSO and SCIM off (setup refuses either), no `KY_ADMIN_PASSWORD`
-  or `KY_AGENT_IMAGE`, and `KY_TRUSTED_PROXIES` only the pod's loopback: KyYard refuses
+  (`KY_DOCKER_SOCKET` empty), SSO and SCIM off (setup refuses either), no `KY_ADMIN_PASSWORD`,
+  `KY_AGENT_IMAGE` set to KyYard's own pinned image without its tag (KyYard finds that digest
+  only through a Docker socket; unset, it cannot generate an agent enrollment command), and
+  `KY_TRUSTED_PROXIES` only the pod's loopback: KyYard refuses
   to start over HTTPS without a trusted proxy, and no proxy connects over loopback, so the
   edge's forwarded headers are ignored and no client can spoof its address. `runner` runs `kyquickstart
   serve --state /state/runner --socket /run/kyquickstart/sock/runner.sock --pod-volumes`

@@ -283,6 +283,23 @@ const EdgePrefixRef = "{{edge_prefix}}"
 // It may appear in a Compose template and as a whole kubernetes.env value.
 const PrivateRecoveryRef = "{{private_recovery}}"
 
+// PinnedImagePrefix starts a kubernetes.env value "{{pinned_image:<key>}}": the manifest's
+// image <key> as repository@sha256:<digest>, without its tag. KyYard needs that form for the
+// agents it enrolls, and cannot find it itself without a Docker socket.
+const PinnedImagePrefix = "{{pinned_image:"
+
+// PinnedImage returns ref (repository:tag@sha256:digest) as repository@sha256:digest.
+func PinnedImage(ref string) (string, error) {
+	name, digest, ok := strings.Cut(ref, "@sha256:")
+	if !ok || digest == "" {
+		return "", fmt.Errorf("image %q is not pinned by digest", ref)
+	}
+	if slash := strings.LastIndex(name, "/"); strings.Contains(name[slash+1:], ":") {
+		name = name[:slash+1+strings.Index(name[slash+1:], ":")]
+	}
+	return name + "@sha256:" + digest, nil
+}
+
 // MediaAddressRef stands for the plan's media_address of the app.
 const MediaAddressRef = "{{media_address}}"
 
@@ -324,6 +341,7 @@ var routeFuncs = template.FuncMap{
 	"edge_prefix":      func() string { return EdgePrefixRef },
 	"media_address":    func() string { return MediaAddressRef },
 	"private_recovery": func() string { return PrivateRecoveryRef },
+	"pinned_image":     PinnedImage,
 	"smtp_address":     func() string { return SMTPAddressRef },
 	"mail_hostname":    func() string { return MailHostnameRef },
 	"maddy_binary":     func() string { return MaddyBinaryRef },
@@ -383,6 +401,9 @@ func loadApp(fsys fs.FS, dir string) (App, error) {
 	}
 	if m.PodSecurity == "" {
 		m.PodSecurity = "restricted"
+	}
+	if err := m.resolvePinnedImages(); err != nil {
+		return App{}, fmt.Errorf("manifest.yaml: %w", err)
 	}
 	if err := m.validate(dir); err != nil {
 		return App{}, fmt.Errorf("manifest.yaml: %w", err)
@@ -571,6 +592,31 @@ func (a App) WithPrivateRecovery(allow bool) App {
 		a.Kubernetes = &k
 	}
 	return a
+}
+
+// resolvePinnedImages replaces each kubernetes.env value "{{pinned_image:<key>}}" with
+// PinnedImage of the manifest's image <key>, so it follows the pin.
+func (m *Manifest) resolvePinnedImages() error {
+	if m.Kubernetes == nil {
+		return nil
+	}
+	for key, v := range m.Kubernetes.Env {
+		name, ok := strings.CutPrefix(v, PinnedImagePrefix)
+		if !ok {
+			continue
+		}
+		name, ok = strings.CutSuffix(name, "}}")
+		ref, found := m.Images[name]
+		if !ok || !found {
+			return fmt.Errorf("kubernetes.env: %s: %s names no image of this manifest", key, v)
+		}
+		pinned, err := PinnedImage(ref)
+		if err != nil {
+			return fmt.Errorf("kubernetes.env: %s: %w", key, err)
+		}
+		m.Kubernetes.Env[key] = pinned
+	}
+	return nil
 }
 
 // Primary is the role of the app's primary route, "" for an app with one route.
