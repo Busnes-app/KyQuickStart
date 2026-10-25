@@ -20,6 +20,8 @@ services:
       KY_PORT: "8080"
       KY_APP_NAME: "KyCalendar"
       KY_APP_URL: "https://{{host}}"
+      # Forwarded headers only from the edge's own address; none without the edge's egress_address.
+      KY_TRUSTED_PROXIES: "{{edge_prefix}}"
       KY_DB_DRIVER: "sqlite"
       KY_DATA_DIR: "/app/data"
       KY_SSO_ENABLED: "true"

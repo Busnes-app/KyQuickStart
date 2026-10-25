@@ -4,8 +4,8 @@ category: ky
 version: 0.4.7
 # No status_path yet: 0.4.7 serves the suite proxy contract at /api/installer/network
 # (KyIdentity-server#141), but reports proxyHeadersTrusted only for a peer in TRUSTED_PROXY_CIDRS,
-# which this catalog does not set (it defaults to empty), so verify-edge would fail its route.
-# verify-edge skips it until the catalog passes the edge's address.
+# which only its Compose file sets (to the edge's address), so verify-edge would fail its
+# Kubernetes route. verify-edge skips it.
 # Release image of v0.4.7, attested by release-image.yml@refs/tags/v0.4.7 (gh attestation verify;
 # source commit 84ba819 = v0.4.7^{commit}). It advertises setup amendments, disable-user,
 # resync-system (its resync replays removals, which kyquickstart restore requires),

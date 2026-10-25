@@ -88,7 +88,7 @@ Plain terminal planning and command orchestration for the operator-run installer
   every Docker deploy of a routed app joins the edge network (`dockerhost.App.EdgeNetwork`).
   A direct edge has no NPM: `connect`, `preflight`, `deploySteps`, `verify-edge` (connector
   steps' `Verify`) and uninstall (cloudflared redeployed without the app's routes) skip it.
-  `{{edge_address}}` is `Edge.TrustedAddress()`. Guided `plan` offers it on Docker targets only.
+  `{{edge_address}}` (and `{{edge_prefix}}`) is `Edge.TrustedAddress()`. Guided `plan` offers it on Docker targets only.
 - Product adapter discovery, bounded reports and activation verification: `product.go`; only implemented product interfaces enter its registry.
 - `integration.go` owns guided setup selections and unattended `integrate-stack` dispatch,
   which skips installed apps' entries (`apply` runs those).
