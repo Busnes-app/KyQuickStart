@@ -56,7 +56,7 @@ func redactModel(text string, secrets ...string) string {
 		if len(x) < minSecret {
 			continue
 		}
-		for i := range text {
+		for i := 0; i < len(text); i++ { // every byte: a secret may start inside a rune
 			if strings.HasPrefix(text[i:], x) {
 				for j := i; j < i+len(x); j++ {
 					covered[j] = true
