@@ -481,10 +481,17 @@ func (s directoryStep) Apply(ctx context.Context) error {
 		}
 		client, detail = s.sync(ctx)
 	}
-	if detail != "" {
-		return fmt.Errorf("KyIdentity's %s connector has not delivered its directory to %s (%s); until it does, offboarding someone may not reach chat. Fix the connector, then rerun apply", client, s.app, detail)
+	if detail == "" {
+		return nil
 	}
-	return nil
+	fix := "Fix the connector"
+	if strings.HasPrefix(detail, "failed") {
+		// kyidentity.setup creates the connector before the routes (the app's setup needs its
+		// secrets), so a Cloudflare tunnel answers its first event 502 and KyIdentity fences
+		// it; resync never releases a fence.
+		fix = "Its first events may be fenced as uncertain writes: a Cloudflare tunnel answers 502 before " + s.app + "'s route exists. If " + s.app + "'s logs show they never arrived, resume the fenced connector in KyIdentity's admin UI (Connectors > Resume all expired)"
+	}
+	return fmt.Errorf("KyIdentity's %s connector has not delivered its directory to %s (%s); until it does, offboarding someone may not reach chat. %s, then rerun apply", client, s.app, detail, fix)
 }
 
 // firstIdentity is the installed KyIdentity's integration, which composeClients found.
