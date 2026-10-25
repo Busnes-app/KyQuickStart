@@ -73,7 +73,7 @@ func TestKyPostClientFromCatalog(t *testing.T) {
 		"KyIdentity role kypost.user and gets a KyPost account at first sign-in", "opens no mail port", "Native\n  mail, receiving, a relay and domains are not set up",
 		"this release offers no setting to allow one", "about 2.9 GB", "separate from KyIdentity's owner-admin, for when\n     KyIdentity is down", "on nas:\n       docker exec --user kypost kyq-kypost-app-1 cat /kypost/config/first-run-password.txt",
 		"docker exec --user kypost kyq-kypost-app-1 rm /kypost/config/first-run-password.txt", "stops new sign-ins",
-		"To end every live session, on nas:\n       docker restart kyq-kypost-app-1", "Pair it with KyRecovery",
+		"To end every live session, on nas:\n       docker restart kyq-kypost-app-1", "No catalog product can pair with KyRecovery in this release", "The KyPost-KyCalendar invitation pairing is not configured by this installer.",
 	} {
 		if !strings.Contains(s.handover, want) {
 			t.Errorf("handover lacks %q:\n%s", want, s.handover)

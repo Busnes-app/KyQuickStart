@@ -276,6 +276,7 @@ Outstanding human step, unless already done: the KyRecovery custodian ceremony.
   print the custodian cards. KyRecovery refuses every product pairing until then, so mint no
   pairing codes before it. Its local "admin" break-glass password is printed once, to its first
   pod's log (kubectl -n kyq-kyrecovery logs deployment/app), and lost when that pod is replaced.
+  No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery.
 `
 
 // identityHandover says where KyIdentity's setup left the owner's two generated passwords, in
@@ -290,6 +291,8 @@ KyIdentity at https://%[1]s/: the owner's accounts are %[2]s (administration onl
   (everyday use). Read each one's generated first password, sign in, change it and enrol MFA:
     %[4]s cat %[5]s
     %[4]s cat %[6]s
+  MFA: enrol TOTP or a passkey. KyAuth push approval does not deliver: this installer
+  configures no push relay.
 `, host, n.Admin.Username, n.Everyday.Username, read, path.Join(scope, "admin.password"), path.Join(scope, "everyday.password")) + where
 }
 
@@ -307,9 +310,7 @@ const notesHandover = `
 KyNotes at https://%[1]s/: sign in through KyIdentity as %[2]s (administers only; it cannot
   open notes) or %[3]s, whose account KyNotes creates at first sign-in. Assign KyIdentity role
   kynotes.user to anyone else who should sign in. KyNotes has no local password.
-  Outstanding human step: on its Backups screen, as %[2]s, pair it with KyRecovery using a
-  one-time code from KyRecovery's administrator, or pin the suite public key by hand. KyNotes
-  makes no backups until then.
+  No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery.
 `
 
 // calendarHandover is printed after every apply that installs KyCalendar; %[4]s is kubectl
@@ -317,14 +318,12 @@ KyNotes at https://%[1]s/: sign in through KyIdentity as %[2]s (administers only
 const calendarHandover = `
 KyCalendar at https://%[1]s/: sign in through KyIdentity as %[2]s (its console only; it has no
   calendars) or %[3]s (calendars). Its setup created exactly these two; it admits no one else.
-  Outstanding human steps:
-  1. Its local "admin" break-glass account. Read its one-time password:
+  Outstanding human step: its local "admin" break-glass account. Read its one-time password:
        %[4]s -n kyq-kycalendar exec deployment/app -- cat /app/data/initial-admin-password
      Sign in with it once at https://%[1]s/ and change it. Only after that, delete the file:
        %[4]s -n kyq-kycalendar exec deployment/app -- rm /app/data/initial-admin-password
-  2. On its Backup & recovery screen, as %[2]s, pair it with KyRecovery using a one-time code
-     from KyRecovery's administrator, or pin the suite public key by hand. It makes no backups
-     until then.
+  The KyPost-KyCalendar invitation pairing is not configured by this installer.
+  No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery.
 `
 
 // dnsHandover is printed after every apply that installs KyDNS; %[3]s is its DNS address,
@@ -338,9 +337,8 @@ KyDNS at https://%[1]s/: sign in through KyIdentity as %[2]s, the one account it
      (ssh -t, so the password does not echo), set one:
        docker exec -it kyq-kydns-app-1 /usr/local/bin/kydns admin reset-password
      It asks for the password twice. Use it only to recover, at https://%[1]s/login.
-  3. Pair it with KyRecovery on its Backups screen, signed in as that local administrator:
-     %[2]s cannot enroll its first recovery key. It makes no backups until then.
   Notes:
+  - No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery.
   - Firewall: ports 53 and %[6]d are open on %[5]s. Its admin UI on %[6]d trusts forwarded
     requests only from egress_address %[7]s; apply checked that the edge is trusted and this
     workstation is refused. DNS answers the private ranges KyDNS sees. Both rest on the Docker
