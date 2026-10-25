@@ -297,11 +297,11 @@ func recoveryPairing(state, host string, t stack.Target) string {
 		mint = "docker exec kyq-kyrecovery-app-1"
 	}
 	return fmt.Sprintf(`After the ceremony, pair each product by hand; until then no product has a backup.
-  For each, mint a single-use code (valid 15 minutes) and enter it, with KyRecovery's URL
-  https://%s/, on the product's backup page as its administrator:
+  For each, mint a single-use code (valid 15 minutes) on KyRecovery's target:
     %s /app/kyrecovery pair generate --service <app> --app <name>
-  The code is a secret: type it, do not paste it into chat or tickets. KyRecovery's pairings
-  page then lists the product and, after its first deposit, its last backup.`, host, mint)
+  As the product's administrator, enter it on the product's backup page together with
+  KyRecovery's URL, https://%s/. The code is a secret: type it, never paste it into chat.
+  KyRecovery's pairings page then lists the product and, after its first deposit, its last backup.`, mint, host)
 }
 
 // identityHandover says where KyIdentity's setup left the owner's two generated passwords, in

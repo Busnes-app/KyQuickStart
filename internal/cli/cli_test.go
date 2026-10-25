@@ -201,5 +201,11 @@ func TestRecoveryPairing(t *testing.T) {
 		if !strings.Contains(c.text, c.mint) || !strings.Contains(c.text, "https://recovery.example.com/") {
 			t.Errorf("pairing step lacks %q or KyRecovery's URL:\n%s", c.mint, c.text)
 		}
+		// apply's output reads a line whose first word holds a dot as a step result.
+		for _, line := range strings.Split(c.text, "\n") {
+			if f := strings.Fields(line); len(f) > 0 && strings.Contains(f[0], ".") {
+				t.Errorf("pairing step line reads as a step result: %q", line)
+			}
+		}
 	}
 }
