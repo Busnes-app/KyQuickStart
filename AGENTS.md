@@ -395,9 +395,11 @@ edge compatibility: `docs/redirect.md`.
   app is on the edge's target or on a Docker target, never in another cluster; a cluster edge's
   egress admits such an upstream's `forward_host` (an IP) and port alone. A product's
   trusted-proxy value is unset or loopback only (forwarded headers ignored), or exactly where its edge
-  connects from (`{{edge_address}}`: `egress_address`, or a `cloudflare-direct` edge's
-  `connector_cidr`), never `0.0.0.0/0` or a Docker gateway; `verify-edge` checks
-  the client address the product reports. Per-product status: `docs/redirect.md`.
+  connects from (`{{edge_address}}` or `{{edge_prefix}}`: `egress_address`, or a `cloudflare-direct` edge's
+  `connector_cidr`), never a range, `0.0.0.0/0` or a Docker gateway; `verify-edge` checks
+  the client address the product reports. On Docker every Ky product trusts its edge's address;
+  on Kubernetes none does (no stable address only NPM connects from). Per-product status:
+  `docs/guided-setup.md` ("Forwarded headers") and `docs/redirect.md`.
 - Each route is internal (`allow_cidrs` clients only) or external (the public connection);
   unmarked takes its edge's (`lan` internal, tunnel external). A tunnel edge may carry both, never
   only internal ones, and its connector never carries or reaches an internal route. Catalog
@@ -497,8 +499,9 @@ edge compatibility: `docs/redirect.md`.
 - A Compose template may write `{{host}}`, `{{forward}}` (the route's
   `forward_host:forward_port`, an IP of the Docker target, where the app publishes its port),
   `{{forward_addr}}` (that IP alone), `{{hostname}}` (the route's hostname without a client
-  port) and `{{edge_address}}` (the route's edge's `egress_address`; a plan whose edge has none
-  is refused before connecting). An app whose manifest declares `routes` (KyMessages, Docker only)
+  port), `{{edge_address}}` (the route's edge's `egress_address`; a plan whose edge has none
+  is refused before connecting) and `{{edge_prefix}}` (that address as a `/32` or `/128`, empty
+  when the edge has none). An app whose manifest declares `routes` (KyMessages, Docker only)
   takes one plan route per role, the primary without `role`, all on one `forward_host` (one LAN
   IPv4 of the target: no wildcard, loopback, link-local, multicast, IPv6 or name) and one
   `forward_port` per service port, and writes `{{host "<role>"}}`,
@@ -559,7 +562,7 @@ calls and kind nodes must carry their own explicit bounds.
 - `make workflow-lint`: needs Docker (CI runs it in `vulncheck`); actionlint v1.7.12 on every
   workflow and offline, digest-pinned zizmor (medium and up) on `release-image.yml` and
   `dependency-release.yml`.
-- `go test -tags e2e ./test/e2e -run '^TestDockerKy'`: pinned-image Docker startup/readiness/native capabilities/restart for every new template, plus KyYard's private runner socket, credential isolation and container recreation.
+- `go test -tags e2e ./test/e2e -run '^TestDockerKy'`: pinned-image Docker startup/readiness/native capabilities/restart for every new template, forwarded headers believed from the rendered edge address and not from a peer beside it, plus KyYard's private runner socket, credential isolation and container recreation.
 - With `KYQ_TEST_EURO_OFFICE=1`, `TestKubernetesEuroOffice` (own kind cluster, 5 GiB node) installs NPM,
   KyIdentity and `euro-office` with KyDrive on an sshd target: baseline pod and its capabilities,
   seeded claims, the copied secret, `/healthcheck` through the edge, a signed KyDrive callback

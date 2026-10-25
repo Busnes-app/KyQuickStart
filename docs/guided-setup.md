@@ -601,6 +601,54 @@ Edge prompts support existing NPM/certificates plus an existing Cloudflare tunne
 server. Connector credentials stay in protected target files, never in the wizard. See
 [edge setup](edge.md) for the supported paths.
 
+## Forwarded headers (trusted proxy)
+
+A product believes `X-Forwarded-For` and `X-Forwarded-Proto` only from the peers its
+trusted-proxy setting names. Unset, it ignores them: no client can forge its address, but
+every request through the edge looks like the edge, so rate limits and audit logs see one
+client. The catalog never trusts a range, only the one address the edge connects from.
+
+| Product | Setting | Docker | Kubernetes |
+| --- | --- | --- | --- |
+| KyIdentity | `TRUSTED_PROXY_CIDRS` | Edge address as `/32` or `/128`; empty without one | Unset: the NPM pod is every client |
+| KyCalendar | `KY_TRUSTED_PROXIES` | Edge address as `/32` or `/128`; empty without one | Unset: the NPM pod is every client |
+| KyRecovery | `KYRECOVERY_TRUSTED_PROXIES` | Edge address as `/32` or `/128`; empty without one | Unset: the NPM pod is every client |
+| kyPulse | `KYPULSE_TRUSTED_PROXIES` | Edge address as `/32` or `/128`; empty without one | Unset: the NPM pod is every client |
+| KyNotes | `KYNOTES_SERVER_TRUSTED_PROXIES` | Edge address as `/32` or `/128`; KyNotes' loopback default without one | KyNotes' default `127.0.0.1/32`: the NPM pod is every client |
+| KyDrive | `KY_TRUSTED_PROXIES` | Edge address as `/32` or `/128`; empty without one | Docker only |
+| KyPost | `TRUSTED_PROXY_CIDRS` | Edge address as `/32` or `/128`; empty without one | Docker only |
+| KyMessages | `KY_TRUSTED_PROXIES` | Edge address, required | Docker only |
+| KyDNS | `KYDNS_TRUSTED_PROXIES` | Edge address, required; `kydns.gate` refuses a shared one | Docker only |
+| KyYard | `KY_TRUSTED_PROXIES` | Edge address, required (KyYard refuses HTTPS without a proxy) | `127.0.0.1`: no proxy connects over loopback, so the edge is every client |
+
+The edge address is the route's edge's `egress_address`, or a `cloudflare-direct` edge's
+cloudflared (`connector_cidr`). Guided `plan` does not ask for `egress_address`: set it in
+`stack.yaml` ([edge setup](edge.md)). For NPM on a cluster it is the IP of the node running
+NPM, since pods leave the cluster through their node's address. That `/32` is exact but not
+NPM's alone: every pod on that node, and the node itself, leaves from it and could forge
+headers to a product that trusts it. If NPM moves node, set it again and rerun `apply`; until
+then the products ignore the edge's headers. Never set it to a Docker network gateway: a Docker
+host that hides client addresses (its userland proxy) shows every peer from that gateway.
+There, leave the product untrusted.
+
+Kubernetes is not fixed. NPM's pod address changes whenever its pod is replaced, and no stable
+address exists that only NPM connects from:
+
+- A ClusterIP Service does not help: it rewrites the destination, and NPM's requests still come
+  from its pod address.
+- The pod network (or the node's pod CIDR) lets every pod in it forge headers. The app
+  namespaces' default-deny ingress would admit only the edge's pods, but whether the cluster's
+  network plugin enforces NetworkPolicy is unproven, so the catalog does not rely on it.
+- The NPM pod's current address, written at apply, fails closed after each NPM restart until the
+  next `apply`, and fails open if another pod is given the old address.
+- A fixed pod address is a network-plugin feature (Calico's `cni.projectcalico.org/ipAddrs`;
+  kind's kindnet and flannel have none), not portable and not testable in CI.
+- `hostNetwork` NPM would leave from the node address, shared with every host-network process,
+  and Pod Security `baseline` refuses it.
+- A product change could identify the edge without an address: the PROXY protocol, mTLS from
+  NPM, or a headless Service name resolved per connection. Each needs a release of every
+  product.
+
 ## Catalog KyIdentity on Kubernetes
 
 Kubernetes targets also need `kubectl` on the workstation, at the cluster's minor version:
@@ -685,8 +733,9 @@ changed intent fails with the product's refusal. `integrate-stack` skips install
 - On a KyIdentity 0.4.2, which has no `disable-user`, the step changes nothing and
   `apply` prints that `kyq-bootstrap` stays an active administrator. Disable it in the admin
   UI after the owner's first sign-in.
-- Not yet: `TRUSTED_PROXY_CIDRS` is unset, so KyIdentity sees the edge pod as every client;
-  SCIM `active:false` proof (gate G2); backups (the
+- `TRUSTED_PROXY_CIDRS` is unset here, so KyIdentity sees the edge pod as every client
+  ([forwarded headers](#forwarded-headers-trusted-proxy)).
+- Not yet: SCIM `active:false` proof (gate G2); backups (the
   `data` volume is declared; `kyquickstart backup` covers Docker apps only).
 - 0.4.4's resync replays removals and it ships `resync-system`, which `kyquickstart restore`
   runs after restoring an app whose people come from KyIdentity. An upgrade from 0.4.3 needs
@@ -757,8 +806,9 @@ secrets never reach the workstation, its output or its state.
   product's claim) comes after the ceremony and with each product's own backup setup; no
   catalog product pairs yet. The backup status and restore-start screens are KyRecovery's own;
   restic status needs `KYRECOVERY_RESTIC_DIR` and the rest-server, which is not installed yet.
-- Not yet: `KYRECOVERY_TRUSTED_PROXIES` is unset, so its rate limits see the edge pod as every
-  client; the pod reaches KyIdentity at its public issuer URL, so cluster DNS
+- `KYRECOVERY_TRUSTED_PROXIES` is unset here, so its rate limits see the edge pod as every
+  client ([forwarded headers](#forwarded-headers-trusted-proxy)).
+- The pod reaches KyIdentity at its public issuer URL, so cluster DNS
   and the edge must answer that name from inside the cluster.
 
 ## Catalog kyPulse on Kubernetes
@@ -816,7 +866,9 @@ other installation's.
   the owner's admin account, and KyIdentity refuses the everyday one for this client); no log
   sources (none of the catalog apps sends logs yet: a source needs a sender holding its token,
   such as `kypulse-send`); the alert webhook is set in its UI;
-  KyRecovery pairing and backups wait on the ceremony; `KYPULSE_TRUSTED_PROXIES` is unset.
+  KyRecovery pairing and backups wait on the ceremony.
+- `KYPULSE_TRUSTED_PROXIES` is unset here, so kyPulse sees the edge pod as every client
+  ([forwarded headers](#forwarded-headers-trusted-proxy)).
   kyPulse 0.4.2 verifies directory events as an HMAC of the body alone while
   KyIdentity 0.4.2 signs them with `syncauth` v1, so directory offboarding events to kyPulse are
   expected to be refused until kyPulse adopts `syncauth` (read from both sources, not run).
@@ -890,9 +942,9 @@ backups until then.
 
 Limits:
 
-- `TRUSTED_PROXY_CIDRS` is left at KyNotes' default (loopback only): forwarded headers from the
+- Its trusted proxies stay at KyNotes' default (loopback only): forwarded headers from the
   edge are ignored, so no client can spoof its address into the rate limiter. KyNotes then
-  rate-limits by the edge pod's address.
+  rate-limits by the edge pod's address ([forwarded headers](#forwarded-headers-trusted-proxy)).
 - Not yet, or unproven: sign-out is local (KyIdentity's setup registers no
   back-channel logout); a directory event (offboarding) reaching KyNotes is not proven live;
   KyRecovery pairing, `KYNOTES_BLOB_TARGET` and restic/K8up blob backups are not configured.
@@ -944,7 +996,7 @@ What apply does:
   termination grace (5 s HTTP drain plus a backup deposit already on the wire). It has no health
   endpoint; readiness is `GET /api/installer/network`. SSO is on, automatic provisioning off,
   `KY_APP_URL` comes from the route, and `KY_TRUSTED_PROXIES` is unset, so forwarded headers
-  from the edge are ignored and no client can spoof its address.
+  from the edge are ignored and no client can spoof its address ([forwarded headers](#forwarded-headers-trusted-proxy)).
 - `kycalendar.setup`, after its health and before the edges, like kyPulse's (KyCalendar does
   not probe the issuer at setup and has no open first-run web setup): KyIdentity's
   `--export-client` frame is read into memory; KyIdentity's read-only `apply-setup --check` of
@@ -1186,9 +1238,9 @@ graceful restart and its live `--check`.
   catalog pin is refused). KyDrive's own `KYDRIVE_BULK_BACKUP_REPOSITORY` stays unset: the installer's
   snapshot is the independent copy, and the `backups` directory, on the same disk as `data`, is not.
 - With `euro-office` in the plan, see "Catalog Euro-Office on Kubernetes".
-- Not yet: recovery pairing;
-  `KY_TRUSTED_PROXIES` (unset, so KyDrive sees the edge as every client and `verify-edge`
-  fails for its route); kyPulse does not watch it (no readiness path on Docker).
+- `KY_TRUSTED_PROXIES` is the edge's `egress_address` as a `/32` or `/128`. Without one it is
+  empty and KyDrive sees the edge as every client ([forwarded headers](#forwarded-headers-trusted-proxy)).
+- Not yet: recovery pairing; kyPulse does not watch it (no readiness path on Docker).
 
 ## Catalog Euro-Office on Kubernetes
 
@@ -1513,7 +1565,7 @@ What apply does:
   writes its key under `~/.ollama`). Health is its `/api/health`, with a 180 s start allowance.
 - `SERVER_BASE_URL` is `https://<route URL host>`: its callback, and Secure session cookies.
   Native mail, receiving and the receiver are off. The catalog sets no `PAIRING_SECRET`,
-  `POW_SECRET`, `BOOTSTRAP_ADMIN_*`, `TRUSTED_PROXY_CIDRS`, TLS or SMTP settings: KyPost
+  `POW_SECRET`, `BOOTSTRAP_ADMIN_*`, TLS or SMTP settings: KyPost
   generates its own keys in `/kypost/private` at first start, and its break-glass password goes
   to a file, never into `docker inspect`.
 - `kypost.setup`, after its health and before the edges (KyPost's setup makes no call to
@@ -1567,10 +1619,11 @@ Limits and residuals:
   authority, so the catalog gives KyPost no `directory_path`. Native mail adds the directory on
   a later pass signed with the client secret instead (below). Back-channel logout is not
   registered either.
-- Forwarded headers are untrusted (`TRUSTED_PROXY_CIDRS` empty), so no client can spoof its
-  address, but KyPost sees the edge as every client: everyone shares one rate-limit bucket, and
-  `verify-edge` fails for its route. The Docker NAT on a host can also hide the edge's own
-  address, so an exact trusted proxy cannot be proven there.
+- `TRUSTED_PROXY_CIDRS` is the edge's `egress_address` as a `/32` or `/128`. Without one it is
+  empty: no client can spoof its address, but KyPost sees the edge as every client, everyone
+  shares one rate-limit bucket and `verify-edge` fails for its route. A Docker host that hides
+  client addresses shows KyPost the gateway instead, so the edge stays untrusted there
+  ([forwarded headers](#forwarded-headers-trusted-proxy)).
 - Ollama pulls its model (`nemotron-3-nano:4b`, about 2.9 GB) by tag at first start and retries
   until it has it. Weights are data, not code, and the image's hash-pinned embedding sorter
   labels mail meanwhile. KyPost also checks GitHub for new releases.
@@ -2031,14 +2084,14 @@ All catalog Ky products support Docker targets. KyIdentity, KyNotes, KyCalendar,
 KyRecovery, kyPulse and KyYard have per-app Compose templates beside their Kubernetes
 manifests; KyDrive, KyPost, KyDNS and KyMessages are Docker only (sections above).
 The same pinned product images, explicit setup selections and owner/everyday
-separation apply. On Docker these six are tested for startup, readiness, native setup capability
-and restart (`TestDockerKyCatalog`); sign-in through an edge is tested on their Kubernetes
+separation apply. On Docker these six are tested for startup, readiness, native setup capability,
+restart and forwarded headers believed from the edge's address alone (`TestDockerKyCatalog`); sign-in through an edge is tested on their Kubernetes
 placement only ([edge compatibility](redirect.md#edge-compatibility)).
 
 Choose the Docker target in `apps` and its integration. Give each app one edge
 route with a literal Docker-host `forward_host` and unused `forward_port`; the
-installer publishes only that address. KyYard additionally requires its edge's
-exact `egress_address` and trusts that one address (`/32` for IPv4, `/128` for IPv6). Use the product's existing fixed
+installer publishes only that address. Each product trusts forwarded headers from its edge's
+exact `egress_address` alone ([forwarded headers](#forwarded-headers-trusted-proxy)); KyYard requires it. Use the product's existing fixed
 bundle path and an `identity_client`; KyIdentity still takes its typed identity
 preparation. Keep protected credentials on targets. Every template uses the SSH
 user's UID/GID and private bind directories that the driver creates before Compose.
