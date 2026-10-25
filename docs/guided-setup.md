@@ -677,6 +677,15 @@ changed intent fails with the product's refusal. `integrate-stack` skips install
   KyIdentity refuses private destinations without it. It opens RFC 1918, ULA and
   carrier-grade NAT (`100.64.0.0/10`) only; loopback, link-local and cloud metadata addresses
   stay refused, and device-supplied push endpoints never get it.
+- `kyidentity.setup` (or the app's `.amend.<app>`) creates each app's signed directory
+  connector, and KyIdentity sends its first events at once, before the edges route to the
+  app: the app's setup, and KyMessages' deploy, need the secrets that setup creates. On a
+  `cloudflare` edge the tunnel answers those events 502 and KyIdentity fences them as
+  uncertain writes, which no resync releases. If apply stops at `<app>.directory` after a
+  first run, and the app's logs show the events never arrived, resume the fenced connector in
+  KyIdentity's admin UI (Connectors > Resume all expired), then rerun apply. Only KyMessages
+  has a directory step; after a first run on a `cloudflare` edge, check the other apps'
+  connectors (KyNotes, KyCalendar) the same way.
 - `kyidentity.retire-bootstrap` follows the setup and its amendments. With KyIdentity 0.4.3 or
   later (capability `disable-user`) it runs `kyidentity disable-user --username kyq-bootstrap
   --require-active-admin <owner admin>`, which revokes the account's sessions and deletes
@@ -1818,6 +1827,7 @@ integrations:
   has delivered the console's directory, so it reports KyMessages set up only once the console
   holds it (the console's first deliveries retry while it starts). KyIdentity 0.4.6 sends a
   removal made before that delivery; 0.4.5 and earlier dropped it, which this step also covered.
+  A first event fenced on a `cloudflare` edge stops it until resumed (KyIdentity section above).
 - **Adding and removing people.** To let someone chat, assign them to both "KyMessages" and
   "KyMessages chat": the console's directory webhook, which keeps a person's chat, follows
   "KyMessages". A person the console adds this way is an ordinary member (role `user`, no
