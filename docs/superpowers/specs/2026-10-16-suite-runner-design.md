@@ -172,7 +172,7 @@ claim for `/state`, and a NetworkPolicy allowing egress only to DNS, the API ser
 Docker targets' SSH). The catalog KyYard (`kubernetes.suite_runner`) runs it as container
 `runner` in KyYard's own pod in `kyq-kyyard` instead: the same command, restricted security
 context and resources, a 1Gi `runner-state` claim at `/state` (not backed up: a fresh `handoff`
-recreates its key and token), and a `runner-socket` emptyDir at `/run/kyquickstart`, whose `sock` directory (created private by the
+recreates its key and token; the init container keeps its `runner` directory owner-only), and a `runner-socket` emptyDir at `/run/kyquickstart`, whose `sock` directory (created private by the
 init container) is all KyYard's container mounts, at `/run/kyquickstart/sock`
 (`KY_SUITE_RUNNER_SOCKET`): KyYard checks every ancestor of its socket, so it must not see the
 kubelet's world-writable volume root. KyYard mounts no runner state. Hand

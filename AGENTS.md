@@ -491,7 +491,9 @@ edge compatibility: `docs/redirect.md`.
   `storage_class` sets every claim's class and must exist at preflight; without it claims need a
   default class. A claim's class never changes: `apply` refuses an existing claim of another class.
   A non-root app mounts each claim through a 0700 `private` subdirectory that an init container
-  (the pinned BusyBox helper, the app's uid) creates. `kubernetes.termination_grace_seconds`
+  (the pinned BusyBox helper, the app's uid) creates and, on every start, strips of group and
+  other access throughout (KyYard's `/state/runner` too); its pod's `fsGroup` uses
+  `OnRootMismatch`, so the kubelet no longer makes 0600 keys 0660 at each mount (#105). `kubernetes.termination_grace_seconds`
   (0-3600, 0 keeps the default) sets the pod's termination grace. A `kubernetes.env` value may contain
   `{{host}}`, replaced by the URL host of the app's one edge route (hostname, plus `:client_port` when an internal route's is not 443); no other template syntax.
 - A Compose template may write `{{host}}`, `{{forward}}` (the route's
@@ -603,7 +605,8 @@ calls and kind nodes must carry their own explicit bounds.
   `--check`, the socket shared 0600/0700 as uid 10001, admin sign-in and the everyday account
   refused at KyIdentity's gate, KyYard's `/api/suite/status` read through the socket, the printed break-glass and handoff lines run as printed, an
   upgrade of every app through the socket that leaves KyYard's pod alone, `runner_host` for
-  KyYard, the workstation apply refused until revoke, and no credential in output or state.
+  KyYard, its pod deleted with both claims loosened as an fsGroup pass leaves them and back
+  ready with its and the runner's keys 0600 and the admin's session intact, the workstation apply refused until revoke, and no credential in output or state.
   The catalog KyDNS joins the Docker target by amendment: hardened container as the target
   user, setup files placed from the host, live `--check`, authoritative NXDOMAIN over UDP and
   TCP on the forward address, its transport gate refusing direct requests with forged headers

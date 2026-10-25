@@ -274,6 +274,56 @@ func TestKubernetesKyYard(t *testing.T) {
 	}
 	runnerSecrets := runnerCredentials(t, ctx, cs, connected, ns, pod)
 
+	// #105: a recreated pod comes back. Loosen KyYard's and the runner's claims as the
+	// kubelet's fsGroup pass did before OnRootMismatch (files g+rw, directories g+rwxs; kind's
+	// local-path claims get no such pass), delete the pod, and its init container must restore
+	// owner-only modes before either container starts.
+	claims := func(pod, name, script string) string {
+		t.Helper()
+		ephemeral(t, ctx, cs, pod, corev1.EphemeralContainer{EphemeralContainerCommon: corev1.EphemeralContainerCommon{
+			Name: name, Image: curlImage, Command: []string{"sleep", "3600"},
+			VolumeMounts: []corev1.VolumeMount{{Name: "vol-data", MountPath: "/v/data"}, {Name: "runner-state", MountPath: "/v/state"}},
+		}})
+		out, err := connected.Exec(ctx, ns, pod, name, []string{"sh", "-ec", script})
+		if err != nil {
+			t.Fatalf("%s: %v %s", name, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	const private = "/v/data/private /v/state/runner"
+	// KyYard's keys, the runner's key and identity, and both private directories.
+	const modes = "stat -c %a /v/data/private/session.key /v/data/private/encryption.key /v/data/private/instance.key /v/state/runner/ssh/id_ed25519 /v/state/runner/runner.json /v/data/private /v/state/runner"
+	if got := claims(pod, "loosen", "chmod -R g+rw "+private+"; find "+private+" -type d -exec chmod g+xs {} +; "+modes); got != strings.Repeat("660\n", 5)+"2770\n2770" {
+		t.Fatalf("loosened modes:\n%s", got)
+	}
+	if err := cs.CoreV1().Pods(ns).Delete(ctx, pod, metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	old := pod
+	for deadline := time.Now().Add(5 * time.Minute); ; time.Sleep(2 * time.Second) {
+		if _, pod, _, err = connected.AppPod(ctx, "kyyard"); err == nil && pod != old {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("KyYard not ready after its pod was deleted: %v", err)
+		}
+	}
+	if s := yardPodState(t, ctx, cs, pod); !strings.Contains(s, " app=0") || !strings.Contains(s, " runner=0") {
+		t.Fatalf("recreated pod restarted: %s", s)
+	}
+	if got := claims(pod, "verify", modes); got != strings.Repeat("600\n", 5)+"2700\n2700" {
+		t.Fatalf("modes after the pod was recreated:\n%s", got)
+	}
+	// The admin's session survived (same session.key) and KyYard still reaches the same runner.
+	var recreated struct {
+		Runner struct {
+			RunnerID string `json:"runner_id"`
+		} `json:"runner"`
+	}
+	if r, b := send(t, ctx, admin, "GET", "https://"+catalogYardURLHost+"/api/suite/status", nil, ""); r.StatusCode != 200 || json.Unmarshal(b, &recreated) != nil || recreated.Runner.RunnerID != runnerIDs[0] {
+		t.Fatalf("KyYard's suite status after the pod was recreated: %d %s", r.StatusCode, b)
+	}
+
 	// The workstation may not redeploy KyYard under its runner; revoke gives the plan back.
 	if _, err := run("under the runner", "apply"); err == nil || !strings.Contains(err.Error(), "owned_by_runner") {
 		t.Fatalf("workstation apply under the runner: %v", err)
