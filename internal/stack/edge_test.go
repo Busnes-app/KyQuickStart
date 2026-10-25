@@ -436,6 +436,8 @@ func TestDomains(t *testing.T) {
 		"internal route under internal": {withDomains(strings.Replace(lan, "hello.example.com", "hello.lan.example.com", 1), "lan.example.com", "example.com"), true},
 		"internal route outside it":     {withDomains(lan, "lan.example.com", "example.com"), false},
 		"external route under external": {withDomains(kubeEdgeStack, "lan.example.com", "example.com"), true},
+		"external route on the apex":    {withDomains(kubeEdgeStack, "lan.example.com", "hello.example.com"), true},
+		"internal route on the apex":    {withDomains(lan, "hello.example.com", "pub.example.net"), false},
 		"external route in internal":    {withDomains(strings.Replace(kubeEdgeStack, "hello.example.com", "hello.lan.example.com", 1), "lan.example.com", "example.com"), false},
 		"external route elsewhere":      {withDomains(kubeEdgeStack, "lan.example.com", "example.net"), false},
 		"same domain":                   {withDomains(kubeEdgeStack, "example.com", "example.com"), false},

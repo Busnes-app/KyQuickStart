@@ -711,8 +711,13 @@ func showPlan(out io.Writer, st *stack.Stack, cat catalog.Catalog) {
 	for _, e := range st.Edges {
 		if e.Direct() {
 			fmt.Fprintf(out, "Edge %s: Cloudflare tunnel %s straight to the apps, no NPM; cloudflared at %s on Docker network %s. Routes are public: no NPM path blocks or allow-list\n", e.Target, e.Connector.TunnelID, e.ConnectorCIDR, e.Connector.Network)
+		} else if slices.ContainsFunc(st.Apps, func(a stack.App) bool { return a.Name == "npm" && a.Target == e.Target }) {
+			fmt.Fprintf(out, "Edge %s: NPM installed by this plan (catalog npm), admin API %s, via %s\n", e.Target, e.NPMURL, e.Provider)
 		} else {
 			fmt.Fprintf(out, "Edge %s: existing NPM %s via %s\n", e.Target, e.NPMURL, e.Provider)
+		}
+		for _, c := range e.Certificates {
+			fmt.Fprintf(out, "  Certificate %s requested by NPM from Let's Encrypt (DNS-01, %s): %s\n", c.Name, c.DNSProvider, strings.Join(c.Domains, ", "))
 		}
 		if e.Connector != nil && !e.Direct() {
 			fmt.Fprintln(out, "  Deploy connector on existing Docker network", e.Connector.Network)
@@ -722,13 +727,13 @@ func showPlan(out io.Writer, st *stack.Stack, cat catalog.Catalog) {
 			if r.Role != "" {
 				role = " (" + r.App + " " + r.Role + ")"
 			}
-			fmt.Fprintf(out, "  https://%s -> %s:%d%s\n", r.Hostname, r.ForwardHost, r.ForwardPort, role)
+			fmt.Fprintf(out, "  https://%s -> %s:%d%s\n", e.URLHost(r), r.ForwardHost, r.ForwardPort, role)
 		}
 	}
 	if len(st.Apps) == 0 {
 		fmt.Fprintln(out, "No deployable apps selected. Existing product setup requires an explicit integration selection and integrate-stack.")
 	}
-	fmt.Fprintln(out, "Skipping a product preserves any existing installation and data.\nAutomatic suite provisioning, new NPM, certificates and tunnel/VPS provisioning remain unavailable.")
+	fmt.Fprintln(out, "Skipping a product preserves any existing installation and data.\nNo tunnel, frp server or VPS is provisioned: connectors use existing credentials. NPM is installed only on Kubernetes (catalog npm).")
 }
 
 func review(args []string, o Options) error {

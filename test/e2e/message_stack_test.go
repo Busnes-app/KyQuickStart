@@ -458,7 +458,7 @@ func TestKubernetesKyMessage(t *testing.T) {
 
 	// AC24: the handover, and its init-admin line run as printed on the target.
 	for _, want := range []string{"chat at https://" + messageHosts["chat"] + ":30443/ (Element)", "Server name " + messageHosts["server_name"], "TCP 7881 and UDP 7882",
-		`both "KyMessages" and "KyMessages chat"`, "sign-out does not end chat sessions", "pair it with KyRecovery",
+		`both "KyMessages" and "KyMessages chat"`, "sign-out does not end chat sessions", "No catalog product can pair with KyRecovery in this release",
 		"KyIdentity sends that mail through " + mailHost + ":1025.", `Removing someone from "KyMessages chat" alone stops only their new chat sign-ins`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("handover lacks %q", want)

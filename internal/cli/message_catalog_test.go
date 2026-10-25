@@ -297,8 +297,6 @@ func TestKyMessagePlanRefusals(t *testing.T) {
 		"bad everyday username": {route("everyday: {username: owner,", "everyday: {username: o,"), "identity.everyday.username"},
 		"plaintext smtp":        {mail("none", pw), "identity.mail.security"},
 		"relative password":     {mail("starttls", "smtp.password"), "identity.mail.password_file"},
-		"symlinked password":    {mail("starttls", link), "identity.mail.password_file"},
-		"loose password":        {mail("starttls", loose), "identity.mail.password_file"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newMessageFixture(t)
@@ -322,6 +320,31 @@ func TestKyMessagePlanRefusals(t *testing.T) {
 	messageStackPlan(t, f, mail("starttls", pw))
 	if err := f.run("review"); err != nil {
 		t.Fatal(err)
+	}
+	// review is offline and reads no password file; preflight and apply refuse an unsafe or
+	// missing one before connecting.
+	for name, file := range map[string]string{"symlinked": link, "loose": loose, "missing": filepath.Join(t.TempDir(), "absent")} {
+		t.Run(name+" password", func(t *testing.T) {
+			f := newMessageFixture(t)
+			messageStackPlan(t, f, mail("starttls", file))
+			dialed := false
+			saved := dialTarget
+			defer func() { dialTarget = saved }()
+			dialTarget = func(context.Context, stack.Target, remote.SSHConfig, bool) (driver, error) {
+				dialed = true
+				return nil, errors.New("no connection expected")
+			}
+			for _, args := range [][]string{{"review"}, {"plan", "--noninteractive"}} {
+				if err := f.run(args...); err != nil {
+					t.Fatalf("%v: %v", args, err)
+				}
+			}
+			for _, args := range [][]string{{"preflight"}, {"apply"}} {
+				if err := f.run(args...); err == nil || !strings.Contains(err.Error(), "identity.mail.password_file") || dialed {
+					t.Fatalf("%v: err = %v (dialed %v)", args, err, dialed)
+				}
+			}
+		})
 	}
 }
 
@@ -761,6 +784,14 @@ func TestKyMessageDirectoryStep(t *testing.T) {
 	if err := s.Apply(ctx); err != nil || len(details) != 0 {
 		t.Fatalf("failed, then delivered: %v, %d left", err, len(details))
 	}
+	// #94: a first event a tunnel answered 502 stays fenced; apply names the recovery.
+	wait := resyncWait
+	resyncWait = 0
+	t.Cleanup(func() { resyncWait = wait })
+	s.sync = func(context.Context) (string, string) { return "kymessage", "failed, 0 pending, 2 failed" }
+	if err := s.Apply(ctx); err == nil || err.Error() != "KyIdentity's kymessage connector has not delivered its directory to kymessage (failed, 0 pending, 2 failed); until it does, offboarding someone may not reach chat. Its first events may be fenced as uncertain writes: a Cloudflare tunnel answers 502 before kymessage's route exists. If kymessage's logs show they never arrived, resume the fenced connector in KyIdentity's admin UI (Connectors > Resume all expired), then rerun apply" {
+		t.Fatalf("fenced: %v", err)
+	}
 }
 
 // AC24: the handover names what a human must know and do.
@@ -775,7 +806,7 @@ func TestKyMessageHandover(t *testing.T) {
 		"everyday accounts only (owner)", "owner-admin signs in to the console alone and has no chat", `both "KyMessages" and "KyMessages chat"`, "email is verified",
 		"192.0.2.1, TCP 7881 and UDP 7882, which are open to your LAN; no\n  TURN", "Federation is closed", "sign-out does not end chat sessions", "Offboarding", "ends their open chat sessions\n  within seconds", `"KyMessages chat" alone is locked out`,
 		"docker logs kyq-kymessage-app-1 on nas", "cd '" + f.h.root + "/kymessage' && docker compose -p kyq-kymessage -f compose.yaml -f compose.kyq.yaml exec -T app /bin/sh -c 'eval \"$KYQ_SECRETS\" && exec /app/kymessages init-admin'",
-		"pair it with KyRecovery", `Replace the console's local "admin" break-glass password`, "the first lines of docker logs",
+		"No catalog product can pair with KyRecovery in this release", `replace the console's local "admin" break-glass password`, "the first lines of docker logs",
 		"No mail relay is set, so only the owner's accounts are verified and nobody else\n  can get a chat account",
 		`Removing someone from "KyMessages chat" alone stops only their new chat sign-ins`, "remove them from \"KyMessages\" too, or\n  offboard them"} {
 		if !strings.Contains(s.handover, want) {
