@@ -110,6 +110,9 @@ func TestDockerKyCatalog(t *testing.T) {
 // from the edge's exact address and from no other peer beside it.
 func checkEdgeTrust(t *testing.T, name, id string, port int) {
 	t.Helper()
+	// Pull the pinned probe image first so docker run's pull progress (CombinedOutput)
+	// cannot contaminate the JSON body this helper parses below.
+	docker(t, "pull", "-q", kube.CredentialGeneratorImage)
 	docker(t, "network", "connect", trustNet, id)
 	app := docker(t, "inspect", id, "--format", "{{(index .NetworkSettings.Networks \""+trustNet+"\").IPAddress}}")
 	path := "/api/installer/network"
