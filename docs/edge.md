@@ -17,7 +17,7 @@ Per-product compatibility with these paths is in [the redirect record](redirect.
 | Existing frp server | Optional frpc deployment on Docker, verified server TLS and PROXY v2 |
 | LAN clients only (`lan`) | Clients connect to NPM directly, no tunnel; NPM serves only `allow_cidrs` |
 | Internal and external routes on one edge | A `cloudflare` or `frp` edge's `exposure: internal` routes serve only `allow_cidrs`, beside its external routes ([below](#internal-and-external-routes-exposure)) |
-| Kubernetes target | NPM from the catalog (`npm` app) managed through `kube://`, or an existing NPM's API; connector deployment and `cloudflare-direct` are rejected |
+| Kubernetes target | NPM from the catalog (`npm` app) managed through `kube://`, or an existing NPM's API; connector deployment and `cloudflare-direct` are rejected, so you run a tunnel edge's connector yourself ([below](#a-connector-for-a-kubernetes-edge)) |
 
 No other edge path is provided; the requirements still open are listed under Unfinished in
 [the redirect record](redirect.md#dispositions).
@@ -87,6 +87,16 @@ Omit `connector` when a connector is already managed outside the installer. Its 
 address must match `connector_cidr`. External DNS and server-side frp settings must already
 route the listed hostnames. frp reaches the dedicated NPM PROXY-protocol listener (default
 8443), not its ordinary 443 listener. Keep that listener private to the connector network.
+
+### A connector for a Kubernetes edge
+
+On Kubernetes you run the connector yourself: give it a source address of its own, put that
+/32 in `connector_cidr` and keep it out of `allow_cidrs`. Ingress per hostname:
+`https://<node running NPM>:<client_port>`, origin server name and Host header set to the
+hostname. `<client_port>` is the NodePort publishing NPM's 443 (`node_ports`, default 30443).
+A connector on a Docker host behind NAT takes that host's address, which then cannot also be a
+client of the host's own internal routes; a container with its own LAN address (for example
+on an ipvlan network) avoids that.
 
 For Cloudflare set `provider: cloudflare`, omit `proxy_port` and replace the frp connector
 fields with `tunnel_id: <existing-tunnel-UUID>`. The generated ingress configuration routes
@@ -260,7 +270,7 @@ every route is internal is refused: use `lan`.
 ```yaml
 domains:                     # optional: keeps the two kinds of names apart
   internal: lan.example.com  # internal routes are names under it
-  external: example.com      # external routes are names under it, outside the internal domain
+  external: example.com      # external routes are it (KyMessages' server_name) or names under it, outside the internal domain
 edges:
   - target: k80
     provider: cloudflare

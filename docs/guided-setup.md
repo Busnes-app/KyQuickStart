@@ -206,7 +206,7 @@ nothing is pruned. Kubernetes apps (KyIdentity, KyNotes, KyCalendar, the edge) a
 `upgrade` still gates data migrations on `backup_required`.
 
 **KyDrive restore gate.** Snapshot restore requires a released KyDrive image advertising
-`restore-reset`. The catalog pins 0.4.3, which advertises it; an image without it (0.4.2 and
+`restore-reset`. KyDrive 0.4.3 and later advertise it; an image without it (0.4.2 and
 earlier) is refused before replacing data, while backups and snapshot listing remain available.
 The installer never substitutes an unpublished image. With a capable image, it runs the
 product's offline grant reset before startup: browser sessions, app passwords, device links,
@@ -608,8 +608,9 @@ kyquickstart itself does not use it, but the human steps it prints do (the Cloud
 KyDNS token Secrets, NPM's admin port-forward, reading break-glass and owner passwords).
 `preflight` warns when a plan with a Kubernetes target finds no `kubectl` on `PATH`.
 
-The catalog's `kyidentity` app installs KyIdentity 0.4.7 on a Kubernetes target from its
-attested release image (`internal/catalog/apps/kyidentity/manifest.yaml` records the digest).
+The catalog's `kyidentity` app installs KyIdentity on a Kubernetes target from the attested release image pinned in `internal/catalog/apps/kyidentity/manifest.yaml`.
+Each catalog app's manifest holds its version, digest and attesting workflow, and
+`scripts/catalog-follow` keeps the Ky pins current, so this guide names no pin.
 It needs an edge route: its issuer is `https://<route hostname>`, plus `:<client_port>` on an
 internal route whose edge's `client_port` is not 443, and a plan without exactly one route for it is refused. Select its setup with an `integrations` entry that names no
 container, namespace or pod; `apply` finds the app's own pod.
@@ -677,6 +678,10 @@ changed intent fails with the product's refusal. `integrate-stack` skips install
   KyIdentity refuses private destinations without it. It opens RFC 1918, ULA and
   carrier-grade NAT (`100.64.0.0/10`) only; loopback, link-local and cloud metadata addresses
   stay refused, and device-supplied push endpoints never get it.
+- MFA: the catalog configures no KyAuth push relay (`PUSH_RELAY_URL`, `APNS_RELAY_URL` are
+  unset, on Docker and Kubernetes, and the plan has no field for them), so KyAuth push approval
+  does not deliver: a device pairs, but no challenge reaches it. Only TOTP and passkeys work;
+  enrol one of those (Busnes-app/KyQuickStart#98).
 - `kyidentity.retire-bootstrap` follows the setup and its amendments. With KyIdentity 0.4.3 or
   later (capability `disable-user`) it runs `kyidentity disable-user --username kyq-bootstrap
   --require-active-admin <owner admin>`, which revokes the account's sessions and deletes
@@ -705,7 +710,7 @@ changed intent fails with the product's refusal. `integrate-stack` skips install
 
 ## Catalog KyRecovery on Kubernetes
 
-The catalog's `kyrecovery` app installs KyRecovery 0.4.2 from its attested release image. It
+The catalog's `kyrecovery` app installs KyRecovery from the attested release image pinned in `internal/catalog/apps/kyrecovery/manifest.yaml`. It
 depends on the catalog `kyidentity` in the same plan and needs one edge route. Its integration
 names its KyIdentity client and a bundle path whose directory is its stable setup UUID:
 
@@ -753,9 +758,10 @@ secrets never reach the workstation, its output or its state.
   `apply` mints no pairing codes and nothing should before the ceremony.
 - KyRecovery 0.4.2 prints its local `admin` break-glass password once, to its first pod's log
   (`kubectl -n kyq-kyrecovery logs deployment/app`), and it is lost when that pod is replaced.
-- Pairing a product (`kyrecovery pair generate --service <name>` in the pod, then the
-  product's claim) comes after the ceremony and with each product's own backup setup; no
-  catalog product pairs yet. The backup status and restore-start screens are KyRecovery's own;
+- No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery. KyRecovery is internal-only, so its URL
+  resolves to a private address, and every product refuses a private KyRecovery unless its
+  `<PRODUCT>_BACKUP_ALLOW_PRIVATE_RECOVERY` is set, which the catalog sets for none of them
+  (Busnes-app/KyQuickStart#93). Apply prints this in each product's handover. The backup status and restore-start screens are KyRecovery's own;
   restic status needs `KYRECOVERY_RESTIC_DIR` and the rest-server, which is not installed yet.
 - Not yet: `KYRECOVERY_TRUSTED_PROXIES` is unset, so its rate limits see the edge pod as every
   client; the pod reaches KyIdentity at its public issuer URL, so cluster DNS
@@ -763,7 +769,7 @@ secrets never reach the workstation, its output or its state.
 
 ## Catalog kyPulse on Kubernetes
 
-The catalog's `kypulse` app installs kyPulse 0.4.2 from its attested release image. Like
+The catalog's `kypulse` app installs kyPulse from the attested release image pinned in `internal/catalog/apps/kypulse/manifest.yaml`. Like
 KyRecovery it depends on the catalog `kyidentity`, needs one edge route, and its integration
 names its client and a bundle whose directory is its own setup UUID:
 
@@ -795,7 +801,9 @@ setup amendment on KyIdentity 0.4.3 or later; on 0.4.2 it must be in the first s
 existing kyPulse adapter: it requires the `monitoring-targets`, `log-sources` and
 `offboarding-alerts` capabilities, applies, waits for kyPulse's graceful restart and its live
 `--check`. Its bundle carries kyPulse's `monitoring` extension: one target per other app the plan
-installs that has a readiness path and one route, at `https://<route URL host><readiness path>`,
+installs that has a readiness path (its Kubernetes `readiness_path`, else its `status_path`, as
+for the Docker-only KyDrive, KyPost and KyMessages) and one primary route, at
+`https://<route URL host><path>`,
 so kyPulse watches each app as a user reaches it, edge included. NPM has no route and is not
 watched; kyPulse never watches itself. Apply prints both lists. Targets follow the plan: the
 bundle is replaced when they change (the secrets never are), kyPulse adds new targets, keeps one
@@ -816,16 +824,14 @@ other installation's.
   the owner's admin account, and KyIdentity refuses the everyday one for this client); no log
   sources (none of the catalog apps sends logs yet: a source needs a sender holding its token,
   such as `kypulse-send`); the alert webhook is set in its UI;
-  KyRecovery pairing and backups wait on the ceremony; `KYPULSE_TRUSTED_PROXIES` is unset.
+  KyRecovery pairing is not possible (see KyRecovery above); `KYPULSE_TRUSTED_PROXIES` is unset.
   kyPulse 0.4.2 verifies directory events as an HMAC of the body alone while
   KyIdentity 0.4.2 signs them with `syncauth` v1, so directory offboarding events to kyPulse are
   expected to be refused until kyPulse adopts `syncauth` (read from both sources, not run).
 
 ## Catalog KyNotes on Kubernetes
 
-The catalog's `kynotes` app installs KyNotes 0.4.2 from its attested release image
-(`ghcr.io/busnes-app/kynotes-server:0.4.2@sha256:85f4…6ad9`, built by
-`Busnes-app/KyNotes-server` `release-image.yml@refs/tags/v0.4.2` from commit `f597e997`). It
+The catalog's `kynotes` app installs KyNotes from the attested release image pinned in `internal/catalog/apps/kynotes/manifest.yaml`. It
 depends on the catalog `kyidentity` and needs one edge route. Docker and Kubernetes are supported; see [Docker catalog products](#catalog-ky-products-on-docker). Its
 integration names its client and KyNotes' one fixed bundle path, and nothing else: apply derives
 the settings.
@@ -884,9 +890,8 @@ reach; fix it and rerun apply.
 
 Handover: apply prints KyNotes' URL, the admin account (which administers only; it cannot open
 notes) and the everyday account (created by KyNotes at its first sign-in). KyIdentity's
-`kynotes.user` assignment is the gate: assign it to anyone else who should sign in. Pairing with KyRecovery stays a human step: on KyNotes' Backups screen, a one-time
-code from KyRecovery's administrator or the suite public key pinned by hand. KyNotes makes no
-backups until then.
+`kynotes.user` assignment is the gate: assign it to anyone else who should sign in.
+No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery.
 
 Limits:
 
@@ -899,9 +904,7 @@ Limits:
 
 ## Catalog KyCalendar on Kubernetes
 
-The catalog's `kycalendar` app installs KyCalendar 0.4.2 from its attested release image
-(`ghcr.io/busnes-app/kycalendar:0.4.2@sha256:7ed4…f75b`, built by `Busnes-app/KyCalendar`
-`release-image.yml@refs/tags/v0.4.2` from commit `5b7b3c60`). It depends on the catalog
+The catalog's `kycalendar` app installs KyCalendar from the attested release image pinned in `internal/catalog/apps/kycalendar/manifest.yaml`. It depends on the catalog
 `kyidentity` and needs one edge route. Docker and Kubernetes are supported; see [Docker catalog products](#catalog-ky-products-on-docker). Its integration names its client
 and a bundle whose directory is its own setup UUID:
 
@@ -975,8 +978,8 @@ administration). Outstanding human steps it names:
   /app/data/initial-admin-password`. Sign in with it once and change it; only then delete the
   file (the same command with `rm`), since it is the only copy. Apply never reads it and never
   sets `KY_ADMIN_PASSWORD`.
-- Pairing with KyRecovery: on the Backup & recovery screen, a one-time code from KyRecovery's
-  administrator, or the suite public key pinned by hand. KyCalendar makes no backups until then.
+- No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery.
+- The KyPost-KyCalendar invitation pairing is not configured by this installer.
 
 Limits:
 
@@ -988,9 +991,7 @@ Limits:
 
 ## Catalog KyYard on Kubernetes
 
-The catalog's `kyyard` app installs KyYard 0.4.3 from its attested release image
-(`ghcr.io/busnes-app/kyyard:0.4.3@sha256:94c1…0756`, built by `Busnes-app/KyYard-server`
-`release-image.yml@refs/tags/v0.4.3` from commit `0bf5e1cb`), with the suite runner
+The catalog's `kyyard` app installs KyYard from the attested release image pinned in `internal/catalog/apps/kyyard/manifest.yaml`, with the suite runner
 (`kyquickstart serve`) beside it in the same pod. It depends on the catalog `kyidentity` and
 needs one edge route. Docker is supported too, with a separate private runner and no Docker socket; see [Docker catalog products](#catalog-ky-products-on-docker).
 
@@ -1069,7 +1070,7 @@ KyYard access, and the outstanding human steps:
   then delete the file (the same command with `rm`).
 - The hand-off, printed ready to run: `kyquickstart handoff --state '<state>' --kyyard-target
   <target> --runner-pod kyq-kyyard/app.kubernetes.io/name=kyyard`.
-- Pairing KyYard with KyRecovery from its backup screen.
+- No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery.
 
 The runner never changes its own pod: it applies the plan with its own build's catalog, so
 redeploying KyYard could kill a running operation or downgrade it. Under the runner, KyYard's
@@ -1096,7 +1097,7 @@ Limits:
 
 ## Catalog KyDrive on Docker
 
-The catalog's `kydrive` app installs KyDrive 0.4.3 from its attested release image on a Docker
+The catalog's `kydrive` app installs KyDrive from the attested release image pinned in `internal/catalog/apps/kydrive/manifest.yaml` on a Docker
 target; it has no Kubernetes deployment, and placing it on a cluster is refused. It depends on
 the catalog `kyidentity` in the same plan, which may run on another target. Its one route may
 sit on the cluster's `lan` edge: NPM reaches the Docker host over the LAN.
@@ -1182,13 +1183,12 @@ graceful restart and its live `--check`.
   certificate through the system roots.
 - Backups: with a destination on its target, `kyquickstart backup kydrive` snapshots `data`,
   `backups` and both secrets cold (see "Backups and restore on Docker"); restore needs KyIdentity
-  v0.4.4 or later and a released Drive image advertising `restore-reset` (the current 0.4.2
-  catalog pin is refused). KyDrive's own `KYDRIVE_BULK_BACKUP_REPOSITORY` stays unset: the installer's
+  v0.4.4 or later and a released Drive image advertising `restore-reset` (0.4.3 and later). KyDrive's own `KYDRIVE_BULK_BACKUP_REPOSITORY` stays unset: the installer's
   snapshot is the independent copy, and the `backups` directory, on the same disk as `data`, is not.
 - With `euro-office` in the plan, see "Catalog Euro-Office on Kubernetes".
 - Not yet: recovery pairing;
   `KY_TRUSTED_PROXIES` (unset, so KyDrive sees the edge as every client and `verify-edge`
-  fails for its route); kyPulse does not watch it (no readiness path on Docker).
+  fails for its route).
 
 ## Catalog Euro-Office on Kubernetes
 
@@ -1336,9 +1336,7 @@ run every product as the target user with no capabilities, which this editor can
 
 ## Catalog KyDNS on Docker
 
-The catalog's `kydns` app installs KyDNS 0.4.2 from its attested release image
-(`ghcr.io/busnes-app/kydns-server:0.4.2@sha256:ceb8…405b`, the index built by
-`Busnes-app/KyDNS-server` `release.yml@refs/tags/v0.4.2` from commit `ca8d7723`). It depends on
+The catalog's `kydns` app installs KyDNS from the attested release image pinned in `internal/catalog/apps/kydns/manifest.yaml`. It depends on
 the catalog `kyidentity`, which may run on another target, and needs one edge route.
 
 **Docker only.** `plan`, `review` and `apply` refuse it on a Kubernetes target before
@@ -1436,8 +1434,7 @@ address `<forward_host>:53`, then these outstanding human steps, then its notes:
 - Set the local recovery administrator's password on the target:
   `docker exec -it kyq-kydns-app-1 /usr/local/bin/kydns admin reset-password` (it asks twice;
   `-t` keeps it off the screen). Use it only to recover, at `/login`.
-- Pair with KyRecovery on the Backups screen, signed in as that local administrator: a managed
-  (KyIdentity) administrator cannot enroll KyDNS's first recovery key.
+- No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery.
 
 The notes name the firewall facts: ports 53 and `forward_port` are open on `forward_host`; the
 admin UI trusts forwarded requests only from `egress_address` (apply checked the edge is trusted
@@ -1468,9 +1465,7 @@ Limits and unproven:
 
 The catalog's `kypost` app installs KyPost, by default a webmail client for mail accounts the
 owner already has (native mail on the owner's own domains is an opt-in, chosen at install:
-[KyPost native mail](#kypost-native-mail)), from its attested release image (`ghcr.io/busnes-app/kypost-server:0.4.2@sha256:23b5…2353`,
-built by `Busnes-app/KyPost-Server` `release-image.yml@refs/tags/v0.4.2` from commit
-`621b4d18`). Docker only: a plan placing it on a cluster is refused by `plan`, `review` and
+[KyPost native mail](#kypost-native-mail)), from the attested release image pinned in `internal/catalog/apps/kypost/manifest.yaml`. Docker only: a plan placing it on a cluster is refused by `plan`, `review` and
 `apply` before any connection. It depends on the catalog `kyidentity`, which may run on another
 target, and its one route may sit on the cluster's `lan` edge, as KyDrive's does.
 
@@ -1556,8 +1551,8 @@ account, the assignment rule above, the mail-port facts and the first-start mode
 - Offboarding: webmail KyPost has no directory, so disabling or unassigning someone in KyIdentity stops
   new sign-ins but not a live KyPost session. Sessions live in memory: `docker restart
   kyq-kypost-app-1` on the target ends every one (the kind test proves it).
-- Pairing with KyRecovery, after its custodian ceremony, with a fresh one-time code from
-  KyRecovery's administrator.
+- No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery.
+- The KyPost-KyCalendar invitation pairing is not configured by this installer.
 
 Limits and residuals:
 
@@ -1579,8 +1574,7 @@ Limits and residuals:
 - Unproven: separation of the admin account from mail (an upstream gate in this mode), and real
   IMAP/SMTP mail exchange; the kind test proves sign-in and sessions only. Not configured unless
   chosen: native mail and receiving (below). Never configured: KyRecovery pairing, bulk restic backups, mobile or desktop pairing, push
-  relays, CAPTCHA and Kubernetes placement. kyPulse does not watch it (no readiness path on
-  Docker).
+  relays, CAPTCHA and Kubernetes placement.
 
 ## KyPost native mail
 
@@ -1804,7 +1798,9 @@ integrations:
 
   `security` is `tls` or `starttls`; plaintext SMTP is never used. `password_file` is a 0600
   regular file of yours on this workstation, not a symlink, one line (checked on the opened
-  file; each refusal names its reason, for example `chmod 600 <file>`); apply copies it on stdin
+  file; each refusal names its reason, for example `chmod 600 <file>`). `review` does not read
+  it, so a plan can be reviewed before the file exists; `preflight` and `apply` refuse a missing
+  or unsafe one before connecting. Apply copies it on stdin
   to `<data>/installer/smtp.password` in KyIdentity's container. The relay is set by
   KyIdentity's first setup only: changing or adding it later is refused, pointing at
   KyIdentity's admin UI. `plan` asks for it when it resumes a KyIdentity preparation: blank (or
