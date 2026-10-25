@@ -24,7 +24,10 @@ import (
 // privateDir is the subdirectory of each claim a non-root app mounts.
 const privateDir = "private"
 
-// initResources bound the private-volumes init container: one mkdir.
+// privateScript makes each argument a directory only its owner can reach, contents included.
+const privateScript = `mkdir -p -m 700 "$@"; chmod -R go-rwx "$@"`
+
+// initResources bound the private-volumes init container: one mkdir and one chmod.
 var initResources = corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("50m"), corev1.ResourceMemory: resource.MustParse("16Mi")}
 
 // The suite runner sidecar (docs/kyyard-runner.k8s.yaml): its state claim and the socket
@@ -32,6 +35,7 @@ var initResources = corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("
 const (
 	runnerState  = "runner-state"
 	runnerSocket = "runner-socket"
+	runnerDir    = "runner" // the runner's state directory in its claim
 )
 
 // socketDir is the socket's directory in the runner-socket volume.
@@ -124,12 +128,14 @@ func render(a App) objects {
 	}
 	// A claim's root may be group- or world-writable (fsGroup, hostPath provisioners), so a
 	// non-root app mounts a private subdirectory its own uid creates first. Root apps own theirs.
+	// chmod takes back the group access an fsGroup pass gave what is inside (#105), on every
+	// start: the apps refuse key files and directories others can reach.
 	var inits []corev1.Container
 	if !root && (len(k.Volumes) > 0 || k.SuiteRunner) {
 		inits = append(inits, corev1.Container{
 			Name:            "private-volumes",
 			Image:           CredentialGeneratorImage,
-			Command:         []string{"mkdir", "-p", "-m", "700"},
+			Command:         []string{"/bin/sh", "-ec", privateScript, "private-volumes"},
 			Resources:       corev1.ResourceRequirements{Requests: initResources, Limits: initResources},
 			SecurityContext: container.SecurityContext,
 		})
@@ -211,8 +217,11 @@ func render(a App) objects {
 		containers, volumes = withRunner(containers, volumes, a.RunnerImage)
 		// The app's socket directory: created private first, so the kubelet's world-writable
 		// volume root never becomes an ancestor KyYard's socket check refuses.
-		inits[0].Command = append(inits[0].Command, "/volumes/"+runnerSocket+"/"+socketDir)
-		inits[0].VolumeMounts = append(inits[0].VolumeMounts, corev1.VolumeMount{Name: runnerSocket, MountPath: "/volumes/" + runnerSocket})
+		// The runner's state directory, which it refuses unless private.
+		inits[0].Command = append(inits[0].Command, "/volumes/"+runnerSocket+"/"+socketDir, "/volumes/"+runnerState+"/"+runnerDir)
+		inits[0].VolumeMounts = append(inits[0].VolumeMounts,
+			corev1.VolumeMount{Name: runnerSocket, MountPath: "/volumes/" + runnerSocket},
+			corev1.VolumeMount{Name: runnerState, MountPath: "/volumes/" + runnerState})
 		o.Claims = append(o.Claims, &corev1.PersistentVolumeClaim{
 			ObjectMeta: meta(runnerState),
 			Spec: corev1.PersistentVolumeClaimSpec{
@@ -263,7 +272,7 @@ func withRunner(containers []corev1.Container, volumes []corev1.Volume, image st
 		Name:  runnerContainer,
 		Image: image,
 		// Volume roots are the kubelet's: the runner works in subdirectories it creates.
-		Command:   []string{"kyquickstart", "serve", "--state", "/state/runner", "--socket", catalog.SuiteRunnerSocket, "--pod-volumes"},
+		Command:   []string{"kyquickstart", "serve", "--state", "/state/" + runnerDir, "--socket", catalog.SuiteRunnerSocket, "--pod-volumes"},
 		Resources: corev1.ResourceRequirements{Requests: runnerRequests, Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("512Mi")}},
 		SecurityContext: &corev1.SecurityContext{
 			AllowPrivilegeEscalation: ptr.To(false),
@@ -283,13 +292,17 @@ func withRunner(containers []corev1.Container, volumes []corev1.Volume, image st
 }
 
 func podSecurityContext(k *catalog.Kubernetes) *corev1.PodSecurityContext {
+	// fsGroup lets the app's uid write a claim root that starts root-owned. OnRootMismatch
+	// limits the kubelet's recursive group-write pass to such a root: once the root is the
+	// app's group, files keep their modes on later mounts.
 	sc := &corev1.PodSecurityContext{
-		RunAsNonRoot:   ptr.To(true),
-		FSGroup:        ptr.To(k.RunAs),
-		SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+		RunAsNonRoot:        ptr.To(true),
+		FSGroup:             ptr.To(k.RunAs),
+		FSGroupChangePolicy: ptr.To(corev1.FSGroupChangeOnRootMismatch),
+		SeccompProfile:      &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 	}
 	if k.RunAs == 0 {
-		sc.RunAsNonRoot, sc.FSGroup = nil, nil // a root init sets its own ownership
+		sc.RunAsNonRoot, sc.FSGroup, sc.FSGroupChangePolicy = nil, nil, nil // a root init sets its own ownership
 	}
 	if k.LowPorts {
 		sc.Sysctls = []corev1.Sysctl{{Name: "net.ipv4.ip_unprivileged_port_start", Value: "0"}}
