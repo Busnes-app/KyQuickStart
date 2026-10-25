@@ -172,7 +172,7 @@ func checkCatalogDNS(t *testing.T, out string, d driveTarget, port int, passed b
 		"restrict both ports to your LAN and the edge at\n    the host or network firewall",
 		"Point clients at " + d.forward + " for DNS",
 		"From an interactive shell on nas\n     (ssh -t, so the password does not echo), set one:\n       docker exec -it kyq-kydns-app-1 /usr/local/bin/kydns admin reset-password",
-		"Pair it with KyRecovery",
+		"No catalog product can pair with KyRecovery in this release",
 	} {
 		if passed && !strings.Contains(out, want) {
 			t.Fatalf("KyDNS handover lacks %q", want)

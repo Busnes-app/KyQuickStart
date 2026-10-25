@@ -99,7 +99,7 @@ func checkCatalogNotes(t *testing.T, ctx context.Context, cs kubernetes.Interfac
 	if status(out, "kynotes.setup") != "ok" || status(out, notesRouteStep) != "ok" {
 		t.Fatalf("kynotes.setup = %q, route = %q", status(out, "kynotes.setup"), status(out, notesRouteStep))
 	}
-	for _, want := range []string{"KyNotes at https://" + catalogNotesURLHost + "/: sign in through KyIdentity as prepared-admin", "or prepared-user, whose account", "pair it with KyRecovery"} {
+	for _, want := range []string{"KyNotes at https://" + catalogNotesURLHost + "/: sign in through KyIdentity as prepared-admin", "or prepared-user, whose account", "No catalog product can pair with KyRecovery in this release"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("KyNotes handover lacks %q", want)
 		}

@@ -4,7 +4,9 @@ Plain terminal planning and command orchestration for the operator-run installer
 
 ## Ownership
 
-- Guided questions, resume answers, plan review and publishing: `guided.go`.
+- Guided questions, resume answers, plan review and publishing: `guided.go`. `showPlan` names an
+  edge whose NPM is the plan's catalog `npm` as installed, lists its certificates and prints
+  each route's URL host (`Edge.URLHost`, with an internal route's `client_port`).
 - CLI dispatch, target connections and locked deployment: `cli.go` and `driver.go`. `apply`
   and every plan change give a plan its `installation_id`, published after the steps pass;
   markers record it only once published. `--adopt-edge-hosts` and `--take-over-target` are
@@ -111,7 +113,8 @@ Plain terminal planning and command orchestration for the operator-run installer
   fixture verifies account/configuration activation plus live monitoring enrollment and
   source capability without adopting foreign objects or mutating live installations.
   Apply's catalog kyPulse reuses that adapter (`pulseSetup`) through `clientSetupStep`;
-  `pulseTargets` makes its bundle's `monitoring` targets, one per other routed app.
+  `pulseTargets` makes its bundle's `monitoring` targets, one per other routed app, at its
+  Kubernetes `readiness_path`, else its `status_path` (the Docker-only apps).
 - KyYard uses the common contract with zero-restart activation, signed directory updates
   and exact `kyyard.admin` assignments. Platform administrators receive no implicit tenant
   access; organization/endpoint composition and shared upgrade orchestration remain gates.
@@ -139,8 +142,9 @@ Plain terminal planning and command orchestration for the operator-run installer
 - KyMessages uses the common contract and graceful activation; exact console grants stay
   separate from Matrix chat. `message.go` owns the catalog KyMessages (Docker only):
   `messagePlan` (plan, review, every command) refuses a plan without `installation_id`, a
-  `chat_client` other than `<app>-chat`, owner usernames its setup refuses and an unsafe
-  `identity.mail.password_file`; `withRoutes` checks its six roles (one edge, one forward_host
+  `chat_client` other than `<app>-chat` and owner usernames its setup refuses;
+  `mailPasswordFiles` (preflight and apply, before connecting; never `review`) refuses an unsafe
+  or missing `identity.mail.password_file`; `withRoutes` checks its six roles (one edge, one forward_host
   that `stack.MediaAddress` accepts, one forward_port per service port and one service port per
   forward_port, so `server_name` shares the console's) and fills its role references;
   `withChatClients` (plan) writes the one possible `chat_client`; `routePaths` gives the
@@ -209,7 +213,9 @@ Plain terminal planning and command orchestration for the operator-run installer
   `transferNotesCredentials` and `notesSetup` with the preparation `notesPreparation` derives
   (catalog client, KyIdentity's issuer, secrets beside the fixed bundle, backup from its env);
   `deploySteps` holds it and KyNotes' route (`routedFirst`, `edge.RouteApp`) until after the other
-  edge steps, setup first. `notesHandover` names the KyRecovery pairing as a human step.
+  edge steps, setup first. Every product handover says no catalog product can pair with
+  KyRecovery in this release (#93); KyCalendar's and KyPost's add that their invitation pairing
+  is not configured (#100); KyIdentity's says only TOTP and passkeys work (no push relay, #98).
   `amendLate` (apply only, read-only, before preflight) records an `identity_amendment` for each
   app whose client the running KyIdentity's retained setup lacks, all or one, when it advertises
   `setup-amendments`; composeClients then puts that client in an `identityAmendment`, whose
