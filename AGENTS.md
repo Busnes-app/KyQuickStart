@@ -359,7 +359,7 @@ edge compatibility: `docs/redirect.md`.
   signed with the client's own secret file. Apply refuses converting an installed KyPost
   either way, native mail over earlier KyPost data, and the receiver before KyPost's spool exists.
   KyRecovery's custodian ceremony stays human and apply prints it as outstanding. kyPulse's
-  bundle registers every other routed app's readiness path as a monitoring target; that bundle
+  bundle registers every other routed app's readiness path (else its `status_path`) as a monitoring target; that bundle
   is replaced as targets change, since kyPulse keeps omitted targets and refuses edited ones.
 - Command-line only: no GUI, web UI or full-screen terminal UI. `plan` asks its questions as
   plain terminal prompts, and every command also runs unattended from `stack.yaml`.
@@ -403,7 +403,7 @@ edge compatibility: `docs/redirect.md`.
   only internal ones, and its connector never carries or reaches an internal route. Catalog
   `exposure: internal` apps (KyRecovery, kyPulse, KyDNS, KyYard) are never external, and an
   external sign-in app needs an external KyIdentity route. Optional plan `domains` keeps internal
-  names under `internal` and external names under `external` and outside it (`docs/edge.md`).
+  names under `internal` and external names at or under `external` and outside it (`docs/edge.md`).
 - Bulk data goes to restic on an operator-run, append-only (`--append-only --private-repos`)
   TLS rest-server off the app's host, one repository (`<repository>/<app>`) and password per
   app. `kyquickstart backup APP` (Docker apps only, no schedule, no prune) snapshots the app's
