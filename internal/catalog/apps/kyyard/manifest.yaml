@@ -50,6 +50,9 @@ kubernetes:
     KY_DATA_DIR: /data
     # Empty disables the local Docker connection: a pod has no Docker socket.
     KY_DOCKER_SOCKET: ""
+    # The image enrolled agents run. KyYard finds its own digest only through a Docker
+    # socket, so without this it cannot generate an enrollment command.
+    KY_AGENT_IMAGE: "{{pinned_image:kyyard}}"
     # Setup refuses either enabled.
     KY_SSO_ENABLED: "false"
     KY_SCIM_ENABLED: "false"
