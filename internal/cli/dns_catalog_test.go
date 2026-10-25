@@ -172,7 +172,7 @@ func TestKyDNSClientFromCatalog(t *testing.T) {
 		"Never set egress_address to a Docker network gateway",
 		"Point clients at 192.0.2.1 for DNS: your router's DHCP DNS server",
 		"From an interactive shell on nas\n     (ssh -t, so the password does not echo), set one:\n       docker exec -it kyq-kydns-app-1 /usr/local/bin/kydns admin reset-password",
-		"Pair it with KyRecovery",
+		"No catalog product can pair with KyRecovery in this release",
 	} {
 		if !strings.Contains(s.handover, want) {
 			t.Errorf("handover lacks %q:\n%s", want, s.handover)
