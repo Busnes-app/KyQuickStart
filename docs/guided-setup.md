@@ -186,6 +186,10 @@ the plan is saved only after every step passed.
   `--acknowledge-no-backup` (`ack_required`), recorded in `results/<app>.upgrade.json` with
   anything the release asks you to check afterwards (the manifest's `upgrade.note`).
   Apps upgrade one at a time in dependency order and stop at the first failure.
+- On Kubernetes a non-root app's key files stay 0600 when its pod is recreated. Builds before
+  #105 let the kubelet make them 0660, and the apps then refuse to start: the next `apply`
+  redeploys each such app once and its init container restores owner-only modes (a KyYard
+  under its runner: `handoff --revoke`, `apply`, then `handoff`).
 
 `stack.yaml` carries a `revision`, raised on every plan write. Every locked run records it
 on each target (`<root>/.plan`, or annotations on the `kyquickstart` namespace). That namespace
@@ -1112,7 +1116,7 @@ What apply does:
   (requests 50m/64Mi, limit 512Mi) with only its own 1Gi `runner-state` claim at `/state` and
   the `runner-socket` emptyDir at `/run/kyquickstart`. KyYard mounts only that volume's `sock`
   directory, at `/run/kyquickstart/sock` (`KY_SUITE_RUNNER_SOCKET`), which the init container
-  creates private first: KyYard checks every ancestor of its socket and refuses the kubelet's
+  creates private first (it keeps `/state/runner` private too): KyYard checks every ancestor of its socket and refuses the kubelet's
   world-writable volume root. It mounts nothing of the runner's state. The socket is 0600 in a 0700
   directory: any process in the pod as uid 10001 can drive the runner, so a compromised KyYard
   holds the runner's authority, as the suite-runner design accepts. `runner-state` is not
