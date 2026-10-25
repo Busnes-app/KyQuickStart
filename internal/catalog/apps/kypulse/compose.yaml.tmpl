@@ -20,6 +20,8 @@ services:
       KYPULSE_HOST: "0.0.0.0"
       KYPULSE_PORT: "8080"
       KYPULSE_APP_URL: "https://{{host}}"
+      # Forwarded headers only from the edge's own address; none without the edge's egress_address.
+      KYPULSE_TRUSTED_PROXIES: "{{edge_prefix}}"
       KYPULSE_DATA_DIR: "/app/data"
       KYPULSE_AUDIT_KEY_FILE: "/app/secrets/audit.key"
       KYPULSE_SSO_AUTO_PROVISION: "false"

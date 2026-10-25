@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/netip"
 	"path"
 	"regexp"
 	"slices"
@@ -273,6 +274,10 @@ const ForwardAddrRef = "{{forward_addr}}"
 // the edge's requests from.
 const EdgeAddressRef = "{{edge_address}}"
 
+// EdgePrefixRef is the route's edge's trusted address as a one-address prefix (/32 or /128),
+// or empty when the edge names none, so the app ignores forwarded headers.
+const EdgePrefixRef = "{{edge_prefix}}"
+
 // MediaAddressRef stands for the plan's media_address of the app.
 const MediaAddressRef = "{{media_address}}"
 
@@ -291,7 +296,7 @@ var mailRefs = []string{SMTPAddressRef, MailHostnameRef, MaddyBinaryRef, Receivi
 
 // routeRefs are every route reference a Compose template may write; {{host:<role>}} and
 // {{forward:<role>}} name a role of routes.
-var routeRefs = []string{HostRef, ForwardRef, ForwardAddrRef, EdgeAddressRef, MediaAddressRef, HostnameRef, "{{host:", "{{forward:", "{{hostname:"}
+var routeRefs = []string{HostRef, ForwardRef, ForwardAddrRef, EdgeAddressRef, EdgePrefixRef, MediaAddressRef, HostnameRef, "{{host:", "{{forward:", "{{hostname:"}
 
 // roleRef renders {{host "x"}} as {{host:x}}, and {{host}} as itself.
 func roleRef(name string) func(...string) string {
@@ -311,6 +316,7 @@ var routeFuncs = template.FuncMap{
 	"hostname":      roleRef("hostname"),
 	"forward_addr":  func() string { return ForwardAddrRef },
 	"edge_address":  func() string { return EdgeAddressRef },
+	"edge_prefix":   func() string { return EdgePrefixRef },
 	"media_address": func() string { return MediaAddressRef },
 	"smtp_address":  func() string { return SMTPAddressRef },
 	"mail_hostname": func() string { return MailHostnameRef },
@@ -533,7 +539,11 @@ func (a App) UsesEdgeAddress() bool { return bytes.Contains(a.Compose, []byte(Ed
 
 // WithRoute returns a copy whose Compose file has its route references replaced by r.
 func (a App) WithRoute(r Route) App {
-	pairs := []string{HostRef, r.Host, ForwardRef, r.Forward, ForwardAddrRef, r.ForwardAddr, EdgeAddressRef, r.EdgeAddress, MediaAddressRef, r.MediaAddress, HostnameRef, r.Hostname}
+	var prefix string
+	if ip, err := netip.ParseAddr(r.EdgeAddress); err == nil {
+		prefix = netip.PrefixFrom(ip, ip.BitLen()).String()
+	}
+	pairs := []string{HostRef, r.Host, ForwardRef, r.Forward, ForwardAddrRef, r.ForwardAddr, EdgeAddressRef, r.EdgeAddress, EdgePrefixRef, prefix, MediaAddressRef, r.MediaAddress, HostnameRef, r.Hostname}
 	for role, ra := range r.Roles {
 		pairs = append(pairs, "{{host:"+role+"}}", ra.Host, "{{forward:"+role+"}}", ra.Forward, "{{hostname:"+role+"}}", ra.Hostname)
 	}

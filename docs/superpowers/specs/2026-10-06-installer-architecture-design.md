@@ -103,8 +103,10 @@ KyYard refuses to start. The installer therefore places proxies and sets those v
     /32.
   - Proxy on another host: the app trusts that host's stable LAN /32, with no NAT on the path
     (NodePort with `externalTrafficPolicy: Local`, source-restricted).
-  - Kubernetes: pod addresses move, so the app trusts the pod network and a NetworkPolicy admits
-    ingress to it only from the edge pods.
+  - Kubernetes: pod addresses move and no stable address is NPM's alone. Trusting the pod
+    network was proposed and is refused (any pod there could forge headers; NetworkPolicy
+    enforcement depends on the network plugin), so apps there trust no proxy for now
+    (`docs/guided-setup.md#forwarded-headers-trusted-proxy`).
 - **Verified, not assumed.** `verify` requests each product through its edge and checks the
   client address and scheme the product reports (KyPost `GET /api/status`: `clientIp`,
   `proxyHeadersTrusted`; the other products through gate G11).

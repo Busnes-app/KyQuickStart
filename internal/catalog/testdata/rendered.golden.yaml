@@ -64,6 +64,8 @@ kycalendar:
               KY_PORT: "8080"
               KY_APP_NAME: "KyCalendar"
               KY_APP_URL: "https://h.example.com"
+              # Forwarded headers only from the edge's own address; none without the edge's egress_address.
+              KY_TRUSTED_PROXIES: "192.0.2.8/32"
               KY_DB_DRIVER: "sqlite"
               KY_DATA_DIR: "/app/data"
               KY_SSO_ENABLED: "true"
@@ -187,6 +189,8 @@ kydrive:
               KY_PORT: "8080"
               KY_APP_NAME: KyDrive
               KY_APP_URL: "https://h.example.com"
+              # Forwarded headers only from the edge's own address; none without the edge's egress_address.
+              KY_TRUSTED_PROXIES: "192.0.2.8/32"
               KY_DB_DRIVER: sqlite
               KY_DATA_DIR: /data
               KY_BACKUP_DIR: /backups
@@ -238,6 +242,8 @@ kyidentity:
               KYIDENTITY_PORT: "5867"
               BOOTSTRAP_ADMIN_USER: "kyq-bootstrap"
               KYIDENTITY_ALLOW_PRIVATE_CALLBACKS: "true"
+              # Forwarded headers only from the edge's own address; none without the edge's egress_address.
+              TRUSTED_PROXY_CIDRS: "192.0.2.8/32"
               GOMEMLIMIT: "640MiB"
             volumes:
               - "./data:/data"
@@ -297,6 +303,8 @@ kynotes:
             environment:
               PORT: "8080"
               KYNOTES_DATA_DIR: "/data"
+              # Forwarded headers only from the edge's own address; none without the edge's egress_address.
+              KYNOTES_SERVER_TRUSTED_PROXIES: "192.0.2.8/32"
               KYNOTES_BACKUP_DIR: "/backups"
               KYNOTES_BACKUP_KEEP: "7"
               KYNOTES_BACKUP_DEPOSIT_INTERVAL: "24h"
@@ -371,6 +379,8 @@ kypost:
               # Its OIDC callback, and Secure cookies.
               SERVER_BASE_URL: "https://h.example.com"
               TUNING_FILE: /kypost/config/TUNING.md
+              # Forwarded headers only from the edge's own address; none without the edge's egress_address.
+              TRUSTED_PROXY_CIDRS: "192.0.2.8/32"
               # A webmail client for existing IMAP/SMTP accounts: no native mail, receiving or receiver.
               KYPOST_NATIVE_MAIL: "false"
               KYPOST_NATIVE_RECEIVING: "false"
@@ -421,6 +431,8 @@ kypulse:
               KYPULSE_HOST: "0.0.0.0"
               KYPULSE_PORT: "8080"
               KYPULSE_APP_URL: "https://h.example.com"
+              # Forwarded headers only from the edge's own address; none without the edge's egress_address.
+              KYPULSE_TRUSTED_PROXIES: "192.0.2.8/32"
               KYPULSE_DATA_DIR: "/app/data"
               KYPULSE_AUDIT_KEY_FILE: "/app/secrets/audit.key"
               KYPULSE_SSO_AUTO_PROVISION: "false"
@@ -489,6 +501,8 @@ kyrecovery:
             environment:
               KYRECOVERY_DATA_DIR: "/app/data"
               KYRECOVERY_COOKIE_SECURE: "true"
+              # Forwarded headers only from the edge's own address; none without the edge's egress_address.
+              KYRECOVERY_TRUSTED_PROXIES: "192.0.2.8/32"
               GOMEMLIMIT: "384MiB"
             volumes:
               - "./data:/app/data"
