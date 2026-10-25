@@ -388,15 +388,15 @@ func validateExposure(e Edge, d *Domains) error {
 		if e.Internal(r) && !d.InInternal(r.Hostname) {
 			return fmt.Errorf("edge %s: internal route %s must be a name under the internal domain %s", e.Target, r.Hostname, d.Internal)
 		}
-		if !e.Internal(r) && (!under(r.Hostname, d.External) || d.InInternal(r.Hostname)) {
-			return fmt.Errorf("edge %s: external route %s must be a name under the external domain %s and outside the internal domain %s", e.Target, r.Hostname, d.External, d.Internal)
+		if !e.Internal(r) && ((r.Hostname != d.External && !under(r.Hostname, d.External)) || d.InInternal(r.Hostname)) {
+			return fmt.Errorf("edge %s: external route %s must be the external domain %s or a name under it, outside the internal domain %s", e.Target, r.Hostname, d.External, d.Internal)
 		}
 	}
 	return nil
 }
 
 // Domains separates an installation's names: internal routes under Internal, external routes
-// under External and outside Internal. Internal may lie inside External (lan.example.com).
+// at or under External (the apex: KyMessages' server_name) and outside Internal. Internal may lie inside External (lan.example.com).
 type Domains struct {
 	Internal string `yaml:"internal"`
 	External string `yaml:"external"`
