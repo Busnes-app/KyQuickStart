@@ -761,6 +761,14 @@ func TestKyMessageDirectoryStep(t *testing.T) {
 	if err := s.Apply(ctx); err != nil || len(details) != 0 {
 		t.Fatalf("failed, then delivered: %v, %d left", err, len(details))
 	}
+	// #94: a first event a tunnel answered 502 stays fenced; apply names the recovery.
+	wait := resyncWait
+	resyncWait = 0
+	t.Cleanup(func() { resyncWait = wait })
+	s.sync = func(context.Context) (string, string) { return "kymessage", "failed, 0 pending, 2 failed" }
+	if err := s.Apply(ctx); err == nil || err.Error() != "KyIdentity's kymessage connector has not delivered its directory to kymessage (failed, 0 pending, 2 failed); until it does, offboarding someone may not reach chat. Its first events may be fenced as uncertain writes: a Cloudflare tunnel answers 502 before kymessage's route exists. If kymessage's logs show they never arrived, resume the fenced connector in KyIdentity's admin UI (Connectors > Resume all expired), then rerun apply" {
+		t.Fatalf("fenced: %v", err)
+	}
 }
 
 // AC24: the handover names what a human must know and do.

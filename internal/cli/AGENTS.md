@@ -155,7 +155,9 @@ Plain terminal planning and command orchestration for the operator-run installer
   routes, which waits for `resync` (KyIdentity's `resync-system --wait`, shared with
   `replayRemovals`) to deliver the console's directory, so apply reports success only once the
   console holds it (defence in depth: KyIdentity 0.4.5 and earlier dropped a removal made before
-  a person's first delivery; 0.4.6 sends it). `refuseMovedServerName` refuses `server_name_changed` from the
+  a person's first delivery; 0.4.6 sends it). Its connector exists before the routes (the
+  console's credentials need `kyidentity.setup`), so a still-`failed` resync names the
+  uncertain-write fence and its recovery (`docs/guided-setup.md`, KyIdentity). `refuseMovedServerName` refuses `server_name_changed` from the
   installed Synapse's `homeserver.yaml`. `readMailPassword` checks the opened file (fstat:
   regular, 0600, this user's; `O_NOFOLLOW`, `O_NONBLOCK`) and names each refusal's reason, which
   `askMail` prints. `identitySetupStep` copies `identity.mail`'s workstation
