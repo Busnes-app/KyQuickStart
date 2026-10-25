@@ -377,7 +377,7 @@ func kubectl(state string, t stack.Target) string {
 	return cmd
 }
 
-// pulseTarget is a kyPulse monitoring target: an app's readiness path through its route.
+// pulseTarget is a kyPulse monitoring target: an app's readiness or status path through its route.
 type pulseTarget struct {
 	Key  string `json:"key"`
 	Name string `json:"name"`
@@ -385,20 +385,24 @@ type pulseTarget struct {
 }
 
 // pulseTargets watches every other app the plan installs through its one edge route, as a
-// user reaches it. unwatched are the apps without a readiness path or a single route (NPM).
+// user reaches it: its Kubernetes readiness path, else its status_path (the Docker-only apps
+// have no Kubernetes block). unwatched are the apps with neither or without a single route (NPM).
 func pulseTargets(st *stack.Stack, cat catalog.Catalog) (targets []pulseTarget, unwatched []string) {
 	targets = []pulseTarget{}
 	for _, a := range st.Apps {
 		if a.Name == "kypulse" { // kyPulse refuses its own origin
 			continue
 		}
-		k := cat[a.Name].Kubernetes
+		path := cat[a.Name].StatusPath
+		if k := cat[a.Name].Kubernetes; k != nil && k.ReadinessPath != "" {
+			path = k.ReadinessPath
+		}
 		host, err := routeHost(st, a.Name)
-		if k == nil || k.ReadinessPath == "" || err != nil {
+		if path == "" || err != nil {
 			unwatched = append(unwatched, a.Name)
 			continue
 		}
-		targets = append(targets, pulseTarget{Key: a.Name, Name: a.Name, URL: "https://" + host + k.ReadinessPath})
+		targets = append(targets, pulseTarget{Key: a.Name, Name: a.Name, URL: "https://" + host + path})
 	}
 	return targets, unwatched
 }
@@ -411,7 +415,7 @@ func pulseHandover(host, admin string, targets []pulseTarget, unwatched []string
 	}
 	out := fmt.Sprintf("\nkyPulse at https://%s/ (sign in through KyIdentity as %s) watches: %s.\n", host, admin, strings.Join(names, ", "))
 	if len(unwatched) > 0 {
-		out += fmt.Sprintf("  Not watched (no readiness path or single edge route): %s.\n", strings.Join(unwatched, ", "))
+		out += fmt.Sprintf("  Not watched (no readiness or status path, or not exactly one edge route): %s.\n", strings.Join(unwatched, ", "))
 	}
 	return out + `  Set its alert webhook in its UI. Its local "admin" break-glass password is printed once, to
   its first pod's log (kubectl -n kyq-kypulse logs deployment/app), and lost when that pod is replaced.
