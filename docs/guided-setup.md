@@ -820,10 +820,16 @@ secrets never reach the workstation, its output or its state.
   `apply` mints no pairing codes and nothing should before the ceremony.
 - KyRecovery 0.4.2 prints its local `admin` break-glass password once, to its first pod's log
   (`kubectl -n kyq-kyrecovery logs deployment/app`), and it is lost when that pod is replaced.
-- No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery. KyRecovery is internal-only, so its URL
-  resolves to a private address, and every product refuses a private KyRecovery unless its
-  `<PRODUCT>_BACKUP_ALLOW_PRIVATE_RECOVERY` is set, which the catalog sets for none of them
-  (Busnes-app/KyQuickStart#93). Apply prints this in each product's handover. The backup status and restore-start screens are KyRecovery's own;
+- Pairing with KyRecovery is by hand. KyRecovery is internal-only, so its URL resolves to a
+  private address, and every product refuses a private KyRecovery unless its private-recovery
+  option is set. When the plan routes KyRecovery as internal, the catalog sets it for every Ky
+  product except KyDNS (`KYIDENTITY_`, `KYCALENDAR_`, `KYNOTES_`, `KYPULSE_`,
+  `KYPOST_BACKUP_ALLOW_PRIVATE_RECOVERY`; KyYard, KyDrive and KyMessages read
+  `KY_BACKUP_ALLOW_PRIVATE_RECOVERY`). The option admits RFC 1918, ULA and CGNAT addresses only;
+  loopback and link-local stay refused. After the ceremony the handover prints the command that
+  mints a single-use code in KyRecovery's container; the owner enters it on each product's
+  backup page. `apply` does not pair products itself yet (#93,
+  [design](superpowers/specs/2026-10-25-recovery-pairing-design.md)). Apply prints this in each product's handover. The backup status and restore-start screens are KyRecovery's own;
   restic status needs `KYRECOVERY_RESTIC_DIR` and the rest-server, which is not installed yet.
 - `KYRECOVERY_TRUSTED_PROXIES` is unset here, so its rate limits see the edge pod as every
   client ([forwarded headers](#forwarded-headers-trusted-proxy)).
@@ -956,7 +962,7 @@ reach; fix it and rerun apply.
 Handover: apply prints KyNotes' URL, the admin account (which administers only; it cannot open
 notes) and the everyday account (created by KyNotes at its first sign-in). KyIdentity's
 `kynotes.user` assignment is the gate: assign it to anyone else who should sign in.
-No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery.
+With an internal KyRecovery in the plan, pair it by hand after the ceremony (KyRecovery's handover step); unpaired, it deposits no backup.
 
 Limits:
 
@@ -1043,7 +1049,7 @@ administration). Outstanding human steps it names:
   /app/data/initial-admin-password`. Sign in with it once and change it; only then delete the
   file (the same command with `rm`), since it is the only copy. Apply never reads it and never
   sets `KY_ADMIN_PASSWORD`.
-- No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery.
+- With an internal KyRecovery in the plan, pair it by hand after the ceremony (KyRecovery's handover step); unpaired, it deposits no backup.
 - The KyPost-KyCalendar invitation pairing is not configured by this installer.
 
 Limits:
@@ -1135,7 +1141,7 @@ KyYard access, and the outstanding human steps:
   then delete the file (the same command with `rm`).
 - The hand-off, printed ready to run: `kyquickstart handoff --state '<state>' --kyyard-target
   <target> --runner-pod kyq-kyyard/app.kubernetes.io/name=kyyard`.
-- No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery.
+- With an internal KyRecovery in the plan, pair it by hand after the ceremony (KyRecovery's handover step); unpaired, it deposits no backup.
 
 The runner never changes its own pod: it applies the plan with its own build's catalog, so
 redeploying KyYard could kill a running operation or downgrade it. Under the runner, KyYard's
@@ -1616,7 +1622,7 @@ account, the assignment rule above, the mail-port facts and the first-start mode
 - Offboarding: webmail KyPost has no directory, so disabling or unassigning someone in KyIdentity stops
   new sign-ins but not a live KyPost session. Sessions live in memory: `docker restart
   kyq-kypost-app-1` on the target ends every one (the kind test proves it).
-- No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery.
+- With an internal KyRecovery in the plan, pair it by hand after the ceremony (KyRecovery's handover step); unpaired, it deposits no backup.
 - The KyPost-KyCalendar invitation pairing is not configured by this installer.
 
 Limits and residuals:

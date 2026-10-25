@@ -45,7 +45,7 @@ func TestEditorConnectsKyDrive(t *testing.T) {
 		t.Fatal(err)
 	}
 	cat, _ := catalog.Load(catalog.Embedded())
-	want := cat["kydrive"].WithRoute(catalog.Route{Host: "drive.example.com", Forward: "192.0.2.1:18443", ForwardAddr: "192.0.2.1"})
+	want := cat["kydrive"].WithRoute(catalog.Route{Host: "drive.example.com", Forward: "192.0.2.1:18443", ForwardAddr: "192.0.2.1"}).WithPrivateRecovery(false)
 	if !bytes.Equal(plain.cat["kydrive"].Compose, want.Compose) || !slices.Equal(plain.cat["kydrive"].Secrets, cat["kydrive"].Secrets) {
 		t.Fatal("KyDrive changed without euro-office")
 	}

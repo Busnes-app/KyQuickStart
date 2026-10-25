@@ -66,6 +66,7 @@ kycalendar:
               KY_APP_URL: "https://h.example.com"
               # Forwarded headers only from the edge's own address; none without the edge's egress_address.
               KY_TRUSTED_PROXIES: "192.0.2.8/32"
+              KYCALENDAR_BACKUP_ALLOW_PRIVATE_RECOVERY: "{{private_recovery}}"
               KY_DB_DRIVER: "sqlite"
               KY_DATA_DIR: "/app/data"
               KY_SSO_ENABLED: "true"
@@ -96,6 +97,7 @@ kycalendar:
             KY_PORT: "8080"
             KY_SSO_AUTO_PROVISION: "false"
             KY_SSO_ENABLED: "true"
+            KYCALENDAR_BACKUP_ALLOW_PRIVATE_RECOVERY: '{{private_recovery}}'
             KYCALENDAR_BACKUP_DEPOSIT_INTERVAL: 24h
             KYCALENDAR_BACKUP_DIR: /app/backups
             KYCALENDAR_BACKUP_KEEP: "7"
@@ -191,6 +193,7 @@ kydrive:
               KY_APP_URL: "https://h.example.com"
               # Forwarded headers only from the edge's own address; none without the edge's egress_address.
               KY_TRUSTED_PROXIES: "192.0.2.8/32"
+              KY_BACKUP_ALLOW_PRIVATE_RECOVERY: "{{private_recovery}}"
               KY_DB_DRIVER: sqlite
               KY_DATA_DIR: /data
               KY_BACKUP_DIR: /backups
@@ -244,6 +247,7 @@ kyidentity:
               KYIDENTITY_ALLOW_PRIVATE_CALLBACKS: "true"
               # Forwarded headers only from the edge's own address; none without the edge's egress_address.
               TRUSTED_PROXY_CIDRS: "192.0.2.8/32"
+              KYIDENTITY_BACKUP_ALLOW_PRIVATE_RECOVERY: "{{private_recovery}}"
               GOMEMLIMIT: "640MiB"
             volumes:
               - "./data:/data"
@@ -260,6 +264,7 @@ kyidentity:
             BOOTSTRAP_ADMIN_USER: kyq-bootstrap
             GOMEMLIMIT: 640MiB
             KYIDENTITY_ALLOW_PRIVATE_CALLBACKS: "true"
+            KYIDENTITY_BACKUP_ALLOW_PRIVATE_RECOVERY: '{{private_recovery}}'
             KYIDENTITY_DATA_DIR: /data
             KYIDENTITY_ISSUER_URL: https://{{host}}
             KYIDENTITY_PORT: "5867"
@@ -305,6 +310,7 @@ kynotes:
               KYNOTES_DATA_DIR: "/data"
               # Forwarded headers only from the edge's own address; none without the edge's egress_address.
               KYNOTES_SERVER_TRUSTED_PROXIES: "192.0.2.8/32"
+              KYNOTES_BACKUP_ALLOW_PRIVATE_RECOVERY: "{{private_recovery}}"
               KYNOTES_BACKUP_DIR: "/backups"
               KYNOTES_BACKUP_KEEP: "7"
               KYNOTES_BACKUP_DEPOSIT_INTERVAL: "24h"
@@ -323,6 +329,7 @@ kynotes:
         args: []
         env:
             GOMEMLIMIT: 384MiB
+            KYNOTES_BACKUP_ALLOW_PRIVATE_RECOVERY: '{{private_recovery}}'
             KYNOTES_BACKUP_DEPOSIT_INTERVAL: 24h
             KYNOTES_BACKUP_DIR: /backups
             KYNOTES_BACKUP_KEEP: "7"
@@ -381,6 +388,7 @@ kypost:
               TUNING_FILE: /kypost/config/TUNING.md
               # Forwarded headers only from the edge's own address; none without the edge's egress_address.
               TRUSTED_PROXY_CIDRS: "192.0.2.8/32"
+              KYPOST_BACKUP_ALLOW_PRIVATE_RECOVERY: "{{private_recovery}}"
               # A webmail client for existing IMAP/SMTP accounts: no native mail, receiving or receiver.
               KYPOST_NATIVE_MAIL: "false"
               KYPOST_NATIVE_RECEIVING: "false"
@@ -433,6 +441,7 @@ kypulse:
               KYPULSE_APP_URL: "https://h.example.com"
               # Forwarded headers only from the edge's own address; none without the edge's egress_address.
               KYPULSE_TRUSTED_PROXIES: "192.0.2.8/32"
+              KYPULSE_BACKUP_ALLOW_PRIVATE_RECOVERY: "{{private_recovery}}"
               KYPULSE_DATA_DIR: "/app/data"
               KYPULSE_AUDIT_KEY_FILE: "/app/secrets/audit.key"
               KYPULSE_SSO_AUTO_PROVISION: "false"
@@ -453,6 +462,7 @@ kypulse:
             GOMEMLIMIT: 384MiB
             KYPULSE_APP_URL: https://{{host}}
             KYPULSE_AUDIT_KEY_FILE: /app/secrets/audit.key
+            KYPULSE_BACKUP_ALLOW_PRIVATE_RECOVERY: '{{private_recovery}}'
             KYPULSE_DATA_DIR: /app/data
             KYPULSE_ENV: production
             KYPULSE_HOST: 0.0.0.0
@@ -561,6 +571,7 @@ kyyard:
               KY_PORT: "9273"
               KY_ALLOW_PLAINTEXT_BIND: "true"
               KY_TRUSTED_PROXIES: "192.0.2.8"
+              KY_BACKUP_ALLOW_PRIVATE_RECOVERY: "{{private_recovery}}"
               KY_APP_NAME: "KyYard"
               KY_APP_URL: "https://h.example.com"
               KY_DB_DRIVER: "sqlite"
@@ -589,6 +600,7 @@ kyyard:
             KY_ALLOW_PLAINTEXT_BIND: "true"
             KY_APP_NAME: KyYard
             KY_APP_URL: https://{{host}}
+            KY_BACKUP_ALLOW_PRIVATE_RECOVERY: '{{private_recovery}}'
             KY_BACKUP_DEPOSIT_INTERVAL: 24h
             KY_BACKUP_DIR: /data/backups
             KY_BACKUP_KEEP: "7"

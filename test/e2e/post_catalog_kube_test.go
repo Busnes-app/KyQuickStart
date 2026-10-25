@@ -126,7 +126,7 @@ func checkCatalogPost(t *testing.T, out string, d driveTarget, port int, get, co
 	}
 	for _, want := range []string{
 		"KyPost at https://" + catalogPostURLHost + "/: webmail", "as prepared-admin, for administration only", "can also add mail", "or as prepared-user for mail",
-		"KyIdentity role kypost.user", "opens no mail port", "this release offers no setting to allow one", "about 2.9 GB", "for when\n     KyIdentity is down", "No catalog product can pair with KyRecovery in this release",
+		"KyIdentity role kypost.user", "opens no mail port", "this release offers no setting to allow one", "about 2.9 GB", "for when\n     KyIdentity is down", recoveryLine(out),
 		"on nas:\n       docker exec --user kypost " + postContainer + " cat /kypost/config/first-run-password.txt",
 		"docker exec --user kypost " + postContainer + " rm /kypost/config/first-run-password.txt",
 		"To end every live session, on nas:\n       docker restart " + postContainer,

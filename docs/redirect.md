@@ -105,9 +105,10 @@ target markers from earlier builds stay valid.
   profile, and KyPost's own production-MX gates, which keep the Maddy profile to a test domain.
 - Internal and external routes on one tunnel edge: covered by unit tests (validation, NPM host
   config, connector configuration, `verify-edge` selection, wizard); no e2e or live tunnel run.
-- Recovery backups: no catalog product can pair with the internal KyRecovery (each refuses a
-  private one without `<PRODUCT>_BACKUP_ALLOW_PRIVATE_RECOVERY`, which the catalog sets for
-  none) (#93).
+- Recovery backups: when the plan routes KyRecovery as internal, the catalog sets each
+  product's private-recovery option (KyDNS's stays `false`), and the owner pairs each product
+  by hand after the ceremony; `apply` does not pair them yet (#93,
+  `docs/superpowers/specs/2026-10-25-recovery-pairing-design.md`).
 - KyAuth push approval: the catalog sets no push relay (`PUSH_RELAY_URL`, `APNS_RELAY_URL`), so
   only TOTP and passkeys work (#98).
 - The KyPost-KyCalendar invitation pairing (#100).

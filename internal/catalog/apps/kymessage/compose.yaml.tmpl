@@ -42,6 +42,7 @@ services:
       KY_DATA_DIR: /app/data
       KY_BACKUP_DIR: /app/backups
       KY_TRUSTED_PROXIES: "{{edge_address}}"
+      KY_BACKUP_ALLOW_PRIVATE_RECOVERY: "{{private_recovery}}"
       # apply-setup writes the KyIdentity issuer, client and secret; only setup's accounts sign in.
       KY_SSO_ENABLED: "true"
       KY_SSO_AUTO_PROVISION: "false"

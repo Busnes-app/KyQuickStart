@@ -473,6 +473,7 @@ func withRoute(st *stack.Stack, name string, t stack.Target, app catalog.App) (c
 	if err != nil {
 		return app, err
 	}
+	app = app.WithPrivateRecovery(privateRecovery(st))
 	for _, a := range st.Apps {
 		if a.Name != name {
 			continue
@@ -718,7 +719,11 @@ func (s *session) apply(ctx context.Context, publish func() error) error {
 	if err := s.operate(ctx, "", s.deploySteps, publish); err != nil {
 		return err
 	}
-	fmt.Fprint(s.o.Out, s.handover+s.postRecords+s.bootstrapNote)
+	handover := s.handover
+	if s.plan != nil && privateRecovery(s.plan) {
+		handover = strings.ReplaceAll(handover, "\n  "+noPairing, "\n  "+pairByHand)
+	}
+	fmt.Fprint(s.o.Out, handover+s.postRecords+s.bootstrapNote)
 	if s.demo {
 		fmt.Fprintln(s.o.Out, "Demo deployment passed its driver checks. Suite SSO, administrator access and backups are not configured.")
 		if t, ok := s.placed["hello"]; ok {
@@ -985,4 +990,17 @@ func versionCommand(args []string, o Options) error {
 	}
 	_, err := fmt.Fprintln(o.Out, o.RunnerImage)
 	return err
+}
+
+// privateRecovery reports whether the plan routes KyRecovery as internal. Its URL then resolves
+// to a private address, and every product refuses it unless its private-recovery option is set.
+func privateRecovery(st *stack.Stack) bool {
+	for _, e := range st.Edges {
+		for _, r := range e.Routes {
+			if r.App == "kyrecovery" && e.Internal(r) {
+				return true
+			}
+		}
+	}
+	return false
 }

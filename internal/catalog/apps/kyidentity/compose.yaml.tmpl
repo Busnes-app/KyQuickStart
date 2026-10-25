@@ -23,6 +23,7 @@ services:
       KYIDENTITY_ALLOW_PRIVATE_CALLBACKS: "true"
       # Forwarded headers only from the edge's own address; none without the edge's egress_address.
       TRUSTED_PROXY_CIDRS: "{{edge_prefix}}"
+      KYIDENTITY_BACKUP_ALLOW_PRIVATE_RECOVERY: "{{private_recovery}}"
       GOMEMLIMIT: "640MiB"
     volumes:
       - "./data:/data"

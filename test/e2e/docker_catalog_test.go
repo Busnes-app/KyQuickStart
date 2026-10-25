@@ -54,7 +54,7 @@ func TestDockerKyCatalog(t *testing.T) {
 			}
 			port := listener.Addr().(*net.TCPAddr).Port
 			listener.Close()
-			app := cat[name].WithRoute(catalog.Route{Host: name + ".example.test", Forward: fmt.Sprintf("127.0.0.1:%d", port), ForwardAddr: "127.0.0.1", EdgeAddress: edgeIP})
+			app := cat[name].WithRoute(catalog.Route{Host: name + ".example.test", Forward: fmt.Sprintf("127.0.0.1:%d", port), ForwardAddr: "127.0.0.1", EdgeAddress: edgeIP}).WithPrivateRecovery(false)
 			root := t.TempDir()
 			runner := remote.Local{}
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -159,7 +159,7 @@ USER 10001:10001
 	if err != nil {
 		t.Fatal(err)
 	}
-	app := cat["kyyard"].WithRoute(catalog.Route{Host: "yard.example.test", Forward: "127.0.0.1:19273", ForwardAddr: "127.0.0.1", EdgeAddress: "192.0.2.2"})
+	app := cat["kyyard"].WithRoute(catalog.Route{Host: "yard.example.test", Forward: "127.0.0.1:19273", ForwardAddr: "127.0.0.1", EdgeAddress: "192.0.2.2"}).WithPrivateRecovery(false)
 	app, err = app.WithDockerRunner("fixture/runner@sha256:" + strings.Repeat("a", 64))
 	if err != nil {
 		t.Fatal(err)

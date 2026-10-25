@@ -32,6 +32,7 @@ upgrade:
 kubernetes:
   image: kynotes
   env:
+    KYNOTES_BACKUP_ALLOW_PRIVATE_RECOVERY: "{{private_recovery}}"
     PORT: "8080"
     KYNOTES_DATA_DIR: /data
     # apply-setup compares its bundle's backup dir and keep with these.

@@ -32,6 +32,7 @@ services:
       KY_APP_URL: "https://{{host}}"
       # Forwarded headers only from the edge's own address; none without the edge's egress_address.
       KY_TRUSTED_PROXIES: "{{edge_prefix}}"
+      KY_BACKUP_ALLOW_PRIVATE_RECOVERY: "{{private_recovery}}"
       KY_DB_DRIVER: sqlite
       KY_DATA_DIR: /data
       KY_BACKUP_DIR: /backups
