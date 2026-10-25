@@ -406,7 +406,7 @@ func checkCatalogYard(t *testing.T, ctx context.Context, cs kubernetes.Interface
 		"workstation apply is refused until kyquickstart handoff --revoke",
 		"handoff --revoke, apply, then handoff again",
 		"KyYard's Suite page shows the runner",
-		"pair it with KyRecovery",
+		"No catalog product can pair with KyRecovery in this release",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("KyYard handover lacks %q", want)

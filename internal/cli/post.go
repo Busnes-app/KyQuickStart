@@ -89,6 +89,6 @@ KyPost at https://%[1]s/: webmail for mail accounts you already have. Sign in th
   2. Offboarding: removing someone in KyIdentity stops new sign-ins, but KyPost keeps a live
      session until it restarts. To end every live session, on %[5]s:
        docker restart %[4]s
-  3. Pair it with KyRecovery once KyRecovery's custodian ceremony is done: it needs a fresh
-     one-time code from KyRecovery's administrator. It makes no recovery backups until then.
+  The KyPost-KyCalendar invitation pairing is not configured by this installer.
+  No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery.
 `

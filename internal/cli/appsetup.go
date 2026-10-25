@@ -276,6 +276,7 @@ Outstanding human step, unless already done: the KyRecovery custodian ceremony.
   print the custodian cards. KyRecovery refuses every product pairing until then, so mint no
   pairing codes before it. Its local "admin" break-glass password is printed once, to its first
   pod's log (kubectl -n kyq-kyrecovery logs deployment/app), and lost when that pod is replaced.
+  No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery.
 `
 
 // identityHandover says where KyIdentity's setup left the owner's two generated passwords, in
@@ -290,6 +291,8 @@ KyIdentity at https://%[1]s/: the owner's accounts are %[2]s (administration onl
   (everyday use). Read each one's generated first password, sign in, change it and enrol MFA:
     %[4]s cat %[5]s
     %[4]s cat %[6]s
+  MFA: enrol TOTP or a passkey. KyAuth push approval does not deliver: this installer
+  configures no push relay.
 `, host, n.Admin.Username, n.Everyday.Username, read, path.Join(scope, "admin.password"), path.Join(scope, "everyday.password")) + where
 }
 
@@ -307,9 +310,7 @@ const notesHandover = `
 KyNotes at https://%[1]s/: sign in through KyIdentity as %[2]s (administers only; it cannot
   open notes) or %[3]s, whose account KyNotes creates at first sign-in. Assign KyIdentity role
   kynotes.user to anyone else who should sign in. KyNotes has no local password.
-  Outstanding human step: on its Backups screen, as %[2]s, pair it with KyRecovery using a
-  one-time code from KyRecovery's administrator, or pin the suite public key by hand. KyNotes
-  makes no backups until then.
+  No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery.
 `
 
 // calendarHandover is printed after every apply that installs KyCalendar; %[4]s is kubectl
@@ -317,14 +318,12 @@ KyNotes at https://%[1]s/: sign in through KyIdentity as %[2]s (administers only
 const calendarHandover = `
 KyCalendar at https://%[1]s/: sign in through KyIdentity as %[2]s (its console only; it has no
   calendars) or %[3]s (calendars). Its setup created exactly these two; it admits no one else.
-  Outstanding human steps:
-  1. Its local "admin" break-glass account. Read its one-time password:
+  Outstanding human step: its local "admin" break-glass account. Read its one-time password:
        %[4]s -n kyq-kycalendar exec deployment/app -- cat /app/data/initial-admin-password
      Sign in with it once at https://%[1]s/ and change it. Only after that, delete the file:
        %[4]s -n kyq-kycalendar exec deployment/app -- rm /app/data/initial-admin-password
-  2. On its Backup & recovery screen, as %[2]s, pair it with KyRecovery using a one-time code
-     from KyRecovery's administrator, or pin the suite public key by hand. It makes no backups
-     until then.
+  The KyPost-KyCalendar invitation pairing is not configured by this installer.
+  No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery.
 `
 
 // dnsHandover is printed after every apply that installs KyDNS; %[3]s is its DNS address,
@@ -338,9 +337,8 @@ KyDNS at https://%[1]s/: sign in through KyIdentity as %[2]s, the one account it
      (ssh -t, so the password does not echo), set one:
        docker exec -it kyq-kydns-app-1 /usr/local/bin/kydns admin reset-password
      It asks for the password twice. Use it only to recover, at https://%[1]s/login.
-  3. Pair it with KyRecovery on its Backups screen, signed in as that local administrator:
-     %[2]s cannot enroll its first recovery key. It makes no backups until then.
   Notes:
+  - No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery.
   - Firewall: ports 53 and %[6]d are open on %[5]s. Its admin UI on %[6]d trusts forwarded
     requests only from egress_address %[7]s; apply checked that the edge is trusted and this
     workstation is refused. DNS answers the private ranges KyDNS sees. Both rest on the Docker
@@ -377,7 +375,7 @@ func kubectl(state string, t stack.Target) string {
 	return cmd
 }
 
-// pulseTarget is a kyPulse monitoring target: an app's readiness path through its route.
+// pulseTarget is a kyPulse monitoring target: an app's readiness or status path through its route.
 type pulseTarget struct {
 	Key  string `json:"key"`
 	Name string `json:"name"`
@@ -385,20 +383,24 @@ type pulseTarget struct {
 }
 
 // pulseTargets watches every other app the plan installs through its one edge route, as a
-// user reaches it. unwatched are the apps without a readiness path or a single route (NPM).
+// user reaches it: its Kubernetes readiness path, else its status_path (the Docker-only apps
+// have no Kubernetes block). unwatched are the apps with neither or without a single route (NPM).
 func pulseTargets(st *stack.Stack, cat catalog.Catalog) (targets []pulseTarget, unwatched []string) {
 	targets = []pulseTarget{}
 	for _, a := range st.Apps {
 		if a.Name == "kypulse" { // kyPulse refuses its own origin
 			continue
 		}
-		k := cat[a.Name].Kubernetes
+		path := cat[a.Name].StatusPath
+		if k := cat[a.Name].Kubernetes; k != nil && k.ReadinessPath != "" {
+			path = k.ReadinessPath
+		}
 		host, err := routeHost(st, a.Name)
-		if k == nil || k.ReadinessPath == "" || err != nil {
+		if path == "" || err != nil {
 			unwatched = append(unwatched, a.Name)
 			continue
 		}
-		targets = append(targets, pulseTarget{Key: a.Name, Name: a.Name, URL: "https://" + host + k.ReadinessPath})
+		targets = append(targets, pulseTarget{Key: a.Name, Name: a.Name, URL: "https://" + host + path})
 	}
 	return targets, unwatched
 }
@@ -411,7 +413,7 @@ func pulseHandover(host, admin string, targets []pulseTarget, unwatched []string
 	}
 	out := fmt.Sprintf("\nkyPulse at https://%s/ (sign in through KyIdentity as %s) watches: %s.\n", host, admin, strings.Join(names, ", "))
 	if len(unwatched) > 0 {
-		out += fmt.Sprintf("  Not watched (no readiness path or single edge route): %s.\n", strings.Join(unwatched, ", "))
+		out += fmt.Sprintf("  Not watched (no readiness or status path, or not exactly one edge route): %s.\n", strings.Join(unwatched, ", "))
 	}
 	return out + `  Set its alert webhook in its UI. Its local "admin" break-glass password is printed once, to
   its first pod's log (kubectl -n kyq-kypulse logs deployment/app), and lost when that pod is replaced.
