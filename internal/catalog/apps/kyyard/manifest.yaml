@@ -35,6 +35,7 @@ upgrade:
 kubernetes:
   image: kyyard
   env:
+    KY_BACKUP_ALLOW_PRIVATE_RECOVERY: "{{private_recovery}}"
     KY_HOST: 0.0.0.0
     KY_PORT: "9273"
     # Ingress is limited to the edge's pods by NetworkPolicy.

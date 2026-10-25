@@ -278,6 +278,11 @@ const EdgeAddressRef = "{{edge_address}}"
 // or empty when the edge names none, so the app ignores forwarded headers.
 const EdgePrefixRef = "{{edge_prefix}}"
 
+// PrivateRecoveryRef stands for "true" when the plan routes KyRecovery as internal, whose URL
+// then resolves to a private address the products refuse unless allowed, and "false" otherwise.
+// It may appear in a Compose template and as a whole kubernetes.env value.
+const PrivateRecoveryRef = "{{private_recovery}}"
+
 // MediaAddressRef stands for the plan's media_address of the app.
 const MediaAddressRef = "{{media_address}}"
 
@@ -311,17 +316,18 @@ func roleRef(name string) func(...string) string {
 // routeFuncs render a Compose template's route references as themselves; a session replaces
 // them with the app's routes (WithRoute).
 var routeFuncs = template.FuncMap{
-	"host":          roleRef("host"),
-	"forward":       roleRef("forward"),
-	"hostname":      roleRef("hostname"),
-	"forward_addr":  func() string { return ForwardAddrRef },
-	"edge_address":  func() string { return EdgeAddressRef },
-	"edge_prefix":   func() string { return EdgePrefixRef },
-	"media_address": func() string { return MediaAddressRef },
-	"smtp_address":  func() string { return SMTPAddressRef },
-	"mail_hostname": func() string { return MailHostnameRef },
-	"maddy_binary":  func() string { return MaddyBinaryRef },
-	"receiving_tls": func() string { return ReceivingTLSRef },
+	"host":             roleRef("host"),
+	"forward":          roleRef("forward"),
+	"hostname":         roleRef("hostname"),
+	"forward_addr":     func() string { return ForwardAddrRef },
+	"edge_address":     func() string { return EdgeAddressRef },
+	"edge_prefix":      func() string { return EdgePrefixRef },
+	"media_address":    func() string { return MediaAddressRef },
+	"private_recovery": func() string { return PrivateRecoveryRef },
+	"smtp_address":     func() string { return SMTPAddressRef },
+	"mail_hostname":    func() string { return MailHostnameRef },
+	"maddy_binary":     func() string { return MaddyBinaryRef },
+	"receiving_tls":    func() string { return ReceivingTLSRef },
 }
 
 // roleRefRE finds {{host:<role>}} and {{forward:<role>}} in a rendered Compose file.
@@ -551,6 +557,22 @@ func (a App) WithRoute(r Route) App {
 	return a
 }
 
+// WithPrivateRecovery returns a copy whose Compose file and Kubernetes env have every
+// PrivateRecoveryRef replaced by allow.
+func (a App) WithPrivateRecovery(allow bool) App {
+	v := strconv.FormatBool(allow)
+	a.Compose = bytes.ReplaceAll(a.Compose, []byte(PrivateRecoveryRef), []byte(v))
+	if a.Kubernetes != nil {
+		k := *a.Kubernetes
+		k.Env = make(map[string]string, len(a.Kubernetes.Env))
+		for key, val := range a.Kubernetes.Env {
+			k.Env[key] = strings.ReplaceAll(val, PrivateRecoveryRef, v)
+		}
+		a.Kubernetes = &k
+	}
+	return a
+}
+
 // Primary is the role of the app's primary route, "" for an app with one route.
 func (m Manifest) Primary() string {
 	if len(m.Routes) == 0 {
@@ -661,8 +683,11 @@ func (k Kubernetes) validate(images map[string]string, baseline, edge bool) erro
 		if !envRE.MatchString(key) {
 			return fmt.Errorf("env: name %q must match %s", key, envRE)
 		}
+		if v == PrivateRecoveryRef {
+			continue
+		}
 		if rest := strings.ReplaceAll(v, HostRef, ""); strings.Contains(rest, "{{") || strings.Contains(rest, "}}") {
-			return fmt.Errorf("env: %s: the only reference is %s", key, HostRef)
+			return fmt.Errorf("env: %s: the only references are %s and a whole %s", key, HostRef, PrivateRecoveryRef)
 		}
 	}
 	switch {

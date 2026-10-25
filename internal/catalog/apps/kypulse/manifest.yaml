@@ -32,6 +32,7 @@ upgrade:
 kubernetes:
   image: kypulse
   env:
+    KYPULSE_BACKUP_ALLOW_PRIVATE_RECOVERY: "{{private_recovery}}"
     # Production listens beyond loopback and sends Secure cookies; both are needed in a pod.
     KYPULSE_ENV: production
     KYPULSE_HOST: 0.0.0.0

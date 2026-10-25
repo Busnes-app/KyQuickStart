@@ -5,6 +5,7 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -269,7 +270,7 @@ func TestKyYardEntry(t *testing.T) {
 		"KY_HOST": "0.0.0.0", "KY_PORT": "9273", "KY_ALLOW_PLAINTEXT_BIND": "true", "KY_TRUSTED_PROXIES": "127.0.0.1", "KY_APP_NAME": "KyYard",
 		"KY_APP_URL": "https://{{host}}", "KY_DB_DRIVER": "sqlite", "KY_DATA_DIR": "/data", "KY_DOCKER_SOCKET": "",
 		"KY_SSO_ENABLED": "false", "KY_SCIM_ENABLED": "false", "KY_BACKUP_DIR": "/data/backups", "KY_BACKUP_KEEP": "7",
-		"KY_BACKUP_DEPOSIT_INTERVAL": "24h", "KY_SUITE_RUNNER_SOCKET": "/run/kyquickstart/sock/runner.sock", "GOMEMLIMIT": "384MiB",
+		"KY_BACKUP_DEPOSIT_INTERVAL": "24h", "KY_BACKUP_ALLOW_PRIVATE_RECOVERY": PrivateRecoveryRef, "KY_SUITE_RUNNER_SOCKET": "/run/kyquickstart/sock/runner.sock", "GOMEMLIMIT": "384MiB",
 	}
 	// Unset: a fixed admin password, the agent image, an external database and the keys KyYard
 	// generates into /data. The only trusted proxy is the pod's loopback.
@@ -400,7 +401,7 @@ func TestKyPostEntry(t *testing.T) {
 		Secrets         []string
 	}
 	var c struct{ Services map[string]service }
-	if err := yaml.Unmarshal(a.WithRoute(Route{Host: "post.example.com", Forward: "192.168.1.91:18866"}).Compose, &c); err != nil {
+	if err := yaml.Unmarshal(a.WithRoute(Route{Host: "post.example.com", Forward: "192.168.1.91:18866"}).WithPrivateRecovery(false).Compose, &c); err != nil {
 		t.Fatal(err)
 	}
 	s, ok := c.Services["app"]
@@ -416,12 +417,12 @@ func TestKyPostEntry(t *testing.T) {
 		t.Fatalf("ports %v, entrypoint %v", s.Ports, s.Entrypoint)
 	}
 	e := s.Environment
-	if e["SERVER_BASE_URL"] != "https://post.example.com" || e["KYPOST_NATIVE_MAIL"] != "false" || e["KYPOST_NATIVE_RECEIVING"] != "false" || e["KYPOST_NATIVE_RECEIVER"] != "false" || e["WEB_PORT"] != "5866" {
+	if e["SERVER_BASE_URL"] != "https://post.example.com" || e["KYPOST_BACKUP_ALLOW_PRIVATE_RECOVERY"] != "false" || e["KYPOST_NATIVE_MAIL"] != "false" || e["KYPOST_NATIVE_RECEIVING"] != "false" || e["KYPOST_NATIVE_RECEIVER"] != "false" || e["WEB_PORT"] != "5866" {
 		t.Fatalf("env = %v", e)
 	}
 	for k := range e {
 		for _, forbidden := range []string{"PAIRING_SECRET", "POW_SECRET", "BOOTSTRAP_ADMIN_", "ALLOW_INSECURE_HTTP", "TLS_", "SANDBOX_PRIVATE_HOSTS", "SMTP_", "CAPTCHA_",
-			"KYPOST_BACKUP_ALLOW_PRIVATE_RECOVERY", "KYPOST_BULK_BACKUP_REPOSITORY", "KYPOST_RECEIVING_"} {
+			"KYPOST_BULK_BACKUP_REPOSITORY", "KYPOST_RECEIVING_"} {
 			if strings.HasPrefix(k, forbidden) {
 				t.Errorf("env sets %s", k)
 			}
@@ -808,6 +809,37 @@ func TestUpgradeAllows(t *testing.T) {
 		err := u.Allows(installed, "2.4.0")
 		if want == "" && err != nil || want != "" && (err == nil || !strings.Contains(err.Error(), want)) {
 			t.Errorf("%s: err = %v, want %q", installed, err, want)
+		}
+	}
+}
+
+// Every Ky product that pairs with KyRecovery takes its private-recovery option from the plan,
+// in Compose and in the Kubernetes env, under the name the product reads (#93).
+func TestWithPrivateRecovery(t *testing.T) {
+	cat, err := Load(Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]string{
+		"kyidentity": "KYIDENTITY_BACKUP_ALLOW_PRIVATE_RECOVERY", "kycalendar": "KYCALENDAR_BACKUP_ALLOW_PRIVATE_RECOVERY",
+		"kynotes": "KYNOTES_BACKUP_ALLOW_PRIVATE_RECOVERY", "kypulse": "KYPULSE_BACKUP_ALLOW_PRIVATE_RECOVERY",
+		"kypost": "KYPOST_BACKUP_ALLOW_PRIVATE_RECOVERY", "kyyard": "KY_BACKUP_ALLOW_PRIVATE_RECOVERY",
+		"kydrive": "KY_BACKUP_ALLOW_PRIVATE_RECOVERY", "kymessage": "KY_BACKUP_ALLOW_PRIVATE_RECOVERY",
+	}
+	for name, env := range names {
+		a := cat[name]
+		for _, allow := range []bool{true, false} {
+			got := a.WithPrivateRecovery(allow)
+			want := env + `: "` + strconv.FormatBool(allow) + `"`
+			if !strings.Contains(string(got.Compose), want) || strings.Contains(string(got.Compose), PrivateRecoveryRef) {
+				t.Errorf("%s Compose with %v lacks %s or keeps the reference", name, allow, want)
+			}
+			if k := got.Kubernetes; k != nil && k.Env[env] != strconv.FormatBool(allow) {
+				t.Errorf("%s Kubernetes env %s = %q with %v", name, env, k.Env[env], allow)
+			}
+		}
+		if a.Kubernetes != nil && a.Kubernetes.Env[env] != PrivateRecoveryRef {
+			t.Errorf("%s: WithPrivateRecovery changed the catalog's own env", name)
 		}
 	}
 }

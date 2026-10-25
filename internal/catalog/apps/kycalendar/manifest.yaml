@@ -32,6 +32,7 @@ upgrade:
 kubernetes:
   image: kycalendar
   env:
+    KYCALENDAR_BACKUP_ALLOW_PRIVATE_RECOVERY: "{{private_recovery}}"
     KY_HOST: 0.0.0.0
     KY_PORT: "8080"
     KY_APP_NAME: KyCalendar

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Busnes-app/kyquickstart/internal/stack"
 )
 
 const stackYAML = `version: 1
@@ -164,5 +166,40 @@ func TestTwoTargetsSameCluster(t *testing.T) {
 		"\napps:\n  - name: hello\n    target: k1\n", "preflight")
 	if err == nil || !strings.Contains(err.Error(), `targets "k1" and "k2" are the same cluster`) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// Products may pair with a private KyRecovery only when the plan routes KyRecovery as internal.
+func TestPrivateRecovery(t *testing.T) {
+	route := func(app, exposure string) stack.Route { return stack.Route{App: app, Exposure: exposure} }
+	for _, c := range []struct {
+		edge stack.Edge
+		want bool
+	}{
+		{stack.Edge{Provider: "cloudflare", Routes: []stack.Route{route("kyrecovery", "internal")}}, true},
+		{stack.Edge{Provider: "lan", Routes: []stack.Route{route("kyrecovery", "")}}, true},
+		{stack.Edge{Provider: "cloudflare", Routes: []stack.Route{route("kyrecovery", "external")}}, false},
+		{stack.Edge{Provider: "cloudflare", Routes: []stack.Route{route("kynotes", "internal")}}, false},
+	} {
+		if got := privateRecovery(&stack.Stack{Edges: []stack.Edge{c.edge}}); got != c.want {
+			t.Errorf("privateRecovery(%+v) = %v, want %v", c.edge, got, c.want)
+		}
+	}
+	if privateRecovery(&stack.Stack{}) {
+		t.Error("a plan without edges allows a private KyRecovery")
+	}
+}
+
+// KyRecovery's pairing step names the command for its target and never a code.
+func TestRecoveryPairing(t *testing.T) {
+	kube := recoveryPairing("/state", "recovery.example.com", stack.Target{Name: "k1", Kubeconfig: "/kc"})
+	docker := recoveryPairing("/state", "recovery.example.com", stack.Target{Name: "nas", Host: "192.0.2.1"})
+	for _, c := range []struct{ text, mint string }{
+		{kube, "-n kyq-kyrecovery exec deployment/app -- /app/kyrecovery pair generate --service <app>"},
+		{docker, "docker exec kyq-kyrecovery-app-1 /app/kyrecovery pair generate --service <app>"},
+	} {
+		if !strings.Contains(c.text, c.mint) || !strings.Contains(c.text, "https://recovery.example.com/") {
+			t.Errorf("pairing step lacks %q or KyRecovery's URL:\n%s", c.mint, c.text)
+		}
 	}
 }

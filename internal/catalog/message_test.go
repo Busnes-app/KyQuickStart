@@ -61,7 +61,7 @@ func messageCompose(t *testing.T) (App, map[string]composeService, map[string]ma
 		Services map[string]composeService  `yaml:"services"`
 		Networks map[string]map[string]bool `yaml:"networks"`
 	}
-	r := a.WithRoute(messageRoute)
+	r := a.WithRoute(messageRoute).WithPrivateRecovery(false)
 	if err := yaml.Unmarshal(r.Compose, &c); err != nil {
 		t.Fatal(err)
 	}

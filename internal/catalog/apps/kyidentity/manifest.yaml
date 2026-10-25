@@ -34,6 +34,7 @@ upgrade:
 kubernetes:
   image: kyidentity
   env:
+    KYIDENTITY_BACKUP_ALLOW_PRIVATE_RECOVERY: "{{private_recovery}}"
     KYIDENTITY_ISSUER_URL: https://{{host}}
     KYIDENTITY_DATA_DIR: /data
     KYIDENTITY_PORT: "5867"

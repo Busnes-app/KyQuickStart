@@ -124,6 +124,9 @@ func (s *session) composeClients(st *stack.Stack) error {
 			if !s.placed["kyrecovery"].Kubernetes() {
 				text = strings.ReplaceAll(text, "pod's log (kubectl -n kyq-kyrecovery logs deployment/app), and lost when that pod is replaced.", "container's log (docker logs kyq-kyrecovery-app-1 on its target), and lost when that container is replaced.")
 			}
+			if privateRecovery(st) {
+				text = strings.ReplaceAll(text, noPairing, recoveryPairing(s.state, host, s.placed["kyrecovery"]))
+			}
 			s.handover += text
 		case "kydrive":
 			t := s.placed["kydrive"]
@@ -278,6 +281,28 @@ Outstanding human step, unless already done: the KyRecovery custodian ceremony.
   pod's log (kubectl -n kyq-kyrecovery logs deployment/app), and lost when that pod is replaced.
   No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery.
 `
+
+// noPairing ends each product's handover while no catalog product can reach KyRecovery.
+const noPairing = "No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery."
+
+// pairByHand replaces noPairing in a product's handover when the plan routes KyRecovery as
+// internal: every product but KyDNS may then pair with it (#93).
+const pairByHand = "Pair it with KyRecovery on its backup page to start backups (see KyRecovery's step)."
+
+// recoveryPairing is KyRecovery's handover step when its products may pair by hand: a code
+// minted in KyRecovery's container, typed into each product as its administrator.
+func recoveryPairing(state, host string, t stack.Target) string {
+	mint := kubectl(state, t) + " -n kyq-kyrecovery exec deployment/app --"
+	if !t.Kubernetes() {
+		mint = "docker exec kyq-kyrecovery-app-1"
+	}
+	return fmt.Sprintf(`After the ceremony, pair each product by hand; until then no product has a backup.
+  For each, mint a single-use code (valid 15 minutes) and enter it, with KyRecovery's URL
+  https://%s/, on the product's backup page as its administrator:
+    %s /app/kyrecovery pair generate --service <app> --app <name>
+  The code is a secret: type it, do not paste it into chat or tickets. KyRecovery's pairings
+  page then lists the product and, after its first deposit, its last backup.`, host, mint)
+}
 
 // identityHandover says where KyIdentity's setup left the owner's two generated passwords, in
 // its setup directory scope inside the app's container.

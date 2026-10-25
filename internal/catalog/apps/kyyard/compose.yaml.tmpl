@@ -20,6 +20,7 @@ services:
       KY_PORT: "9273"
       KY_ALLOW_PLAINTEXT_BIND: "true"
       KY_TRUSTED_PROXIES: "{{edge_address}}"
+      KY_BACKUP_ALLOW_PRIVATE_RECOVERY: "{{private_recovery}}"
       KY_APP_NAME: "KyYard"
       KY_APP_URL: "https://{{host}}"
       KY_DB_DRIVER: "sqlite"

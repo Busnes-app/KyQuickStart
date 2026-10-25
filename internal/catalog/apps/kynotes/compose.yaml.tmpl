@@ -20,6 +20,7 @@ services:
       KYNOTES_DATA_DIR: "/data"
       # Forwarded headers only from the edge's own address; none without the edge's egress_address.
       KYNOTES_SERVER_TRUSTED_PROXIES: "{{edge_prefix}}"
+      KYNOTES_BACKUP_ALLOW_PRIVATE_RECOVERY: "{{private_recovery}}"
       KYNOTES_BACKUP_DIR: "/backups"
       KYNOTES_BACKUP_KEEP: "7"
       KYNOTES_BACKUP_DEPOSIT_INTERVAL: "24h"
