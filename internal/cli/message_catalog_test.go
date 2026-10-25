@@ -297,8 +297,6 @@ func TestKyMessagePlanRefusals(t *testing.T) {
 		"bad everyday username": {route("everyday: {username: owner,", "everyday: {username: o,"), "identity.everyday.username"},
 		"plaintext smtp":        {mail("none", pw), "identity.mail.security"},
 		"relative password":     {mail("starttls", "smtp.password"), "identity.mail.password_file"},
-		"symlinked password":    {mail("starttls", link), "identity.mail.password_file"},
-		"loose password":        {mail("starttls", loose), "identity.mail.password_file"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newMessageFixture(t)
@@ -322,6 +320,31 @@ func TestKyMessagePlanRefusals(t *testing.T) {
 	messageStackPlan(t, f, mail("starttls", pw))
 	if err := f.run("review"); err != nil {
 		t.Fatal(err)
+	}
+	// review is offline and reads no password file; preflight and apply refuse an unsafe or
+	// missing one before connecting.
+	for name, file := range map[string]string{"symlinked": link, "loose": loose, "missing": filepath.Join(t.TempDir(), "absent")} {
+		t.Run(name+" password", func(t *testing.T) {
+			f := newMessageFixture(t)
+			messageStackPlan(t, f, mail("starttls", file))
+			dialed := false
+			saved := dialTarget
+			defer func() { dialTarget = saved }()
+			dialTarget = func(context.Context, stack.Target, remote.SSHConfig, bool) (driver, error) {
+				dialed = true
+				return nil, errors.New("no connection expected")
+			}
+			for _, args := range [][]string{{"review"}, {"plan", "--noninteractive"}} {
+				if err := f.run(args...); err != nil {
+					t.Fatalf("%v: %v", args, err)
+				}
+			}
+			for _, args := range [][]string{{"preflight"}, {"apply"}} {
+				if err := f.run(args...); err == nil || !strings.Contains(err.Error(), "identity.mail.password_file") || dialed {
+					t.Fatalf("%v: err = %v (dialed %v)", args, err, dialed)
+				}
+			}
+		})
 	}
 }
 
