@@ -85,7 +85,7 @@ func TestKyYardClientFromCatalog(t *testing.T) {
 		"KyYard's Suite page shows the runner",
 		`only the local "admin" account from step 1 can start operations there, and owner-admin can
      only view it.`,
-		"pair it with KyRecovery",
+		"No catalog product can pair with KyRecovery in this release",
 	} {
 		if !strings.Contains(s.handover, want) {
 			t.Errorf("handover lacks %q:\n%s", want, s.handover)

@@ -326,10 +326,11 @@ KyPost at https://%[1]s/: native mail for %[6]s, chosen at install. KyPost store
      and reachability, actual incoming and outgoing mail (headers, Sent), and a backup restored
      on another host. A passing report is not acceptance.
   Backups: KyPost's sealed backups hold mailboxes only up to 64 MiB each and 256 MiB in all;
-  KyQuickStart sets no KYPOST_BULK_BACKUP_REPOSITORY, so real mail volumes outgrow them. Pair
-  it with KyRecovery once KyRecovery's custodian ceremony is done (a one-time code from
-  KyRecovery's administrator). Removing someone in KyIdentity ends their KyPost sessions
-  through the directory; their mailbox is kept.
+  KyQuickStart sets no KYPOST_BULK_BACKUP_REPOSITORY, so real mail volumes outgrow them.
+  No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery.
+  Removing someone in KyIdentity ends their KyPost sessions through the directory; their
+  mailbox is kept.
+  The KyPost-KyCalendar invitation pairing is not configured by this installer.
 `
 
 // postReceiverPending is step 5 before the receiver is in the plan.

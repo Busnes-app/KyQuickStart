@@ -17,6 +17,7 @@ import (
 	"github.com/Busnes-app/kyquickstart/internal/engine"
 	"github.com/Busnes-app/kyquickstart/internal/kube"
 	"github.com/Busnes-app/kyquickstart/internal/managed"
+	"github.com/Busnes-app/kyquickstart/internal/stack"
 	"github.com/Busnes-app/kyquickstart/internal/suite"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -53,8 +54,28 @@ func TestKyPulseClientFromCatalog(t *testing.T) {
 	if b, _ := json.Marshal(s.pulseTargets); string(b) != `[{"key":"kyidentity","name":"kyidentity","url":"https://identity.example.com/readyz"},{"key":"kyrecovery","name":"kyrecovery","url":"https://recovery.example.com/healthz"}]` {
 		t.Fatalf("targets = %s", b)
 	}
-	if !strings.Contains(s.handover, "kyPulse at https://pulse.example.com/ (sign in through KyIdentity as owner-admin) watches: kyidentity, kyrecovery.") || !strings.Contains(s.handover, "Not watched (no readiness path or single edge route): npm.") || !strings.Contains(s.handover, "custodian ceremony") {
+	if !strings.Contains(s.handover, "kyPulse at https://pulse.example.com/ (sign in through KyIdentity as owner-admin) watches: kyidentity, kyrecovery.") || !strings.Contains(s.handover, "Not watched (no readiness or status path, or not exactly one edge route): npm.") || !strings.Contains(s.handover, "custodian ceremony") {
 		t.Fatalf("handover = %q", s.handover)
+	}
+}
+
+// An app without a Kubernetes block (Docker only) is watched at its status_path.
+func TestPulseTargetsDockerApps(t *testing.T) {
+	st := &stack.Stack{
+		Apps: []stack.App{{Name: "kydrive", Target: "nas"}, {Name: "kymessage", Target: "nas"}, {Name: "kypulse", Target: "k1"}},
+		Edges: []stack.Edge{{Target: "k1", Provider: "lan", AllowCIDRs: []string{"192.168.1.0/24"}, ClientPort: 30443, Routes: []stack.Route{
+			{App: "kydrive", Hostname: "drive.example.com"},
+			{App: "kymessage", Hostname: "message.example.com"},
+			{App: "kymessage", Role: "matrix", Hostname: "matrix.example.com"},
+		}}},
+	}
+	cat := catalog.Catalog{
+		"kydrive":   {Manifest: catalog.Manifest{Name: "kydrive", StatusPath: "/healthz"}},
+		"kymessage": {Manifest: catalog.Manifest{Name: "kymessage", StatusPath: "/api/installer/network"}},
+	}
+	targets, unwatched := pulseTargets(st, cat)
+	if b, _ := json.Marshal(targets); string(b) != `[{"key":"kydrive","name":"kydrive","url":"https://drive.example.com:30443/healthz"},{"key":"kymessage","name":"kymessage","url":"https://message.example.com:30443/api/installer/network"}]` || len(unwatched) != 0 {
+		t.Fatalf("targets = %s, unwatched %v", b, unwatched)
 	}
 }
 

@@ -61,7 +61,7 @@ func TestKyNotesClientFromCatalog(t *testing.T) {
 	if b, _ := json.Marshal(s.integrations[0].Identity.Clients); string(b) != "["+wantNotesClient+"]" || len(s.amendments) != 0 || !slices.Equal(s.derived, []string{"kynotes"}) {
 		t.Fatalf("derived clients = %s, amendments %d", b, len(s.amendments))
 	}
-	for _, want := range []string{"KyNotes at https://notes.example.com/", "as owner-admin (administers only", "or owner, whose account", "role\n  kynotes.user", "pair it with KyRecovery", "no local password"} {
+	for _, want := range []string{"KyNotes at https://notes.example.com/", "as owner-admin (administers only", "or owner, whose account", "role\n  kynotes.user", "No catalog product can pair with KyRecovery in this release", "no local password"} {
 		if !strings.Contains(s.handover, want) {
 			t.Errorf("handover lacks %q: %s", want, s.handover)
 		}

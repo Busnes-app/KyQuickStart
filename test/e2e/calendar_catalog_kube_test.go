@@ -68,7 +68,7 @@ func checkCatalogCalendar(t *testing.T, ctx context.Context, cs kubernetes.Inter
 		"or prepared-user (calendars)",
 		"kubectl --kubeconfig '" + kubeconfig + "' -n kyq-kycalendar exec deployment/app -- cat /app/data/initial-admin-password",
 		"Only after that, delete the file:",
-		"pair it with KyRecovery",
+		"No catalog product can pair with KyRecovery in this release",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("KyCalendar handover lacks %q", want)

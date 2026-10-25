@@ -255,6 +255,37 @@ func TestPlanDeclaresClusterCredentialGenerator(t *testing.T) {
 	}
 }
 
+// review describes a catalog NPM as installed, its certificates as requested and an internal
+// route's URL with its client_port.
+func TestPlanDescribesCatalogNPM(t *testing.T) {
+	edge := stack.Edge{Target: "k1", Provider: "lan", NPMURL: "kube://kyq-npm/app:81", AllowCIDRs: []string{"192.168.1.0/24"}, ClientPort: 30443,
+		Certificates: []stack.Certificate{{Name: "lan", Domains: []string{"*.lan.example.com"}, DNSProvider: "cloudflare"}},
+		Routes:       []stack.Route{{App: "kyidentity", Hostname: "id.lan.example.com", ForwardHost: "10.0.0.5", ForwardPort: 8080}}}
+	st := &stack.Stack{Targets: []stack.Target{{Name: "k1", Kubeconfig: "/outside/kubeconfig"}}, Apps: []stack.App{{Name: "npm", Target: "k1"}, {Name: "kyidentity", Target: "k1"}}, Edges: []stack.Edge{edge}}
+	var out bytes.Buffer
+	showPlan(&out, st, catalog.Catalog{})
+	for _, want := range []string{
+		"Edge k1: NPM installed by this plan (catalog npm), admin API kube://kyq-npm/app:81, via lan",
+		"Certificate lan requested by NPM from Let's Encrypt (DNS-01, cloudflare): *.lan.example.com",
+		"https://id.lan.example.com:30443 -> 10.0.0.5:8080",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("missing %q in:\n%s", want, out.String())
+		}
+	}
+	for _, stale := range []string{"existing NPM", "new NPM, certificates"} {
+		if strings.Contains(out.String(), stale) {
+			t.Errorf("stale %q in:\n%s", stale, out.String())
+		}
+	}
+	st.Apps = st.Apps[1:]
+	out.Reset()
+	showPlan(&out, st, catalog.Catalog{})
+	if !strings.Contains(out.String(), "Edge k1: existing NPM kube://kyq-npm/app:81 via lan") {
+		t.Errorf("NPM outside the plan not shown as existing:\n%s", out.String())
+	}
+}
+
 func TestGuidedKubernetesStorageClassResumes(t *testing.T) {
 	dir := t.TempDir()
 	kc := filepath.Join(t.TempDir(), "kubeconfig")
