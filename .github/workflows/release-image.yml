@@ -92,6 +92,15 @@ jobs:
             exit 1
           fi
 
+      - name: Require useful release notes before publishing artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          notes="$RUNNER_TEMP/release-notes.md"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.body // ""' > "$notes"
+          python3 scripts/check-release-notes.py "$notes"
+
       # internal/appversion/VERSION is the only version source. The binary reports the
       # tag's full version (the VERSION build arg below and scripts/release-binaries.sh
       # stamp it); the tag's X.Y.Z must be the file's, and the built image is checked
