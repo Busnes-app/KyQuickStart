@@ -1,5 +1,7 @@
 # KyQuickStart
 
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15932/badge)](https://www.bestpractices.dev/projects/15932)
+
 The deterministic execution layer for [KyQuickStart-AI](https://github.com/Busnes-app/KyQuickStart-AI),
 the primary installation path, and a command-line tool that also runs unattended from a saved
 `stack.yaml`. It installs the Ky suite on your own Docker hosts and Kubernetes clusters with
