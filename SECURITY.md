@@ -68,6 +68,15 @@ This is a transport policy for one independent runtime. It does not certify rest
 cryptography as FIPS-approved or establish the key policy of Kubernetes clients, external
 authentication plugins, installed applications or their own backup processes.
 
+## Supported installer TLS configuration
+
+[STRONG-CRYPTO.md](docs/STRONG-CRYPTO.md) owns the workstation startup profile and
+runner image default, private trust, selected strong client credentials and access-preserving
+migration. The image sets its Go TLS profile independently of the workstation; Restic keeps
+its separate per-container setting. This filters verified remote chains, including roots;
+local mTLS, dynamic authenticators and proxies have their own documented conditions.
+It is not automatic rejection of every operator-supplied weak local key or formal FIPS validation.
+
 ## Security-sensitive changes
 
 Changes to credential handling, SSH/remote execution, driver operations, the reverse proxy / edge, or backup orchestration require tests for both the expected path and the relevant

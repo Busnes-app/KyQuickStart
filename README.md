@@ -139,6 +139,7 @@ Choosing `finish` saves the plan without touching any server.
 - [Third-party catalog and admission rules](docs/superpowers/specs/2026-10-06-third-party-catalog-design.md)
 - [Installer architecture](docs/superpowers/specs/2026-10-06-installer-architecture-design.md)
 - [Verifying releases](docs/VERIFYING-RELEASES.md): check a release's attestation and source commit, and rebuild its binaries to the same bytes
+- [Supported key strength and TLS](docs/STRONG-CRYPTO.md): process settings, credential conditions and migration
 - [Assurance case](docs/ASSURANCE-CASE.md): threat model, trust boundaries, and why the security requirements hold
 - [Contributing](CONTRIBUTING.md): process, tests and coding standard
 
