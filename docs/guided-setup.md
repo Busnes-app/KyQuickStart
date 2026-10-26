@@ -218,7 +218,9 @@ service tokens and sharing links must be recreated. Accounts, files and workspac
 The probe has no data mounts; reset has only the restored data directory, runs as its target
 owner and has no network or published ports.
 
-**The rest-server is yours.** Run [rest-server](https://github.com/restic/rest-server) 0.14.0 on
+**The rest-server is yours.** Give it a certificate from a public CA (for example Let's
+Encrypt through DNS-01) when KyDrive is on the target: KyDrive's own restic, which holds its
+documents (`<repository>/kydrive-bulk`), trusts only the system's CAs. Run [rest-server](https://github.com/restic/rest-server) 0.14.0 on
 another machine than the app's target (the installer never deploys it), with TLS and
 `--append-only --private-repos`, and one htpasswd user per Docker target. Append-only means the
 target can add snapshots but not delete them; `forget` and `prune` need the server's own
@@ -1256,8 +1258,18 @@ graceful restart and its live `--check`.
   certificate through the system roots.
 - Backups: with a destination on its target, `kyquickstart backup kydrive` snapshots `data`,
   `backups` and both secrets cold (see "Backups and restore on Docker"); restore needs KyIdentity
-  v0.4.4 or later and a released Drive image advertising `restore-reset` (0.4.3 and later). KyDrive's own `KYDRIVE_BULK_BACKUP_REPOSITORY` stays unset: the installer's
-  snapshot is the independent copy, and the `backups` directory, on the same disk as `data`, is not.
+  v0.4.4 or later and a released Drive image advertising `restore-reset` (0.4.3 and later).
+- Document backups: once KyDrive holds any document, every backup it makes, the KyRecovery
+  deposit included, first writes the files to a Restic repository
+  (`KYDRIVE_BULK_BACKUP_REPOSITORY`); without one each fails with "KYDRIVE_BULK_BACKUP_REPOSITORY
+  is required for document backups". With a backup destination on KyDrive's target, the catalog
+  points it at `<repository>/kydrive-bulk` on that rest-server, as the target's user, beside
+  kyquickstart's own `<repository>/kydrive`. The rest-server password file is mounted read-only
+  as a Compose secret, and KyDrive's entrypoint writes the two-line credentials file KyDrive
+  reads into its private `/tmp` (mode 0600); the password is not in Compose or the environment.
+  `kydrive.bulk-init` then runs KyDrive's `bulk-init` (a no-op once initialized). KyDrive's
+  restic trusts only the system's CAs, so a destination with `ca_file` leaves the repository
+  unset, and so does a target without a destination; the handover says so.
 - With `euro-office` in the plan, see "Catalog Euro-Office on Kubernetes".
 - `KY_TRUSTED_PROXIES` is the edge's `egress_address` as a `/32` or `/128`. Without one it is
   empty and KyDrive sees the edge as every client ([forwarded headers](#forwarded-headers-trusted-proxy)).
