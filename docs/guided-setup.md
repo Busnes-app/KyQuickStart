@@ -1565,6 +1565,13 @@ owner already has (native mail on the owner's own domains is an opt-in, chosen a
 `apply` before any connection. It depends on the catalog `kyidentity`, which may run on another
 target, and its one route may sit on the cluster's `lan` edge, as KyDrive's does.
 
+Mobile notifications go through KyPost's own push relays, `https://fcm.relay.kypost.busnes.app` (Android)
+and `https://apn.relay.kypost.busnes.app` (iOS), which the catalog sets as KyPost's `.env.example` does.
+KyPost registers itself with each on first start and keeps the keys in its `private` volume. Each
+relay keeps one key per public IP address: two KyPost servers behind one address take the key
+from each other, so pin operator-issued keys (`PUSH_RELAY_KEY`, `APNS_RELAY_KEY`) there. The
+devices' **App Pull** mode needs no relay.
+
 ```yaml
 apps:
   - name: kypost
