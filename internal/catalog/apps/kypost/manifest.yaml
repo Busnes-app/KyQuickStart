@@ -38,6 +38,7 @@ native_mail:
 backup:
   volumes: [config, private, state]
 upgrade:
-  # First catalog release; its state migrates forward at startup.
-  min_from: 0.4.2
-  migrates_data: true
+  # 0.4.3 -> 0.4.3.1 changes no stored state (frontend, push relays, PGP delivery), so it needs
+  # only an acknowledgement. From 0.4.2 the state still migrates: those upgrade to 0.4.3 first.
+  min_from: 0.4.3
+  migrates_data: false
