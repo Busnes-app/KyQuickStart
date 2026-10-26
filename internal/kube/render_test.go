@@ -15,6 +15,7 @@ import (
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/managed"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 )
 
 func fixture(t *testing.T) catalog.App {
@@ -562,6 +563,17 @@ func TestRenderEuroOffice(t *testing.T) {
 	for _, private := range []string{"fc00::/7", "fe80::/10", "::1/128"} {
 		if v6.CIDR != "::/0" || !slices.Contains(v6.Except, private) {
 			t.Errorf("public egress admits %s: %+v", private, v6)
+		}
+	}
+	// The API server refuses an exception that is not a strict subset of its CIDR in the same
+	// family; it counts an IPv4-mapped IPv6 prefix as IPv4.
+	for _, b := range []*networkingv1.IPBlock{v4, v6} {
+		cidr := netip.MustParsePrefix(b.CIDR)
+		for _, e := range b.Except {
+			ex := netip.MustParsePrefix(e)
+			if ex.Addr().Is4In6() || ex.Addr().Is4() != cidr.Addr().Is4() || ex.Bits() <= cidr.Bits() {
+				t.Errorf("exception %s of %s would be refused by the API server", e, b.CIDR)
+			}
 		}
 	}
 	// An app without egress "edge" is unaffected: PublicEgress only widens a closed policy.
