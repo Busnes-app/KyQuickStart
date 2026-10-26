@@ -50,7 +50,9 @@ operator's job ([README](../README.md#targets)).
    unknown key is pinned only after the operator confirms its fingerprint or passes
    `--trust-host-key`, and a changed key is always refused (`internal/remote/ssh.go`,
    `hostKeyCallback`; `TestChangedHostKeyIsRefused`). Authentication is the SSH agent or a
-   private key file.
+   private key file. The same boundary enforces supported transport algorithms, key-size
+   floors and RSA SHA-2 signatures, including agent certificates. See
+   [SSH policy and rotation](../SECURITY.md#ssh-policy-and-key-rotation).
 2. **Workstation → Kubernetes API.** Through the operator's kubeconfig, referenced by path and
    refused inside the state directory (`internal/cli/cli.go`). Each app gets namespace
    `kyq-<app>` with Pod Security `restricted` and a `default-deny-ingress` policy
@@ -96,6 +98,7 @@ operator's job ([README](../README.md#targets)).
 |---|---|---|
 | Shell injection on a target | Every value is one POSIX word via `remote.Quote`; each command reaches `sh` base64-encoded, so a fish or other login shell cannot reinterpret it; a test runs the wrapper under sh, bash and fish | `internal/remote/remote.go` (`Quote`), `internal/remote/ssh.go` (`wrap`), `internal/remote/ssh_test.go` |
 | Man-in-the-middle on SSH | Pinned host keys, changed key refused, host asked only for the pinned key types | `internal/remote/ssh.go` (`hostKeyCallback`, `hostKeyAlgorithms`) |
+| Obsolete SSH negotiation or short keys | Supported transport algorithms only; RSA >=2048, ECDSA/Ed25519; agent key bytes decoded; RSA authentication restricted to SHA-2; certificate subject/authority floors | `internal/remote/ssh.go`, `internal/remote/ssh_strength.go`, `internal/remote/ssh_strength_test.go` |
 | Weak or leaked secrets | 32 bytes from the target's `/dev/urandom`; on Docker written once into a private file (`ln` refuses replacement); read back only from a regular 0600 file owned by the user, under no symlinked directory and no parent others can write to without the sticky bit | `internal/dockerhost/secrets.go` (`generateSecret`), `internal/kube/generate.go`, `internal/remote/secret.go` (`ReadSecret`) |
 | Secrets in output | Every secret read back is registered with the redactor; step errors and `logs` output pass through it. Every byte any occurrence of any secret covers is replaced, matches found before any replacement, so secrets that overlap or share a prefix leave no fragment; `TestRedactLeavesNoPartOfOverlappingSecrets` and `FuzzRedact` check it | `internal/engine/redact.go`, `internal/cli/lifecycle.go`, `internal/engine/engine_test.go` |
 | Forged client address (`X-Forwarded-For`) | A product trusts forwarded headers from one address only, its edge's `egress_address` (or cloudflared's) as rendered by the catalog, never a range; with none set, and on Kubernetes, it trusts loopback at most. The operator must not name a Docker gateway; only KyDNS checks (`kydns.gate`). For NPM on a cluster that address is its node's, shared by the node's other pods (`guided-setup.md`, "Forwarded headers") | `internal/catalog/catalog.go` (`WithRoute`), `internal/catalog/catalog_test.go` (`TestTrustedProxies`), `test/e2e/docker_catalog_test.go` (`checkEdgeTrust`) |
@@ -109,6 +112,9 @@ operator's job ([README](../README.md#targets)).
 
 - **First contact is trust on first use.** The first host key is accepted on the operator's word;
   the error message tells them to compare it with `ssh-keygen -lf` on the host.
+- **SSH enforcement has a specific scope.** It preserves old keys/pins but refuses their use
+  when they fail policy. It does not qualify Kubernetes TLS, external authentication plugins,
+  installed products or KyQuickStart-AI's separate OpenSSH transport.
 - **Redaction covers registered secrets only.** A secret the installer never read back, or one
   shorter than 8 characters, is not redacted.
 - **The handover prints credentials by design.** Anyone who sees that output can sign in as the

@@ -30,7 +30,8 @@ listed under [Unfinished](docs/redirect.md#dispositions).
 
 ## Targets
 
-- Docker hosts over SSH (pinned host keys, SSH agent authentication).
+- Docker hosts over SSH (pinned host keys, SSH agent or private-key authentication).
+  Obsolete keys and algorithms are refused; see [SSH policy and key rotation](SECURITY.md#ssh-policy-and-key-rotation) before upgrading an old target.
 - Kubernetes clusters through an existing kubeconfig. App volumes use the cluster's default
   StorageClass, or the one a target names with `storage_class`.
 
