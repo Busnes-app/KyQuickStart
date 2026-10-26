@@ -26,9 +26,10 @@ oidc:
 backup:
   volumes: [data, secrets]
 upgrade:
-  # First release; its SQLite schema migrates at startup.
-  min_from: 0.4.2
-  migrates_data: true
+  # 0.4.3 -> 0.4.3.1 changes no schema (credential-checked sessions and TOTP use existing
+  # columns), so it needs only an acknowledgement. 0.4.2 migrates: upgrade to 0.4.3 first.
+  min_from: 0.4.3
+  migrates_data: false
 kubernetes:
   image: kypulse
   env:
