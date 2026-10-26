@@ -23,5 +23,7 @@ COPY --from=build /out/kyquickstart /usr/local/bin/kyquickstart
 # owners are set in the build stage: COPY --chmod does not reach a destination directory on
 # every builder, and --chown would also hand /run to 10001.
 COPY --from=build /out/root/ /
+# Outbound installer TLS; Restic containers set their own independent profile.
+ENV GODEBUG=fips140=on
 USER 10001:10001
 ENTRYPOINT ["kyquickstart", "serve", "--state", "/state", "--socket", "/run/kyquickstart/runner.sock"]
