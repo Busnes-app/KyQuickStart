@@ -131,6 +131,12 @@ func (s *session) composeClients(st *stack.Stack) error {
 		case "kydrive":
 			t := s.placed["kydrive"]
 			s.handover += fmt.Sprintf(driveHandover, host, n.Admin.Username, path.Join(t.Root, "kydrive"), t.Name, n.Everyday.Username)
+			switch {
+			case t.Backup == nil:
+				s.handover += bulkMissing
+			case t.Backup.CAFile != "":
+				s.handover += bulkUnavailable
+			}
 		case "kynotes":
 			s.handover += fmt.Sprintf(notesHandover, host, n.Admin.Username, n.Everyday.Username)
 		case "kydns":

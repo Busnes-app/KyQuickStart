@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/netip"
 	"net/url"
@@ -529,7 +530,15 @@ func validateSelection(st *stack.Stack, cat catalog.Catalog, o Options) error {
 	if _, err := plan.Order(names, cat); err != nil {
 		return err
 	}
-	_, _, err := editorPlan(st, cat)
+	drive, ok, err := editorPlan(st, cat)
+	if err != nil {
+		return err
+	}
+	if ok {
+		cat = maps.Clone(cat)
+		cat["kydrive"] = drive
+	}
+	_, _, err = bulkPlan(st, cat)
 	return err
 }
 
