@@ -1,3 +1,5 @@
+# Runner images from this source default outbound TLS to GODEBUG=fips140=on.
+# Preserve that mode when overriding GODEBUG; trust/migration: docs/STRONG-CRYPTO.md.
 # The suite runner as a pod of its own (docs/guided-setup.md, "Hand-off to KyYard"), for
 # `kyquickstart handoff --kyyard-target <this cluster's target> --runner-pod kyq-runner/app=runner`.
 # The catalog KyYard runs the runner in its own pod instead (docs/guided-setup.md, "Catalog

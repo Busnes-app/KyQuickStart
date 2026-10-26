@@ -14,6 +14,8 @@ v1 in `../../docs/superpowers/specs/2026-10-16-suite-runner-design.md`.
 
 ## Local Contracts
 
+- Before changing startup environment, outbound trust or credentials, read `../../docs/STRONG-CRYPTO.md`; the image supplies the runner TLS profile, while operations reuse the CLI clients.
+
 - Answers must decode with KyYard's client types with unknown fields refused
   (`kyyard_test.go` copies them from KyYard `internal/suite`). Change wire types only with the
   spec and KyYard together. Only `not_found` is a 404.

@@ -362,6 +362,15 @@ then, for KyDrive:
 
 Piped instead: `printf '%s\nkydrive\n' "$PW" | ./kyquickstart restore kydrive --snapshot 1a2b3c4d`.
 
+## Installer TLS and key strength
+
+[Supported key strength and TLS](STRONG-CRYPTO.md) gives the workstation startup
+setting, selected kubeconfig/credential and trust conditions, and certificate migration.
+The runner image supplies its own profile for outbound API/admin connections in all
+placements; retain it if replacing GODEBUG. Earlier images need an upgrade containing
+both this change and Restic's independent policy. Existing SSH keys, kubeconfigs, archives,
+passwords and data are preserved. Legacy TLS destinations may need certificate/server updates.
+
 ## Hand-off to KyYard
 
 After install, KyYard's Suite page can install, upgrade, uninstall and unmanage apps through the

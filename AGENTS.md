@@ -248,6 +248,7 @@ edge compatibility: `docs/redirect.md`.
 ## Ownership
 
 - Public overview, build and command summary: `README.md`.
+- Supported installer key/TLS configuration, startup, selected credentials and lossless migration: `docs/STRONG-CRYPTO.md`.
 - Third-party catalog, admission rules, edge and reverse-proxy choices, and the app-aware bulk
   backup path: `docs/superpowers/specs/2026-10-06-third-party-catalog-design.md`.
 - Redirect record (decision, freeze, Keep/Simplify/Retire/Unfinished dispositions, placement,
@@ -492,6 +493,10 @@ edge compatibility: `docs/redirect.md`.
   base64-encoded to `sh` (`remote.wrap`), so a non-POSIX login shell such as fish cannot alter
   it. Unit tests run commands for real through `remote.Local` and under sh, bash and fish.
 - Host keys are pinned in `<state>/known_hosts`; a changed key is never accepted, by flag or prompt.
+- The runner image sets `GODEBUG=fips140=on` for its own outbound TLS in every placement;
+  workstation commands opt in at startup. `docs/STRONG-CRYPTO.md` owns the selected
+  credential/trust conditions and migration. Keep this distinct from the independent
+  Restic runtime and local mTLS inputs: on-mode does not reject every short client key.
 - `remote.Dial` uses `ssh.SupportedAlgorithms()` for transport negotiation and refuses short
   host/authentication keys (RSA >=2048, supported ECDSA, Ed25519). Certificate subjects and
   authorities meet the same floor and certificate signatures use supported algorithms.
