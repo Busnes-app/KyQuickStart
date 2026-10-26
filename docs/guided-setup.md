@@ -226,6 +226,21 @@ another machine than the app's target (the installer never deploys it), with TLS
 target can add snapshots but not delete them; `forget` and `prune` need the server's own
 administrator credential, which stays off the target. The installer prescribes no firewall rule.
 
+**TLS key policy.** Every restic container started by the installer enables its own
+Go strong TLS profile (`GODEBUG=fips140=on`). Use RSA-2048 or larger, or P-256/P-384/P-521,
+for the server certificate and every intermediate/root in its trusted chain. The profile
+also restricts TLS negotiation to Go's supported strong policy; it does not disable hostname,
+expiry or CA verification. Strong private CAs still work through `ca_file`.
+
+Before upgrading a destination with smaller keys, provision a strong certificate/CA and
+verify its identity through your existing administrative access. Update the protected
+`ca_file` when the CA changes, then test snapshot listing before relying on a new backup.
+Keep the repository, its encrypted data, repository password and rest-server credential.
+A TLS refusal is a certificate/server migration problem; do not recreate the repository,
+delete backup data or weaken verification to recover access. This setting configures the
+installer's restic processes, not KyDrive's separate backup client or other product TLS.
+It is not a FIPS certification of restic or the installer.
+
 **On the target**, as its SSH user, write the rest-server password for that user to a file,
 mode 0600, and, for a private CA, its certificate. `plan` asks for the destination after the
 target's directory (blank for none); `review` lists it:
