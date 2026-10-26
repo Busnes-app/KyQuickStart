@@ -209,3 +209,14 @@ func TestRecoveryPairing(t *testing.T) {
 		}
 	}
 }
+
+// Behind a tunnel, NPM admits external routes only from the connector: apps on that cluster
+// reach them over the internet. A lan edge admits allow_cidrs, the pod network among them.
+func TestTunnelEdge(t *testing.T) {
+	st := &stack.Stack{Edges: []stack.Edge{{Target: "k1", Provider: "cloudflare"}, {Target: "k2", Provider: "lan"}, {Target: "k3", Provider: "frp"}}}
+	for target, want := range map[string]bool{"k1": true, "k2": false, "k3": true, "nas": false} {
+		if got := tunnelEdge(st, target); got != want {
+			t.Errorf("tunnelEdge(%s) = %v, want %v", target, got, want)
+		}
+	}
+}

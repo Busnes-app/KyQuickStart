@@ -1329,7 +1329,15 @@ run every product as the target user with no capabilities, which this editor can
   RabbitMQ, Redis and the `Data` directory stay in the container and reset when the pod is
   recreated.
 - **Network.** Ingress comes only from the edge's pods, on port 80. Egress reaches only
-  cluster DNS and the edge's HTTPS container port (443). `ALLOW_PRIVATE_IP_ADDRESS=true` is set
+  cluster DNS and the edge's HTTPS container port (443), plus, when the cluster's edge is a
+  tunnel (`cloudflare`, `cloudflare-direct` or `frp`), port 443 on public addresses. A tunnel
+  edge's NPM answers external routes such as KyDrive's only to its connector (403 to anyone
+  else), so the editor fetches documents from and posts saves to KyDrive's public URL the way a
+  browser does. Private (RFC 1918), shared (CGNAT), link-local, loopback, multicast and reserved
+  ranges stay excluded, IPv6 alike, so the editor still reaches nothing on the site's networks
+  but the edge pods. Without that rule, opening a document fails with `"errorCode":-4,
+  "errorDescription":"Download failed."` and the editor's log shows the KyDrive callback
+  timing out. `ALLOW_PRIVATE_IP_ADDRESS=true` is set
   because KyDrive's route resolves to a private address. The editor fetches the URLs KyDrive's
   signed requests name, but also URLs an editing user supplies, such as an image inserted by
   URL; the egress policy is what confines both.
@@ -1346,9 +1354,12 @@ run every product as the target user with no capabilities, which this editor can
     `lan` edge's `allow_cidrs` must admit for the editor to reach KyDrive). That reaches every
     app routed by that edge, past any Cloudflare-side control on those hostnames. The editor's
     request filter works on addresses only, and every routed hostname shares the edge's
-    address, so it cannot narrow this per hostname.
+    address, so it cannot narrow this per hostname. Behind a tunnel edge the editor can also
+    GET any public HTTPS address, as most document editors can (an image inserted by URL);
+    internal-only hostnames stay out of reach there, since they resolve to private addresses.
   - From the editor's pod, KyDrive's hostname must resolve to an address that reaches this
-    edge's HTTPS port, such as a node's NodePort; any other path is blocked. The editor must
+    edge's HTTPS port, such as a node's NodePort, or, behind a tunnel edge, to its public
+    address; any other path is blocked. The editor must
     trust the edge's certificate through its image's roots, which works for Let's Encrypt but
     not for a private CA. `ALLOW_META_IP_ADDRESS` and `USE_UNAUTHORIZED_STORAGE` stay `false`.
 - **Route path blocks.** NPM answers 404 for `/info`, `/internal`, `/ai-proxy`, `/admin`,

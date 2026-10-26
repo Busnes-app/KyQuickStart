@@ -24,6 +24,10 @@ type App struct {
 	// Upstreams are the addresses off the cluster the edge app's routes forward to, which its
 	// egress admits; edge app only.
 	Upstreams []netip.AddrPort
+	// PublicEgress lets an app with egress "edge" also reach public addresses on 443: behind a
+	// tunnel edge, NPM answers external routes only to the connector, so the app reaches them
+	// the way a browser does. Private, shared, link-local and loopback ranges stay refused.
+	PublicEgress bool
 	// RunnerImage is the suite runner sidecar's image, for an app with kubernetes.suite_runner.
 	RunnerImage string
 	// SecretFrom reads secrets copied from another target rather than generated here, by key.
