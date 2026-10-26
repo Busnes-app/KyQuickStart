@@ -380,6 +380,8 @@ func clusterDNS() []networkingv1.NetworkPolicyPeer {
 
 // publicInternet is every address but the private, shared (CGNAT), link-local, loopback,
 // multicast and reserved ranges: the internet without the site's own networks or the cluster's.
+// The API server refuses IPv4-mapped IPv6 (::ffff:0:0/96) as an exception to ::/0, and needs
+// none: a socket to a mapped address sends IPv4, which the IPv4 exceptions cover.
 func publicInternet() []networkingv1.NetworkPolicyPeer {
 	return []networkingv1.NetworkPolicyPeer{
 		{IPBlock: &networkingv1.IPBlock{CIDR: "0.0.0.0/0", Except: []string{
@@ -387,7 +389,7 @@ func publicInternet() []networkingv1.NetworkPolicyPeer {
 			"192.0.0.0/24", "192.168.0.0/16", "198.18.0.0/15", "224.0.0.0/4", "240.0.0.0/4",
 		}}},
 		{IPBlock: &networkingv1.IPBlock{CIDR: "::/0", Except: []string{
-			"::/128", "::1/128", "::ffff:0:0/96", "64:ff9b::/96", "fc00::/7", "fe80::/10", "ff00::/8",
+			"::/128", "::1/128", "64:ff9b::/96", "fc00::/7", "fe80::/10", "ff00::/8",
 		}}},
 	}
 }
