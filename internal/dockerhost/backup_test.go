@@ -95,7 +95,7 @@ func TestResticRunsConfined(t *testing.T) {
 				t.Errorf("restic run lacks %q: %s", want, cmd)
 			}
 		}
-		if !slices.Equal(c.Env, []string{"RESTIC_REPOSITORY=rest:https://backup.lan:8000/nas/fixture", "RESTIC_PASSWORD_FILE=/run/kyq/restic_password", "RESTIC_REST_USERNAME=nas"}) {
+		if !slices.Equal(c.Env, []string{"GODEBUG=fips140=on", "RESTIC_REPOSITORY=rest:https://backup.lan:8000/nas/fixture", "RESTIC_PASSWORD_FILE=/run/kyq/restic_password", "RESTIC_REST_USERNAME=nas"}) {
 			t.Errorf("env = %v", c.Env)
 		}
 		for i, a := range c.Args {

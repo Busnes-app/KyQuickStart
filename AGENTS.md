@@ -420,6 +420,13 @@ edge compatibility: `docs/redirect.md`.
   target, never leaves it through the installer and is never in a snapshot; the owner records
   it once with the printed `ssh … cat` command. Sealing it in KyRecovery and K8up on
   Kubernetes come later; the rest-server host never holds one.
+- Every installer-owned restic container sets its own `GODEBUG=fips140=on`; the workstation's
+  environment does not configure the container. Preserve repository passwords, archive bytes,
+  credential files and normal hostname/CA verification. A legacy TLS peer/CA must be upgraded
+  without recreating the repository; `docs/guided-setup.md` owns that migration. The real-image
+  `TestResticTLSKeyFloor` regression runs in CI's default e2e shard, including weak leaf,
+  intermediate and root keys plus strong private-CA controls. This is not a whole-installer
+  FIPS certification or a policy for other clients/products.
 - Restores run in `kyquickstart restore`, never inside KyRecovery: typed confirmation, refusal
   of a running app and, without `--replace` (which moves data aside, never deletes), of any
   existing data. An app whose people come from KyIdentity restores only when the plan's
