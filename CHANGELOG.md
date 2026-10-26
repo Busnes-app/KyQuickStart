@@ -12,6 +12,16 @@ plan before running `apply` or `upgrade`: catalog pins and rendered configuratio
 change, and product-specific migration/backup acknowledgements still apply. Keep the
 state directory, target data and target-held credentials; do not reset them as an upgrade.
 
+## Unreleased
+
+- Refuse undersized SSH host/authentication keys, obsolete key exchange and 96-bit MACs.
+  RSA authentication uses SHA-2 even through the SSH agent and user certificates.
+
+Upgrade impact: legacy SSH targets/agents may need a key or software update before the
+installer or suite runner can connect. Keep existing access while rotating keys and verify
+the new host fingerprint before updating a pin; see [rotation guidance](SECURITY.md#ssh-policy-and-key-rotation).
+No installer state, target data, key or credential is reset automatically.
+
 ## v0.4.2.7 — 2026-10-26
 
 - Kubernetes network rules no longer include the IPv4-mapped exception that the API

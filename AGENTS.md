@@ -485,6 +485,12 @@ edge compatibility: `docs/redirect.md`.
   base64-encoded to `sh` (`remote.wrap`), so a non-POSIX login shell such as fish cannot alter
   it. Unit tests run commands for real through `remote.Local` and under sh, bash and fish.
 - Host keys are pinned in `<state>/known_hosts`; a changed key is never accepted, by flag or prompt.
+- `remote.Dial` uses `ssh.SupportedAlgorithms()` for transport negotiation and refuses short
+  host/authentication keys (RSA >=2048, supported ECDSA, Ed25519). Certificate subjects and
+  authorities meet the same floor and certificate signatures use supported algorithms.
+  RSA authentication is restricted to SHA-2, including agent certificates; decode agent key
+  blobs before checking strength. Skip unusable agent identities, refuse when none remain,
+  and preserve existing keys/pins. Rotation guidance lives in `SECURITY.md`.
 - On a cluster each app lives in namespace `kyq-<app>` (Pod Security `restricted`, default-deny
   ingress) and the run lock is Lease `kyquickstart/kyquickstart-lock`. A manifest's
   `pod_security: baseline` is the only exception (NPM, whose root init it needs, and
