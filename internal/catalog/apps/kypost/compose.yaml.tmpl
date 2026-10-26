@@ -42,6 +42,11 @@ services:
       # Forwarded headers only from the edge's own address; none without the edge's egress_address.
       TRUSTED_PROXY_CIDRS: "{{edge_prefix}}"
       KYPOST_BACKUP_ALLOW_PRIVATE_RECOVERY: "{{private_recovery}}"
+      # Native push through KyPost's relays (Android FCM, iOS APNs), as its .env.example sets
+      # them. Unset, every mobile notification stays off. The server registers itself on first
+      # start and keeps the keys in SECRET_DIR (/kypost/private, the private volume).
+      PUSH_RELAY_URL: https://fcm.relay.busnes.app
+      APNS_RELAY_URL: https://apn.relay.busnes.app
 {{- if eq .Mail "receiver"}}
       # Native mailboxes, receiving through the bundled Maddy and Rspamd's scan.
       KYPOST_NATIVE_MAIL: "true"
