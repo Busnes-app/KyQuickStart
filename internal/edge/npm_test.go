@@ -259,8 +259,8 @@ allow 192.168.1.0/24;
 allow fd00:1::/48;
 deny all;
 location / {
-  proxy_set_header Host $host;
-  proxy_set_header X-Forwarded-Host $host;
+  proxy_set_header Host hello.example.com:30543;
+  proxy_set_header X-Forwarded-Host hello.example.com:30543;
   proxy_set_header X-Forwarded-For $remote_addr;
   proxy_set_header X-Real-IP $remote_addr;
   proxy_set_header X-Forwarded-Proto $scheme;

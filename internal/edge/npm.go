@@ -286,14 +286,21 @@ func (n *NPM) config(e stack.Edge, r stack.Route, cert int) hostConfig {
 	}
 	// A server-level proxy_set_header loses to NPM's default location. Own the whole
 	// location, which also suppresses NPM's default forwarding-header configuration.
+	// nginx's $host drops the port. Clients that reach a route on another port than 443 (an
+	// internal route's client_port) dialed host:port, and an app that binds a signature to the
+	// host the client dialed (KyYard's agent challenge) must see the same, so name it exactly.
+	hostHeader := "$host"
+	if port != 443 {
+		hostHeader = fmt.Sprintf("%s:%d", r.Hostname, port)
+	}
 	proxy := fmt.Sprintf(` {
-  proxy_set_header Host $host;
-  proxy_set_header X-Forwarded-Host $host;
+  proxy_set_header Host %[2]s;
+  proxy_set_header X-Forwarded-Host %[2]s;
   proxy_set_header X-Forwarded-For $remote_addr;
   proxy_set_header X-Real-IP $remote_addr;
   proxy_set_header X-Forwarded-Proto $scheme;
   proxy_set_header X-Forwarded-Scheme $scheme;
-  proxy_set_header X-Forwarded-Port %d;
+  proxy_set_header X-Forwarded-Port %[1]d;
   proxy_set_header Forwarded "";
   proxy_set_header CF-Connecting-IP "";
   proxy_set_header True-Client-IP "";
@@ -302,7 +309,7 @@ func (n *NPM) config(e stack.Edge, r stack.Route, cert int) hostConfig {
   proxy_http_version 1.1;
   proxy_pass $forward_scheme://$server:$port$request_uri;
 }
-`, port)
+`, port, hostHeader)
 	const closed = " {\n  return 404;\n}\n"
 	// The catalog's paths alone, or everything but its denied paths.
 	for _, p := range r.Paths {
