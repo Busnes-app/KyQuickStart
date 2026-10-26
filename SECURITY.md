@@ -55,6 +55,19 @@ needs an update or a supported Ed25519/ECDSA identity.
 This is an SSH policy. It does not establish strong-key compliance for Kubernetes TLS,
 external authentication plugins, deployed products or the AI launcher's separate OpenSSH path.
 
+## Installer restic TLS
+
+The pinned restic container sets `GODEBUG=fips140=on` for its own Go TLS runtime on every
+backup, listing, check and restore operation. This closes undersized peer-certificate keys,
+including trusted intermediate/root keys. Private-CA trust, hostname checks, file-only
+password handling and existing encrypted repositories remain intact. Legacy certificate
+chains must be migrated before use; [the backup runbook](docs/guided-setup.md#backups-and-restore-on-docker)
+explains how to preserve archive/password/credential state. There is no weak-TLS override.
+
+This is a transport policy for one independent runtime. It does not certify restic's
+cryptography as FIPS-approved or establish the key policy of Kubernetes clients, external
+authentication plugins, installed applications or their own backup processes.
+
 ## Security-sensitive changes
 
 Changes to credential handling, SSH/remote execution, driver operations, the reverse proxy / edge, or backup orchestration require tests for both the expected path and the relevant

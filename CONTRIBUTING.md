@@ -32,6 +32,13 @@ Run the checks that apply to the files you changed, and the repository's
 full required checks before hand-off. Record the exact commands and their
 results in the pull request.
 
+The backup TLS regression uses the real pinned restic image through
+`dockerhost.Store.Snapshots`: `make e2e E2E_RUN='^TestResticTLSKeyFloor$' E2E_PKGS=./test/e2e/`.
+It uses disposable certificate chains and an absent test repository, then removes the exact
+owned container after observing the handshake. It changes only the test container name/network
+for fixture routing; separate `TestApply` backup/restore acceptance uses the production network.
+Keep it in the default CI e2e shard and retain the complete backup/restore checks.
+
 ## AI attribution
 
 AI-assisted contributions are welcome; undisclosed ones are not. Disclose

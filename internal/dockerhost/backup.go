@@ -85,7 +85,7 @@ func (s Store) resticCmd(password string, binds []bind, args ...string) string {
 	}
 	var b strings.Builder
 	b.WriteString(`docker run --rm --user "$(id -u):$(id -g)" --read-only --cap-drop ALL --security-opt no-new-privileges --network bridge --tmpfs /tmp:size=512m --memory 1g --memory-swap 1g --cpus 1 --pids-limit 128`)
-	for _, e := range []string{"RESTIC_REPOSITORY=" + s.repo(), "RESTIC_PASSWORD_FILE=" + ctrPassword, "RESTIC_REST_USERNAME=" + s.Dest.RestUser()} {
+	for _, e := range []string{"GODEBUG=fips140=on", "RESTIC_REPOSITORY=" + s.repo(), "RESTIC_PASSWORD_FILE=" + ctrPassword, "RESTIC_REST_USERNAME=" + s.Dest.RestUser()} {
 		b.WriteString(" -e " + remote.Quote(e))
 	}
 	for _, m := range all {
