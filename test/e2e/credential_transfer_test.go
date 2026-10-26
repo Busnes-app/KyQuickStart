@@ -101,7 +101,7 @@ func testCredentialTransfer(t *testing.T, ctx context.Context, originalState, ho
 		docker(t, words...)
 		t.Cleanup(func() { exec.Command("docker", "rm", "-f", name).Run() })
 	}
-	start(identityName, identityBinary, "/usr/local/bin/kyidentity", identityData, []string{"KYIDENTITY_DATA_DIR=/data", "KYIDENTITY_PORT=" + fmt.Sprint(identityPort), "KYIDENTITY_LISTEN_HOST=127.0.0.1", "KYIDENTITY_ISSUER_URL=" + issuerURL, "KYIDENTITY_ALLOW_PRIVATE_CALLBACKS=true", "TRUSTED_PROXY_CIDRS=127.0.0.1/32"})
+	start(identityName, identityBinary, "/usr/local/bin/kyidentity", identityData, append([]string{"KYIDENTITY_DATA_DIR=/data", "KYIDENTITY_PORT=" + fmt.Sprint(identityPort), "KYIDENTITY_LISTEN_HOST=127.0.0.1", "KYIDENTITY_ISSUER_URL=" + issuerURL, "KYIDENTITY_ALLOW_PRIVATE_CALLBACKS=true", "TRUSTED_PROXY_CIDRS=127.0.0.1/32"}, relaysOffEnv...))
 	start(notesName, notesBinary, "/kynotes-server", notesData, nil, "--config", "/data/kynotes.yaml")
 	for _, endpoint := range []string{issuer.URL + "/healthz", destination.URL + "/healthz"} {
 		client := issuer.Client()

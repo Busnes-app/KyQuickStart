@@ -191,7 +191,7 @@ func testCredentialKubernetesTransfer(t *testing.T, ctx context.Context, cs kube
 			t.Fatal(err)
 		}
 		backend, binary, health, init := "127.0.0.1:5867", "/usr/local/bin/kyidentity", "/readyz", "umask 077; mkdir /work/product"
-		env := []corev1.EnvVar{{Name: "KYIDENTITY_DATA_DIR", Value: "/data"}, {Name: "KYIDENTITY_LISTEN_HOST", Value: "127.0.0.1"}, {Name: "KYIDENTITY_ISSUER_URL", Value: issuerURL}, {Name: "KYIDENTITY_ALLOW_PRIVATE_CALLBACKS", Value: "true"}}
+		env := []corev1.EnvVar{{Name: "KYIDENTITY_DATA_DIR", Value: "/data"}, {Name: "KYIDENTITY_LISTEN_HOST", Value: "127.0.0.1"}, {Name: "KYIDENTITY_ISSUER_URL", Value: issuerURL}, {Name: "KYIDENTITY_ALLOW_PRIVATE_CALLBACKS", Value: "true"}, {Name: "PUSH_RELAY_URL"}, {Name: "APNS_RELAY_URL"}}
 		var args []string
 		if name == "notes" {
 			backend, binary, health = "127.0.0.1:8080", "/kynotes-server", "/healthz"

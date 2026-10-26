@@ -34,7 +34,7 @@ const (
 // Real pinned images, private owned binds, actual Compose and native capabilities.
 // Runs serially and refuses an existing project instead of adopting an installation.
 func TestDockerKyCatalog(t *testing.T) {
-	cat, err := catalog.Load(catalog.Embedded())
+	cat, err := catalog.Load(os.DirFS(relaysOffCatalog(t)))
 	if err != nil {
 		t.Fatal(err)
 	}

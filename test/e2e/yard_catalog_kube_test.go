@@ -71,9 +71,7 @@ func TestKubernetesKyYard(t *testing.T) {
 	cs := kubernetes.NewForConfigOrDie(cfg)
 	catalogDir := filepath.Join(work, "catalog")
 	for _, app := range []string{"npm", "kyidentity", "kyyard"} {
-		if err := os.CopyFS(filepath.Join(catalogDir, app), os.DirFS("../../internal/catalog/apps/"+app)); err != nil {
-			t.Fatal(err)
-		}
+		copyCatalogApp(t, catalogDir, app)
 	}
 	runnerImage := yardRunnerImage(t, name, node)
 	plan := filepath.Join(state, "stack.yaml")

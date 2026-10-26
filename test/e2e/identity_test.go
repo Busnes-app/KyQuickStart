@@ -51,7 +51,7 @@ func testIdentityIntegration(t *testing.T, ctx context.Context, state, hostFP st
 		t.Fatal(err)
 	}
 	name := "kyq-identity-" + hex.EncodeToString(random)
-	docker(t, "run", "-d", "--name", name, "--memory", "768m", "--memory-swap", "768m", "--cpus", "1", "--pids-limit", "128", "--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()), "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "-v", binary+":/usr/local/bin/kyidentity:ro", "-v", data+":/data", "-e", "KYIDENTITY_DATA_DIR=/data", "-e", "GOMAXPROCS=2", "-e", "GOMEMLIMIT=512MiB", "-e", "KYIDENTITY_ISSUER_URL=https://identity.example.test", "--entrypoint", "/usr/local/bin/kyidentity", "kyq-e2e-sshd")
+	docker(t, "run", "-d", "--name", name, "--memory", "768m", "--memory-swap", "768m", "--cpus", "1", "--pids-limit", "128", "--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()), "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "-v", binary+":/usr/local/bin/kyidentity:ro", "-v", data+":/data", "-e", "KYIDENTITY_DATA_DIR=/data", "-e", "GOMAXPROCS=2", "-e", "GOMEMLIMIT=512MiB", "-e", "KYIDENTITY_ISSUER_URL=https://identity.example.test", "-e", relaysOffEnv[0], "-e", relaysOffEnv[1], "--entrypoint", "/usr/local/bin/kyidentity", "kyq-e2e-sshd")
 	t.Cleanup(func() { exec.Command("docker", "rm", "-f", name).Run() })
 	deadline := time.Now().Add(30 * time.Second)
 	for {
