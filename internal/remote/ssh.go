@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"time"
 
@@ -75,7 +76,9 @@ func Dial(ctx context.Context, c SSHConfig) (*SSH, error) {
 		closeAgent()
 		return nil, err
 	}
+	algorithms := ssh.SupportedAlgorithms()
 	sc, chans, reqs, err := ssh.NewClientConn(conn, addr, &ssh.ClientConfig{
+		Config:            ssh.Config{KeyExchanges: algorithms.KeyExchanges, Ciphers: algorithms.Ciphers, MACs: algorithms.MACs},
 		User:              c.User,
 		Auth:              []ssh.AuthMethod{auth},
 		HostKeyCallback:   hk,
@@ -100,6 +103,9 @@ func authMethod(ctx context.Context, keyFile string) (ssh.AuthMethod, net.Conn, 
 		}
 		signer, err := ssh.ParsePrivateKey(b)
 		clear(b)
+		if err == nil {
+			signer, err = strongSSHSigner(signer)
+		}
 		if err != nil {
 			return nil, nil, fmt.Errorf("ssh key %s: %w", keyFile, err)
 		}
@@ -113,7 +119,22 @@ func authMethod(ctx context.Context, keyFile string) (ssh.AuthMethod, net.Conn, 
 	if err != nil {
 		return nil, nil, fmt.Errorf("ssh agent: %w", err)
 	}
-	return ssh.PublicKeysCallback(agent.NewClient(ac).Signers), ac, nil
+	return ssh.PublicKeysCallback(func() ([]ssh.Signer, error) {
+		signers, err := agent.NewClient(ac).Signers()
+		if err != nil {
+			return nil, err
+		}
+		var allowed []ssh.Signer
+		for _, signer := range signers {
+			if strong, err := strongSSHSigner(signer); err == nil {
+				allowed = append(allowed, strong)
+			}
+		}
+		if len(allowed) == 0 {
+			return nil, errors.New("SSH agent has no supported key: add Ed25519, ECDSA or RSA >=2048 with SHA-2 signing support")
+		}
+		return allowed, nil
+	}), ac, nil
 }
 
 func (s *SSH) Run(ctx context.Context, cmd string, stdin []byte) ([]byte, error) {
@@ -167,19 +188,26 @@ func hostKeyAlgorithms(knownHosts, addr string) ([]string, error) {
 	}
 	host := knownhosts.Normalize(addr)
 	var algos []string
+	pinned := false
 	for _, line := range bytes.Split(b, []byte("\n")) {
 		f := bytes.Fields(line)
 		if len(f) < 2 || string(f[0]) != host {
 			continue
 		}
+		pinned = true
 		switch t := string(f[1]); t {
 		case ssh.KeyAlgoRSA:
 			algos = append(algos, ssh.KeyAlgoRSASHA512, ssh.KeyAlgoRSASHA256)
 		default:
-			algos = append(algos, t)
+			if slices.Contains(ssh.SupportedAlgorithms().HostKeys, t) {
+				algos = append(algos, t)
+			}
 		}
 	}
 	if len(algos) == 0 {
+		if pinned {
+			return nil, errors.New("pinned SSH host keys use unsupported algorithms: rotate the host key and verify its fingerprint before updating known_hosts")
+		}
 		return firstContactAlgorithms, nil
 	}
 	return algos, nil
@@ -198,6 +226,9 @@ func hostKeyCallback(c SSHConfig) (ssh.HostKeyCallback, error) {
 		return nil, err
 	}
 	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		if err := strongSSHKey(key); err != nil {
+			return fmt.Errorf("%s: host key: %w", c.Name, err)
+		}
 		err := known(hostname, remote, key)
 		var ke *knownhosts.KeyError
 		if !errors.As(err, &ke) {
