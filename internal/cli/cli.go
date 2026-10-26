@@ -542,6 +542,7 @@ func (s *session) connect(ctx context.Context, trust trustFlag) error {
 		}
 		if k, ok := d.(kubeDriver); ok {
 			k.edge, k.nodePorts, k.upstreams, k.runnerImage = s.edgeApp(t.Name), s.nodePorts(t.Name), s.upstreams(t.Name), s.o.RunnerImage
+			k.tunnel = tunnelEdge(s.plan, t.Name)
 			d = k
 		}
 		if h, ok := d.(sshDriver); ok {
@@ -1000,6 +1001,18 @@ func privateRecovery(st *stack.Stack) bool {
 			if r.App == "kyrecovery" && e.Internal(r) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// tunnelEdge reports whether the edge on target is reached through a tunnel (cloudflare,
+// cloudflare-direct or frp). Its external routes admit only the connector, so an app on that
+// cluster reaches another app's external hostname the way a browser does, over the internet.
+func tunnelEdge(st *stack.Stack, target string) bool {
+	for _, e := range st.Edges {
+		if e.Target == target && e.Provider != "lan" {
+			return true
 		}
 	}
 	return false

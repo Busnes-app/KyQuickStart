@@ -159,6 +159,7 @@ type kubeDriver struct {
 	nodePorts    map[int]string   // NodePort -> the app here publishing it
 	upstreams    []netip.AddrPort // where the edge's routes forward off the cluster
 	runnerImage  string           // the suite runner beside KyYard
+	tunnel       bool             // the edge here admits only its connector on external routes
 }
 
 func (d kubeDriver) preflight(ctx context.Context) []finding {
@@ -184,7 +185,7 @@ func (d kubeDriver) steps(name string, app catalog.App, releaseSet string, redac
 }
 
 func (d kubeDriver) app(name string, app catalog.App, releaseSet string, redact *engine.Redactor) kube.App {
-	a := kube.App{Name: name, Client: d.c, Catalog: app, ReleaseSet: releaseSet, Redact: redact, StorageClass: d.storageClass, Edge: d.edge, RunnerImage: d.runnerImage}
+	a := kube.App{Name: name, Client: d.c, Catalog: app, ReleaseSet: releaseSet, Redact: redact, StorageClass: d.storageClass, Edge: d.edge, RunnerImage: d.runnerImage, PublicEgress: d.tunnel}
 	if name == d.edge {
 		a.Upstreams = d.upstreams
 	}

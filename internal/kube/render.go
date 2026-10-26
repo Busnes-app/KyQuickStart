@@ -354,6 +354,9 @@ func policy(a App) networkingv1.NetworkPolicySpec {
 		if a.Edge != "" {
 			spec.Egress = append(spec.Egress, networkingv1.NetworkPolicyEgressRule{Ports: tcp(edgeHTTPS), To: edgePods})
 		}
+		if a.PublicEgress {
+			spec.Egress = append(spec.Egress, networkingv1.NetworkPolicyEgressRule{Ports: tcp(443), To: publicInternet()})
+		}
 	}
 	return spec
 }
@@ -373,4 +376,18 @@ func clusterDNS() []networkingv1.NetworkPolicyPeer {
 		NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{nsNameLabel: "kube-system"}},
 		PodSelector:       &metav1.LabelSelector{MatchLabels: map[string]string{"k8s-app": "kube-dns"}},
 	}}
+}
+
+// publicInternet is every address but the private, shared (CGNAT), link-local, loopback,
+// multicast and reserved ranges: the internet without the site's own networks or the cluster's.
+func publicInternet() []networkingv1.NetworkPolicyPeer {
+	return []networkingv1.NetworkPolicyPeer{
+		{IPBlock: &networkingv1.IPBlock{CIDR: "0.0.0.0/0", Except: []string{
+			"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12",
+			"192.0.0.0/24", "192.168.0.0/16", "198.18.0.0/15", "224.0.0.0/4", "240.0.0.0/4",
+		}}},
+		{IPBlock: &networkingv1.IPBlock{CIDR: "::/0", Except: []string{
+			"::/128", "::1/128", "::ffff:0:0/96", "64:ff9b::/96", "fc00::/7", "fe80::/10", "ff00::/8",
+		}}},
+	}
 }

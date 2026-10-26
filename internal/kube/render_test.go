@@ -547,4 +547,25 @@ func TestRenderEuroOffice(t *testing.T) {
 	if p := render(App{Name: "euro-office", Catalog: cat["euro-office"], ReleaseSet: "rs-1"}).Policy.Spec; len(p.Egress) != 1 || len(p.Ingress) != 0 {
 		t.Fatalf("edgeless policy = %+v", p)
 	}
+	// Behind a tunnel edge, NPM answers KyDrive's external route only to the connector, so the
+	// editor reaches it over the internet: 443 to public addresses, never the site's own ranges.
+	p = render(App{Name: "euro-office", Catalog: cat["euro-office"], ReleaseSet: "rs-1", Edge: "npm", PublicEgress: true}).Policy.Spec
+	if len(p.Egress) != 3 || len(p.Egress[2].Ports) != 1 || p.Egress[2].Ports[0].Port.IntValue() != 443 || len(p.Egress[2].To) != 2 {
+		t.Fatalf("tunnel policy = %+v", p.Egress)
+	}
+	v4, v6 := p.Egress[2].To[0].IPBlock, p.Egress[2].To[1].IPBlock
+	for _, private := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16", "127.0.0.0/8"} {
+		if v4.CIDR != "0.0.0.0/0" || !slices.Contains(v4.Except, private) {
+			t.Errorf("public egress admits %s: %+v", private, v4)
+		}
+	}
+	for _, private := range []string{"fc00::/7", "fe80::/10", "::1/128"} {
+		if v6.CIDR != "::/0" || !slices.Contains(v6.Except, private) {
+			t.Errorf("public egress admits %s: %+v", private, v6)
+		}
+	}
+	// An app without egress "edge" is unaffected: PublicEgress only widens a closed policy.
+	if p := render(App{Name: "kynotes", Catalog: cat["kynotes"], ReleaseSet: "rs-1", Edge: "npm", PublicEgress: true}).Policy.Spec; len(p.Egress) != 0 {
+		t.Fatalf("kynotes gained egress rules: %+v", p.Egress)
+	}
 }
