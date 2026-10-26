@@ -1,6 +1,7 @@
 # KyQuickStart
 
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15932/badge)](https://www.bestpractices.dev/projects/15932)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Busnes-app/KyQuickStart/badge)](https://scorecard.dev/viewer/?uri=github.com/Busnes-app/KyQuickStart)
 
 The deterministic execution layer for [KyQuickStart-AI](https://github.com/Busnes-app/KyQuickStart-AI),
 the primary installation path, and a command-line tool that also runs unattended from a saved
