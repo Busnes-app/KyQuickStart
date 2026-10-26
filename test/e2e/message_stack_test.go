@@ -218,9 +218,7 @@ func TestKubernetesKyMessage(t *testing.T) {
 	mail := startMailpit(t, work)
 	catalogDir := filepath.Join(work, "catalog")
 	for _, app := range []string{"npm", "kyidentity"} {
-		if err := os.CopyFS(filepath.Join(catalogDir, app), os.DirFS("../../internal/catalog/apps/"+app)); err != nil {
-			t.Fatal(err)
-		}
+		copyCatalogApp(t, catalogDir, app)
 	}
 	loadCatalogApp(t, name, cs, "kyidentity")
 	logAppOnFailure(t, cs, "kyidentity")

@@ -344,9 +344,7 @@ func TestKubernetesRestore(t *testing.T) {
 func identity043(t *testing.T, cluster, catalogDir string) {
 	t.Helper()
 	dir := filepath.Join(catalogDir, "kyidentity")
-	if err := os.CopyFS(dir, os.DirFS("../../internal/catalog/apps/kyidentity")); err != nil {
-		t.Fatal(err)
-	}
+	copyCatalogApp(t, catalogDir, "kyidentity")
 	m, _ := os.ReadFile(filepath.Join(dir, "manifest.yaml"))
 	// The pin moves with scripts/catalog-follow; whatever it is, it is replaced.
 	v := regexp.QuoteMeta(identityVersion(t, m))
@@ -386,7 +384,10 @@ func upgradeIdentity(t *testing.T, ctx context.Context, cs kubernetes.Interface,
 	if err != nil {
 		t.Fatal(err)
 	}
-	os.WriteFile(filepath.Join(catalogDir, "kyidentity", "manifest.yaml"), real, 0o600)
+	if err := os.RemoveAll(filepath.Join(catalogDir, "kyidentity")); err != nil {
+		t.Fatal(err)
+	}
+	copyCatalogApp(t, catalogDir, "kyidentity")
 	loadCatalogApp(t, cluster, cs, "kyidentity")
 	start := time.Now()
 	out, err := kyq(t, ctx, state, catalogDir, trust, "", "upgrade", "kyidentity", "--acknowledge-no-backup")

@@ -62,6 +62,7 @@ func TestKubernetesNPMEdge(t *testing.T) {
 		if err := os.CopyFS(filepath.Join(catalogDir, filepath.Base(src)), os.DirFS(src)); err != nil {
 			t.Fatal(err)
 		}
+		relaysOff(t, filepath.Join(catalogDir, filepath.Base(src)))
 	}
 	plan := filepath.Join(state, "stack.yaml")
 	os.WriteFile(plan, []byte("version: 1\ntargets:\n  - name: k8s\n    kubeconfig: "+kc+"\n    storage_class: standard\napps:\n  - name: npm\n    target: k8s\n  - name: hello\n    target: k8s\n"), 0o600)

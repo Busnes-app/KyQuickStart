@@ -60,9 +60,7 @@ var postPlumbing = []string{
 func preparePost(t *testing.T, work, catalogDir string, d driveTarget) int {
 	t.Helper()
 	dir := filepath.Join(catalogDir, "kypost")
-	if err := os.CopyFS(dir, os.DirFS("../../internal/catalog/apps/kypost")); err != nil {
-		t.Fatal(err)
-	}
+	copyCatalogApp(t, catalogDir, "kypost")
 	ca := filepath.Join(work, "drive-ca.pem")
 	tmpl := filepath.Join(dir, "compose.yaml.tmpl")
 	b, _ := os.ReadFile(tmpl)
