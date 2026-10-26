@@ -424,6 +424,11 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 	} else if ok {
 		cat["kydrive"] = drive
 	}
+	if drive, ok, err := bulkPlan(st, cat); err != nil {
+		return nil, err
+	} else if ok {
+		cat["kydrive"] = drive
+	}
 	// A cluster edge's egress policy admits an upstream off the cluster by address only.
 	for _, e := range st.Edges {
 		for _, r := range e.Routes {
@@ -821,6 +826,9 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 			}
 		}
 		steps = append(steps, app...)
+		if st := bulkInit(d, s.placed[name]); name == "kydrive" && st != nil {
+			steps = append(steps, st)
+		}
 		for _, i := range s.integrations {
 			if i.Product == name && i.Target == s.placed[name].Name && i.ChatClient == "" {
 				setup, connector, err := s.setupSteps(d, i)
