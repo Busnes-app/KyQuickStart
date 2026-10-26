@@ -392,8 +392,8 @@ kypost:
               # Native push through KyPost's relays (Android FCM, iOS APNs), as its .env.example sets
               # them. Unset, every mobile notification stays off. The server registers itself on first
               # start and keeps the keys in SECRET_DIR (/kypost/private, the private volume).
-              PUSH_RELAY_URL: https://fcm.relay.busnes.app
-              APNS_RELAY_URL: https://apn.relay.busnes.app
+              PUSH_RELAY_URL: https://fcm.relay.kypost.busnes.app
+              APNS_RELAY_URL: https://apn.relay.kypost.busnes.app
               # A webmail client for existing IMAP/SMTP accounts: no native mail, receiving or receiver.
               KYPOST_NATIVE_MAIL: "false"
               KYPOST_NATIVE_RECEIVING: "false"

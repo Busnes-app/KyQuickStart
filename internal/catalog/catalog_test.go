@@ -417,7 +417,7 @@ func TestKyPostEntry(t *testing.T) {
 		t.Fatalf("ports %v, entrypoint %v", s.Ports, s.Entrypoint)
 	}
 	e := s.Environment
-	if e["SERVER_BASE_URL"] != "https://post.example.com" || e["KYPOST_BACKUP_ALLOW_PRIVATE_RECOVERY"] != "false" || e["PUSH_RELAY_URL"] != "https://fcm.relay.busnes.app" || e["APNS_RELAY_URL"] != "https://apn.relay.busnes.app" || e["KYPOST_NATIVE_MAIL"] != "false" || e["KYPOST_NATIVE_RECEIVING"] != "false" || e["KYPOST_NATIVE_RECEIVER"] != "false" || e["WEB_PORT"] != "5866" {
+	if e["SERVER_BASE_URL"] != "https://post.example.com" || e["KYPOST_BACKUP_ALLOW_PRIVATE_RECOVERY"] != "false" || e["PUSH_RELAY_URL"] != "https://fcm.relay.kypost.busnes.app" || e["APNS_RELAY_URL"] != "https://apn.relay.kypost.busnes.app" || e["KYPOST_NATIVE_MAIL"] != "false" || e["KYPOST_NATIVE_RECEIVING"] != "false" || e["KYPOST_NATIVE_RECEIVER"] != "false" || e["WEB_PORT"] != "5866" {
 		t.Fatalf("env = %v", e)
 	}
 	for k := range e {
