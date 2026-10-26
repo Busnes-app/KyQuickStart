@@ -210,7 +210,12 @@ jobs:
           SHA: ${{ steps.next.outputs.sha }}
         run: |
           set -euo pipefail
+          notes="$RUNNER_TEMP/release-notes.md"
+          gh api --method POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$TAG" -f target_commitish="$SHA" -f previous_tag_name="$PREVIOUS" --jq ' .body // ""' > "$notes"
+          python3 scripts/check-release-notes.py "$notes"
+          printf '\nUpgrade: verify the matching installer and runner image before use; review existing plans before applying a changed catalog. See https://github.com/Busnes-app/KyQuickStart/blob/%s/docs/VERIFYING-RELEASES.md and https://github.com/Busnes-app/KyQuickStart/blob/%s/docs/guided-setup.md.\n' "$TAG" "$TAG" >> "$notes"
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$SHA" --title "$TAG" \
-            --generate-notes --notes-start-tag "$PREVIOUS" --latest
+            --notes-file "$notes" --latest
           gh workflow run release-image.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
           echo "Released \`$TAG\` at \`$SHA\`; release-image.yml dispatched on it" >> "$GITHUB_STEP_SUMMARY"

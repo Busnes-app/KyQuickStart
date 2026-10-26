@@ -268,6 +268,12 @@ edge compatibility: `docs/redirect.md`.
 - Contribution process, test policy and coding standard: `CONTRIBUTING.md`. Threat model, trust
   boundaries and the weaknesses table: `docs/ASSURANCE-CASE.md`, updated by any change that moves
   a trust boundary or security requirement.
+- `CHANGELOG.md` owns version-by-version release summaries and upgrade impact, including
+  maintenance releases and missing/failed artifacts. The daily publisher checks generated
+  notes before creating a release; `release-image.yml` checks the published body before
+  publishing artifacts. Compare-only bodies stop publication; maintainers still review
+  factual accuracy. If generation finds no summary, publish authored notes manually under
+  the existing tag/version/CI gates. Never replace them with a raw commit log.
 - The release set has one source: `internal/appversion/VERSION` (`X.Y.Z`, the release line). Go
   code calls `appversion.String()`; release builds (the image's `VERSION` build arg and
   `scripts/release-binaries.sh`) set the tag's full version through
@@ -546,7 +552,8 @@ calls and kind nodes must carry their own explicit bounds.
 - `make build`: builds the workstation `kyquickstart` binary.
 - CI's `release binaries are repeatable` step (`test`, ubuntu 1.26.x leg): `scripts/release-binaries.sh`
   from the checkout and from a `git archive` copy elsewhere must give identical bytes.
-- `make ci`: tidy check, gofmt, vet (including the `e2e,goolm` tags), race tests. Runner tests decode
+- `make notes-check`: Python standard-library checks for the missing/compare-only release-note guard.
+- `make ci`: release-note guard, tidy check, gofmt, vet (including the `e2e,goolm` tags), race tests. Runner tests decode
   every answer with KyYard's client types (`internal/runner/kyyard_test.go`).
   `cmd/kyquickstart/release_test.go` runs `scripts/release-binaries.sh` (the stamp in all four
   binaries, its refusals) and checks `release-image.yml`'s and `dependency-release.yml`'s job

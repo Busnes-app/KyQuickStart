@@ -50,6 +50,7 @@ Docker targets, or an existing Kubernetes cluster, working kubeconfig and persis
 StorageClass for Kubernetes. KyQuickStart does **not** install Docker or Kubernetes.
 Supply DNS/HTTPS and edge configuration as described in the guided setup.
 
+Read [release changes and upgrade impact](CHANGELOG.md) before choosing a version.
 Releases are on the [GitHub releases page](https://github.com/Busnes-app/KyQuickStart/releases);
 [install one](#install-a-release), or clone this repository and use `make build` with the Go
 version in `go.mod`. A source binary cannot install the KyYard runner because it has no released
@@ -93,11 +94,12 @@ it with `xattr -d com.apple.quarantine kyquickstart-X.Y.Z-darwin-<arch>`.
 
 ## Build
 
-Requires Go 1.26.6 or later. A source build pins no runner image, so it cannot install KyYard.
+Building requires Go 1.26.6 or later; `make ci` also needs Python 3 for the release-note
+checks (standard library only). A source build pins no runner image, so it cannot install KyYard.
 
 ```sh
 make build
-make ci             # tidy check, vet, race tests
+make ci             # release-note guard, tidy check, vet, race tests
 make e2e            # needs Docker; real SSH, kind and edge containers
 make workflow-lint  # needs Docker; actionlint and zizmor on the release workflows
 ```

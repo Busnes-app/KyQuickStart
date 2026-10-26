@@ -101,6 +101,7 @@ operator's job ([README](../README.md#targets)).
 | Forged client address (`X-Forwarded-For`) | A product trusts forwarded headers from one address only, its edge's `egress_address` (or cloudflared's) as rendered by the catalog, never a range; with none set, and on Kubernetes, it trusts loopback at most. The operator must not name a Docker gateway; only KyDNS checks (`kydns.gate`). For NPM on a cluster that address is its node's, shared by the node's other pods (`guided-setup.md`, "Forwarded headers") | `internal/catalog/catalog.go` (`WithRoute`), `internal/catalog/catalog_test.go` (`TestTrustedProxies`), `test/e2e/docker_catalog_test.go` (`checkEdgeTrust`) |
 | Unintended network exposure | A Compose `ports:` entry must name the plan's forward, media or SMTP address or `127.0.0.1`; no bare or wildcard publication. Port 25 only in KyPost's receiver rendering, after the operator's explicit confirmation | `internal/catalog/catalog.go`, `internal/stack/mail.go` |
 | Supply-chain substitution | Digest-pinned images; attestation-checked pin updates; release workflows pin every action by commit | `internal/catalog/catalog.go` (`imageRE`), `scripts/catalog-follow/main.go`, `.github/workflows/release-image.yml` |
+| Missing upgrade information | Human summaries and upgrade impact are archived; daily publishing and artifact publishing refuse missing/compare-only bodies. Maintainers still review accuracy | `CHANGELOG.md`, `scripts/check-release-notes.py`, `make notes-check` |
 | Tampered release | Attested binaries and image, verified before upload and again after download; repeatable binaries | [VERIFYING-RELEASES.md](VERIFYING-RELEASES.md) |
 | Vulnerable dependencies | `govulncheck` on every push and pull request (`vulncheck` job); Dependabot; daily dependency releases | `.github/workflows/ci.yml`, `.github/workflows/dependency-release.yml` |
 
@@ -112,8 +113,6 @@ operator's job ([README](../README.md#targets)).
   shorter than 8 characters, is not redacted.
 - **The handover prints credentials by design.** Anyone who sees that output can sign in as the
   owner's administrator.
-- **`ci.yml` uses actions by tag, not commit** (Scorecard's Pinned-Dependencies alerts). The release
-  workflows are pinned.
 - **macOS binaries are not signed or notarized**; the attestation is the only check
   ([README](../README.md#install-a-release)).
 - **No independent security audit** has been done.
@@ -135,7 +134,8 @@ operator's job ([README](../README.md#targets)).
   `test (ubuntu-latest, stable)`, `test (ubuntu-latest, 1.26.x)` and `vulncheck` green; repository
   administrators can bypass it.
 - **Releases:** attested binaries and runner image; binaries rebuild to the same bytes
-  ([VERIFYING-RELEASES.md](VERIFYING-RELEASES.md)).
+  ([VERIFYING-RELEASES.md](VERIFYING-RELEASES.md)); [human notes](../CHANGELOG.md) and the
+  missing-summary publication guard (`make notes-check`).
 
 This case is updated when a trust boundary or a security requirement changes. A pull request that
 moves one must update this page in the same change.

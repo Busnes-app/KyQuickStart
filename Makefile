@@ -1,4 +1,4 @@
-.PHONY: build test-race tidy-check lint ci e2e workflow-lint
+.PHONY: build test-race tidy-check lint ci e2e workflow-lint notes-check
 
 build:
 	go build -trimpath -o kyquickstart ./cmd/kyquickstart
@@ -15,7 +15,10 @@ lint:
 	go vet ./...
 	go vet -tags e2e,goolm ./...
 
-ci: tidy-check lint test-race
+notes-check:
+	python3 -B -m unittest discover -s scripts -p test_release_notes.py
+
+ci: notes-check tidy-check lint test-race
 
 # Needs Docker. goolm is the test-only Matrix client's pure-Go Olm. The kind TLS helper runs the
 # test executable in distroless. test/e2e measured 33.7 min on the workstation and 35.9 min on
@@ -32,6 +35,6 @@ e2e:
 ZIZMOR := ghcr.io/zizmorcore/zizmor@sha256:42d409dbb851d4c5d35a058cf042b828bea1e3f2884378c526eb0974780e18d9
 workflow-lint:
 	go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
-	docker run --rm --network none -v "$(CURDIR)/.github:/src/.github:ro" $(ZIZMOR) \
+	docker run --rm --memory 512m --memory-swap 512m --cpus 1 --pids-limit 128 --network none -v "$(CURDIR)/.github:/src/.github:ro" $(ZIZMOR) \
 		--offline --min-severity medium /src/.github/workflows/release-image.yml \
 		/src/.github/workflows/dependency-release.yml

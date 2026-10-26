@@ -14,6 +14,10 @@ This page shows how to check that a binary and its runner image were built by th
 release workflow from the tagged commit, and how to rebuild the binaries yourself and get the
 same bytes.
 
+Read the [release notes](../CHANGELOG.md) for changes, upgrade impact and artifact
+availability. A valid attestation does not replace those checks: v0.4.0, for example,
+published its runner image but uploaded no installer binaries.
+
 ## What is signed, and by whom
 
 - The release workflow publishes a SLSA build-provenance attestation, through GitHub's Sigstore
