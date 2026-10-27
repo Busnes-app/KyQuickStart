@@ -59,7 +59,9 @@ Docker target; firewall it to the edge's source (`guided-setup.md`, "Catalog KyD
 `egress_address` (optional) is the one address upstreams off the cluster see this edge's
 requests from: a single IP literal, no prefix, hostname, zone, loopback or unspecified address.
 For NPM on a cluster, pods leave through their node's address, so it is the IP of the node
-running NPM. It is not derived: if NPM moves node, set it again and rerun `apply`.
+running NPM. It is not derived: if NPM moves node, set it again and rerun `apply`. With a
+`kube_vip_address` NPM's requests leave from that address on every node, and the edge must
+set `egress_address` to it.
 
 An app whose Compose file writes `{{edge_address}}` (catalog KyDNS, KyMessages and KyYard)
 trusts forwarded headers from exactly that address. `plan`, `review` and `apply` refuse it until
@@ -96,6 +98,8 @@ On Kubernetes you run the connector yourself: give it a source address of its ow
 /32 in `connector_cidr` and keep it out of `allow_cidrs`. Ingress per hostname:
 `https://<node running NPM>:<client_port>`, origin server name and Host header set to the
 hostname. `<client_port>` is the NodePort publishing NPM's 443 (`node_ports`, default 30443).
+With a [`kube_vip_address`](#an-address-that-follows-npm-kube_vip_address), use
+`https://<kube_vip_address>:443` instead: it survives NPM moving node.
 A connector on a Docker host behind NAT takes that host's address, which then cannot also be a
 client of the host's own internal routes; a container with its own LAN address (for example
 on an ipvlan network) avoids that.
@@ -329,6 +333,8 @@ apps:
   Service but this one already holds, naming it, before anything is created. Its
   `externalTrafficPolicy: Local` keeps the client address, which each route's `connector_cidr`
   check, or a lan edge's `allow_cidrs`, depends on: only the node running NPM answers.
+- With `kube_vip_address`, `app-public` is instead a LoadBalancer at that address (see below);
+  its NodePorts stay.
 - Service `app`, ClusterIP, for the admin API on port 81 only. Port 81 can never be published:
   the catalog refuses it in `node_ports`, and `apply` repairs a Service edited to expose other
   ports.
@@ -396,6 +402,38 @@ add the edge (with an existing certificate's ID, or a [managed certificate](#man
 and apply again. Inside the cluster, forward to an app's Service, for example
 `forward_host: app.kyq-hello.svc.cluster.local`.
 
+
+### An address that follows NPM (`kube_vip_address`)
+
+Without it, the edge's one address is the node running NPM, in both directions: connectors
+and LAN DNS point at that node, and Docker apps trust it as `egress_address`. When NPM is
+rescheduled (a node reboot is enough), every route stops until both are changed.
+
+```yaml
+apps:
+  - name: npm
+    target: k80
+    kube_vip_address: 192.168.1.78
+edges:
+  - target: k80
+    egress_address: 192.168.1.78   # required, and must match
+```
+
+`app-public` becomes a LoadBalancer requesting that address from
+[kube-vip](https://kube-vip.io) in services mode (`kube-vip.io/loadbalancerIPs`), with
+`externalTrafficPolicy: Local` and kube-vip egress (`kube-vip.io/egress`,
+`kube-vip.io/egress-internal`). kube-vip announces the address over ARP from the node running
+NPM's pod and SNATs that pod's traffic leaving the cluster to it, so connectors, LAN DNS and
+`egress_address` name one address that moves with NPM. Traffic to pods and Services stays
+unchanged, so in-cluster policies still see NPM's pod. Reruns keep the annotations kube-vip
+writes; removing the field returns `app-public` to a NodePort.
+
+You provide kube-vip, as with the cluster itself: services mode with service election and
+`egress_podcidr`/`egress_servicecidr` set to the cluster's ranges. kube-vip announces any
+address a LoadBalancer Service asks for, so admit only approved namespace and address pairs
+(a ValidatingAdmissionPolicy is enough). The address must be an unused LAN IPv4 address
+outside DHCP. A node that dies takes the address with it until Kubernetes reschedules NPM
+(about five minutes with default eviction).
 ## Managed certificates
 
 On a Kubernetes edge, NPM can request a Let's Encrypt certificate through a DNS-01 challenge, so

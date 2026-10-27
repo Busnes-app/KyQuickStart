@@ -542,3 +542,30 @@ func TestCloudflareDirectEdge(t *testing.T) {
 		})
 	}
 }
+
+// kube_vip_address is one IPv4 LAN address, and the edge in front of that NPM must name it
+// as egress_address: kube-vip makes it the address NPM's requests leave from.
+func TestKubeVIPAddress(t *testing.T) {
+	with := func(vip, egress string) string {
+		s := strings.Replace(kubeEdgeStack, "  - name: npm\n    target: k8s\n", "  - name: npm\n    target: k8s\n    kube_vip_address: '"+vip+"'\n", 1)
+		if egress != "" {
+			s = strings.Replace(s, "    connector_cidr:", "    egress_address: '"+egress+"'\n    connector_cidr:", 1)
+		}
+		return s
+	}
+	if s, err := Parse([]byte(with("192.168.1.78", "192.168.1.78"))); err != nil || s.Apps[0].KubeVIPAddress != "192.168.1.78" {
+		t.Fatalf("matching addresses refused: %v", err)
+	}
+	for name, plan := range map[string]string{
+		"no egress_address":    with("192.168.1.78", ""),
+		"other egress_address": with("192.168.1.78", "192.168.1.81"),
+		"IPv6":                 with("fd00::78", "fd00::78"),
+		"hostname":             with("vip.example.com", "192.168.1.78"),
+		"unspecified":          with("0.0.0.0", "0.0.0.0"),
+		"prefix":               with("192.168.1.78/32", "192.168.1.78"),
+	} {
+		if _, err := Parse([]byte(plan)); err == nil || !strings.Contains(err.Error(), "kube_vip_address") {
+			t.Errorf("%s accepted: %v", name, err)
+		}
+	}
+}

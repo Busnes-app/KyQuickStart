@@ -11,7 +11,7 @@ Plain terminal planning and command orchestration for the operator-run installer
   and every plan change give a plan its `installation_id`, published after the steps pass;
   markers record it only once published. `--adopt-edge-hosts` and `--take-over-target` are
   apply-only. A `kube://` edge gets its token and tunnel from the
-  Kubernetes driver; an app's `node_ports` override the catalog's in the session only.
+  Kubernetes driver; an app's `node_ports` and `kube_vip_address` override the catalog's in the session only.
   `version` prints the release set; `version --runner-image` prints `Options.RunnerImage` or
   fails "this build pins no suite runner image (source build); use a release binary".
 - `suite.go` owns `install`, `uninstall`, `unmanage`, `upgrade` and `status`, the upgrade gate

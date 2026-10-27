@@ -100,6 +100,20 @@ func (e Edge) TrustedAddress() string {
 	return e.EgressAddress
 }
 
+// kubeVIPAddress is the kube_vip_address of the in-cluster NPM app behind e's kube:// npm_url.
+func (s *Stack) kubeVIPAddress(e Edge) string {
+	ns, _, _, ok := KubeService(e.NPMURL)
+	if !ok {
+		return ""
+	}
+	for _, a := range s.Apps {
+		if "kyq-"+a.Name == ns && a.Target == e.Target {
+			return a.KubeVIPAddress
+		}
+	}
+	return ""
+}
+
 // Internal reports whether only allow_cidrs clients reach r: every route of a lan edge, and
 // a tunnel edge's routes marked internal.
 func (e Edge) Internal(r Route) bool {
@@ -212,6 +226,9 @@ func (s *Stack) validateEdges() error {
 			if err != nil || ip.Zone() != "" || ip.IsUnspecified() || ip.IsLoopback() {
 				return fmt.Errorf("edge %s: egress_address must be one IP address, not a prefix, hostname, loopback or unspecified address", e.Target)
 			}
+		}
+		if vip := s.kubeVIPAddress(*e); vip != "" && e.EgressAddress != vip {
+			return fmt.Errorf("edge %s: its NPM's egress leaves from kube_vip_address %s: set egress_address to %s", e.Target, vip, vip)
 		}
 		for j := range e.Routes {
 			r := &e.Routes[j]

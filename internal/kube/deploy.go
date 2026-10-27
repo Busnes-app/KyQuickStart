@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -82,10 +85,23 @@ func exposure(s *corev1.Service) string {
 		t = corev1.ServiceTypeClusterIP
 	}
 	out := fmt.Sprint(t, s.Spec.ExternalTrafficPolicy, s.Spec.ExternalIPs)
+	for _, k := range slices.Sorted(maps.Keys(kubeVIPAnnotations(""))) {
+		out += " " + k + "=" + s.Annotations[k]
+	}
 	for _, p := range s.Spec.Ports {
 		out += fmt.Sprintf(" %d:%d->%s", p.Port, p.NodePort, p.TargetPort.String())
 	}
 	return out
+}
+
+// keepKubeVIPState keeps the annotations kube-vip writes for its election and egress rules,
+// so an apply does not make it re-announce the address.
+func keepKubeVIPState(want, have *corev1.Service) {
+	for k, v := range have.Annotations {
+		if _, ours := want.Annotations[k]; !ours && strings.HasPrefix(k, kubeVIPPrefix) {
+			want.Annotations[k] = v
+		}
+	}
 }
 
 func (d deployStep) Inspect(ctx context.Context) (bool, error) {
@@ -130,6 +146,10 @@ func (d deployStep) Apply(ctx context.Context) error {
 		err := upsert(ctx, cs.CoreV1().Services(ns), "service", svc, func(have *corev1.Service) {
 			svc.Spec.ClusterIP, svc.Spec.ClusterIPs = have.Spec.ClusterIP, have.Spec.ClusterIPs
 			svc.Spec.IPFamilies, svc.Spec.IPFamilyPolicy = have.Spec.IPFamilies, have.Spec.IPFamilyPolicy
+			if svc.Spec.Type == corev1.ServiceTypeLoadBalancer {
+				svc.Spec.HealthCheckNodePort = have.Spec.HealthCheckNodePort
+				keepKubeVIPState(svc, have)
+			}
 		})
 		if err != nil {
 			return err

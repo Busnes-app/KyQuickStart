@@ -98,12 +98,17 @@ func TestNodePortsAndEdgePlacement(t *testing.T) {
 	if np := s.nodePorts("k1"); len(np) != 2 || np[31443] != "npm" || np[30080] != "npm" || len(s.nodePorts("nas")) != 0 {
 		t.Fatalf("preflight node ports %v", np)
 	}
+	f.plan(t, k1+"apps:\n  - name: npm\n    target: k1\n    kube_vip_address: 192.168.1.78\n")
+	if s, err = load(f.state, nil, f.o); err != nil || s.cat["npm"].Kubernetes.KubeVIPAddress != "192.168.1.78" || s.cat["npm"].Kubernetes.NodePorts[443] != 30443 {
+		t.Fatalf("kube_vip_address not carried to the catalog: %v", err)
+	}
 	if fresh, _ := catalog.Load(catalog.Embedded()); fresh["npm"].Kubernetes.NodePorts[443] != 30443 {
 		t.Fatal("override leaked into the catalog")
 	}
 	for plan, want := range map[string]string{
-		k1 + "apps:\n  - name: npm\n    target: k1\n    node_ports: {81: 31081}\n": "not one of its published ports",
-		"apps:\n  - name: npm\n    target: nas\n":                                  "place it on a Kubernetes target",
+		k1 + "apps:\n  - name: npm\n    target: k1\n    node_ports: {81: 31081}\n":               "not one of its published ports",
+		"apps:\n  - name: npm\n    target: nas\n":                                                "place it on a Kubernetes target",
+		k1 + "apps:\n  - name: kyidentity\n    target: k1\n    kube_vip_address: 192.168.1.78\n": "publishes no node_ports",
 	} {
 		f.plan(t, plan)
 		if _, err := load(f.state, nil, f.o); err == nil || !strings.Contains(err.Error(), want) {

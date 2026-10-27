@@ -390,14 +390,17 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 		}
 	}
 	for _, a := range st.Apps {
-		if len(a.NodePorts) == 0 {
+		if len(a.NodePorts) == 0 && a.KubeVIPAddress == "" {
 			continue
 		}
 		app := cat[a.Name]
 		if !s.placed[a.Name].Kubernetes() {
-			return nil, fmt.Errorf("app %q: node_ports are for a Kubernetes target", a.Name)
+			return nil, fmt.Errorf("app %q: node_ports and kube_vip_address are for a Kubernetes target", a.Name)
 		}
 		k := *app.Kubernetes
+		if a.KubeVIPAddress != "" && len(k.NodePorts) == 0 {
+			return nil, fmt.Errorf("app %q publishes no node_ports: remove its kube_vip_address", a.Name)
+		}
 		k.NodePorts = maps.Clone(k.NodePorts)
 		for port, node := range a.NodePorts {
 			if _, ok := k.NodePorts[port]; !ok {
@@ -405,6 +408,7 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 			}
 			k.NodePorts[port] = node
 		}
+		k.KubeVIPAddress = a.KubeVIPAddress
 		app.Kubernetes = &k
 		cat[a.Name] = app
 	}

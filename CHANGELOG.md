@@ -22,6 +22,13 @@ installer or suite runner can connect. Keep existing access while rotating keys 
 the new host fingerprint before updating a pin; see [rotation guidance](SECURITY.md#ssh-policy-and-key-rotation).
 No installer state, target data, key or credential is reset automatically.
 
+- An in-cluster NPM can keep one edge address when it changes node: `kube_vip_address`
+  publishes `app-public` as a kube-vip LoadBalancer whose address follows NPM's pod and is
+  also where its requests leave the cluster ([edge guide](docs/edge.md#an-address-that-follows-npm-kube_vip_address)).
+
+Upgrade impact: none unless set. It needs kube-vip in services mode on the cluster, and the
+edge's `egress_address` must equal the address; then point connectors and LAN DNS at it.
+
 ## v0.4.2.7 — 2026-10-26
 
 - Kubernetes network rules no longer include the IPv4-mapped exception that the API

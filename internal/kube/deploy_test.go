@@ -9,6 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
+	"maps"
 	"strings"
 	"testing"
 
@@ -253,5 +254,72 @@ func TestDeployRepairsAdminExposure(t *testing.T) {
 	}
 	if list, _ := svcs.List(ctx, metav1.ListOptions{}); len(list.Items) != 0 {
 		t.Fatalf("uninstall left %d services", len(list.Items))
+	}
+}
+
+// kube_vip_address makes app-public a kube-vip LoadBalancer; applies keep what kube-vip
+// writes, repair our annotations, and removing the address returns it to a NodePort.
+func TestDeployKubeVIPLoadBalancer(t *testing.T) {
+	ctx := context.Background()
+	client := New(fake.NewClientset())
+	withVIP := func(addr string) App {
+		c := npmApp(t)
+		k := *c.Kubernetes
+		k.KubeVIPAddress = addr
+		c.Kubernetes = &k
+		return App{Name: "npm", Client: client, Catalog: c, ReleaseSet: "rs-1"}
+	}
+	d := deployOf(withVIP("192.168.1.78"))
+	if err := d.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	svcs := client.cs.CoreV1().Services("kyq-npm")
+	pub, _ := svcs.Get(ctx, publicName, metav1.GetOptions{})
+	want := map[string]string{"kube-vip.io/loadbalancerIPs": "192.168.1.78", "kube-vip.io/egress": "true", "kube-vip.io/egress-internal": "true"}
+	if pub.Spec.Type != corev1.ServiceTypeLoadBalancer || pub.Spec.ExternalTrafficPolicy != corev1.ServiceExternalTrafficPolicyLocal || !maps.Equal(pub.Annotations, want) {
+		t.Fatalf("public service = %v %v %v", pub.Spec.Type, pub.Spec.ExternalTrafficPolicy, pub.Annotations)
+	}
+	if ports := map[int32]int32{pub.Spec.Ports[0].Port: pub.Spec.Ports[0].NodePort, pub.Spec.Ports[1].Port: pub.Spec.Ports[1].NodePort}; ports[80] != 30080 || ports[443] != 30443 {
+		t.Fatalf("node ports = %v", ports)
+	}
+
+	// kube-vip's own state and the API server's health check port survive an apply.
+	pub.Annotations["kube-vip.io/vipHost"] = "k81"
+	pub.Spec.HealthCheckNodePort = 31234
+	svcs.Update(ctx, pub, metav1.UpdateOptions{})
+	if done, err := d.Inspect(ctx); err != nil || !done {
+		t.Fatalf("kube-vip state counted as drift: %v %v", done, err)
+	}
+	if err := d.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	pub, _ = svcs.Get(ctx, publicName, metav1.GetOptions{})
+	if pub.Annotations["kube-vip.io/vipHost"] != "k81" || pub.Spec.HealthCheckNodePort != 31234 {
+		t.Fatalf("apply dropped kube-vip state: %v %d", pub.Annotations, pub.Spec.HealthCheckNodePort)
+	}
+
+	// A hand edit that stops egress SNAT is drift.
+	delete(pub.Annotations, "kube-vip.io/egress")
+	svcs.Update(ctx, pub, metav1.UpdateOptions{})
+	if done, _ := d.Inspect(ctx); done {
+		t.Fatal("missing egress annotation counted as deployed")
+	}
+	if err := d.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if pub, _ = svcs.Get(ctx, publicName, metav1.GetOptions{}); pub.Annotations["kube-vip.io/egress"] != "true" {
+		t.Fatalf("egress annotation not repaired: %v", pub.Annotations)
+	}
+
+	plain := deployOf(withVIP(""))
+	if done, _ := plain.Inspect(ctx); done {
+		t.Fatal("LoadBalancer counted as the NodePort release")
+	}
+	if err := plain.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	pub, _ = svcs.Get(ctx, publicName, metav1.GetOptions{})
+	if pub.Spec.Type != corev1.ServiceTypeNodePort || len(pub.Annotations) != 0 {
+		t.Fatalf("not back to a NodePort: %v %v", pub.Spec.Type, pub.Annotations)
 	}
 }
