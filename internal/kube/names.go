@@ -14,7 +14,8 @@ import (
 
 const (
 	appName        = "app"
-	publicName     = "app-public" // an edge's NodePort Service
+	publicName     = "app-public" // an edge's NodePort or kube-vip LoadBalancer Service
+	kubeVIPPrefix  = "kube-vip.io/"
 	secretName     = "kyq-secrets"
 	policyName     = "default-deny-ingress"
 	hashAnnotation = "kyquickstart/input-hash"

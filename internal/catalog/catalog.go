@@ -164,6 +164,8 @@ type Kubernetes struct {
 	LowPorts bool `yaml:"low_ports"`
 	// NodePorts publishes container ports on every node, with their default NodePort; edge only.
 	NodePorts map[int]int `yaml:"node_ports"`
+	// KubeVIPAddress makes the NodePort Service a kube-vip LoadBalancer; set from the stack.
+	KubeVIPAddress string `yaml:"-"`
 	// TerminationGraceSeconds lets a stopping pod drain this long; 0 keeps Kubernetes' default.
 	TerminationGraceSeconds int64 `yaml:"termination_grace_seconds"`
 	// SuiteRunner adds the suite runner (kyquickstart serve) as a sidecar sharing only its

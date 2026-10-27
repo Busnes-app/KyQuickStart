@@ -195,6 +195,12 @@ func render(a App) objects {
 						Type: corev1.ServiceTypeNodePort, Selector: selector(app),
 						ExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
 					}}
+					if k.KubeVIPAddress != "" {
+						// kube-vip announces the address from the pod's node and SNATs its egress
+						// to it, so the edge keeps one address in both directions when NPM moves.
+						o.Public.Spec.Type = corev1.ServiceTypeLoadBalancer
+						o.Public.Annotations = kubeVIPAnnotations(k.KubeVIPAddress)
+					}
 				}
 				sp.NodePort = int32(node)
 				o.Public.Spec.Ports = append(o.Public.Spec.Ports, sp)
@@ -359,6 +365,15 @@ func policy(a App) networkingv1.NetworkPolicySpec {
 		}
 	}
 	return spec
+}
+
+// kubeVIPAnnotations request address from kube-vip, with the pod's egress leaving from it.
+func kubeVIPAnnotations(address string) map[string]string {
+	return map[string]string{
+		kubeVIPPrefix + "loadbalancerIPs": address,
+		kubeVIPPrefix + "egress":          "true",
+		kubeVIPPrefix + "egress-internal": "true",
+	}
 }
 
 // edgeHTTPS is NPM's TLS container port, where a NodePort's 443 traffic arrives.
