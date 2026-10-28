@@ -69,7 +69,7 @@ func TestHandoverNamesOwnerPasswords(t *testing.T) {
 		"KyIdentity at https://identity.example.com/: the owner's accounts are owner-admin (administration only) and owner",
 		"-n kyq-kyidentity exec deployment/app -- cat /data/installer/271333e2-c221-4601-b249-563b3d828530/admin.password",
 		"-n kyq-kyidentity exec deployment/app -- cat /data/installer/271333e2-c221-4601-b249-563b3d828530/everyday.password",
-		"MFA: enrol TOTP, a passkey or KyAuth push approval. Push reaches phones through the\n  Busnes.app relays",
+		"MFA: enrol TOTP, a passkey or KyAuth push approval. Push reaches phones through\n  the relays fcm.relay.kyauth.busnes.app",
 	} {
 		if !strings.Contains(s.handover, want) {
 			t.Errorf("handover lacks %q:\n%s", want, s.handover)
