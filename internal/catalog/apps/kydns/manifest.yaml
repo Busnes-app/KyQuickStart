@@ -1,12 +1,12 @@
 name: kydns
 description: KyDNS, the suite's LAN DNS server; local names for every service, upstream resolution
 category: ky
-version: 0.4.3.2
+version: 0.5.0
 # Release image of v0.4.2 (commit ca8d7723b4fc), attested by
 # Busnes-app/KyDNS-server release.yml@refs/tags/v0.4.2 (gh attestation verify).
-# catalog-follow: v0.4.3.2 attested by Busnes-app/KyDNS-server release.yml@refs/tags/v0.4.3.2
+# catalog-follow: v0.5.0 attested by Busnes-app/KyDNS-server release.yml@refs/tags/v0.5.0
 images:
-  kydns: ghcr.io/busnes-app/kydns-server:0.4.3.2@sha256:52e11a74764b87f6bbc55fb44de93fc3eade24d98d1131b497274fd2d0703053
+  kydns: ghcr.io/busnes-app/kydns-server:0.5.0@sha256:84961a56b44b516aff750a210476b00cfb62c5726c59b40d2b29b88fd3de6866
 # verify-edge reads the suite proxy contract here (clientIp, proxyHeadersTrusted, scheme).
 status_path: /api/v1/installer/network
 # The LAN's DNS administration: never on the public connection.
@@ -28,6 +28,7 @@ oidc:
 backup:
   volumes: [data]
 upgrade:
-  # First catalog release; its SQLite schema migrates at startup.
+  # 0.5.0 adds no migration (sessions stay in memory), but an install from 0.4.2 still migrates
+  # its SQLite schema at startup.
   min_from: 0.4.2
   migrates_data: true

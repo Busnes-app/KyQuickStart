@@ -1,12 +1,12 @@
 name: kycalendar
 description: KyCalendar, the suite's calendars and CalDAV; signs in through KyIdentity
 category: ky
-version: 0.4.3
+version: 0.5.0
 # Release image of v0.4.2 (commit 5b7b3c60995db7fc67cda8e845a8fbd4ae98a2b2), attested by
 # Busnes-app/KyCalendar release-image.yml@refs/tags/v0.4.2 (gh attestation verify).
-# catalog-follow: v0.4.3 attested by Busnes-app/KyCalendar release-image.yml@refs/tags/v0.4.3
+# catalog-follow: v0.5.0 attested by Busnes-app/KyCalendar release-image.yml@refs/tags/v0.5.0
 images:
-  kycalendar: ghcr.io/busnes-app/kycalendar:0.4.3@sha256:1af68f2c44b389d1f73e73d3610ba014b23e4e1ef1cf837bbf3a7a503be7c2d3
+  kycalendar: ghcr.io/busnes-app/kycalendar:0.5.0@sha256:1f611a9930b4b8983ead0b9de1a7e2d66bd3012b74ae263d23296abf43798ba9
 # verify-edge reads the suite proxy contract here (clientIp, proxyHeadersTrusted, scheme).
 status_path: /api/installer/network
 # Its setup needs KyIdentity's issuer, client and signed directory.
@@ -26,9 +26,12 @@ oidc:
 backup:
   volumes: [data, backups]
 upgrade:
-  # First catalog release; its schema migrates forward at startup.
+  # 0.5.0 adds migrations 18-20 at startup (back-channel logout tables and sso_sid); additive,
+  # nothing dropped, so 0.4.2 still upgrades directly.
   min_from: 0.4.2
   migrates_data: true
+  note: >-
+    Signs out single sign-on sessions once, at first start; people sign in again.
 kubernetes:
   image: kycalendar
   env:
