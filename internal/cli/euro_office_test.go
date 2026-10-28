@@ -59,13 +59,15 @@ func TestEditorConnectsKyDrive(t *testing.T) {
 	if !slices.Equal(drive.Secrets, []string{"session_secret", "scim_token", "editor_secret"}) || !slices.Equal(cat["kydrive"].Secrets, []string{"session_secret", "scim_token"}) {
 		t.Fatalf("secrets = %v", drive.Secrets)
 	}
+	// The image pin is the catalog's, not the editor's; catalog-follow bumps it.
+	compose := bytes.ReplaceAll(drive.Compose, []byte(cat["kydrive"].Images["kydrive"]), []byte("KYDRIVE_IMAGE"))
 	const file = "testdata/kydrive-editor.compose.golden"
 	if *updateGolden {
-		os.WriteFile(file, drive.Compose, 0o644)
+		os.WriteFile(file, compose, 0o644)
 	}
 	golden, _ := os.ReadFile(file)
-	if !bytes.Equal(drive.Compose, golden) {
-		t.Fatalf("KyDrive's Compose file with the editor differs from %s:\n%s", file, drive.Compose)
+	if !bytes.Equal(compose, golden) {
+		t.Fatalf("KyDrive's Compose file with the editor differs from %s:\n%s", file, compose)
 	}
 	for _, line := range []string{
 		`      KYDRIVE_EDITOR_URL: "https://office.example.com"`,
