@@ -205,7 +205,7 @@ func TestKubernetesNPMEdgeJoins(t *testing.T) {
 	postAdmin := postSignOn(t, ctx, connected, certPEM, nodeIP)
 	postSecrets = append(postSecrets, checkPostHandover(t, ctx, out, drive, postAdmin, code))
 	out = apply("post rerun")
-	for _, id := range []string{"kyidentity.amend.kypost", "kypost.deploy", "kypost.health", "kypost.setup", postRouteStep} {
+	for _, id := range []string{"kyidentity.amend.kypost", "kypost.deploy", "kypost.health", "kypost.setup", postRouteStep, "kypost.recovery-pair"} {
 		if status(out, id) != "skipped" {
 			t.Errorf("rerun: %s = %q", id, status(out, id))
 		}

@@ -107,8 +107,13 @@ target markers from earlier builds stay valid.
   config, connector configuration, `verify-edge` selection, wizard); no e2e or live tunnel run.
 - Recovery backups: when the plan routes KyRecovery as internal, the catalog sets each
   product's private-recovery option (KyDNS's stays `false`), and the owner pairs each product
-  by hand after the ceremony; `apply` does not pair them yet (#93,
-  `docs/superpowers/specs/2026-10-25-recovery-pairing-design.md`).
+  by hand after the ceremony (#93, `docs/superpowers/specs/2026-10-25-recovery-pairing-design.md`).
+  `apply` pairs KyPost itself once the owner confirms the recovery key (`recovery_key_id`),
+  but only with a KyRecovery that reports its key (`kyrecovery status --json`, not in 0.4.3),
+  so it pairs nothing yet. KyNotes needs a release that takes the pairing code on stdin, and
+  KyIdentity, KyCalendar, kyPulse, KyYard, KyDrive and KyMessages a release whose `apply-setup`
+  accepts pairing at all. The upgrade gate does not yet accept a verified deposit as a
+  pre-upgrade backup.
 - KyAuth push approval: the catalog sets no push relay (`PUSH_RELAY_URL`, `APNS_RELAY_URL`), so
   only TOTP and passkeys work (#98).
 - The KyPost-KyCalendar invitation pairing (#100).

@@ -122,6 +122,11 @@ func checkCatalogPost(t *testing.T, out string, d driveTarget, port int, get, co
 	if status(out, "kypost.secrets") != "" || status(out, "kyidentity.scim.kypost") != "" {
 		t.Fatal("KyPost got a secrets or SCIM step")
 	}
+	// The plan confirms no recovery key, so apply pairs nothing: the step passes and says why
+	// (the pinned KyRecovery cannot report its key yet; one that can still awaits the owner).
+	if pair := handoverLine(t, out, "kypost.recovery-pair ok: "); !strings.Contains(pair, "Pair it with KyRecovery on its backup page") || strings.Contains(out, "Apply paired it") {
+		t.Fatalf("kypost.recovery-pair: %q", pair)
+	}
 	for _, want := range []string{
 		"KyPost at https://" + catalogPostURLHost + "/: webmail", "as prepared-admin, for administration only", "can also add mail", "or as prepared-user for mail",
 		"KyIdentity role kypost.user", "opens no mail port", "this release offers no setting to allow one", "about 2.9 GB", "for when\n     KyIdentity is down", recoveryLine(out),

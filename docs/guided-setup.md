@@ -854,9 +854,31 @@ secrets never reach the workstation, its output or its state.
   `KY_BACKUP_ALLOW_PRIVATE_RECOVERY`). The option admits RFC 1918, ULA and CGNAT addresses only;
   loopback and link-local stay refused. After the ceremony the handover prints the command that
   mints a single-use code in KyRecovery's container; the owner enters it on each product's
-  backup page. `apply` does not pair products itself yet (#93,
-  [design](superpowers/specs/2026-10-25-recovery-pairing-design.md)). Apply prints this in each product's handover. The backup status and restore-start screens are KyRecovery's own;
-  restic status needs `KYRECOVERY_RESTIC_DIR` and the rest-server, which is not installed yet.
+  backup page. Apply prints this in each product's handover. It pairs only KyPost itself
+  (below); the other products wait for their own releases (#93,
+  [design](superpowers/specs/2026-10-25-recovery-pairing-design.md)). The backup status and
+  restore-start screens are KyRecovery's own; restic status needs `KYRECOVERY_RESTIC_DIR` and
+  the rest-server, which is not installed yet.
+- **KyPost's pairing during apply** (`kypost.recovery-pair`, after the edges). It pairs only to
+  a recovery key the owner confirmed: after the ceremony, check that the key ID the ceremony
+  page shows is the one on the custodian cards, then set it on the plan's KyRecovery app and
+  rerun `apply`:
+
+  ```yaml
+  apps:
+    - name: kyrecovery
+      target: k1
+      recovery_key_id: <the 64-character key ID>
+  ```
+
+  The step reads KyRecovery's `status --json` (setup capability `status`; KyRecovery 0.4.3 has
+  none, so with it the step only says to pair by hand). It refuses a KyRecovery holding another
+  key, or a KyPost already paired to another. Otherwise it mints a 10-minute code in
+  KyRecovery's container, hands it to KyPost's `apply-setup` on stdin, checks the new pairing's
+  key, runs KyPost's `deposit` and passes once KyRecovery lists KyPost's last backup. The code is
+  never written to a file, the plan, state or output. A KyPost already paired by hand is not
+  paired again. A failed claim fails the step; a rerun mints a new code, and the unclaimed one
+  expires. A suite runner older than this release refuses a plan with `recovery_key_id`.
 - `KYRECOVERY_TRUSTED_PROXIES` is unset here, so its rate limits see the edge pod as every
   client ([forwarded headers](#forwarded-headers-trusted-proxy)).
 - The pod reaches KyIdentity at its public issuer URL, so cluster DNS
@@ -1678,7 +1700,9 @@ account, the assignment rule above, the mail-port facts and the first-start mode
 - Offboarding: webmail KyPost has no directory, so disabling or unassigning someone in KyIdentity stops
   new sign-ins but not a live KyPost session. Sessions live in memory: `docker restart
   kyq-kypost-app-1` on the target ends every one (the kind test proves it).
-- With an internal KyRecovery in the plan, pair it by hand after the ceremony (KyRecovery's handover step); unpaired, it deposits no backup.
+- With an internal KyRecovery in the plan, apply pairs it once the owner confirms KyRecovery's
+  recovery key ([KyRecovery](#catalog-kyrecovery-on-kubernetes)); until then, or with a KyRecovery that cannot report
+  its key, the handover says to pair it by hand. Unpaired, it deposits no backup.
 - The KyPost-KyCalendar invitation pairing is not configured by this installer.
 
 Limits and residuals:

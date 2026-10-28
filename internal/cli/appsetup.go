@@ -125,7 +125,8 @@ func (s *session) composeClients(st *stack.Stack) error {
 				text = strings.ReplaceAll(text, "pod's log (kubectl -n kyq-kyrecovery logs deployment/app), and lost when that pod is replaced.", "container's log (docker logs kyq-kyrecovery-app-1 on its target), and lost when that container is replaced.")
 			}
 			if privateRecovery(st) {
-				text = strings.ReplaceAll(text, noPairing, recoveryPairing(s.state, host, s.placed["kyrecovery"]))
+				post := slices.ContainsFunc(st.Integrations, func(i stack.Integration) bool { return i.Product == "kypost" && i.Installed(st) })
+				text = strings.ReplaceAll(text, noPairing, recoveryPairing(s.state, host, s.placed["kyrecovery"], post))
 			}
 			s.handover += text
 		case "kydrive":
@@ -147,11 +148,14 @@ func (s *session) composeClients(st *stack.Stack) error {
 		case "kycalendar":
 			s.handover += calendarRuntimeHandover(s.state, host, n.Admin.Username, n.Everyday.Username, s.placed["kycalendar"])
 		case "kypost":
+			text := fmt.Sprintf(postHandover, host, n.Admin.Username, n.Everyday.Username, postContainer, s.placed["kypost"].Name)
 			if m := mailOf(st, "kypost"); m != nil {
-				s.handover += postNativeText(host, n.Admin.Username, n.Everyday.Username, s.placed["kypost"].Name, m)
-			} else {
-				s.handover += fmt.Sprintf(postHandover, host, n.Admin.Username, n.Everyday.Username, postContainer, s.placed["kypost"].Name)
+				text = postNativeText(host, n.Admin.Username, n.Everyday.Username, s.placed["kypost"].Name, m)
 			}
+			if _, ok := s.placed["kyrecovery"]; ok && privateRecovery(st) {
+				text = strings.Replace(text, noPairing, pairByApply, 1)
+			}
+			s.handover += text
 		case "kymessage":
 			s.handover += messageHandover(st, i.Product, s.placed[i.Product], n.Admin.Username, n.Everyday.Username)
 		case "kypulse":
@@ -295,19 +299,42 @@ const noPairing = "No catalog product can pair with KyRecovery in this release; 
 // internal: every product but KyDNS may then pair with it (#93).
 const pairByHand = "Pair it with KyRecovery on its backup page to start backups (see KyRecovery's step)."
 
+// pairByApply holds KyPost's pairing line until apply replaces it with kypost.recovery-pair's
+// outcome, or with pairByHand when that step did not run.
+const pairByApply = "KyPost's KyRecovery pairing is decided by apply."
+
+// pairingLines is handover with an internal KyRecovery: KyPost's line from its pairing step
+// (pairByHand when it did not run), every other product's pairByHand.
+func pairingLines(handover, post string) string {
+	if post == "" {
+		post = pairByHand
+	}
+	handover = strings.ReplaceAll(handover, pairByApply, post)
+	return strings.ReplaceAll(handover, "\n  "+noPairing, "\n  "+pairByHand)
+}
+
 // recoveryPairing is KyRecovery's handover step when its products may pair by hand: a code
-// minted in KyRecovery's container, typed into each product as its administrator.
-func recoveryPairing(state, host string, t stack.Target) string {
+// minted in KyRecovery's container, typed into each product as its administrator. With
+// KyPost (post), it also says how apply pairs KyPost.
+func recoveryPairing(state, host string, t stack.Target, post bool) string {
 	mint := kubectl(state, t) + " -n kyq-kyrecovery exec deployment/app --"
 	if !t.Kubernetes() {
 		mint = "docker exec kyq-kyrecovery-app-1"
 	}
-	return fmt.Sprintf(`After the ceremony, pair each product by hand; until then no product has a backup.
+	text := fmt.Sprintf(`After the ceremony, pair each product by hand; until then no product has a backup.
   For each, mint a single-use code (valid 15 minutes) on KyRecovery's target:
     %s /app/kyrecovery pair generate --service <app> --app <name>
   As the product's administrator, enter it on the product's backup page together with
   KyRecovery's URL, https://%s/. The code is a secret: type it, never paste it into chat.
   KyRecovery's pairings page then lists the product and, after its first deposit, its last backup.`, mint, host)
+	if post {
+		text += `
+  Apply can pair KyPost instead, only to a recovery key you confirm: after the ceremony,
+  check that the key ID its page shows is the one on the custodian cards, set it as
+  recovery_key_id under the kyrecovery app in stack.yaml and rerun apply. KyPost's
+  section says whether apply paired it.`
+	}
+	return text
 }
 
 // identityHandover says where KyIdentity's setup left the owner's two generated passwords, in

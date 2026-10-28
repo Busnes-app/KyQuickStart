@@ -145,6 +145,9 @@ type App struct {
 	Stopped bool `yaml:"stopped,omitempty" json:",omitempty"`
 	// Mail is KyPost's opt-in native mail; nil keeps it webmail for existing IMAP accounts.
 	Mail *Mail `yaml:"mail,omitempty" json:",omitempty"`
+	// RecoveryKeyID is KyRecovery's recovery key as the owner confirmed it after the ceremony
+	// (64 lowercase hex). Apply pairs products only to this key.
+	RecoveryKeyID string `yaml:"recovery_key_id,omitempty" json:",omitempty"`
 }
 
 // MediaAddress accepts one unicast IPv4 address a LAN client can reach.
@@ -160,6 +163,7 @@ var (
 	userRE    = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
 	rootRE    = regexp.MustCompile(`^(/[A-Za-z0-9._-]+)+$`)
 	contextRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._@:/-]{0,252}$`)
+	keyIDRE   = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
 
 // ValidName reports whether s is a usable target or app name. App names become step IDs,
@@ -295,6 +299,9 @@ func (s *Stack) validate() error {
 		}
 		if a.KubeVIPAddress != "" && !MediaAddress(a.KubeVIPAddress) {
 			return fmt.Errorf("app %q: kube_vip_address %q must be one IPv4 LAN address: not a hostname, IPv6, unspecified, loopback, link-local, multicast or broadcast", a.Name, a.KubeVIPAddress)
+		}
+		if a.RecoveryKeyID != "" && (a.Name != "kyrecovery" || !keyIDRE.MatchString(a.RecoveryKeyID)) {
+			return fmt.Errorf("app %q: recovery_key_id belongs to kyrecovery only and is the 64 lowercase hex characters of the key ID its ceremony page shows", a.Name)
 		}
 		if a.Mail != nil {
 			if err := a.Mail.validate(); err != nil {

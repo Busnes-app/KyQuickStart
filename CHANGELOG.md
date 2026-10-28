@@ -29,6 +29,18 @@ No installer state, target data, key or credential is reset automatically.
 Upgrade impact: none unless set. It needs kube-vip in services mode on the cluster, and the
 edge's `egress_address` must equal the address; then point connectors and LAN DNS at it.
 
+- With an internal KyRecovery, `apply` can pair KyPost with it (`kypost.recovery-pair`, #93
+  stage 2). It pairs only to the recovery key the owner confirms after the ceremony, set as
+  `recovery_key_id` on the plan's `kyrecovery` app, and only with a KyRecovery that reports
+  its key (`status --json`). It then makes KyPost's first deposit and checks KyRecovery holds
+  it. The pairing code stays in memory. KyRecovery 0.4.3 cannot report its key, so for now the
+  step only says to pair by hand.
+
+Upgrade impact: apply runs one new read-only step with KyPost and an internal KyRecovery;
+nothing is paired until `recovery_key_id` is set and KyRecovery has a release with `status`.
+A suite runner older than this release refuses a plan with `recovery_key_id`: hand off the
+new runner first.
+
 ## v0.4.2.7 — 2026-10-26
 
 - Kubernetes network rules no longer include the IPv4-mapped exception that the API
