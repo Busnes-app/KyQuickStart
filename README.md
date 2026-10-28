@@ -146,3 +146,5 @@ Choosing `finish` saves the plan without touching any server.
 ## License
 
 MIT. See [LICENSE.txt](LICENSE.txt).
+
+[![OctoCounts](https://api.octocounts.com/badge/Busnes-app/KyQuickStart/branch/master)](https://octocounts.com/github/Busnes-app/KyQuickStart/tree/master)
