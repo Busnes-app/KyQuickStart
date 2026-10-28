@@ -22,9 +22,9 @@ import (
 )
 
 // TestKubernetesNPMEdgeJoins is TestKubernetesNPMEdge's later half, split off to run in its own
-// CI shard. On the smallest stack the joins need, KyIdentity and KyRecovery behind the lan edge
-// with the edge already admitting this host, the cluster's pods and the Docker target's relay,
-// KyNotes, KyCalendar and KyPost and KyDNS (on the Docker target) join by setup amendment.
+// CI shard. On the stack TestKubernetesNPMEdge has when they join (KyIdentity, KyRecovery,
+// kyPulse and KyDrive behind the lan edge, KyDrive backed up), KyNotes, KyCalendar, KyPost and
+// KyDNS join by setup amendment, and no credential of any of them leaks.
 func TestKubernetesNPMEdgeJoins(t *testing.T) {
 	ctx := context.Background()
 	work := t.TempDir()
@@ -38,7 +38,7 @@ func TestKubernetesNPMEdgeJoins(t *testing.T) {
 	}
 	cs := kubernetes.NewForConfigOrDie(cfg)
 	catalogDir := filepath.Join(work, "catalog")
-	for _, src := range []string{"../../internal/catalog/testdata/apps/hello", "../../internal/catalog/apps/npm", "../../internal/catalog/apps/kyidentity", "../../internal/catalog/apps/kyrecovery", "../../internal/catalog/apps/kynotes", "../../internal/catalog/apps/kycalendar"} {
+	for _, src := range []string{"../../internal/catalog/testdata/apps/hello", "../../internal/catalog/apps/npm", "../../internal/catalog/apps/kyidentity", "../../internal/catalog/apps/kyrecovery", "../../internal/catalog/apps/kypulse", "../../internal/catalog/apps/kynotes", "../../internal/catalog/apps/kycalendar"} {
 		if err := os.CopyFS(filepath.Join(catalogDir, filepath.Base(src)), os.DirFS(src)); err != nil {
 			t.Fatal(err)
 		}
@@ -88,6 +88,7 @@ func TestKubernetesNPMEdgeJoins(t *testing.T) {
 	// and allow_cidrs for the LAN client, the cluster's pods, this host and the target's relay.
 	loadCatalogApp(t, name, cs, "kyidentity")
 	loadCatalogApp(t, name, cs, "kyrecovery")
+	loadCatalogApp(t, name, cs, "kypulse")
 	drive := startDriveTarget(t, work, catalogDir, nodeIP, certPEM)
 	testClusterDNS(t, ctx, cs, nodeIP)
 	allow := []string{ip(client) + "/32", mustNode(t, ctx, cs, node).Spec.PodCIDR}
@@ -106,6 +107,9 @@ func TestKubernetesNPMEdgeJoins(t *testing.T) {
 	}}}}
 	addCatalogIdentity(st, certID)
 	addCatalogRecovery(st, certID)
+	addCatalogPulse(st, certID)
+	addCatalogDrive(st, certID, drive)
+	trust = []string{"--trust-host-key", "nas=" + drive.fp}
 	b, _ := yaml.Marshal(st)
 	os.WriteFile(plan, b, 0o600)
 	out := apply("identity")
@@ -113,7 +117,13 @@ func TestKubernetesNPMEdgeJoins(t *testing.T) {
 		return docker(t, "exec", client, "curl", "-sk", "-m", "10", "--resolve", host+":30443:"+nodeIP, "https://"+host+":30443"+path)
 	}
 	recoverySecrets := checkCatalogRecovery(t, ctx, cs, kc, out, viaEdge)
+	pulseSecrets := checkCatalogPulse(t, ctx, cs, kc, out, viaEdge)
+	driveSecrets := checkCatalogDrive(t, out, drive, viaEdge)
+	checkDriveConnector(t, ctx, connected, out, driveSecrets[1])
 	trustTestCA(t, ctx, cs, connected, "kyidentity", certPEM)
+	driveSignOn(t, ctx, kc, certPEM, nodeIP, driveSecrets[1])
+	backupOutputs, backupSecrets := testDriveBackupGate(t, ctx, work, state, catalogDir, plan, drive, trust, apply)
+	outputs = append(outputs, backupOutputs...)
 
 	// KyNotes joins after KyIdentity's first setup: its client comes in a setup amendment, and
 	// its setup runs after KyIdentity's route and before its own.
@@ -187,8 +197,6 @@ func TestKubernetesNPMEdgeJoins(t *testing.T) {
 	// amendment; its setup runs before the edges. The handover's commands run verbatim there.
 	postPort := preparePost(t, work, catalogDir, drive)
 	st, _ = stack.Load(plan)
-	addNASTarget(st, drive)
-	trust = []string{"--trust-host-key", "nas=" + drive.fp}
 	addCatalogPost(st, certID, drive, postPort)
 	b, _ = yaml.Marshal(st)
 	os.WriteFile(plan, b, 0o600)
@@ -271,5 +279,5 @@ func TestKubernetesNPMEdgeJoins(t *testing.T) {
 		t.Errorf("rerun: kydns.edge = %q, %v", status(out, "kydns.edge"), err)
 	}
 
-	noCredentialLeak(t, state, outputs, slices.Concat([]string{password, token, stored()}, recoverySecrets, notesSecrets, calendarSecrets, postSecrets, dnsSecrets))
+	noCredentialLeak(t, state, outputs, slices.Concat([]string{password, token, stored()}, backupSecrets, recoverySecrets, pulseSecrets, driveSecrets, notesSecrets, calendarSecrets, postSecrets, dnsSecrets))
 }
