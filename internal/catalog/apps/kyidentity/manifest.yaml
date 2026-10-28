@@ -1,7 +1,7 @@
 name: kyidentity
 description: KyIdentity, the suite's identity provider (OIDC, MFA, SCIM); every other app signs in through it
 category: ky
-version: 0.4.8.2
+version: 0.5.0
 # No status_path yet: 0.4.7 serves the suite proxy contract at /api/installer/network
 # (KyIdentity-server#141), but reports proxyHeadersTrusted only for a peer in TRUSTED_PROXY_CIDRS,
 # which only its Compose file sets (to the edge's address), so verify-edge would fail its
@@ -11,20 +11,18 @@ version: 0.4.8.2
 # resync-system (its resync replays removals, which kyquickstart restore requires),
 # installer-verified-email (MAS's chat sign-in needs it) and mail-relay. 0.4.6 sends a removal
 # made before the person's first delivery instead of dropping it; 0.4.7 never gives up on one.
-# catalog-follow: v0.4.8.2 attested by Busnes-app/KyIdentity-server release-image.yml@refs/tags/v0.4.8.2
+# catalog-follow: v0.5.0 attested by Busnes-app/KyIdentity-server release-image.yml@refs/tags/v0.5.0
 images:
-  kyidentity: ghcr.io/busnes-app/kyidentity-server:0.4.8.2@sha256:88236f9be91010f4876f4693d48e3367ecd81711ff4ef4c0939e3649a68a6471
+  kyidentity: ghcr.io/busnes-app/kyidentity-server:0.5.0@sha256:a01d5926aa4962811dea5fa212f905083399b7f0ecb6ee53f1251272b49512ee
 health:
   timeout_seconds: 300
 # Its signing, session and encryption keys are generated in the data directory on first start.
 backup:
   volumes: [data]
 upgrade:
-  # Migrations run at startup; the release notes cover upgrades from 0.4.x only. 0.4.4 and 0.4.5
-  # change no schema; 0.4.6 adds one defaulted column and flags an unchanged bootstrap password
-  # (once); 0.4.7 changes no schema and marks pending creates and updates already at their
-  # attempt budget failed (once) so the reconcile pass re-queues them. None rewrites people,
-  # access or content, so an upgrade needs only an acknowledgement.
+  # Migrations run at startup; the release notes cover upgrades from 0.4.x only. 0.4.4 to 0.5.0
+  # add at most one defaulted column (0.4.6) and one-time status corrections; none rewrites
+  # people, access or content, so an upgrade needs only an acknowledgement.
   min_from: 0.4.0
   migrates_data: false
   note: >-

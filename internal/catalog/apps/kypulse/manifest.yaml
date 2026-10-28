@@ -1,11 +1,11 @@
 name: kypulse
 description: kyPulse, the suite's monitor; polls every app's health, alerts and keeps their logs
 category: ky
-version: 0.4.3.1
+version: 0.5.0
 # Release image of v0.4.2, attested by release-image.yml@refs/tags/v0.4.2 (gh attestation verify).
-# catalog-follow: v0.4.3.1 attested by Busnes-app/KyPulse-server release-image.yml@refs/tags/v0.4.3.1
+# catalog-follow: v0.5.0 attested by Busnes-app/KyPulse-server release-image.yml@refs/tags/v0.5.0
 images:
-  kypulse: ghcr.io/busnes-app/kypulse-server:0.4.3.1@sha256:89f35d8d126462f8b6e8320e987510762b435e03937d1e15bf76d14a305efb1c
+  kypulse: ghcr.io/busnes-app/kypulse-server:0.5.0@sha256:5685912266651a2b35369555ebd9f7a65a78b1620827a2c3df9534055123a3cf
 # verify-edge reads the suite proxy contract here (clientIp, proxyHeadersTrusted, scheme).
 status_path: /api/installer/network
 # Monitoring for administrators: never on the public connection.
@@ -26,10 +26,12 @@ oidc:
 backup:
   volumes: [data, secrets]
 upgrade:
-  # 0.4.3 -> 0.4.3.1 changes no schema (credential-checked sessions and TOTP use existing
-  # columns), so it needs only an acknowledgement. 0.4.2 migrates: upgrade to 0.4.3 first.
+  # 0.5.0 adds migration 12 at startup (back-channel logout tables); additive, so 0.4.3 still
+  # upgrades directly. 0.4.2 migrates further: upgrade to 0.4.3 first.
   min_from: 0.4.3
-  migrates_data: false
+  migrates_data: true
+  note: >-
+    Signs out single sign-on sessions once, at first start; people sign in again.
 kubernetes:
   image: kypulse
   env:

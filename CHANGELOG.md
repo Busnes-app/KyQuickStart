@@ -14,6 +14,16 @@ state directory, target data and target-held credentials; do not reset them as a
 
 ## Unreleased
 
+- The catalog moves every Ky app to its 0.5 line: KyCalendar, KyDNS, KyDrive, KyIdentity,
+  KyMessage, KyNotes, kyPulse, KyRecovery and KyYard 0.5.0, KyPost 0.5.0.1. Each pin is the
+  digest its release workflow attested.
+
+Upgrade impact: an existing install whose app migrates data (KyCalendar, KyDNS, KyDrive, KyNotes,
+kyPulse, KyRecovery, KyYard) is refused until this installer can take the pre-upgrade backup;
+KyIdentity, KyMessage and KyPost upgrade with an acknowledgement. Apps with back-channel logout
+sign out single sign-on sessions once. New KyPost device enrollments need KyPost for Android
+0.5.1.1 or later.
+
 - KyIdentity's handover and the guides no longer say KyAuth push approval does not deliver:
   KyIdentity 0.4.8 and later, which the catalog pins, use the Busnes.app push relays by
   default (#98).

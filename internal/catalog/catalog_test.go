@@ -117,7 +117,7 @@ func TestKyPulseEntry(t *testing.T) {
 	if o.AdminRole != "kypulse.admin" || o.UserRole != "" || o.RedirectPaths[0] != "/api/sso/kysignon/callback" || o.DirectoryPath != "/api/sso/kysignon/sync" || len(o.LogoutPaths) != 0 || o.BackchannelLogoutPath != "" || o.Public {
 		t.Fatalf("oidc = %+v", o)
 	}
-	if a.Upgrade.MinFrom != "0.4.3" || a.Upgrade.MigratesData || !slices.Equal(a.Backup.Volumes, []string{"data", "secrets"}) {
+	if a.Upgrade.MinFrom != "0.4.3" || !a.Upgrade.MigratesData || !slices.Equal(a.Backup.Volumes, []string{"data", "secrets"}) {
 		t.Fatalf("upgrade %+v, backup %+v", a.Upgrade, a.Backup)
 	}
 }

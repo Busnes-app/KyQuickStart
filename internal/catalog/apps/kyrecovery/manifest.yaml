@@ -1,11 +1,11 @@
 name: kyrecovery
 description: KyRecovery, the suite's blind backup store; keeps sealed capsules only k custodians can open
 category: ky
-version: 0.4.3
+version: 0.5.0
 # Release image of v0.4.2, attested by release-image.yml@refs/tags/v0.4.2 (gh attestation verify).
-# catalog-follow: v0.4.3 attested by Busnes-app/KyRecovery-server release-image.yml@refs/tags/v0.4.3
+# catalog-follow: v0.5.0 attested by Busnes-app/KyRecovery-server release-image.yml@refs/tags/v0.5.0
 images:
-  kyrecovery: ghcr.io/busnes-app/kyrecovery-server:0.4.3@sha256:462b722d7073cc3ed934dd05195237d1d19c32d33785ac6e700fac39709b2736
+  kyrecovery: ghcr.io/busnes-app/kyrecovery-server:0.5.0@sha256:377b42dd9f8d158bfbba7fc2b7bfdd38184dc96ac1ea85d2ab2e66063f31ba9d
 # verify-edge reads the suite proxy contract here (clientIp, proxyHeadersTrusted, scheme).
 status_path: /api/installer/network
 # The suite's backup store and its ceremony: administrators and the suite's own apps only.
@@ -26,9 +26,12 @@ oidc:
 backup:
   volumes: [data]
 upgrade:
-  # First release; its SQLite schema migrates at startup.
+  # 0.5.0 migrates at startup and hashes stored session IDs, API tokens and pairing codes once;
+  # an older binary cannot read the result, so going back needs the pre-upgrade backup.
   min_from: 0.4.2
   migrates_data: true
+  note: >-
+    Signs out single sign-on sessions once, at first start; people sign in again. Rolling back to 0.4.x needs the backup taken before this upgrade.
 kubernetes:
   image: kyrecovery
   env:
