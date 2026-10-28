@@ -23,7 +23,7 @@ ci: notes-check tidy-check lint test-race
 # Needs Docker. goolm is the test-only Matrix client's pure-Go Olm. The kind TLS helper runs the
 # test executable in distroless. test/e2e measured 33.7 min on the workstation and 35.9 min on
 # GitHub's runner (2026-10-21, PR #66: whole job 38 min): 60m leaves room for a slower runner.
-# E2E_RUN, E2E_SKIP and E2E_PKGS select a shard (ci.yml splits the suite over four jobs);
+# E2E_RUN, E2E_SKIP and E2E_PKGS select a shard (ci.yml splits the suite over five jobs);
 # unset, `make e2e` runs everything.
 E2E_RUN ?=
 E2E_SKIP ?=

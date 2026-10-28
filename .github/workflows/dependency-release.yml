@@ -23,7 +23,8 @@ name: dependency release
 # runner image and the release binaries.
 on:
   schedule:
-    - cron: "0 23 * * *"
+    # After every Ky app's own dependency release, whose releases it follows.
+    - cron: "53 23 * * *"
   workflow_dispatch:
 
 concurrency:

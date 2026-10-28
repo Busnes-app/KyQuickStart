@@ -594,7 +594,7 @@ calls and kind nodes must carry their own explicit bounds.
   KyIdentity and `euro-office` with KyDrive on an sshd target: baseline pod and its capabilities,
   seeded claims, the copied secret, `/healthcheck` through the edge, a signed KyDrive callback
   (200/401), egress through the edge only, a skipped rerun and a restart. Not part of `make e2e`.
-- `make e2e`: needs Docker (in CI split by `E2E_RUN`/`E2E_SKIP` over four `e2e (<shard>)` jobs, summarised by the `e2e` job that `release-image.yml` requires; a new slow kind test should get a shard or join one); runs `apply` against an sshd container on the local Docker socket and
+- `make e2e`: needs Docker (in CI split by `E2E_RUN`/`E2E_SKIP` over five `e2e (<shard>)` jobs, summarised by the `e2e` job that `release-image.yml` requires; a new slow kind test should get a shard or join one); runs `apply` against an sshd container on the local Docker socket and
   against a kind cluster (`go run sigs.k8s.io/kind@v0.33.0`), including drift and stale-lock cases.
   Also runs disposable NPM, frpc/frps and cloudflared container tests in `internal/edge`, and
   `TestKubernetesNPMEdge`: catalog NPM on kind with claims, bootstrap, policy probes, a routed
@@ -617,8 +617,9 @@ calls and kind nodes must carry their own explicit bounds.
   every other routed app in its live `--check`, and health through the edge. Then, with
   test-only cluster DNS and CA trust, the owner's admin signs in to KyRecovery and kyPulse
   through KyIdentity, the everyday account is refused by both, and kyPulse reports every
-  target ok. Last, the catalog KyNotes joins after KyIdentity's first setup through a setup
-  amendment: restricted uid-65532 pod, staged/imported private setup files (checked from an
+  target ok. `TestKubernetesNPMEdgeJoins` (its own CI shard) sets up the same lan edge with
+  KyIdentity and KyRecovery only, then the catalog KyNotes joins after KyIdentity's first setup
+  through a setup amendment: restricted uid-65532 pod, staged/imported private setup files (checked from an
   ephemeral BusyBox container, the image has no shell), live present-only `--check`, no route
   until its setup passed, health through the edge, admin and everyday sign-in with KyNotes' admin
   separation (backup status 200/403, notes 403 `admin_account` for the admin), and a skipped rerun.
@@ -642,7 +643,7 @@ calls and kind nodes must carry their own explicit bounds.
   proves `kydns.edge`, trusted headers through the edge, the closed `/setup` and admin-only
   sign-in; where it hides them (this workstation) it proves KyDNS refuses the edge, that
   `kydns.edge` fails apply and that `kydns.gate` refuses a gateway `egress_address`.
-  The catalog KyPost joins the Docker target beside KyDrive by amendment: container as `kypost`,
+  The catalog KyPost joins the Docker target by amendment: container as `kypost`,
   read-only, no capabilities, published on the forward address only and listening on no mail
   port, private setup files, live `--check`, health and an untrusted-proxy network status
   through the edge, admin and everyday sign-in (`/api/users` 200/403), the handover's

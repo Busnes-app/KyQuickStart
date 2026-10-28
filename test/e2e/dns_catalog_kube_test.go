@@ -28,8 +28,8 @@ import (
 	"github.com/Busnes-app/kyquickstart/internal/stack"
 )
 
-// catalogDNSHost is where TestKubernetesNPMEdge routes the catalog KyDNS, which runs on the
-// Docker target behind the cluster's lan edge.
+// catalogDNSHost is where TestKubernetesNPMEdgeJoins routes the catalog KyDNS, which runs on
+// the Docker target behind the cluster's lan edge.
 const catalogDNSHost = "dns.example.test"
 
 const catalogDNSURLHost = catalogDNSHost + ":30443"

@@ -29,8 +29,8 @@ import (
 	"github.com/Busnes-app/kyquickstart/internal/stack"
 )
 
-// catalogPostHost is where TestKubernetesNPMEdge routes the catalog KyPost, which runs on the
-// Docker target beside KyDrive, behind the cluster's lan edge.
+// catalogPostHost is where TestKubernetesNPMEdgeJoins routes the catalog KyPost, which runs on
+// the Docker target behind the cluster's lan edge.
 const catalogPostHost = "post.example.test"
 
 const catalogPostURLHost = catalogPostHost + ":30443"
@@ -94,9 +94,9 @@ func preparePost(t *testing.T, work, catalogDir string, d driveTarget) int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
-// addCatalogPost places KyPost on the Docker target beside KyDrive, routes it through the
-// cluster's lan edge and selects its setup, after KyIdentity's first setup ran: apply adds its
-// client with a setup amendment.
+// addCatalogPost places KyPost on the Docker target, routes it through the cluster's lan edge
+// and selects its setup, after KyIdentity's first setup ran: apply adds its client with a
+// setup amendment.
 func addCatalogPost(st *stack.Stack, certID int, d driveTarget, port int) {
 	st.Apps = append(st.Apps, stack.App{Name: "kypost", Target: "nas"})
 	st.Edges[0].Routes = append(st.Edges[0].Routes, stack.Route{App: "kypost", Hostname: catalogPostHost,
