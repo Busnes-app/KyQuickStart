@@ -149,7 +149,8 @@ func startDriveTarget(t *testing.T, work, catalogDir, nodeIP string, certPEM []b
 // edge to the target's forward address and selects its setup; apply adds its client to the
 // catalog KyIdentity's first setup.
 func addCatalogDrive(st *stack.Stack, certID int, d driveTarget) {
-	addNASTarget(st, d)
+	port, _ := strconv.Atoi(d.port)
+	st.Targets = append(st.Targets, stack.Target{Name: "nas", Host: "127.0.0.1", Port: port, User: "root", Root: d.root})
 	st.Apps = append(st.Apps, stack.App{Name: "kydrive", Target: "nas"})
 	st.Edges[0].Routes = append(st.Edges[0].Routes, stack.Route{App: "kydrive", Hostname: catalogDriveHost,
 		ForwardHost: d.forward, ForwardPort: d.forwardPort, CertificateID: certID, StatusPath: "/healthz"})
@@ -240,12 +241,6 @@ func checkDriveConnector(t *testing.T, ctx context.Context, c *kube.Client, out,
 	if err != nil || json.Unmarshal(report, &r) != nil || len(r.Created) != 0 || !slices.ContainsFunc(r.Reused, func(o struct{ Kind, Name string }) bool { return o.Kind == "connector" && o.Name == "kydrive" }) {
 		t.Fatalf("connector check:\n%s %v", report, err)
 	}
-}
-
-// addNASTarget adds d to st as the Docker target nas.
-func addNASTarget(st *stack.Stack, d driveTarget) {
-	port, _ := strconv.Atoi(d.port)
-	st.Targets = append(st.Targets, stack.Target{Name: "nas", Host: "127.0.0.1", Port: port, User: "root", Root: d.root})
 }
 
 // relayIP is the address KyDrive's requests to KyIdentity reach the lan edge from.

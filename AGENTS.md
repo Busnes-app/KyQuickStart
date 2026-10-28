@@ -617,8 +617,8 @@ calls and kind nodes must carry their own explicit bounds.
   every other routed app in its live `--check`, and health through the edge. Then, with
   test-only cluster DNS and CA trust, the owner's admin signs in to KyRecovery and kyPulse
   through KyIdentity, the everyday account is refused by both, and kyPulse reports every
-  target ok. `TestKubernetesNPMEdgeJoins` (its own CI shard) sets up the same lan edge with
-  KyIdentity and KyRecovery only, then the catalog KyNotes joins after KyIdentity's first setup
+  target ok. `TestKubernetesNPMEdgeJoins` (its own CI shard) rebuilds that stack (KyIdentity,
+  KyRecovery, kyPulse, KyDrive signed in and backed up), then the catalog KyNotes joins after KyIdentity's first setup
   through a setup amendment: restricted uid-65532 pod, staged/imported private setup files (checked from an
   ephemeral BusyBox container, the image has no shell), live present-only `--check`, no route
   until its setup passed, health through the edge, admin and everyday sign-in with KyNotes' admin
@@ -643,7 +643,7 @@ calls and kind nodes must carry their own explicit bounds.
   proves `kydns.edge`, trusted headers through the edge, the closed `/setup` and admin-only
   sign-in; where it hides them (this workstation) it proves KyDNS refuses the edge, that
   `kydns.edge` fails apply and that `kydns.gate` refuses a gateway `egress_address`.
-  The catalog KyPost joins the Docker target by amendment: container as `kypost`,
+  The catalog KyPost joins the Docker target beside KyDrive by amendment: container as `kypost`,
   read-only, no capabilities, published on the forward address only and listening on no mail
   port, private setup files, live `--check`, health and an untrusted-proxy network status
   through the edge, admin and everyday sign-in (`/api/users` 200/403), the handover's
