@@ -756,10 +756,12 @@ changed intent fails with the product's refusal. `integrate-stack` skips install
   KyIdentity refuses private destinations without it. It opens RFC 1918, ULA and
   carrier-grade NAT (`100.64.0.0/10`) only; loopback, link-local and cloud metadata addresses
   stay refused, and device-supplied push endpoints never get it.
-- MFA: the catalog configures no KyAuth push relay (`PUSH_RELAY_URL`, `APNS_RELAY_URL` are
-  unset, on Docker and Kubernetes, and the plan has no field for them), so KyAuth push approval
-  does not deliver: a device pairs, but no challenge reaches it. Only TOTP and passkeys work;
-  enrol one of those (Busnes-app/KyQuickStart#98).
+- MFA: KyAuth push approval goes through the Busnes.app relays,
+  `https://fcm.relay.kyauth.busnes.app` (Android) and `https://apn.relay.kyauth.busnes.app`
+  (iOS). The catalog leaves `PUSH_RELAY_URL` and `APNS_RELAY_URL` unset, on Docker and
+  Kubernetes, so KyIdentity (0.4.8 and later) uses those defaults and self-registers a relay
+  key under its data directory; the plan has no field to change them. TOTP and passkeys need
+  no relay.
 - `kyidentity.setup` (or the app's `.amend.<app>`) creates each app's signed directory
   connector, and KyIdentity sends its first events at once, before the edges route to the
   app: the app's setup, and KyMessages' deploy, need the secrets that setup creates. On a

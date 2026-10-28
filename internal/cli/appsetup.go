@@ -322,8 +322,8 @@ KyIdentity at https://%[1]s/: the owner's accounts are %[2]s (administration onl
   (everyday use). Read each one's generated first password, sign in, change it and enrol MFA:
     %[4]s cat %[5]s
     %[4]s cat %[6]s
-  MFA: enrol TOTP or a passkey. KyAuth push approval does not deliver: this installer
-  configures no push relay.
+  MFA: enrol TOTP, a passkey or KyAuth push approval. Push reaches phones through
+  the relays fcm.relay.kyauth.busnes.app and apn.relay.kyauth.busnes.app.
 `, host, n.Admin.Username, n.Everyday.Username, read, path.Join(scope, "admin.password"), path.Join(scope, "everyday.password")) + where
 }
 
