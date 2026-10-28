@@ -215,7 +215,7 @@ Plain terminal planning and command orchestration for the operator-run installer
   `deploySteps` holds it and KyNotes' route (`routedFirst`, `edge.RouteApp`) until after the other
   edge steps, setup first. Every product handover says no catalog product can pair with
   KyRecovery in this release (#93); KyCalendar's and KyPost's add that their invitation pairing
-  is not configured (#100); KyIdentity's says only TOTP and passkeys work (no push relay, #98).
+  is not configured (#100); KyIdentity's names its default Busnes.app push relays (#98).
   `amendLate` (apply only, read-only, before preflight) records an `identity_amendment` for each
   app whose client the running KyIdentity's retained setup lacks, all or one, when it advertises
   `setup-amendments`; composeClients then puts that client in an `identityAmendment`, whose

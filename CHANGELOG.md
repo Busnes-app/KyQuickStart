@@ -14,6 +14,12 @@ state directory, target data and target-held credentials; do not reset them as a
 
 ## Unreleased
 
+- KyIdentity's handover and the guides no longer say KyAuth push approval does not deliver:
+  KyIdentity 0.4.8 and later, which the catalog pins, use the Busnes.app push relays by
+  default (#98).
+
+Upgrade impact: none; text only.
+
 - Refuse undersized SSH host/authentication keys, obsolete key exchange and 96-bit MACs.
   RSA authentication uses SHA-2 even through the SSH agent and user certificates.
 

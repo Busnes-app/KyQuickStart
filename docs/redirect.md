@@ -109,8 +109,8 @@ target markers from earlier builds stay valid.
   product's private-recovery option (KyDNS's stays `false`), and the owner pairs each product
   by hand after the ceremony; `apply` does not pair them yet (#93,
   `docs/superpowers/specs/2026-10-25-recovery-pairing-design.md`).
-- KyAuth push approval: the catalog sets no push relay (`PUSH_RELAY_URL`, `APNS_RELAY_URL`), so
-  only TOTP and passkeys work (#98).
+- KyAuth push approval on a live install: KyIdentity 0.4.8 and later default to the Busnes.app
+  relays and the catalog leaves them unset (#98); no e2e or live run has delivered a push.
 - The KyPost-KyCalendar invitation pairing (#100).
 
 ## Compatibility consequences
