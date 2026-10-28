@@ -25,7 +25,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-// catalogCalendarHost is where TestKubernetesNPMEdge routes the catalog KyCalendar.
+// catalogCalendarHost is where TestKubernetesNPMEdgeJoins routes the catalog KyCalendar.
 const catalogCalendarHost = "calendar.example.test"
 
 // catalogCalendarURLHost is its URL host behind the lan edge.

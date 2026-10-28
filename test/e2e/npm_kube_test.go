@@ -43,8 +43,8 @@ import (
 // demo app through it as a cloudflare and then a lan edge, and reruns apply until nothing
 // changes. KyIdentity, KyRecovery and kyPulse join behind the lan edge, so their URLs carry
 // its client_port, which may not change once KyIdentity's setup ran. KyDrive joins from a
-// Docker target, routed through the same edge, with its client in the same first setup;
-// KyNotes, KyCalendar and KyPost (on that Docker target) join later by setup amendment.
+// Docker target, routed through the same edge, with its client in the same first setup.
+// TestKubernetesNPMEdgeJoins covers the apps that join later by setup amendment.
 func TestKubernetesNPMEdge(t *testing.T) {
 	ctx := context.Background()
 	work := t.TempDir()
@@ -352,164 +352,14 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	backupOutputs, backupSecrets := testDriveBackupGate(t, ctx, work, state, catalogDir, plan, drive, trust, apply)
 	outputs = append(outputs, backupOutputs...)
 
-	// KyNotes joins after KyIdentity's first setup: its client comes in a setup amendment, and
-	// its setup runs after KyIdentity's route and before its own.
-	loadCatalogApp(t, name, cs, "kynotes")
-	st, _ = stack.Load(plan)
-	addCatalogNotes(st, certID)
-	b, _ = yaml.Marshal(st)
-	os.WriteFile(plan, b, 0o600)
-	var first bytes.Buffer
-	err = cli.Run(ctx, []string{"apply", "--state", state}, cli.Options{Catalog: os.DirFS(catalogDir), ReleaseSet: "e2e", Out: &first})
-	t.Logf("apply (notes):\n%s", first.String())
-	outputs = append(outputs, first.String())
-	out = first.String()
-	if !strings.Contains(out, "ran without kynotes's client: adding it with setup amendment ") {
-		t.Fatal("amendment not announced")
-	}
-	for _, id := range []string{"kyidentity.amend.kynotes", "kynotes.deploy", "kynotes.health"} {
-		if status(out, id) != "ok" {
-			t.Fatalf("%s = %q", id, status(out, id))
-		}
-	}
-	// code is the HTTP status the LAN client gets through the edge; curl fails (000) when
-	// NPM serves no host for the name.
-	code := func(host, path string) string {
-		b, _ := exec.Command("docker", "exec", client, "curl", "-sk", "-o", "/dev/null", "-w", "%{http_code}", "-m", "10", "--resolve", host+":30443:"+nodeIP, "https://"+host+":30443"+path).Output()
-		return strings.TrimSpace(string(b))
-	}
-	if err != nil {
-		// Test-only: KyNotes' issuer probe refuses the edge's throwaway certificate. Apply
-		// stopped before KyNotes' route, so its open first-run setup was never served.
-		if status(out, "kynotes.setup") != "failed" || status(out, notesRouteStep) != "" || code(catalogNotesHost, "/healthz") == "200" {
-			t.Fatalf("failed KyNotes setup: %v", err)
-		}
-		trustTestCA(t, ctx, cs, connected, "kynotes", certPEM)
-		out = apply("notes after test CA")
-	}
-	notesSecrets := checkCatalogNotes(t, ctx, cs, connected, out, code)
-	if _, err := cs.CoreV1().ConfigMaps("kyq-kynotes").Get(ctx, "test-ca", metav1.GetOptions{}); err != nil {
-		trustTestCA(t, ctx, cs, connected, "kynotes", certPEM) // its token exchange goes through the edge too
-	}
-	notesSignOn(t, ctx, connected, certPEM, nodeIP)
-	out = apply("notes rerun")
-	for _, id := range []string{"kyidentity.amend.kynotes", "kynotes.deploy", "kynotes.health", "kynotes.setup", notesRouteStep} {
-		if status(out, id) != "skipped" {
-			t.Errorf("rerun: %s = %q", id, status(out, id))
-		}
-	}
+	noCredentialLeak(t, state, outputs, slices.Concat([]string{password, token, stored()}, backupSecrets, recoverySecrets, pulseSecrets, driveSecrets))
+}
 
-	// KyCalendar joins after KyIdentity's first setup too, by setup amendment. Its setup needs
-	// no issuer probe, so it runs before the edges as kyPulse's does; its everyday account's
-	// subject comes from KyIdentity's read-only check of its first setup.
-	loadCatalogApp(t, name, cs, "kycalendar")
-	st, _ = stack.Load(plan)
-	addCatalogCalendar(st, certID)
-	b, _ = yaml.Marshal(st)
-	os.WriteFile(plan, b, 0o600)
-	out = apply("calendar")
-	calendarSecrets := checkCatalogCalendar(t, ctx, cs, connected, kc, out, code)
-	// Test-only: KyCalendar's discovery and token exchange at sign-in go through the edge
-	// and its throwaway certificate.
-	trustTestCA(t, ctx, cs, connected, "kycalendar", certPEM)
-	calendarSignOn(t, ctx, connected, certPEM, nodeIP)
-	out = apply("calendar rerun")
-	for _, id := range []string{"kyidentity.amend.kycalendar", "kycalendar.deploy", "kycalendar.health", "kycalendar.setup", calendarRouteStep} {
-		if status(out, id) != "skipped" {
-			t.Errorf("rerun: %s = %q", id, status(out, id))
-		}
-	}
-
-	// KyPost joins the Docker target beside KyDrive after KyIdentity's first setup, by setup
-	// amendment; its setup runs before the edges. The handover's commands run verbatim there.
-	postPort := preparePost(t, work, catalogDir, drive)
-	st, _ = stack.Load(plan)
-	addCatalogPost(st, certID, drive, postPort)
-	b, _ = yaml.Marshal(st)
-	os.WriteFile(plan, b, 0o600)
-	out = apply("post")
-	postSecrets := checkCatalogPost(t, out, drive, postPort, viaEdge, code)
-	postAdmin := postSignOn(t, ctx, connected, certPEM, nodeIP)
-	postSecrets = append(postSecrets, checkPostHandover(t, ctx, out, drive, postAdmin, code))
-	out = apply("post rerun")
-	for _, id := range []string{"kyidentity.amend.kypost", "kypost.deploy", "kypost.health", "kypost.setup", postRouteStep} {
-		if status(out, id) != "skipped" {
-			t.Errorf("rerun: %s = %q", id, status(out, id))
-		}
-	}
-
-	// KyDNS joins on the Docker target by setup amendment too, its admin UI behind the edge and
-	// DNS on the target's forward address. Its edge's egress_address is the kind node's address,
-	// where pods leave kind. kydns.gate proves this host, not the edge, gets 403 with a forged
-	// X-Forwarded-Proto; kydns.edge proves NPM's pod gets KyDNS's trust, or fails apply.
-	dnsPort := freePort(t, drive.forward)
-	copyCatalogDNS(t, catalogDir, filepath.Join(work, "drive-ca.pem"), drive)
-	st, _ = stack.Load(plan)
-	addCatalogDNS(st, certID, drive, dnsPort)
-	st.Edges[0].EgressAddress = nodeIP
-	b, _ = yaml.Marshal(st)
-	os.WriteFile(plan, b, 0o600)
-	try := func(label string) (string, error) {
-		t.Helper()
-		var out bytes.Buffer
-		err := cli.Run(ctx, append([]string{"apply", "--state", state}, trust...), cli.Options{Catalog: os.DirFS(catalogDir), ReleaseSet: "e2e", Out: &out})
-		t.Logf("apply (%s): %v\n%s", label, err, out.String())
-		outputs = append(outputs, out.String())
-		return out.String(), err
-	}
-	out, err = try("dns")
-	dnsSecrets := checkCatalogDNS(t, out, drive, dnsPort, err == nil)
-	checkDNSGate(t, ctx, drive, dnsPort)
-	_, newClient := edgeClient(t, certPEM, nodeIP)
-	trusted := err == nil
-	if trusted {
-		if status(out, "kydns.edge") != "ok" {
-			t.Fatalf("kydns.edge = %q", status(out, "kydns.edge"))
-		}
-		checkDNSEdge(t, ctx, newClient)
-		dnsSignOn(t, ctx, connected, newClient)
-	} else {
-		// This Docker host hides client addresses (the userland proxy hands KyDNS every
-		// connection from its network's gateway), so KyDNS refuses the edge and kydns.edge fails
-		// apply after every other step passed: fail closed. The edge-trusted path is unproven
-		// here. Trusting that gateway would open the gate to every peer, and kydns.gate refuses it.
-		if status(out, "kydns.edge") != "failed" || !strings.Contains(err.Error(), "KyDNS does not trust edge k8s at egress_address "+nodeIP) {
-			t.Fatalf("dns apply: %v", err)
-		}
-		checkDNSFailClosed(t, ctx, newClient)
-		gw := strings.Fields(docker(t, "network", "inspect", "kyq-kydns_default", "--format", "{{range .IPAM.Config}}{{.Gateway}} {{end}}"))[0]
-		t.Logf("UNPROVEN on this host: KyDNS sees the edge as %s, not %s; kydns.edge fails apply, edge-trusted checks and sign-in skipped", gw, nodeIP)
-		st, _ = stack.Load(plan)
-		st.Edges[0].EgressAddress = gw
-		b, _ = yaml.Marshal(st)
-		os.WriteFile(plan, b, 0o600)
-		refused, err := try("dns gateway egress_address")
-		if err == nil || status(refused, "kydns.gate") != "failed" || !strings.Contains(err.Error(), "egress_address "+gw+" on edge k8s is not the edge's alone") || status(refused, "kydns.edge") != "" {
-			t.Fatalf("gateway egress_address: %v", err)
-		}
-		st, _ = stack.Load(plan)
-		st.Edges[0].EgressAddress = nodeIP
-		b, _ = yaml.Marshal(st)
-		os.WriteFile(plan, b, 0o600)
-		if out, err := try("dns egress_address restored"); err == nil || status(out, "kydns.deploy") != "ok" || status(out, "kydns.gate") != "ok" || status(out, "kydns.edge") != "failed" {
-			t.Fatalf("restored egress_address: %v", err)
-		}
-		checkDNSGate(t, ctx, drive, dnsPort)
-	}
-	out, err = try("dns rerun")
-	for _, id := range []string{"kyidentity.amend.kydns", "kydns.deploy", "kydns.health", "kydns.setup", "kydns.gate", dnsRouteStep} {
-		if status(out, id) != "skipped" {
-			t.Errorf("rerun: %s = %q", id, status(out, id))
-		}
-	}
-	if want := map[bool]string{true: "skipped", false: "failed"}[trusted]; status(out, "kydns.edge") != want || (err == nil) != trusted {
-		t.Errorf("rerun: kydns.edge = %q, %v", status(out, "kydns.edge"), err)
-	}
-
-	// No credential reached apply output or workstation state.
-	secretsSeen := slices.Concat([]string{password, token, stored()}, backupSecrets, recoverySecrets, pulseSecrets, driveSecrets, notesSecrets, calendarSecrets, postSecrets, dnsSecrets)
+// noCredentialLeak checks that no secret reached apply output or workstation state.
+func noCredentialLeak(t *testing.T, state string, outputs, secrets []string) {
+	t.Helper()
 	for _, o := range outputs {
-		for _, s := range secretsSeen {
+		for _, s := range secrets {
 			if strings.Contains(o, s) {
 				t.Error("credential printed")
 			}
@@ -518,7 +368,7 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	filepath.WalkDir(state, func(p string, d fs.DirEntry, err error) error {
 		if err == nil && !d.IsDir() {
 			b, _ := os.ReadFile(p)
-			for _, s := range secretsSeen {
+			for _, s := range secrets {
 				if bytes.Contains(b, []byte(s)) {
 					t.Errorf("credential stored in %s", p)
 				}

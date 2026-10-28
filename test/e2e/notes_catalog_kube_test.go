@@ -27,7 +27,7 @@ import (
 	"k8s.io/utils/ptr"
 )
 
-// catalogNotesHost is where TestKubernetesNPMEdge routes the catalog KyNotes.
+// catalogNotesHost is where TestKubernetesNPMEdgeJoins routes the catalog KyNotes.
 const catalogNotesHost = "notes.example.test"
 
 // catalogNotesURLHost is its URL host behind the lan edge.
