@@ -3,7 +3,7 @@
 # refuses a parent directory (/app) owned by another user.
 services:
   app:
-    image: ghcr.io/busnes-app/kydrive-server:0.4.3@sha256:ac6445ce8f593ca2ebf8388baa5c8e33a46bd03f30bb0f56b94d258d525a26d9
+    image: KYDRIVE_IMAGE
     platform: linux/amd64
     user: "${KYQ_UID:?}:${KYQ_GID:?}"
     restart: unless-stopped
