@@ -1,6 +1,7 @@
 # Recovery pairing: catalog products deposit sealed backups in KyRecovery
 
-Status: proposed 2026-10-25. Refs #93. Not built.
+Status: proposed 2026-10-25. Refs #93. Stage 1 shipped (#114). Stage 2's installer part is built
+for KyPost and waits on KyRecovery ("Stage 2 as built" below).
 
 ## Problem
 
@@ -91,6 +92,36 @@ KyRecovery and the app supports setup pairing:
 A failed claim (expired, used, 409) fails the step. Rerunning mints a new code, and an
 unclaimed code expires on its own.
 
+### Stage 2 as built (2026-10-28)
+
+Reading the products at their pins changed three points:
+
+- **The owner confirms the key.** A key KyRecovery reports is not one the owner has checked. The
+  step pairs only to `recovery_key_id` on the plan's `kyrecovery` app: the key ID the ceremony
+  page shows and the custodian cards carry (lowercase hex SHA-256 of the public key). Without
+  it the step passes with a note. A KyRecovery holding another key, or a product paired to
+  another, fails the step. After the claim the step reads the new pairing's key again before
+  the first deposit, so a key rotated in during the claim seals nothing.
+- **KyRecovery's state comes from KyRecovery.** The step asks KyRecovery, not the product,
+  whether the product is paired and has deposited. A product paired by hand, even under
+  another URL spelling, is not paired again, and nothing is recorded on the workstation.
+- **KyNotes cannot take a code file.** Its image has no shell, and its bundle refuses a file
+  the container user does not own, which rules out a Secret on Kubernetes. KyNotes needs a
+  release that reads the code on stdin, as it already reads `--import-client`.
+
+The step therefore runs for KyPost only (`kypost.recovery-pair`, after the edges, since KyPost
+reaches KyRecovery through its route). It needs a KyRecovery release with this command, which
+the installer reads and nothing else:
+
+- `kyrecovery status --json`, advertised as setup capability `status`, reading the same
+  database as `pair list`:
+  `{"schema": "kyrecovery.status/1", "recovery_key_id": "<hex, or empty before the ceremony>",
+  "paired": [{"service_name", "recovery_key_id", "last_backup_at"}]}`, with only `paired`
+  pairings listed and `last_backup_at` empty before the first deposit.
+
+Until then, with KyRecovery 0.4.3, the step says to pair KyPost by hand. A suite runner older
+than this release refuses a plan carrying `recovery_key_id`.
+
 ### Stage 3: the other six products (product releases)
 
 KyIdentity, KyCalendar, kyPulse, KyYard, KyDrive and KyMessages each need a release whose
@@ -107,6 +138,9 @@ of refusing with `backup_required`. That would unblock kyPulse 0.4.3.1 (held bac
 Kubernetes. This is a separate change: listed here, not decided.
 
 ## Open questions
+
+Questions 1 and 2 are answered by the `status --json` contract in "Stage 2 as built"; the
+command does not exist yet.
 
 1. **Ceremony state without a browser.** KyRecovery's public API needs a viewer session. Is
    there a CLI or unauthenticated endpoint that reports whether a recovery key is imported?

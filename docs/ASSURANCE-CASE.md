@@ -108,6 +108,7 @@ operator's job ([README](../README.md#targets)).
 | Tampered release | Attested binaries and image, verified before upload and again after download; repeatable binaries | [VERIFYING-RELEASES.md](VERIFYING-RELEASES.md) |
 | Undersized TLS keys at the backup destination | Every installer-owned restic container enables its own Go TLS profile; peer leaf/intermediate/root RSA keys below2048 are refused without changing archive or credential state; strong private CAs remain usable | `internal/dockerhost/backup.go`, `TestResticTLSKeyFloor`, [migration runbook](guided-setup.md#backups-and-restore-on-docker) |
 | Undersized HTTPS peer keys | Workstation startup profile and runner-image default apply the maintained Go verified-chain floor to API/admin/route clients; selected local credentials, plugins and proxies have explicit conditions | [Supported configuration](STRONG-CRYPTO.md), `Dockerfile`, `internal/kube/client.go`, `internal/edge/` |
+| Backups sealed to a key the owner never checked | Apply pairs a product with KyRecovery only to the plan's owner-confirmed `recovery_key_id`, refuses a KyRecovery or pairing holding another key, and rechecks the new pairing's key before the first deposit | `internal/cli/recoverypair.go`, `internal/cli/recoverypair_test.go` (`TestRecoveryPairRefusesUnconfirmedKey`) |
 | Vulnerable dependencies | `govulncheck` on every push and pull request (`vulncheck` job); Dependabot; daily dependency releases | `.github/workflows/ci.yml`, `.github/workflows/dependency-release.yml` |
 
 ## Residual risk
@@ -119,6 +120,10 @@ operator's job ([README](../README.md#targets)).
   installed products or KyQuickStart-AI's separate OpenSSH transport.
 - **Redaction covers registered secrets only.** A secret the installer never read back, or one
   shorter than 8 characters, is not redacted.
+- **A pairing code crosses the workstation.** `kypost.recovery-pair` reads the six-digit code
+  from KyRecovery and sends it to KyPost on stdin. It is too short for the redactor, so it is
+  kept out of arguments, errors and output by construction (`TestRecoveryPair`); it is single
+  use and expires after 10 minutes.
 - **The handover prints credentials by design.** Anyone who sees that output can sign in as the
   owner's administrator.
 - **macOS binaries are not signed or notarized**; the attestation is the only check

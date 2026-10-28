@@ -213,9 +213,17 @@ Plain terminal planning and command orchestration for the operator-run installer
   `transferNotesCredentials` and `notesSetup` with the preparation `notesPreparation` derives
   (catalog client, KyIdentity's issuer, secrets beside the fixed bundle, backup from its env);
   `deploySteps` holds it and KyNotes' route (`routedFirst`, `edge.RouteApp`) until after the other
-  edge steps, setup first. Every product handover says no catalog product can pair with
-  KyRecovery in this release (#93); KyCalendar's and KyPost's add that their invitation pairing
-  is not configured (#100); KyIdentity's names its default Busnes.app push relays (#98).
+  edge steps, setup first. Without an internal KyRecovery every product handover says no
+  catalog product can pair with it (`noPairing`); with one, `pairingLines` makes that
+  `pairByHand`, and KyPost's line (`pairByApply`) the outcome of `recoveryPairStep`
+  (`recoverypair.go`, `kypost.recovery-pair`, a connector after the edges, #93 stage 2). That
+  step reads KyRecovery's `status --json` (capability `status`), pairs only to the plan's
+  owner-confirmed `recovery_key_id`, mints the code in KyRecovery's container and hands it to
+  KyPost's `apply-setup --file -` on stdin, rechecks the pairing's key, deposits once and
+  passes when KyRecovery lists KyPost's last backup; without the capability, the confirmation
+  or the ceremony it passes with a pair-by-hand note. KyCalendar's and KyPost's handovers add
+  that their invitation pairing is not configured (#100); KyIdentity's names its default
+  Busnes.app push relays (#98).
   `amendLate` (apply only, read-only, before preflight) records an `identity_amendment` for each
   app whose client the running KyIdentity's retained setup lacks, all or one, when it advertises
   `setup-amendments`; composeClients then puts that client in an `identityAmendment`, whose

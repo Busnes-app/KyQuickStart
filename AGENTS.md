@@ -365,7 +365,10 @@ edge compatibility: `docs/redirect.md`.
   and `kyidentity.directory.<app>`, a later pass of the client's setup whose suite webhook is
   signed with the client's own secret file. Apply refuses converting an installed KyPost
   either way, native mail over earlier KyPost data, and the receiver before KyPost's spool exists.
-  KyRecovery's custodian ceremony stays human and apply prints it as outstanding. kyPulse's
+  KyRecovery's custodian ceremony stays human and apply prints it as outstanding. Apply pairs
+  a product with KyRecovery only to the recovery key the owner confirmed (`recovery_key_id` on
+  the plan's `kyrecovery` app) and the pairing code only in memory: today KyPost alone, with a
+  KyRecovery that reports its key (`status --json`); every other pairing is by hand. kyPulse's
   bundle registers every other routed app's readiness path (else its `status_path`) as a monitoring target; that bundle
   is replaced as targets change, since kyPulse keeps omitted targets and refuses edited ones.
 - Command-line only: no GUI, web UI or full-screen terminal UI. `plan` asks its questions as
@@ -647,7 +650,8 @@ calls and kind nodes must carry their own explicit bounds.
   read-only, no capabilities, published on the forward address only and listening on no mail
   port, private setup files, live `--check`, health and an untrusted-proxy network status
   through the edge, admin and everyday sign-in (`/api/users` 200/403), the handover's
-  break-glass read and session-ending restart run verbatim on the target, and a skipped rerun.
+  break-glass read and session-ending restart run verbatim on the target, `kypost.recovery-pair`
+  passing with its pair-by-hand note (no confirmed key), and a skipped rerun.
   `TestKubernetesKyMessage` (`message_stack_test.go`, `message_chat_test.go`) installs the whole
   KyMessages stack on a non-root sshd target in the host's network namespace by amendment, with
   KyIdentity's first setup relaying mail through a test-only Mailpit (STARTTLS, AUTH, test CA)

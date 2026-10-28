@@ -67,6 +67,22 @@ func TestParseRejects(t *testing.T) {
 	}
 }
 
+// recovery_key_id is the key ID KyRecovery's ceremony page shows, on kyrecovery alone.
+func TestRecoveryKeyID(t *testing.T) {
+	key := strings.Repeat("0f", 32)
+	with := func(app, id string) string {
+		return strings.Replace(good, "  - name: hello\n    target: nas\n", "  - name: "+app+"\n    target: nas\n    recovery_key_id: "+id+"\n", 1)
+	}
+	if s, err := Parse([]byte(with("kyrecovery", key))); err != nil || s.Apps[0].RecoveryKeyID != key {
+		t.Fatalf("valid key: %v", err)
+	}
+	for _, in := range []string{with("hello", key), with("kyrecovery", strings.ToUpper(key)), with("kyrecovery", key[2:]), with("kyrecovery", key+"00")} {
+		if _, err := Parse([]byte(in)); err == nil || !strings.Contains(err.Error(), "recovery_key_id") {
+			t.Errorf("accepted, or err %v, for:\n%s", err, in)
+		}
+	}
+}
+
 func TestParseRejectsDuplicateApp(t *testing.T) {
 	_, err := Parse([]byte(good + "  - name: hello\n    target: k1\n"))
 	if err == nil || !strings.Contains(err.Error(), `duplicate app "hello"`) {

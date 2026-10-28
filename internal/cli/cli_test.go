@@ -192,13 +192,13 @@ func TestPrivateRecovery(t *testing.T) {
 
 // KyRecovery's pairing step names the command for its target and never a code.
 func TestRecoveryPairing(t *testing.T) {
-	kube := recoveryPairing("/state", "recovery.example.com", stack.Target{Name: "k1", Kubeconfig: "/kc"})
-	docker := recoveryPairing("/state", "recovery.example.com", stack.Target{Name: "nas", Host: "192.0.2.1"})
+	kube := recoveryPairing("/state", "recovery.example.com", stack.Target{Name: "k1", Kubeconfig: "/kc"}, false)
+	docker := recoveryPairing("/state", "recovery.example.com", stack.Target{Name: "nas", Host: "192.0.2.1"}, true)
 	for _, c := range []struct{ text, mint string }{
 		{kube, "-n kyq-kyrecovery exec deployment/app -- /app/kyrecovery pair generate --service <app>"},
 		{docker, "docker exec kyq-kyrecovery-app-1 /app/kyrecovery pair generate --service <app>"},
 	} {
-		if !strings.Contains(c.text, c.mint) || !strings.Contains(c.text, "https://recovery.example.com/") {
+		if !strings.Contains(c.text, c.mint) || !strings.Contains(c.text, "https://recovery.example.com/") || strings.Contains(c.text, "recovery_key_id") != (c.text == docker) {
 			t.Errorf("pairing step lacks %q or KyRecovery's URL:\n%s", c.mint, c.text)
 		}
 		// apply's output reads a line whose first word holds a dot as a step result.

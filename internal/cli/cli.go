@@ -292,6 +292,7 @@ type session struct {
 	pulseTargets  []pulseTarget       // kyPulse's targets, when the plan installs it
 	handover      string              // printed after apply: what installed apps leave to a human
 	postRecords   string              // KyPost's mail DNS records from its setup report, printed after apply
+	postPairing   string              // KyPost's recovery pairing line, set by kypost.recovery-pair
 }
 
 // load validates everything that needs no connection.
@@ -731,7 +732,7 @@ func (s *session) apply(ctx context.Context, publish func() error) error {
 	}
 	handover := s.handover
 	if s.plan != nil && privateRecovery(s.plan) {
-		handover = strings.ReplaceAll(handover, "\n  "+noPairing, "\n  "+pairByHand)
+		handover = pairingLines(handover, s.postPairing)
 	}
 	fmt.Fprint(s.o.Out, handover+s.postRecords+s.bootstrapNote)
 	if s.demo {
@@ -846,6 +847,14 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 				}
 				if connector != nil {
 					connectors = append(connectors, connector)
+				}
+				// After the edges: KyPost reaches KyRecovery through its route.
+				pair, err := s.recoveryPair(d, i)
+				if err != nil {
+					return nil, err
+				}
+				if pair != nil {
+					connectors = append(connectors, pair)
 				}
 			}
 		}
