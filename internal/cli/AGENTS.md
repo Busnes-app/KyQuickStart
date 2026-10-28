@@ -222,8 +222,8 @@ Plain terminal planning and command orchestration for the operator-run installer
   KyPost's `apply-setup --file -` on stdin, rechecks the pairing's key, deposits once and
   passes when KyRecovery lists KyPost's last backup; without the capability, the confirmation
   or the ceremony it passes with a pair-by-hand note. KyCalendar's and KyPost's handovers add
-  that their invitation pairing is not configured (#100); KyIdentity's says only TOTP and
-  passkeys work (no push relay, #98).
+  that their invitation pairing is not configured (#100); KyIdentity's names its default
+  Busnes.app push relays (#98).
   `amendLate` (apply only, read-only, before preflight) records an `identity_amendment` for each
   app whose client the running KyIdentity's retained setup lacks, all or one, when it advertises
   `setup-amendments`; composeClients then puts that client in an `identityAmendment`, whose

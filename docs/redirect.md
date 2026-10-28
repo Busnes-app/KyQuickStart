@@ -114,8 +114,8 @@ target markers from earlier builds stay valid.
   KyIdentity, KyCalendar, kyPulse, KyYard, KyDrive and KyMessages a release whose `apply-setup`
   accepts pairing at all. The upgrade gate does not yet accept a verified deposit as a
   pre-upgrade backup.
-- KyAuth push approval: the catalog sets no push relay (`PUSH_RELAY_URL`, `APNS_RELAY_URL`), so
-  only TOTP and passkeys work (#98).
+- KyAuth push approval on a live install: KyIdentity 0.4.8 and later default to the Busnes.app
+  relays and the catalog leaves them unset (#98); no e2e or live run has delivered a push.
 - The KyPost-KyCalendar invitation pairing (#100).
 
 ## Compatibility consequences
