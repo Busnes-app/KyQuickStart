@@ -180,10 +180,11 @@ the plan is saved only after every step passed.
   install over the app.
 - `upgrade`, and `apply`/`install` over a kept deployment, compare the deployed version
   with the catalog: older than `min_from`, skipping a `no_skip` version, a downgrade or an
-  unknown version is refused (`upgrade_refused`); a version that migrates data is refused
-  until verified pre-upgrade backups exist (`backup_required`; `kyquickstart backup` does not
-  lift it yet); any other upgrade needs
-  `--acknowledge-no-backup` (`ack_required`), recorded in `results/<app>.upgrade.json` with
+  unknown version is refused (`upgrade_refused`); a version that migrates data first takes
+  a `kyquickstart backup` snapshot (`<app>.pre-upgrade-backup`, which records its ID), and is
+  refused (`backup_required`) where backup cannot cover the app: Kubernetes, a target without a
+  backup destination, or a named volume. A failed snapshot leaves the old version running. Any
+  other upgrade needs `--acknowledge-no-backup` (`ack_required`), recorded in `results/<app>.upgrade.json` with
   anything the release asks you to check afterwards (the manifest's `upgrade.note`).
   Apps upgrade one at a time in dependency order and stop at the first failure.
 - On Kubernetes a non-root app's key files stay 0600 when its pod is recreated. Builds before
@@ -206,8 +207,9 @@ Docker installs from earlier builds are recreated once by their next `apply` to 
 `kyquickstart backup APP` takes an encrypted, append-only restic snapshot of a Docker app to
 an off-host rest-server; `kyquickstart restore APP` brings the app back from one, with the same
 accounts and data, after its whole target directory is lost. Nothing runs on a schedule and
-nothing is pruned. Kubernetes apps (KyIdentity, KyNotes, KyCalendar, the edge) are refused, and
-`upgrade` still gates data migrations on `backup_required`.
+nothing is pruned. Kubernetes apps (KyIdentity, KyNotes, KyCalendar, the edge) are refused. `upgrade`
+takes the same snapshot before a data migration, so a Kubernetes migration stays
+`backup_required`.
 
 **KyDrive restore gate.** Snapshot restore requires a released KyDrive image advertising
 `restore-reset`. KyDrive 0.4.3 and later advertise it; an image without it (0.4.2 and

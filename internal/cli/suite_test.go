@@ -239,8 +239,13 @@ func TestUpgradeGate(t *testing.T) {
 		if c.ack {
 			args = append(args, "--acknowledge-no-backup")
 		}
-		if err := f.run(args...); code(err) != c.want {
+		err := f.run(args...)
+		if code(err) != c.want {
 			t.Errorf("%q: err = %v, want %s", c.manifest, err, c.want)
+		}
+		// web has no backup block, so no pre-upgrade backup can be taken.
+		if c.want == suite.BackupRequired && !strings.Contains(err.Error(), "which kyquickstart cannot take here: web's catalog entry has no backup block") {
+			t.Errorf("backup_required reason: %v", err)
 		}
 		if f.ran(" pull") || f.ran(" up ") {
 			t.Errorf("%q: deployed after a refusal", c.manifest)

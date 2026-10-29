@@ -478,8 +478,9 @@ edge compatibility: `docs/redirect.md`.
 - Deployments record their catalog version (`kyquickstart/version` in `compose.kyq.yaml` or on
   the app namespace), which outlives uninstall. Catalog versions are `MAJOR.MINOR.PATCH`, or
   `MAJOR.MINOR.PATCH.N` for a Ky product's dependency release (`X.Y.Z` orders as `X.Y.Z.0`). `apply`, `install` and `upgrade` gate a version
-  change on the manifest's upgrade rules: `migrates_data` is always `backup_required` (a
-  `kyquickstart backup` does not lift it yet); any other upgrade needs an explicit, recorded
+  change on the manifest's upgrade rules: `migrates_data` first takes a `kyquickstart backup`
+  snapshot (step `<app>.pre-upgrade-backup`) and is `backup_required` where that backup cannot
+  run (Kubernetes, no destination, named volumes); any other upgrade needs an explicit, recorded
   acknowledgement. The manifest's `upgrade.note` is printed and recorded with it.
   Uninstall keeps data and secrets; unmanage drops the managed labels and the installer then
   refuses to install over the app. Error codes are `internal/suite` codes.

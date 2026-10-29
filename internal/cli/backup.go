@@ -100,19 +100,7 @@ func backupSession(state, name string, trust trustFlag, o Options) (*session, st
 	}
 	t, err := s.installed(name)
 	if err == nil {
-		app := s.cat[name]
-		switch {
-		case t.Kubernetes():
-			err = suite.Errorf(suite.InvalidRequest, "%s runs on Kubernetes; kyquickstart backup and restore cover Docker apps", name)
-		case app.Backup == nil:
-			err = suite.Errorf(suite.BackupUnconfigured, "%s's catalog entry has no backup block", name)
-		case t.Backup == nil:
-			err = suite.Errorf(suite.BackupUnconfigured, "target %s has no backup destination; add its rest-server with kyquickstart plan", t.Name)
-		case namedVolume(app) != "":
-			err = suite.Errorf(suite.BackupUnsupported, "%s keeps %s in a named Docker volume; kyquickstart backup takes ./<name> bind directories only", name, namedVolume(app))
-		case s.installation == "":
-			err = suite.Errorf(suite.InvalidRequest, "the plan has no installation_id yet; apply it first")
-		}
+		err = s.backupRefusal(name, t)
 	}
 	if err != nil {
 		s.close()
@@ -121,6 +109,70 @@ func backupSession(state, name string, trust trustFlag, o Options) (*session, st
 	// Refused on a runner-owned target like any change.
 	s.changesPlan, s.edges = true, nil
 	return s, t, nil
+}
+
+// backupRefusal says why kyquickstart backup cannot cover name on t, nil when it can.
+func (s *session) backupRefusal(name string, t stack.Target) error {
+	app := s.cat[name]
+	switch {
+	case t.Kubernetes():
+		return suite.Errorf(suite.InvalidRequest, "%s runs on Kubernetes; kyquickstart backup and restore cover Docker apps", name)
+	case app.Backup == nil:
+		return suite.Errorf(suite.BackupUnconfigured, "%s's catalog entry has no backup block", name)
+	case t.Backup == nil:
+		return suite.Errorf(suite.BackupUnconfigured, "target %s has no backup destination; add its rest-server with kyquickstart plan", t.Name)
+	case namedVolume(app) != "":
+		return suite.Errorf(suite.BackupUnsupported, "%s keeps %s in a named Docker volume; kyquickstart backup takes ./<name> bind directories only", name, namedVolume(app))
+	case s.installation == "":
+		return suite.Errorf(suite.InvalidRequest, "the plan has no installation_id yet; apply it first")
+	}
+	return nil
+}
+
+// preUpgradeBackup snapshots an app before an upgrade that migrates its data, as
+// kyquickstart backup does. Its input is the version pair, so a rerun after a failed deploy
+// keeps the first snapshot.
+type preUpgradeBackup struct {
+	s        *session
+	name     string
+	t        stack.Target
+	from, to string
+	id       string
+}
+
+func (p *preUpgradeBackup) ID() string                            { return p.name + ".pre-upgrade-backup" }
+func (p *preUpgradeBackup) InputHash() string                     { return p.from + " to " + p.to }
+func (p *preUpgradeBackup) Inspect(context.Context) (bool, error) { return false, nil }
+func (p *preUpgradeBackup) Verify(context.Context) error          { return nil }
+
+func (p *preUpgradeBackup) Apply(ctx context.Context) error {
+	st, err := p.s.store(ctx, p.name, p.t, false)
+	if err != nil {
+		return err
+	}
+	id, created, err := st.Backup(ctx)
+	if created {
+		p.s.passwordCreated(p.name, p.t, st)
+	}
+	if err != nil {
+		return fmt.Errorf("no upgrade: the pre-upgrade backup failed: %s", p.s.redact.Redact(err.Error()))
+	}
+	p.id = id
+	return nil
+}
+
+// passwordCreated points at a repository password this run generated. Printed even when the
+// snapshot then failed: the next run finds the password and says nothing.
+func (s *session) passwordCreated(name string, t stack.Target, st dockerhost.Store) {
+	fmt.Fprintf(s.o.Out, "This run created %s's repository password. Read it once into your printed record:\n  ssh -p %d %s@%s cat %s\n", name, t.Port, t.User, t.Host, st.PasswordFile())
+}
+
+// Note is "" when the step was skipped: its earlier result keeps the snapshot.
+func (p *preUpgradeBackup) Note() string {
+	if p.id == "" {
+		return ""
+	}
+	return fmt.Sprintf("snapshot %s of %s %s in %s/%s (restic check passed); kyquickstart restore %s --snapshot %s restores it", p.id[:8], p.name, p.from, p.t.Backup.Repository, p.name, p.name, p.id[:8])
 }
 
 // store is the app's repository on its target, for the deployed version. Restore may find
@@ -176,6 +228,9 @@ func backup(ctx context.Context, state, name string, trust trustFlag, o Options)
 		}
 		start := time.Now()
 		id, created, err := st.Backup(ctx)
+		if created {
+			s.passwordCreated(name, t, st)
+		}
 		if err != nil {
 			err = fmt.Errorf("%s: backup: %s", name, s.redact.Redact(err.Error()))
 			if cold {
@@ -188,9 +243,6 @@ func backup(ctx context.Context, state, name string, trust trustFlag, o Options)
 			return err
 		}
 		fmt.Fprintf(s.o.Out, "%s: snapshot %s in %s/%s (restic check passed, %s)\n", name, id, t.Backup.Repository, name, time.Since(start).Round(time.Second))
-		if created {
-			fmt.Fprintf(s.o.Out, "This run created %s's repository password. Read it once into your printed record:\n  ssh -p %d %s@%s cat %s\n", name, t.Port, t.User, t.Host, st.PasswordFile())
-		}
 		return nil
 	})
 }

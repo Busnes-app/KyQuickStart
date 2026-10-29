@@ -591,3 +591,64 @@ func TestStopForRestore(t *testing.T) {
 		t.Fatalf("after restore: stopped %v, revision %d (was %d)", st.Apps[0].Stopped, st.Revision, rev)
 	}
 }
+
+// An upgrade that migrates data takes a verified snapshot first, tagged with the old version,
+// and needs no acknowledgement; a failed snapshot leaves the old version deployed, and a
+// rerun after a failed deploy keeps the first snapshot.
+func TestUpgradeTakesPreUpgradeBackup(t *testing.T) {
+	f, fake, k := backupFixture(t)
+	dir := filepath.Join(f.h.root, "dumpdemo")
+	next := fstest.MapFS{"dumpdemo/compose.yaml.tmpl": dumpCatalog["dumpdemo/compose.yaml.tmpl"]}
+	m := strings.Replace(string(dumpCatalog["dumpdemo/manifest.yaml"].Data), "version: 1.0.0\n", "version: 1.1.0\nupgrade:\n  migrates_data: true\n  note: Sign in again.\n", 1)
+	next["dumpdemo/manifest.yaml"] = &fstest.MapFile{Data: []byte(m)}
+	f.o.Catalog = next
+	deployed := func() string {
+		b, _ := os.ReadFile(filepath.Join(dir, "compose.kyq.yaml"))
+		return string(b)
+	}
+
+	k.match = "'backup' '--json'"
+	err := f.run("upgrade", "dumpdemo")
+	k.match = ""
+	if err == nil || !strings.Contains(err.Error(), "no upgrade: the pre-upgrade backup failed") {
+		t.Fatalf("failed backup: %v\n%s", err, f.out.String())
+	}
+	if !strings.Contains(deployed(), managed.VersionLabel+": 1.0.0") || f.step("dumpdemo.deploy") != "" {
+		t.Fatalf("deployed after a failed backup:\n%s", deployed())
+	}
+	// The failed snapshot already created the password; no later run says so.
+	if !strings.Contains(f.out.String(), "This run created dumpdemo's repository password.") {
+		t.Errorf("failed backup did not point at the new password:\n%s", f.out.String())
+	}
+
+	k.match = " up " // the deploy, after the snapshot
+	err = f.run("upgrade", "dumpdemo")
+	k.match = ""
+	if err == nil {
+		t.Fatal("deploy did not fail")
+	}
+	first, _ := engine.Read(filepath.Join(f.state, "results"), "dumpdemo.pre-upgrade-backup")
+	if first.Status != "ok" || !strings.Contains(first.Diagnostics, "of dumpdemo 1.0.0 in rest:https://backup.lan/nas/dumpdemo (restic check passed)") {
+		t.Fatalf("backup record = %+v\n%s", first, f.out.String())
+	}
+
+	// The failed deploy already recorded 1.1.0, so the rerun only finishes it.
+	if err := f.run("upgrade", "dumpdemo"); err != nil {
+		t.Fatal(err, f.out.String())
+	}
+	if st := f.step("dumpdemo.pre-upgrade-backup"); st != "" && st != "skipped" {
+		t.Errorf("rerun took another snapshot:\n%s", f.out.String())
+	}
+	if !strings.Contains(deployed(), managed.VersionLabel+": 1.1.0") || !fakedocker.Running(t, fake)["web"] {
+		t.Fatalf("not upgraded:\n%s", deployed())
+	}
+	note, _ := engine.Read(filepath.Join(f.state, "results"), "dumpdemo.upgrade")
+	if note.Diagnostics != "upgrade 1.0.0 to 1.1.0 after a verified pre-upgrade backup. Sign in again." {
+		t.Errorf("upgrade record = %q", note.Diagnostics)
+	}
+	// One snapshot, of the old version, that restore lists and can use.
+	id := snapshotID(t, f, "")
+	if !strings.Contains(first.Diagnostics, "snapshot "+id+" ") || strings.Count(f.out.String(), "  nas\n") != 1 {
+		t.Errorf("snapshots:\n%s\nrecord: %s", f.out.String(), first.Diagnostics)
+	}
+}
