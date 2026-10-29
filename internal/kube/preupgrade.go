@@ -19,7 +19,8 @@ const copiedAnnotation = "kyquickstart/pre-upgrade"
 
 // copyCommand copies each named volume's private directory into its pre-upgrade claim,
 // replacing what an interrupted run left, then compares contents, modes, owners, sizes,
-// times and link targets with the original.
+// times and link targets with the original. A link's own time is left out: BusyBox cp -a
+// does not keep it.
 const copyCommand = `exec 2>&1
 for v in "$@"; do
   s=/src/$v d=/dst/$v/` + privateDir + `
@@ -27,8 +28,9 @@ for v in "$@"; do
   mkdir -m 700 "$d"
   cp -a "$s/." "$d/"
   diff -r "$s" "$d" >/dev/null || { echo "$v: copied contents differ from the original"; exit 1; }
-  l() { cd "$1" && find . -exec stat -c '%n %f %u %g %s %Y %N' {} + | sort; }
-  [ "$(l "$s")" = "$(l "$d")" ] || { echo "$v: copied modes, owners or times differ from the original"; exit 1; }
+  l() { (cd "$1" && { find . ! -type l -exec stat -c '%n %f %u %g %s %Y' {} +; find . -type l -exec stat -c '%n %u %g %N' {} +; } | sort) > "$2"; }
+  l "$s" /tmp/src; l "$d" /tmp/dst
+  cmp -s /tmp/src /tmp/dst || { echo "$v: copied modes, owners or times differ from the original:"; diff /tmp/src /tmp/dst | grep '^[-+][^-+]' | head -10; exit 1; }
 done`
 
 // PreUpgradeClaim names volume's copy taken before upgrading from version.
