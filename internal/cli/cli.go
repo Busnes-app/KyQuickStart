@@ -808,7 +808,7 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 			return nil, fmt.Errorf("%s: %w", name, err)
 		}
 		t := s.placed[name]
-		note, backupFrom, err := gate(name, s.cat[name], deployed, s.o.ReleaseSet, s.ack, s.backupRefusal(name, t))
+		note, backupFrom, err := gate(name, s.cat[name], deployed, s.o.ReleaseSet, s.ack, s.preUpgradeRefusal(name, t))
 		if err != nil {
 			return nil, err
 		}

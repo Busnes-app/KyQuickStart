@@ -180,10 +180,14 @@ the plan is saved only after every step passed.
   install over the app.
 - `upgrade`, and `apply`/`install` over a kept deployment, compare the deployed version
   with the catalog: older than `min_from`, skipping a `no_skip` version, a downgrade or an
-  unknown version is refused (`upgrade_refused`); a version that migrates data first takes
-  a `kyquickstart backup` snapshot (`<app>.pre-upgrade-backup`, which records its ID), and is
-  refused (`backup_required`) where backup cannot cover the app: Kubernetes, a target without a
-  backup destination, or a named volume. A failed snapshot leaves the old version running. Any
+  unknown version is refused (`upgrade_refused`); a version that migrates data is first backed
+  up (`<app>.pre-upgrade-backup`, whose result records it). On Docker that is a `kyquickstart
+  backup` snapshot. On Kubernetes the app is stopped, each claim is copied into a new claim
+  `pre-upgrade-<from>-vol-<name>` in the app's namespace, as the app's uid under its pod
+  security, and the copy is compared with the original before the claim is marked verified;
+  kyquickstart never deletes these claims. Either way a failed backup leaves the old version
+  running. It is refused (`backup_required`) where neither can run: a Docker target without a
+  backup destination, a named volume, or a Kubernetes app that runs as root. Any
   other upgrade needs `--acknowledge-no-backup` (`ack_required`), recorded in `results/<app>.upgrade.json` with
   anything the release asks you to check afterwards (the manifest's `upgrade.note`).
   Apps upgrade one at a time in dependency order and stop at the first failure.
@@ -207,9 +211,9 @@ Docker installs from earlier builds are recreated once by their next `apply` to 
 `kyquickstart backup APP` takes an encrypted, append-only restic snapshot of a Docker app to
 an off-host rest-server; `kyquickstart restore APP` brings the app back from one, with the same
 accounts and data, after its whole target directory is lost. Nothing runs on a schedule and
-nothing is pruned. Kubernetes apps (KyIdentity, KyNotes, KyCalendar, the edge) are refused. `upgrade`
-takes the same snapshot before a data migration, so a Kubernetes migration stays
-`backup_required`.
+nothing is pruned. Kubernetes apps (KyIdentity, KyNotes, KyCalendar, the edge) are refused; before a
+data migration `upgrade` copies their claims instead (see Managing apps), and `restore` does not
+read those copies yet.
 
 **KyDrive restore gate.** Snapshot restore requires a released KyDrive image advertising
 `restore-reset`. KyDrive 0.4.3 and later advertise it; an image without it (0.4.2 and
@@ -1452,8 +1456,9 @@ run every product as the target user with no capabilities, which this editor can
   the editor's URL and secret, so KyDrive never points at an editor that is gone. That is
   refused with `app_stopped` while KyDrive is stopped, since the redeploy would start it.
   `editor_secret` stays on KyDrive's target, and the editor's Secret stays in the cluster.
-- **Upgrades.** `migrates_data: true`, so any version change needs a backup, and Kubernetes
-  backups do not exist yet. No upgrade path exists.
+- **Upgrades.** `migrates_data: true`, so any version change needs a backup. The Kubernetes
+  pre-upgrade copy covers only apps that run as a non-root uid, and the editor runs as root,
+  so no upgrade path exists.
 - **Verification.** `TestKubernetesEuroOffice` needs the 7 GB image and a 5 GiB kind node, so
   it runs only with `KYQ_TEST_EURO_OFFICE=1` and stays out of `make e2e`. It runs NPM,
   KyIdentity and `euro-office` in kind and KyDrive on an sshd Docker target, then checks:

@@ -17,6 +17,7 @@ import (
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/dockerhost"
 	"github.com/Busnes-app/kyquickstart/internal/engine"
+	"github.com/Busnes-app/kyquickstart/internal/kube"
 	"github.com/Busnes-app/kyquickstart/internal/managed"
 	"github.com/Busnes-app/kyquickstart/internal/remote"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
@@ -129,15 +130,23 @@ func (s *session) backupRefusal(name string, t stack.Target) error {
 	return nil
 }
 
-// preUpgradeBackup snapshots an app before an upgrade that migrates its data, as
-// kyquickstart backup does. Its input is the version pair, so a rerun after a failed deploy
-// keeps the first snapshot.
+// preUpgradeRefusal says why no pre-upgrade backup can be taken of name on t, nil when one
+// can: a kyquickstart backup snapshot on Docker, a copy of its claims on Kubernetes.
+func (s *session) preUpgradeRefusal(name string, t stack.Target) error {
+	if t.Kubernetes() {
+		return kube.PreUpgradeRefusal(kube.App{Name: name, Catalog: s.cat[name]})
+	}
+	return s.backupRefusal(name, t)
+}
+
+// preUpgradeBackup backs an app up before an upgrade that migrates its data. Its input is
+// the version pair, so a rerun after a failed deploy keeps the first backup.
 type preUpgradeBackup struct {
 	s        *session
 	name     string
 	t        stack.Target
 	from, to string
-	id       string
+	note     string
 }
 
 func (p *preUpgradeBackup) ID() string                            { return p.name + ".pre-upgrade-backup" }
@@ -145,7 +154,18 @@ func (p *preUpgradeBackup) InputHash() string                     { return p.fro
 func (p *preUpgradeBackup) Inspect(context.Context) (bool, error) { return false, nil }
 func (p *preUpgradeBackup) Verify(context.Context) error          { return nil }
 
+// Note is "" when the step was skipped: its earlier result keeps the backup's record.
+func (p *preUpgradeBackup) Note() string { return p.note }
+
 func (p *preUpgradeBackup) Apply(ctx context.Context) error {
+	if d, ok := p.s.drivers[p.t.Name].(kubeDriver); ok {
+		claims, err := kube.PreUpgradeCopy(ctx, d.app(p.name, p.s.cat[p.name], p.s.o.ReleaseSet, p.s.redact), p.from)
+		if err != nil {
+			return fmt.Errorf("no upgrade: %w", err)
+		}
+		p.note = fmt.Sprintf("copied %s %s to claims %s in namespace kyq-%s (verified against the original); they stay until you delete them", p.name, p.from, strings.Join(claims, ", "), p.name)
+		return nil
+	}
 	st, err := p.s.store(ctx, p.name, p.t, false)
 	if err != nil {
 		return err
@@ -157,7 +177,7 @@ func (p *preUpgradeBackup) Apply(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("no upgrade: the pre-upgrade backup failed: %s", p.s.redact.Redact(err.Error()))
 	}
-	p.id = id
+	p.note = fmt.Sprintf("snapshot %s of %s %s in %s/%s (restic check passed); kyquickstart restore %s --snapshot %s restores it", id[:8], p.name, p.from, p.t.Backup.Repository, p.name, p.name, id[:8])
 	return nil
 }
 
@@ -165,14 +185,6 @@ func (p *preUpgradeBackup) Apply(ctx context.Context) error {
 // snapshot then failed: the next run finds the password and says nothing.
 func (s *session) passwordCreated(name string, t stack.Target, st dockerhost.Store) {
 	fmt.Fprintf(s.o.Out, "This run created %s's repository password. Read it once into your printed record:\n  ssh -p %d %s@%s cat %s\n", name, t.Port, t.User, t.Host, st.PasswordFile())
-}
-
-// Note is "" when the step was skipped: its earlier result keeps the snapshot.
-func (p *preUpgradeBackup) Note() string {
-	if p.id == "" {
-		return ""
-	}
-	return fmt.Sprintf("snapshot %s of %s %s in %s/%s (restic check passed); kyquickstart restore %s --snapshot %s restores it", p.id[:8], p.name, p.from, p.t.Backup.Repository, p.name, p.name, p.id[:8])
 }
 
 // store is the app's repository on its target, for the deployed version. Restore may find
