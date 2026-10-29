@@ -807,12 +807,16 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", name, err)
 		}
-		note, err := gate(name, s.cat[name], deployed, s.o.ReleaseSet, s.ack)
+		t := s.placed[name]
+		note, backupFrom, err := gate(name, s.cat[name], deployed, s.o.ReleaseSet, s.ack, s.preUpgradeRefusal(name, t))
 		if err != nil {
 			return nil, err
 		}
 		if note != "" {
 			steps = append(steps, noteStep{id: name + ".upgrade", note: note})
+		}
+		if backupFrom != "" {
+			steps = append(steps, &preUpgradeBackup{s: s, name: name, t: t, from: backupFrom, to: s.cat[name].Version})
 		}
 		app := d.steps(name, s.cat[name], s.o.ReleaseSet, s.redact)
 		if k, ok := d.(kubeDriver); ok && name == euroOffice {

@@ -14,15 +14,24 @@ state directory, target data and target-held credentials; do not reset them as a
 
 ## Unreleased
 
+- `upgrade`, and `apply`/`install` over a kept deployment, take a verified `kyquickstart backup`
+  snapshot before a version that migrates data, then upgrade with no acknowledgement. The
+  snapshot ID is recorded in `results/<app>.pre-upgrade-backup.json`; a failed snapshot
+  leaves the old version running. On Kubernetes the backup is a copy of each claim into
+  `pre-upgrade-<from>-vol-<name>`, compared with the original before it is marked verified;
+  `restore` does not read these copies yet. Docker targets without a backup destination, named
+  volumes and Kubernetes apps that run as root stay `backup_required`.
+- `backup` names a repository password it created even when that run's snapshot failed.
+  Before, the next run found the password and never pointed at it.
 - The catalog moves every Ky app to its 0.5 line: KyCalendar, KyDNS, KyDrive, KyIdentity,
   KyMessage, KyNotes, kyPulse, KyRecovery and KyYard 0.5.0, KyPost 0.5.0.1. Each pin is the
   digest its release workflow attested.
 
 Upgrade impact: an existing install whose app migrates data (KyCalendar, KyDNS, KyDrive, KyNotes,
-kyPulse, KyRecovery, KyYard) is refused until this installer can take the pre-upgrade backup;
-KyIdentity, KyMessage and KyPost upgrade with an acknowledgement. Apps with back-channel logout
-sign out single sign-on sessions once. New KyPost device enrollments need KyPost for Android
-0.5.1.1 or later.
+kyPulse, KyRecovery, KyYard) is backed up first: a snapshot on a Docker target with a backup
+destination, a copy of its claims on Kubernetes; it is refused (`backup_required`) elsewhere; KyIdentity, KyMessage and KyPost
+upgrade with an acknowledgement. Apps with back-channel logout sign out single sign-on sessions
+once. New KyPost device enrollments need KyPost for Android 0.5.1.1 or later.
 
 - KyIdentity's handover and the guides no longer say KyAuth push approval does not deliver:
   KyIdentity 0.4.8 and later, which the catalog pins, use the Busnes.app push relays by

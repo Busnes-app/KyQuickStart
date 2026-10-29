@@ -494,3 +494,30 @@ func TestKyCalendarOnDockerRequiresRoute(t *testing.T) {
 		}
 	}
 }
+
+// On Kubernetes an upgrade that migrates data, KyCalendar 0.4.2 to the catalog's, copies its
+// claims before its deploy, with no acknowledgement.
+func TestKubernetesUpgradeCopiesClaimsFirst(t *testing.T) {
+	f := newFixture(t, "../catalog/testdata/apps")
+	f.o.Catalog = catalog.Embedded()
+	calendarPlan(t, f, "      clients: []\n")
+	s := calendarSession(t, f, &fakeIdentity{}, &fakeCalendar{files: map[string]string{}}, false)
+	if !s.cat["kycalendar"].Upgrade.MigratesData {
+		t.Fatal("the catalog's KyCalendar no longer migrates data; pick another app")
+	}
+	f.cs.CoreV1().Namespaces().Create(context.Background(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "kyq-kycalendar", Labels: map[string]string{
+		managed.Label: managed.Value, managed.ReleaseSetLabel: f.o.ReleaseSet, managed.VersionLabel: "0.4.2",
+	}}}, metav1.CreateOptions{})
+	list, err := s.deploySteps(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	order := ids(list)
+	note, backup, deploy := slices.Index(order, "kycalendar.upgrade"), slices.Index(order, "kycalendar.pre-upgrade-backup"), slices.Index(order, "kycalendar.deploy")
+	if note < 0 || backup != note+1 || deploy < backup {
+		t.Fatalf("steps = %v", order)
+	}
+	if n := list[note].(engine.Noter).Note(); !strings.HasPrefix(n, "upgrade 0.4.2 to "+s.cat["kycalendar"].Version+" after a verified pre-upgrade backup") {
+		t.Errorf("note = %q", n)
+	}
+}

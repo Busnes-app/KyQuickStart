@@ -128,6 +128,9 @@ func run(dir string, args []string, stdin io.Reader, stdout io.Writer) (int, err
 		}
 	}()
 	switch {
+	case len(args) > 0 && args[0] == "version": // preflight
+		fmt.Fprintln(stdout, "28.0.0")
+		return 0, nil
 	case len(args) > 0 && args[0] == "run":
 		return restic(dir, args[1:], &c, stdout)
 	case len(args) > 0 && args[0] == "compose":
@@ -164,6 +167,8 @@ func compose(dir string, args []string, stdin io.Reader, stdout io.Writer) (int,
 		writeJSON(file, state)
 	}
 	switch args[0] {
+	case "version": // preflight
+		fmt.Fprintln(stdout, "2.30.0")
 	case "ps":
 		for _, s := range slices.Sorted(func(yield func(string) bool) {
 			for s := range state {

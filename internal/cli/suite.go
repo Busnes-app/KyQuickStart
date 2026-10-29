@@ -469,35 +469,46 @@ func installedVersion(d managed.Deployed, app catalog.App, releaseSet string) st
 }
 
 // gate refuses deploying app over what its target holds unless the upgrade rules allow it.
-// It returns the note to record for an upgrade, or "" when there is nothing to upgrade.
-func gate(name string, app catalog.App, d managed.Deployed, releaseSet string, ack bool) (string, error) {
+// It returns the note to record for an upgrade ("" when there is nothing to upgrade) and the
+// installed version when the upgrade migrates data, so a pre-upgrade backup must come first.
+// noBackup says why kyquickstart backup cannot cover the app, nil when it can.
+func gate(name string, app catalog.App, d managed.Deployed, releaseSet string, ack bool, noBackup error) (note, backupFrom string, err error) {
 	if !d.Found {
-		return "", nil
+		return "", "", nil
 	}
 	if !d.Managed {
-		return "", suite.Errorf(suite.AlreadyInstalled, "%s exists on its target but is not managed by kyquickstart; remove it by hand first", name)
+		return "", "", suite.Errorf(suite.AlreadyInstalled, "%s exists on its target but is not managed by kyquickstart; remove it by hand first", name)
 	}
 	from := installedVersion(d, app, releaseSet)
 	switch {
 	case from == "":
-		return "", suite.Errorf(suite.UpgradeRefused, "%s: installed version unknown (deployed by release set %q, before versions were recorded), so its upgrade rules cannot be checked", name, d.ReleaseSet)
+		return "", "", suite.Errorf(suite.UpgradeRefused, "%s: installed version unknown (deployed by release set %q, before versions were recorded), so its upgrade rules cannot be checked", name, d.ReleaseSet)
 	case from == app.Version:
-		return "", nil
+		return "", "", nil
 	}
 	if err := app.Upgrade.Allows(from, app.Version); err != nil {
-		return "", suite.Errorf(suite.UpgradeRefused, "%s: %w", name, err)
+		return "", "", suite.Errorf(suite.UpgradeRefused, "%s: %w", name, err)
 	}
 	if app.Upgrade.MigratesData {
-		return "", suite.Errorf(suite.BackupRequired, "%s %s migrates data and needs a verified pre-upgrade backup, which this build cannot take yet", name, app.Version)
+		if noBackup != nil {
+			var se *suite.Error
+			reason := noBackup.Error()
+			if errors.As(noBackup, &se) {
+				reason = se.Message
+			}
+			return "", "", suite.Errorf(suite.BackupRequired, "%s %s migrates data and needs a verified pre-upgrade backup, which kyquickstart cannot take here: %s", name, app.Version, reason)
+		}
+		note, backupFrom = fmt.Sprintf("upgrade %s to %s after a verified pre-upgrade backup", from, app.Version), from
+	} else {
+		if !ack {
+			return "", "", suite.Errorf(suite.AckRequired, "upgrading %s %s to %s takes no pre-upgrade backup; pass --acknowledge-no-backup to proceed", name, from, app.Version)
+		}
+		note = fmt.Sprintf("upgrade %s to %s; operator acknowledged no pre-upgrade backup", from, app.Version)
 	}
-	if !ack {
-		return "", suite.Errorf(suite.AckRequired, "upgrading %s %s to %s takes no pre-upgrade backup; pass --acknowledge-no-backup to proceed", name, from, app.Version)
-	}
-	note := fmt.Sprintf("upgrade %s to %s; operator acknowledged no pre-upgrade backup", from, app.Version)
 	if app.Upgrade.Note != "" {
 		note += ". " + app.Upgrade.Note
 	}
-	return note, nil
+	return note, backupFrom, nil
 }
 
 // noteStep changes nothing; its ok result records the note.
