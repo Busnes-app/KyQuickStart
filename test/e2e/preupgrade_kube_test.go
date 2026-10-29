@@ -59,8 +59,11 @@ func TestKubernetesPreUpgradeCopy(t *testing.T) {
 	b, _ := os.ReadFile(manifest)
 	os.WriteFile(manifest, bytes.Replace(b, []byte("version: 1.11.0\n"), []byte("version: 1.12.0\nupgrade:\n  migrates_data: true\n"), 1), 0o600)
 	out, err := run("upgrade")
-	if err != nil || status(out, "hello.pre-upgrade-backup") != "ok" || status(out, "hello.deploy") != "ok" || status(out, "hello.health") != "ok" {
+	if err != nil || status(out, "hello.pre-upgrade-backup") != "ok" || status(out, "hello.deploy") != "ok" {
 		t.Fatalf("upgrade: %v", err)
+	}
+	if dep, err := cs.AppsV1().Deployments("kyq-hello").Get(ctx, "app", metav1.GetOptions{}); err != nil || dep.Status.ReadyReplicas != 1 {
+		t.Fatalf("not running after the upgrade: %v", err)
 	}
 	claim := kube.PreUpgradeClaim("1.11.0", "data")
 	c, err := cs.CoreV1().PersistentVolumeClaims("kyq-hello").Get(ctx, claim, metav1.GetOptions{})
