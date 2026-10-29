@@ -433,6 +433,7 @@ func (s *server) handleStart(w http.ResponseWriter, r *http.Request) {
 // execute runs rec, recording every step as it starts and ends.
 func (s *server) execute(ctx context.Context, rec *record) {
 	defer s.wg.Done()
+	id := strings.NewReplacer("\n", "", "\r", "").Replace(rec.ID) // for the log
 	o := s.o
 	o.Progress = func(e engine.Event) {
 		s.mu.Lock()
@@ -444,7 +445,7 @@ func (s *server) execute(ctx context.Context, rec *record) {
 			rec.Steps = append(rec.Steps, step)
 		}
 		if err := s.write(rec); err != nil {
-			s.log.Printf("operation %s: %v", rec.ID, err)
+			s.log.Printf("operation %s: %v", id, err)
 		}
 	}
 	r := cli.Request{Apps: rec.Request.Apps, Target: rec.Request.Target, AcknowledgeNoBackup: rec.Request.AcknowledgeNoBackup,
@@ -458,7 +459,7 @@ func (s *server) execute(ctx context.Context, rec *record) {
 		rec.State, rec.Error = "failed", s.refusal(err)
 	}
 	if err := s.write(rec); err != nil {
-		s.log.Printf("operation %s: %v", rec.ID, err)
+		s.log.Printf("operation %s: %v", id, err)
 	}
 	s.running = nil
 	s.cancel()
