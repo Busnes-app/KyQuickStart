@@ -9,6 +9,7 @@ import (
 
 	"github.com/Busnes-app/kyquickstart/internal/engine"
 	"github.com/Busnes-app/kyquickstart/internal/managed"
+	"github.com/Busnes-app/kyquickstart/internal/stack"
 	"github.com/Busnes-app/kyquickstart/internal/suite"
 )
 
@@ -357,5 +358,45 @@ func TestStatusJSON(t *testing.T) {
 	}
 	if err := f.run("status", "web"); err != ErrUsage {
 		t.Errorf("status with an app: %v", err)
+	}
+}
+
+// upgrade and install connect only the targets of the apps they deploy, but those apps' setup
+// exports their clients from KyIdentity (and KyPost pairs through KyRecovery): a KyIdentity on
+// another target must be connected too, or setup fails with "selected product target is not
+// connected".
+func TestSetupSourcesConnectIdentityTarget(t *testing.T) {
+	kube, nas, other := stack.Target{Name: "kube"}, stack.Target{Name: "nas"}, stack.Target{Name: "other"}
+	s := &session{
+		allTargets: []stack.Target{kube, nas, other},
+		placed:     map[string]stack.Target{"kyidentity": kube, "kyrecovery": other, "kypost": nas, "kymessage": nas, "db": nas},
+		integrations: []stack.Integration{
+			{Product: "kyidentity", Target: "kube"},
+			{Product: "kypost", Target: "nas"},
+			{Product: "kymessage", Target: "nas"},
+		},
+		plan: &stack.Stack{},
+	}
+	names := func(ts []stack.Target) string {
+		var n []string
+		for _, t := range ts {
+			n = append(n, t.Name)
+		}
+		return strings.Join(n, ",")
+	}
+	for _, c := range []struct {
+		order []string
+		want  string
+	}{
+		{[]string{"kymessage"}, "kube,nas"},
+		{[]string{"kypost"}, "kube,nas,other"},
+		{[]string{"kymessage", "kypost"}, "kube,nas,other"},
+		{[]string{"db"}, "nas"}, // no integration: nothing to read from elsewhere
+		{[]string{"kyidentity"}, "kube"},
+	} {
+		s.order = c.order
+		if got := names(s.withSetupSources([]stack.Target{s.placed[c.order[0]]})); got != c.want {
+			t.Errorf("%v: targets = %s, want %s", c.order, got, c.want)
+		}
 	}
 }
