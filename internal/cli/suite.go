@@ -213,7 +213,7 @@ func install(ctx context.Context, state string, r Request, trust trustFlag, o Op
 	defer ns.close()
 	ns.revision, ns.saved, ns.ack, ns.edges, ns.changesPlan = s.revision, s.saved, r.AcknowledgeNoBackup, nil, true
 	ns.order = slices.DeleteFunc(ns.order, func(a string) bool { return !added[a] })
-	ns.targets = []stack.Target{ns.placed[name]}
+	ns.targets = ns.withSetupSources([]stack.Target{ns.placed[name]})
 	if err := ns.runnerImage(); err != nil {
 		return err
 	}
@@ -257,6 +257,7 @@ func upgrade(ctx context.Context, state string, r Request, trust trustFlag, o Op
 	s.targets = slices.DeleteFunc(s.targets, func(t stack.Target) bool {
 		return !slices.ContainsFunc(s.order, func(a string) bool { return s.placed[a].Name == t.Name })
 	})
+	s.targets = s.withSetupSources(s.targets)
 	s.ack, s.edges, s.deploys = r.AcknowledgeNoBackup, nil, true
 	if err := s.connect(ctx, trust); err != nil {
 		return err
@@ -267,6 +268,34 @@ func upgrade(ctx context.Context, state string, r Request, trust trustFlag, o Op
 		}
 		return s.deploySteps(ctx)
 	}, nil)
+}
+
+// withSetupSources adds to targets the other targets the setup steps of s.order's apps read
+// from: KyIdentity's (each app's client is exported there), KyRecovery's (KyPost's pairing)
+// and KyDNS's edge (its trust check runs in NPM's pod). Their apps are not redeployed, but
+// deploySteps needs their drivers, and the targets are locked while it runs.
+func (s *session) withSetupSources(targets []stack.Target) []stack.Target {
+	add := func(name string) {
+		k := slices.IndexFunc(s.allTargets, func(t stack.Target) bool { return t.Name == name })
+		if k >= 0 && !slices.ContainsFunc(targets, func(t stack.Target) bool { return t.Name == name }) {
+			targets = append(targets, s.allTargets[k])
+		}
+	}
+	for _, i := range s.integrations {
+		if !slices.Contains(s.order, i.Product) || i.Target != s.placed[i.Product].Name {
+			continue
+		}
+		add(s.placed["kyidentity"].Name)
+		switch i.Product {
+		case "kypost":
+			add(s.placed["kyrecovery"].Name)
+		case "kydns":
+			e, _ := appRoute(s.plan, "kydns")
+			add(e.Target)
+		}
+	}
+	slices.SortFunc(targets, func(a, b stack.Target) int { return strings.Compare(a.Name, b.Name) })
+	return targets
 }
 
 // remove uninstalls or unmanages one app, disabling its public routes first.
