@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -450,7 +451,37 @@ func (s *session) messageSteps(d driver, i stack.Integration) (before []engine.S
 		run: func(ctx context.Context) error { return run(ctx, env) }}
 	step.after = creds.chatCheck
 	step.everyday = &everydayUser{Bundle: s.firstIdentity().Bundle, Username: s.firstIdentity().Identity.Everyday.Username}
-	return []engine.Step{matrixInitStep{app: i.Product, target: host.t.Name, seed: seed, env: env, hash: hash, file: file, run: run}, creds}, step, nil
+	launch := launcherStep{app: i.Product, bundle: step.source.Bundle, client: i.ChatClient, url: "https://" + roleHost(s.plan, i.Product, "chat") + "/", exec: step.export}
+	return []engine.Step{matrixInitStep{app: i.Product, target: host.t.Name, seed: seed, env: env, hash: hash, file: file, run: run}, creds, launch}, step, nil
+}
+
+// launcherStep (<app>.launcher) links the chat client's KyIdentity launcher card to Element;
+// without a link the card opens the client's redirect origin, MAS. KyIdentity writes it only
+// while the client has none, so a link an admin set stays, and Verify reruns it.
+type launcherStep struct {
+	app, bundle, client, url string
+	exec                     identityExec
+}
+
+func (s launcherStep) ID() string                            { return s.app + ".launcher" }
+func (s launcherStep) InputHash() string                     { return s.bundle + "\x00" + s.client + "\x00" + s.url }
+func (s launcherStep) Inspect(context.Context) (bool, error) { return false, nil }
+func (s launcherStep) Verify(ctx context.Context) error      { return s.Apply(ctx) }
+func (s launcherStep) Apply(ctx context.Context) error {
+	// A KyIdentity without the capability keeps its card on MAS; a rerun after its upgrade
+	// adds the link. A failed query fails.
+	var missing missingCapability
+	if err := identityCapabilities(ctx, s.exec, false, "client-launch-urls"); errors.As(err, &missing) && missing == "client-launch-urls" {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	b, err := s.exec(ctx, []string{"apply-setup", "--file", s.bundle, "--launch-url", s.client + "=" + s.url})
+	var r struct{ Schema, Client, Status string }
+	if err != nil || len(b) > 1024 || json.Unmarshal(b, &r) != nil || r.Schema != "kyidentity.launch-url/1" || r.Client != s.client || r.Status != "set" && r.Status != "unchanged" {
+		return fmt.Errorf("KyIdentity did not link its %s launcher card to %s", s.client, s.url)
+	}
+	return nil
 }
 
 // directoryRetry spaces directoryStep's resyncs after a failed delivery.

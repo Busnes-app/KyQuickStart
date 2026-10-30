@@ -421,7 +421,7 @@ func TestKyMessageSteps(t *testing.T) {
 	}
 	got := strings.Join(slices.DeleteFunc(ids(list), func(id string) bool { return strings.HasPrefix(id, "npm.") || strings.HasPrefix(id, "kyidentity.") }), " ")
 	edges := strings.Join(ids(list)[len(ids(list))-8:len(ids(list))-1], " ")
-	if !strings.HasPrefix(got, "kymessage.secrets kymessage.matrix-init kymessage.credentials kymessage.deploy kymessage.health kymessage.setup k1.edge.removed k1.edge.") || strings.Count(edges, "k1.edge.") != 7 ||
+	if !strings.HasPrefix(got, "kymessage.secrets kymessage.matrix-init kymessage.credentials kymessage.launcher kymessage.deploy kymessage.health kymessage.setup k1.edge.removed k1.edge.") || strings.Count(edges, "k1.edge.") != 7 ||
 		!strings.HasSuffix(got, " kymessage.directory") || strings.Contains(got, "scim") {
 		t.Fatalf("steps = %s", got)
 	}
@@ -605,7 +605,7 @@ func TestKyMessageAddedByAmendment(t *testing.T) {
 	}
 	got := strings.Join(ids(list), " ")
 	if !strings.Contains(got, "kyidentity.amend.kymessage kyidentity.retire-bootstrap") || strings.Contains(got, "kyidentity.amend.kymessage-chat") ||
-		!strings.Contains(got, "kymessage.matrix-init kymessage.credentials kymessage.deploy kymessage.health kymessage.setup") || strings.Contains(got, "kyidentity.scim") {
+		!strings.Contains(got, "kymessage.matrix-init kymessage.credentials kymessage.launcher kymessage.deploy kymessage.health kymessage.setup") || strings.Contains(got, "kyidentity.scim") {
 		t.Fatalf("steps = %s", got)
 	}
 	// Its credentials step exports both clients from the amendment.
@@ -629,6 +629,21 @@ func TestKyMessageAddedByAmendment(t *testing.T) {
 	}
 	if !slices.ContainsFunc(amendment.calls, func(c string) bool { return strings.HasSuffix(c, "--file "+bundle+" --export-client kymessage-chat") }) {
 		t.Fatalf("amendment calls = %v", amendment.calls)
+	}
+	// The chat card links to Element, in the setup that owns its client; a KyIdentity without
+	// the capability is left as it is, and Verify adds the link once it has it.
+	launcher := list[slices.IndexFunc(list, func(st engine.Step) bool { return st.ID() == "kymessage.launcher" })]
+	if err := launcher.Apply(ctx); err != nil || amendment.launch != "" {
+		t.Fatalf("launcher without capability: %v, %q", err, amendment.launch)
+	}
+	identity.features = append(identity.features, "client-launch-urls")
+	for range 2 {
+		if err := launcher.Verify(ctx); err != nil || amendment.launch != "kymessage-chat=https://chat.example.com/" {
+			t.Fatalf("launcher: %v, %q", err, amendment.launch)
+		}
+	}
+	if identity.launch != "" {
+		t.Fatalf("launch URL went to the parent setup: %q", identity.launch)
 	}
 }
 
