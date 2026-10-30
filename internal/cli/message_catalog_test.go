@@ -522,6 +522,20 @@ func TestKyMessageSteps(t *testing.T) {
 	}
 }
 
+// upgrade and install deploy with s.edges cleared: the server name still comes from the plan.
+func TestKyMessageServerNameKeptWithoutEdges(t *testing.T) {
+	f := newMessageFixture(t)
+	messageStackPlan(t, f, func(y string) string { return y })
+	s, h := messageSession(t, f, &fakeIdentity{})
+	p := filepath.Join(h.dir(), "matrix/synapse")
+	os.MkdirAll(p, 0o700)
+	os.WriteFile(filepath.Join(p, "homeserver.yaml"), []byte("server_name: \"example.com\"\n"), 0o600)
+	s.edges = nil
+	if err := s.refuseMovedServerName(context.Background()); err != nil {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 // AC8: the server name never changes after install; the auth host follows the moved-client rule.
 func TestKyMessageServerNameChanged(t *testing.T) {
 	ctx := context.Background()
