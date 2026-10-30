@@ -1,13 +1,13 @@
 name: kydrive
 description: KyDrive, the suite's drive; personal and group workspaces for files and documents
 category: ky
-version: 0.5.0
+version: 0.5.0.1
 # Release image of v0.4.3 (commit 7eaa56fded8c), attested by
 # Busnes-app/kydrive-server release-image.yml@refs/tags/v0.4.3 (gh attestation verify).
 # It advertises restore-reset, which kyquickstart restore requires.
-# catalog-follow: v0.5.0 attested by Busnes-app/kydrive-server release-image.yml@refs/tags/v0.5.0
+# catalog-follow: v0.5.0.1 attested by Busnes-app/kydrive-server release-image.yml@refs/tags/v0.5.0.1
 images:
-  kydrive: ghcr.io/busnes-app/kydrive-server:0.5.0@sha256:1b5aee6e1a4b64751fa4303e9c208253158f56cd913b7f87a5c1837057fe14a0
+  kydrive: ghcr.io/busnes-app/kydrive-server:0.5.0.1@sha256:a536e7b21dfaaceada1b6c9080c73a9bba13f3e885c92d7f87eb3c9e9775c893
 # Generated on the target. The session secret signs sessions; the SCIM token is the bearer
 # KyIdentity's SCIM connector must present, and KyDrive's setup refuses to run without one.
 secrets: [session_secret, scim_token]
