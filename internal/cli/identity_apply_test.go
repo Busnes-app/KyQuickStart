@@ -126,6 +126,7 @@ type fakeIdentity struct {
 	parent          *fakeIdentity            // an amendment's
 	disabled        bool                     // disable-user ran
 	checkReport     string                   // --check's setup report, when set
+	launch          string                   // --launch-url's CLIENT=URL, once set
 }
 
 func (n *fakeIdentity) stream(ctx context.Context, namespace, pod, container string, args []string, o remotecommand.StreamOptions) error {
@@ -162,6 +163,17 @@ func (n *fakeIdentity) stream(ctx context.Context, namespace, pod, container str
 			n.staged, status = true, "created"
 		}
 		out = `{"schema":"kyidentity.setup-preparation/1","status":"` + status + `"}`
+	case slices.Contains(args, "--launch-url"):
+		if !n.applied {
+			return errors.New("not applied")
+		}
+		arg := args[slices.Index(args, "--launch-url")+1]
+		client, _, _ := strings.Cut(arg, "=")
+		status := "unchanged"
+		if n.launch == "" {
+			n.launch, status = arg, "set"
+		}
+		out = `{"schema":"kyidentity.launch-url/1","client":"` + client + `","status":"` + status + `"}`
 	case slices.Contains(args, "--export-client"):
 		if !n.applied {
 			return errors.New("not applied")
