@@ -1,12 +1,12 @@
 name: kycalendar
 description: KyCalendar, the suite's calendars and CalDAV; signs in through KyIdentity
 category: ky
-version: 0.5.0
+version: 0.5.0.2
 # Release image of v0.4.2 (commit 5b7b3c60995db7fc67cda8e845a8fbd4ae98a2b2), attested by
 # Busnes-app/KyCalendar release-image.yml@refs/tags/v0.4.2 (gh attestation verify).
-# catalog-follow: v0.5.0 attested by Busnes-app/KyCalendar release-image.yml@refs/tags/v0.5.0
+# catalog-follow: v0.5.0.2 attested by Busnes-app/KyCalendar release-image.yml@refs/tags/v0.5.0.2
 images:
-  kycalendar: ghcr.io/busnes-app/kycalendar:0.5.0@sha256:1f611a9930b4b8983ead0b9de1a7e2d66bd3012b74ae263d23296abf43798ba9
+  kycalendar: ghcr.io/busnes-app/kycalendar:0.5.0.2@sha256:2dfd7b209af6b4782affd89039a9eaa0be4af502f7a515cf5d185511dd7465b2
 # verify-edge reads the suite proxy contract here (clientIp, proxyHeadersTrusted, scheme).
 status_path: /api/installer/network
 # Its setup needs KyIdentity's issuer, client and signed directory.
