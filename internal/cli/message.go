@@ -522,8 +522,9 @@ func (s *session) refuseMovedServerName(ctx context.Context) error {
 		if yaml.Unmarshal(out, &hs) != nil || hs.ServerName == "" {
 			return fmt.Errorf("%s on %s has no readable server_name; nothing was changed", f, t.Name)
 		}
+		// The plan's routes, not s.edges: upgrade and install clear s.edges to leave NPM alone.
 		want := ""
-		for _, e := range s.edges {
+		for _, e := range s.plan.Edges {
 			for _, r := range e.Routes {
 				if r.App == name && r.Role == "server_name" {
 					want = r.Hostname
