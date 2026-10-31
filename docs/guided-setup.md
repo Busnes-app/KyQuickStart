@@ -1970,9 +1970,12 @@ integrations:
   the pinned image), `kymessage.credentials` (both clients' secrets from KyIdentity's export to
   0600 files on the host, never replaced, then the second pass that writes MAS's configuration),
   `kymessage.launcher` (links the "KyMessages chat" card on KyIdentity's launcher to Element at
-  the chat host; without a link it opens MAS at the auth host. KyIdentity writes the link only
-  while the client has none, so one an admin set stays; a KyIdentity without capability
-  `client-launch-urls` is left as it is, and the next apply after its upgrade adds the link),
+  the chat host; without a link it opens MAS at the auth host. With capability
+  `client-launcher-display` it also names that card "KyMessages" and shows the console's card
+  to its admins only, so everyday users see one "KyMessages" card that opens chat. Display
+  only: assignments and access do not change. KyIdentity writes each setting only while it is
+  unset, so one an admin set stays; a KyIdentity without a capability is left as it is, and
+  the next apply after its upgrade adds the setting),
   `kymessage.deploy`, `kymessage.health`, `kymessage.setup` (the console's setup with the owner's
   admin and everyday accounts, then both clients rechecked), then the six routes, then
   `kymessage.directory`: apply waits (`resync-system --wait 10m`) until KyIdentity's connector
