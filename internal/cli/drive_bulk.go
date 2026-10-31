@@ -83,7 +83,8 @@ func withBulkRepository(drive catalog.App, dest stack.BackupDestination) (catalo
 // bulkInitStep (kydrive.bulk-init) initializes KyDrive's bulk repository once, from inside its
 // running container, where its entrypoint wrote the credentials. KyDrive's bulk-init changes
 // nothing when the repository already opens with this deployment's key, and refuses one that
-// does not, so every apply may run it.
+// does not, so every apply may run it. It loads KyDrive's whole configuration, and exec skips
+// the entrypoint, so it reads KY_SESSION_SECRET from its secret the same way.
 type bulkInitStep struct {
 	hash string
 	run  func(ctx context.Context) error
@@ -112,13 +113,16 @@ const bulkUnavailable = `  Document backups: KyDrive writes its files to a Resti
   required for document backups"); kyquickstart backup kydrive still snapshots it cold.
 `
 
+// bulkInitScript runs bulk-init with the session secret the entrypoint would have set.
+const bulkInitScript = "s=$(cat /run/secrets/session_secret) || exit 1; KY_SESSION_SECRET=$s; export KY_SESSION_SECRET; unset s; exec /app/kydrive-server bulk-init"
+
 // bulkInit is KyDrive's bulk-init step on t, nil unless t has a backup destination.
 func bulkInit(d driver, t stack.Target) engine.Step {
 	h, ok := d.(sshDriver)
 	if !ok || t.Backup == nil || t.Backup.CAFile != "" {
 		return nil
 	}
-	cmd := "cd " + remote.Quote(path.Join(t.Root, "kydrive")) + " && docker compose -p kyq-kydrive -f compose.yaml -f compose.kyq.yaml exec -T app /app/kydrive-server bulk-init"
+	cmd := "cd " + remote.Quote(path.Join(t.Root, "kydrive")) + " && docker compose -p kyq-kydrive -f compose.yaml -f compose.kyq.yaml exec -T app /bin/sh -c " + remote.Quote(bulkInitScript)
 	return bulkInitStep{
 		hash: hex.EncodeToString(sha256Sum("kydrive.bulk-init\x00" + t.Backup.Repository)),
 		run: func(ctx context.Context) error {

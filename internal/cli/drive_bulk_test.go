@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -119,5 +120,44 @@ func TestBulkPlan(t *testing.T) {
 	st.Targets[0].Backup = &bulkDest
 	if drive, ok, err := bulkPlan(st, cat); !ok || err != nil || !strings.Contains(string(drive.Compose), "/nas/kydrive-bulk") {
 		t.Fatalf("bulkPlan with a destination = %v, %v", ok, err)
+	}
+}
+
+type bulkInitRunner struct{ ran []string }
+
+func (r *bulkInitRunner) Run(_ context.Context, cmd string, _ []byte) ([]byte, error) {
+	r.ran = append(r.ran, cmd)
+	return nil, nil
+}
+func (r *bulkInitRunner) Close() error { return nil }
+
+// bulk-init loads KyDrive's whole configuration, which requires KY_SESSION_SECRET; docker
+// compose exec skips the entrypoint that sets it, so the step reads it from the secret itself.
+func TestBulkInitSetsSessionSecret(t *testing.T) {
+	r := &bulkInitRunner{}
+	target := stack.Target{Name: "nas", Root: "/srv/kyq", Backup: &bulkDest}
+	step := bulkInit(sshDriver{t: target, c: r}, target)
+	if step == nil {
+		t.Fatal("no bulk-init step with a backup destination")
+	}
+	if err := step.Apply(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.ran) != 1 {
+		t.Fatalf("ran %q", r.ran)
+	}
+	want := "cd '/srv/kyq/kydrive' && docker compose -p kyq-kydrive -f compose.yaml -f compose.kyq.yaml exec -T app /bin/sh -c '" + bulkInitScript + "'"
+	if r.ran[0] != want {
+		t.Fatalf("ran %q, want %q", r.ran[0], want)
+	}
+	cat, err := catalog.Load(catalog.Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prefix, _, _ := strings.Cut(bulkInitScript, "exec "); !strings.Contains(string(cat["kydrive"].Compose), strings.ReplaceAll(prefix, "$", "$$")) {
+		t.Fatalf("bulk-init no longer reads the session secret as KyDrive's entrypoint does")
+	}
+	if out, err := exec.Command("sh", "-n", "-c", bulkInitScript).CombinedOutput(); err != nil {
+		t.Fatalf("bulk-init script: %v: %s", err, out)
 	}
 }
