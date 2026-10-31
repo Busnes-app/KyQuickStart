@@ -1,11 +1,11 @@
 name: kyrecovery
 description: KyRecovery, the suite's blind backup store; keeps sealed capsules only k custodians can open
 category: ky
-version: 0.5.0
+version: 0.5.0.1
 # Release image of v0.4.2, attested by release-image.yml@refs/tags/v0.4.2 (gh attestation verify).
-# catalog-follow: v0.5.0 attested by Busnes-app/KyRecovery-server release-image.yml@refs/tags/v0.5.0
+# catalog-follow: v0.5.0.1 attested by Busnes-app/KyRecovery-server release-image.yml@refs/tags/v0.5.0.1
 images:
-  kyrecovery: ghcr.io/busnes-app/kyrecovery-server:0.5.0@sha256:377b42dd9f8d158bfbba7fc2b7bfdd38184dc96ac1ea85d2ab2e66063f31ba9d
+  kyrecovery: ghcr.io/busnes-app/kyrecovery-server:0.5.0.1@sha256:dea0e8b24209fbd4928b6b75eebe4631606c797e79f637dc54ad775d93fa8e25
 # verify-edge reads the suite proxy contract here (clientIp, proxyHeadersTrusted, scheme).
 status_path: /api/installer/network
 # The suite's backup store and its ceremony: administrators and the suite's own apps only.
