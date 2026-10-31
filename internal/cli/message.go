@@ -451,35 +451,46 @@ func (s *session) messageSteps(d driver, i stack.Integration) (before []engine.S
 		run: func(ctx context.Context) error { return run(ctx, env) }}
 	step.after = creds.chatCheck
 	step.everyday = &everydayUser{Bundle: s.firstIdentity().Bundle, Username: s.firstIdentity().Identity.Everyday.Username}
-	launch := launcherStep{app: i.Product, bundle: step.source.Bundle, client: i.ChatClient, url: "https://" + roleHost(s.plan, i.Product, "chat") + "/", exec: step.export}
+	launch := launcherStep{app: i.Product, bundle: step.source.Bundle, client: i.ChatClient, url: "https://" + roleHost(s.plan, i.Product, "chat") + "/",
+		name: app.OIDC.Name, console: i.IdentityClient, exec: step.export}
 	return []engine.Step{matrixInitStep{app: i.Product, target: host.t.Name, seed: seed, env: env, hash: hash, file: file, run: run}, creds, launch}, step, nil
 }
 
-// launcherStep (<app>.launcher) links the chat client's KyIdentity launcher card to Element;
-// without a link the card opens the client's redirect origin, MAS. KyIdentity writes it only
-// while the client has none, so a link an admin set stays, and Verify reruns it.
+// launcherStep (<app>.launcher) sets KyIdentity's launcher cards: the chat client's links to
+// Element (without a link it opens the client's redirect origin, MAS) under the app's name,
+// and the console's is shown to its admins only. Display only: access does not change.
+// KyIdentity writes each setting only while unset, so an admin's choice stays, and Verify
+// reruns it. A KyIdentity without a setting's capability is left as it is; a rerun after its
+// upgrade adds it.
 type launcherStep struct {
-	app, bundle, client, url string
-	exec                     identityExec
+	app, bundle, client, url, name, console string
+	exec                                    identityExec
 }
 
-func (s launcherStep) ID() string                            { return s.app + ".launcher" }
-func (s launcherStep) InputHash() string                     { return s.bundle + "\x00" + s.client + "\x00" + s.url }
+func (s launcherStep) ID() string { return s.app + ".launcher" }
+func (s launcherStep) InputHash() string {
+	return strings.Join([]string{s.bundle, s.client, s.url, s.name, s.console}, "\x00")
+}
 func (s launcherStep) Inspect(context.Context) (bool, error) { return false, nil }
 func (s launcherStep) Verify(ctx context.Context) error      { return s.Apply(ctx) }
 func (s launcherStep) Apply(ctx context.Context) error {
-	// A KyIdentity without the capability keeps its card on MAS; a rerun after its upgrade
-	// adds the link. A failed query fails.
-	var missing missingCapability
-	if err := identityCapabilities(ctx, s.exec, false, "client-launch-urls"); errors.As(err, &missing) && missing == "client-launch-urls" {
-		return nil
-	} else if err != nil {
-		return err
-	}
-	b, err := s.exec(ctx, []string{"apply-setup", "--file", s.bundle, "--launch-url", s.client + "=" + s.url})
-	var r struct{ Schema, Client, Status string }
-	if err != nil || len(b) > 1024 || json.Unmarshal(b, &r) != nil || r.Schema != "kyidentity.launch-url/1" || r.Client != s.client || r.Status != "set" && r.Status != "unchanged" {
-		return fmt.Errorf("KyIdentity did not link its %s launcher card to %s", s.client, s.url)
+	for _, l := range []struct{ capability, flag, client, value string }{
+		{"client-launch-urls", "launch-url", s.client, s.url},
+		{"client-launcher-display", "launcher-name", s.client, s.name},
+		{"client-launcher-display", "launcher-audience", s.console, "admins"},
+	} {
+		var missing missingCapability
+		if err := identityCapabilities(ctx, s.exec, false, l.capability); errors.As(err, &missing) && string(missing) == l.capability {
+			continue
+		} else if err != nil {
+			return err
+		}
+		// KyIdentity takes one launcher flag per call.
+		b, err := s.exec(ctx, []string{"apply-setup", "--file", s.bundle, "--" + l.flag, l.client + "=" + l.value})
+		var r struct{ Schema, Client, Status string }
+		if err != nil || len(b) > 1024 || json.Unmarshal(b, &r) != nil || r.Schema != "kyidentity."+l.flag+"/1" || r.Client != l.client || r.Status != "set" && r.Status != "unchanged" {
+			return fmt.Errorf("KyIdentity did not set its %s launcher card's %s to %s", l.client, l.flag, l.value)
+		}
 	}
 	return nil
 }
@@ -599,6 +610,9 @@ KyMessages chat at https://%[1]s/ (Element), its console at https://%[2]s/.
   Server name %[3]s: Matrix IDs are @<the local part of a verified email>:%[3]s, and the
   server name can never change.
   Chat: everyday accounts only (%[5]s). %[4]s signs in to the console alone and has no chat.
+  KyIdentity's launcher: everyday accounts see one "KyMessages" card, which opens chat; the
+  console's card shows to its admins only. A KyIdentity without launcher display settings
+  shows both cards to everyone assigned; the next apply after its upgrade sets them.
   To add a person: in KyIdentity assign them to both "KyMessages" and "KyMessages chat", and
   make sure their email is verified (the installer's owner accounts are; anyone else redeems
   KyIdentity's verification mail). An unverified address gets no Matrix account.

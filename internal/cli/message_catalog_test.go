@@ -633,17 +633,35 @@ func TestKyMessageAddedByAmendment(t *testing.T) {
 	// The chat card links to Element, in the setup that owns its client; a KyIdentity without
 	// the capability is left as it is, and Verify adds the link once it has it.
 	launcher := list[slices.IndexFunc(list, func(st engine.Step) bool { return st.ID() == "kymessage.launcher" })]
-	if err := launcher.Apply(ctx); err != nil || amendment.launch != "" {
+	if err := launcher.Apply(ctx); err != nil || amendment.launch != "" || amendment.display != nil {
 		t.Fatalf("launcher without capability: %v, %q", err, amendment.launch)
 	}
 	identity.features = append(identity.features, "client-launch-urls")
 	for range 2 {
-		if err := launcher.Verify(ctx); err != nil || amendment.launch != "kymessage-chat=https://chat.example.com/" {
-			t.Fatalf("launcher: %v, %q", err, amendment.launch)
+		if err := launcher.Verify(ctx); err != nil || amendment.launch != "kymessage-chat=https://chat.example.com/" || amendment.display != nil {
+			t.Fatalf("launcher: %v, %q, %v", err, amendment.launch, amendment.display)
 		}
 	}
-	if identity.launch != "" {
-		t.Fatalf("launch URL went to the parent setup: %q", identity.launch)
+	// With client-launcher-display everyday users see one "KyMessages" card, the chat's, and
+	// the console's goes to its admins: one launcher flag per call, after the link.
+	identity.features = append(identity.features, "client-launcher-display")
+	amendment.calls = nil
+	for range 2 {
+		if err := launcher.Verify(ctx); err != nil || amendment.display["launcher-name"] != "kymessage-chat=KyMessages" || amendment.display["launcher-audience"] != "kymessage=admins" {
+			t.Fatalf("launcher display: %v, %v", err, amendment.display)
+		}
+	}
+	var settings []string
+	for _, c := range amendment.calls {
+		if _, flag, ok := strings.Cut(c, " --file "+bundle+" --"); ok {
+			settings = append(settings, flag)
+		}
+	}
+	if want := []string{"launch-url kymessage-chat=https://chat.example.com/", "launcher-name kymessage-chat=KyMessages", "launcher-audience kymessage=admins"}; !slices.Equal(settings, append(want, want...)) {
+		t.Fatalf("launcher calls = %q", settings)
+	}
+	if identity.launch != "" || identity.display != nil {
+		t.Fatalf("launcher settings went to the parent setup: %q, %v", identity.launch, identity.display)
 	}
 }
 

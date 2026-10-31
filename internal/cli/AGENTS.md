@@ -154,9 +154,12 @@ Plain terminal planning and command orchestration for the operator-run installer
   `messageSteps` puts `<app>.matrix-init` (seed `matrix/secrets/upstream_provider_id`, refusing
   another with `provider_id_mismatch`, then `dockerhost.RunInit`) and `<app>.credentials`
   (both clients' export, `hostFile` writes on the host, never replacing, then the second pass)
-  and `launcherStep` (`<app>.launcher`: KyIdentity's `apply-setup --launch-url` gives the chat
-  client's launcher card Element's URL in the setup that owns it; skipped while KyIdentity lacks
-  `client-launch-urls`; Verify reruns it) before its deploy, and its `clientSetupStep` (everyday binding, chat client rechecked by
+  and `launcherStep` (`<app>.launcher`: in the setup that owns both clients, one
+  `apply-setup` call per setting, in order: `--launch-url` gives the chat client's card
+  Element's URL (capability `client-launch-urls`), then `--launcher-name` names it after the
+  app and `--launcher-audience` shows the console's card to admins only (capability
+  `client-launcher-display`); each skipped while KyIdentity lacks its capability; Verify
+  reruns it) before its deploy, and its `clientSetupStep` (everyday binding, chat client rechecked by
   `after`) after its health; `deploySteps` adds `directoryStep` (`<app>.directory`) after the
   routes, which waits for `resync` (KyIdentity's `resync-system --wait`, shared with
   `replayRemovals`) to deliver the console's directory, so apply reports success only once the

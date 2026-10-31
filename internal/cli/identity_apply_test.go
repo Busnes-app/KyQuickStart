@@ -127,6 +127,7 @@ type fakeIdentity struct {
 	disabled        bool                     // disable-user ran
 	checkReport     string                   // --check's setup report, when set
 	launch          string                   // --launch-url's CLIENT=URL, once set
+	display         map[string]string        // --launcher-name and --launcher-audience's CLIENT=VALUE, once set, by flag
 }
 
 func (n *fakeIdentity) stream(ctx context.Context, namespace, pod, container string, args []string, o remotecommand.StreamOptions) error {
@@ -174,6 +175,24 @@ func (n *fakeIdentity) stream(ctx context.Context, namespace, pod, container str
 			n.launch, status = arg, "set"
 		}
 		out = `{"schema":"kyidentity.launch-url/1","client":"` + client + `","status":"` + status + `"}`
+	case slices.Contains(args, "--launcher-name") || slices.Contains(args, "--launcher-audience"):
+		flag := "launcher-name"
+		if slices.Contains(args, "--launcher-audience") {
+			flag = "launcher-audience"
+		}
+		if !n.applied || slices.Contains(args, "--launch-url") || slices.Contains(args, "--launcher-name") && flag == "launcher-audience" {
+			return errors.New("not applied, or more than one launcher flag")
+		}
+		arg := args[slices.Index(args, "--"+flag)+1]
+		client, _, _ := strings.Cut(arg, "=")
+		status := "unchanged"
+		if n.display[flag] == "" {
+			if n.display == nil {
+				n.display = map[string]string{}
+			}
+			n.display[flag], status = arg, "set"
+		}
+		out = `{"schema":"kyidentity.` + flag + `/1","client":"` + client + `","status":"` + status + `"}`
 	case slices.Contains(args, "--export-client"):
 		if !n.applied {
 			return errors.New("not applied")
