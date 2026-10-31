@@ -1,12 +1,12 @@
 name: kydns
 description: KyDNS, the suite's LAN DNS server; local names for every service, upstream resolution
 category: ky
-version: 0.5.0.1
+version: 0.5.0.2
 # Release image of v0.4.2 (commit ca8d7723b4fc), attested by
 # Busnes-app/KyDNS-server release.yml@refs/tags/v0.4.2 (gh attestation verify).
-# catalog-follow: v0.5.0.1 attested by Busnes-app/KyDNS-server release.yml@refs/tags/v0.5.0.1
+# catalog-follow: v0.5.0.2 attested by Busnes-app/KyDNS-server release.yml@refs/tags/v0.5.0.2
 images:
-  kydns: ghcr.io/busnes-app/kydns-server:0.5.0.1@sha256:4393f9b80451f99b4465113aff70b78ba96d1373ad2bdc03e41c2b25821f8876
+  kydns: ghcr.io/busnes-app/kydns-server:0.5.0.2@sha256:f1844a71aa1f676e206de00b69cb509efdde2d9635dc8f0a171fe01f4d1b9948
 # verify-edge reads the suite proxy contract here (clientIp, proxyHeadersTrusted, scheme).
 status_path: /api/v1/installer/network
 # The LAN's DNS administration: never on the public connection.
