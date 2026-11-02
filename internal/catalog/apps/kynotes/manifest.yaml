@@ -1,12 +1,12 @@
 name: kynotes
 description: KyNotes, the suite's end-to-end encrypted notes; signs in through KyIdentity
 category: ky
-version: 0.5.0.3
+version: 0.6.0
 # Release image of v0.4.2 (commit f597e99703316cf53d2efac2224cb6ae66df5752), attested by
 # Busnes-app/KyNotes-server release-image.yml@refs/tags/v0.4.2 (gh attestation verify).
-# catalog-follow: v0.5.0.3 attested by Busnes-app/KyNotes-server release-image.yml@refs/tags/v0.5.0.3
+# catalog-follow: v0.6.0 attested by Busnes-app/KyNotes-server release-image.yml@refs/tags/v0.6.0
 images:
-  kynotes: ghcr.io/busnes-app/kynotes-server:0.5.0.3@sha256:5910d5e1d187b0a054c08ce07e9e8825c1feaa900fd173e04c5a3da0f6295857
+  kynotes: ghcr.io/busnes-app/kynotes-server:0.6.0@sha256:5b18f95b3889cf2afd5f7a0b1ead15b506dad4b2961906392716b27f0b0e24ce
 # verify-edge reads the suite proxy contract here (clientIp, proxyHeadersTrusted, scheme).
 status_path: /api/v1/installer/network
 # Its setup needs KyIdentity's issuer, client and signed directory.
@@ -28,6 +28,7 @@ backup:
 upgrade:
   # 0.5.0 adds no server migration (team-key envelopes move to HPKE v3 on the client; stored v2
   # rows still open), but an install from 0.4.2 still migrates its SQLite schema at startup.
+  # 0.6.0 changes no migration (its migrations directory is unchanged since 0.5.0).
   min_from: 0.4.2
   migrates_data: true
   data_since: 0.5.0
