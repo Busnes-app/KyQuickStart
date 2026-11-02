@@ -536,6 +536,9 @@ func TestLoadRejects(t *testing.T) {
 		"no_skip at target":     {manifest + "upgrade:\n  no_skip: [2.4.0]\n", compose, "no_skip"},
 		"no_skip before min":    {manifest + "upgrade:\n  min_from: 2.0.0\n  no_skip: [1.9.0]\n", compose, "no_skip"},
 		"no_skip repeated":      {manifest + "upgrade:\n  no_skip: [2.1.0, 2.1.0]\n", compose, "no_skip"},
+		"data_since newer":      {manifest + "upgrade:\n  migrates_data: true\n  data_since: 2.4.0.1\n", compose, "data_since"},
+		"data_since no migrate": {manifest + "upgrade:\n  data_since: 2.0.0\n", compose, "data_since"},
+		"data_since bad":        {manifest + "upgrade:\n  migrates_data: true\n  data_since: v2.0.0\n", compose, "data_since"},
 		"third-party no oidc":   {strings.Replace(manifest, "category: ky", "category: third-party", 1), compose, "sign in through KyIdentity"},
 		"edge with oidc":        {strings.Replace(manifest, "category: ky", "category: edge", 1) + oidc, compose, "edge components"},
 		"no redirect":           {manifest + strings.Replace(oidc, "[/auth/callback]", "[]", 1), compose, "redirect_paths"},
@@ -810,6 +813,19 @@ func TestUpgradeAllows(t *testing.T) {
 		if want == "" && err != nil || want != "" && (err == nil || !strings.Contains(err.Error(), want)) {
 			t.Errorf("%s: err = %v, want %q", installed, err, want)
 		}
+	}
+}
+
+// data_since narrows migrates_data to upgrades from an older version (#150).
+func TestUpgradeMigrates(t *testing.T) {
+	u := Upgrade{MigratesData: true, DataSince: "2.4.0"}
+	for installed, want := range map[string]bool{"2.3.9": true, "2.3.9.4": true, "2.4.0": false, "2.4.0.2": false, "2.5.0": false, "bad": true} {
+		if got := u.Migrates(installed); got != want {
+			t.Errorf("from %s: migrates = %v, want %v", installed, got, want)
+		}
+	}
+	if !(Upgrade{MigratesData: true}).Migrates("2.4.0.2") || (Upgrade{}).Migrates("1.0.0") {
+		t.Error("without data_since, migrates_data alone decides")
 	}
 }
 

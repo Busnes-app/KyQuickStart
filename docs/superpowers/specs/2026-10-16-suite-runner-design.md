@@ -67,7 +67,8 @@ and under each target's lock:
 For each app: installed `version` ≥ `upgrade.min_from`, no `upgrade.no_skip` version skipped,
 then:
 
-- target version has `migrates_data: true`: refused (`backup_required`) unless a verified
+- target version has `migrates_data: true` and the installed version is older than its
+  `data_since` (when set): refused (`backup_required`) unless a verified
   pre-upgrade backup exists. Until KyRecovery integration lands, this is always refused.
 - otherwise: refused unless the request sets `acknowledge_no_backup`; the acknowledgement is
   recorded in the step result.

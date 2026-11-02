@@ -68,6 +68,8 @@ func backupCommand(ctx context.Context, cmd string, args []string, o Options) er
 	if cmd == "restore" {
 		fl.StringVar(&r.snapshot, "snapshot", "", "restore this snapshot (8 or 64 lowercase hex)")
 		fl.BoolVar(&r.replace, "replace", false, "move the app's current data and secrets aside first")
+	}
+	if cmd != "backup" {
 		fl.BoolVar(&r.yes, "yes", false, "skip the typed confirmation")
 	}
 	var apps []string
@@ -83,8 +85,11 @@ func backupCommand(ctx context.Context, cmd string, args []string, o Options) er
 	if len(apps) != 1 {
 		return ErrUsage
 	}
-	if cmd == "backup" {
+	switch cmd {
+	case "backup":
 		return backup(ctx, *state, apps[0], trust, o)
+	case "prune-copies":
+		return pruneCopies(ctx, *state, apps[0], r.yes, trust, o)
 	}
 	if r.snapshot == "" && (r.replace || r.yes) {
 		return suite.Errorf(suite.InvalidRequest, "--replace and --yes restore a snapshot: add --snapshot ID (kyquickstart restore %s lists them)", apps[0])
@@ -163,7 +168,7 @@ func (p *preUpgradeBackup) Apply(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("no upgrade: %w", err)
 		}
-		p.note = fmt.Sprintf("copied %s %s to claims %s in namespace kyq-%s (verified against the original); they stay until you delete them", p.name, p.from, strings.Join(claims, ", "), p.name)
+		p.note = fmt.Sprintf("copied %s %s to claims %s in namespace kyq-%s (verified against the original); they stay until kyquickstart prune-copies %s deletes them, once %s is upgraded past %s", p.name, p.from, strings.Join(claims, ", "), p.name, p.name, p.name, p.from)
 		return nil
 	}
 	st, err := p.s.store(ctx, p.name, p.t, false)
@@ -179,6 +184,81 @@ func (p *preUpgradeBackup) Apply(ctx context.Context) error {
 	}
 	p.note = fmt.Sprintf("snapshot %s of %s %s in %s/%s (restic check passed); kyquickstart restore %s --snapshot %s restores it", id[:8], p.name, p.from, p.t.Backup.Repository, p.name, p.name, id[:8])
 	return nil
+}
+
+// pruneCopies deletes a Kubernetes app's pre-upgrade claims taken before upgrading from a
+// version older than the installed one, after a typed confirmation, under the target lock.
+// Copies from the installed version on (a pending upgrade's) and the app's own claims stay.
+func pruneCopies(ctx context.Context, state, name string, yes bool, trust trustFlag, o Options) error {
+	s, err := load(state, trust, o)
+	if err != nil {
+		return err
+	}
+	defer s.close()
+	t, err := s.installed(name)
+	if err != nil {
+		return err
+	}
+	if !t.Kubernetes() {
+		return suite.Errorf(suite.InvalidRequest, "%s runs on Docker: its pre-upgrade backups are restic snapshots in its append-only repository, which kyquickstart never deletes", name)
+	}
+	s.changesPlan, s.edges, s.targets = true, nil, []stack.Target{t}
+	if err := s.connect(ctx, trust); err != nil {
+		return err
+	}
+	return s.locked(ctx, func(ctx context.Context) error {
+		d := s.drivers[t.Name]
+		dep, err := d.deployed(ctx, name)
+		if err != nil {
+			return err
+		}
+		if !dep.Found || !dep.Managed {
+			return suite.Errorf(suite.NotInstalled, "%s is not deployed by kyquickstart on %s", name, t.Name)
+		}
+		installed := installedVersion(dep, s.cat[name], s.o.ReleaseSet)
+		if installed == "" {
+			return suite.Errorf(suite.InvalidRequest, "%s: installed version unknown, so no copy can be called older; nothing was changed", name)
+		}
+		a := d.(kubeDriver).app(name, s.cat[name], s.o.ReleaseSet, s.redact)
+		copies, err := kube.PreUpgradeCopies(ctx, a)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(s.o.Out, "Pre-upgrade copies of %s (installed %s) in namespace kyq-%s:\n", name, installed, name)
+		var old []string
+		for _, c := range copies {
+			action := "keep  "
+			if catalog.VersionAtLeast(installed, c.From) && installed != c.From {
+				action, old = "delete", append(old, c.Claim)
+			}
+			state := "verified"
+			if !c.Verified {
+				state = "unverified"
+			}
+			fmt.Fprintf(s.o.Out, "  %s %s  %s, %s, taken before upgrading from %s\n", action, c.Claim, c.Size, state, c.From)
+		}
+		if len(old) == 0 {
+			fmt.Fprintf(s.o.Out, "No copy of %s is older than %s; nothing to delete.\n", name, installed)
+			return nil
+		}
+		if !yes {
+			if s.o.Stdin == nil {
+				return suite.Errorf(suite.InvalidRequest, "prune-copies needs the app name typed back, or --yes when not interactive; nothing was changed")
+			}
+			fmt.Fprintf(s.o.Out, "Deleting a copy deletes its data. Type %s to delete %d claims: ", name, len(old))
+			line, _ := bufio.NewReader(s.o.Stdin).ReadString('\n')
+			if strings.TrimSpace(line) != name {
+				return suite.Errorf(suite.InvalidRequest, "not confirmed: type %q exactly, or pass --yes; nothing was changed", name)
+			}
+		}
+		for _, c := range old {
+			if err := kube.DeletePreUpgradeCopy(ctx, a, c); err != nil {
+				return fmt.Errorf("%s: %w", name, err)
+			}
+			fmt.Fprintf(s.o.Out, "Deleted claim %s.\n", c)
+		}
+		return nil
+	})
 }
 
 // passwordCreated points at a repository password this run generated. Printed even when the

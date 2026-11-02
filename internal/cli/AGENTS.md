@@ -54,6 +54,11 @@ Plain terminal planning and command orchestration for the operator-run installer
   transfer and native TLS setup are qualified. SSH also qualifies installer-composed native
   HTTP sign-on, reciprocal owner/everyday Notes access and post-login inspect/resume;
   browser UI, MFA, Kubernetes sign-on and full lifecycle acceptance remain open.
+- `backup.go` owns `prune-copies` (Kubernetes only, `docs/guided-setup.md` "Managing apps"):
+  under the target lock and refused under `owner: runner`, it lists the app's
+  `kube.PreUpgradeCopies` and, after the typed app name or `--yes`, deletes through
+  `kube.DeletePreUpgradeCopy` only those whose `<from>` is older than the installed version.
+  Its output lines never start with a dotted word.
 - `backup.go` owns `backup` and `restore` (Docker apps only; `docs/guided-setup.md` "Backups
   and restore on Docker"). Both refuse before connecting a Kubernetes app, an app without a
   `backup` block or a target without a destination (`backup_unconfigured`), backup volumes in

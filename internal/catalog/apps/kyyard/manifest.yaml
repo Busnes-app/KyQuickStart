@@ -33,6 +33,7 @@ upgrade:
   # KyIdentity roles, so 0.4.3 stays the floor.
   min_from: 0.4.3
   migrates_data: true
+  data_since: 0.5.0
   note: >-
     Signs out single sign-on users and linked local accounts once, at first start, and cancels
     pending MFA challenges; people sign in again.

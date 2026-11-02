@@ -157,6 +157,7 @@ the plan is saved only after every step passed.
 ./kyquickstart stop hello --state ./morning-test     # Kubernetes: suspend (0 replicas)
 ./kyquickstart start hello --state ./morning-test
 ./kyquickstart restart hello --state ./morning-test
+./kyquickstart prune-copies hello --state ./morning-test  # Kubernetes: old pre-upgrade copies
 ./kyquickstart unmanage hello --state ./morning-test
 ./kyquickstart uninstall hello --state ./morning-test
 ```
@@ -181,15 +182,31 @@ the plan is saved only after every step passed.
 - `upgrade`, and `apply`/`install` over a kept deployment, compare the deployed version
   with the catalog: older than `min_from`, skipping a `no_skip` version, a downgrade or an
   unknown version is refused (`upgrade_refused`); a version that migrates data is first backed
-  up (`<app>.pre-upgrade-backup`, whose result records it). On Docker that is a `kyquickstart
-  backup` snapshot. On Kubernetes the app is stopped, each claim is copied into a new claim
-  `pre-upgrade-<from>-vol-<name>` in the app's namespace, as the app's uid under its pod
-  security, and the copy is compared with the original before the claim is marked verified;
-  kyquickstart never deletes these claims. Either way a failed backup leaves the old version
-  running. It is refused (`backup_required`) where neither can run: a Docker target without a
-  backup destination, a named volume, or a Kubernetes app that runs as root. Any
-  other upgrade needs `--acknowledge-no-backup` (`ack_required`), recorded in `results/<app>.upgrade.json` with
+  up (`<app>.pre-upgrade-backup`, whose result records it). A version migrates data when its
+  manifest says `upgrade.migrates_data: true` and the installed version is older than its
+  `upgrade.data_since` (or it has none): a patch or `.N` release whose product changed no
+  migration since the installed version takes no backup. On Docker the backup is a `kyquickstart
+  backup` snapshot. On Kubernetes each claim gets a new claim `pre-upgrade-<from>-vol-<name>`
+  of the same size and class in the app's namespace; a short pod first mounts the new claims
+  while the app still runs, so storage that cannot provide them fails the step before the app
+  stops, with the cluster's warnings (such as Longhorn's `insufficient storage`) and the earlier
+  copies that take space. Then the app is stopped, each claim is copied as the app's uid under
+  its pod security, and the copy is compared with the original before the claim is marked
+  verified. Either way a failed backup leaves the old version running. It is refused
+  (`backup_required`) where neither can run: a Docker target without a backup destination, a
+  named volume, or a Kubernetes app that runs as root. Any other upgrade needs
+  `--acknowledge-no-backup` (`ack_required`), recorded in `results/<app>.upgrade.json` with
   anything the release asks you to check afterwards (the manifest's `upgrade.note`).
+- Each Kubernetes copy has the size of its original claim, and on Longhorn each replica
+  counts against every node's scheduling limit. Copies keep that space until you delete them:
+  `kyquickstart prune-copies APP` lists the app's copies and, once you type the app name back
+  (or with `--yes`), deletes those taken before upgrading from a version older than the
+  installed one. Copies from the installed version on and the app's own `vol-<name>` claims
+  are never touched. It holds the target lock and needs `list` and `delete` on
+  `persistentvolumeclaims`, which `preflight` does not require; the storage check reads
+  `events` and claims the same way and leaves out what it cannot list. On Docker the
+  pre-upgrade backups are restic snapshots in the append-only repository, and `prune-copies`
+  refuses.
   Apps upgrade one at a time in dependency order and stop at the first failure.
 - On Kubernetes a non-root app's key files stay 0600 when its pod is recreated. Builds before
   #105 let the kubelet make them 0660, and the apps then refuse to start: the next `apply`
