@@ -6,8 +6,11 @@
 //	go run ./scripts/catalog-follow [-apps internal/catalog/apps]
 //
 // For every app that follows a release it prints one line, "<app> <old> <new>", and rewrites
-// only the manifest's version line, the image reference and one machine-maintained comment
-// line ("# catalog-follow: ..."). Human comments and upgrade rules are left as they are. A newer
+// only the manifest's version line, the image reference, one machine-maintained comment line
+// ("# catalog-follow: ...") and, for an app whose upgrade migrates_data, upgrade.data_since:
+// kept when the release's migration paths (its sources entry) hold the same git objects as the
+// pinned release's, the new version otherwise or when that cannot be read, so the next upgrade
+// still copies the data first. Human comments and other upgrade rules are left as they are. A newer
 // MAJOR.MINOR is only reported, as a ::warning::: its upgrade rules need a human. An app whose
 // release cannot be resolved or verified is skipped with a ::warning::, never pinned. It exits
 // non-zero only when it cannot run at all.
@@ -15,6 +18,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -36,22 +40,27 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// source is where an image's releases are published and which workflow attests them.
-type source struct{ repo, workflow string }
+// source is where an image's releases are published, which workflow attests them and where
+// the repository keeps the code that migrates stored data (files or directories).
+type source struct {
+	repo, workflow string
+	migrations     []string
+}
 
 // sources maps each ghcr.io/busnes-app image to its repository. A Ky image added to the
-// catalog needs an entry here (TestSourcesCoverCatalog).
+// catalog needs an entry here (TestSourcesCoverCatalog). Without migrations every release of
+// an app that migrates_data is taken to migrate.
 var sources = map[string]source{
-	"kycalendar":        {"Busnes-app/KyCalendar", "release-image.yml"},
-	"kydns-server":      {"Busnes-app/KyDNS-server", "release.yml"},
-	"kydrive-server":    {"Busnes-app/kydrive-server", "release-image.yml"},
-	"kyidentity-server": {"Busnes-app/KyIdentity-server", "release-image.yml"},
-	"kymessage-server":  {"Busnes-app/KyMessage-Server", "release-image.yml"},
-	"kynotes-server":    {"Busnes-app/KyNotes-server", "release-image.yml"},
-	"kypost-server":     {"Busnes-app/KyPost-Server", "release-image.yml"},
-	"kypulse-server":    {"Busnes-app/KyPulse-server", "release-image.yml"},
-	"kyrecovery-server": {"Busnes-app/KyRecovery-server", "release-image.yml"},
-	"kyyard":            {"Busnes-app/KyYard-server", "release-image.yml"},
+	"kycalendar":        {"Busnes-app/KyCalendar", "release-image.yml", []string{"internal/store/migrations"}},
+	"kydns-server":      {"Busnes-app/KyDNS-server", "release.yml", []string{"internal/store/store.go"}},
+	"kydrive-server":    {"Busnes-app/kydrive-server", "release-image.yml", []string{"internal/store/migrations", "internal/drive/schema.go"}},
+	"kyidentity-server": {"Busnes-app/KyIdentity-server", "release-image.yml", nil},
+	"kymessage-server":  {"Busnes-app/KyMessage-Server", "release-image.yml", []string{"internal/store/migrations"}},
+	"kynotes-server":    {"Busnes-app/KyNotes-server", "release-image.yml", []string{"internal/storage/migrations"}},
+	"kypost-server":     {"Busnes-app/KyPost-Server", "release-image.yml", nil},
+	"kypulse-server":    {"Busnes-app/KyPulse-server", "release-image.yml", []string{"internal/store/migrations"}},
+	"kyrecovery-server": {"Busnes-app/KyRecovery-server", "release-image.yml", []string{"internal/db/db.go"}},
+	"kyyard":            {"Busnes-app/KyYard-server", "release-image.yml", []string{"internal/store/migrations"}},
 }
 
 // release is one GitHub release as the API lists it.
@@ -64,8 +73,9 @@ type release struct {
 // deps are the outside world, replaced in tests.
 type deps struct {
 	releases func(repo string) ([]release, error)
-	digest   func(image, tag string) (string, error) // sha256:<hex> of the tag's manifest
-	verify   func(ref, repo, identity string) error  // the attestation, pinned to identity
+	digest   func(image, tag string) (string, error)      // sha256:<hex> of the tag's manifest
+	verify   func(ref, repo, identity string) error       // the attestation, pinned to identity
+	object   func(repo, tag, path string) (string, error) // path's git object at tag, "" when absent
 	warn     func(format string, a ...any)
 }
 
@@ -82,7 +92,7 @@ type bump struct{ app, from, to string }
 func main() {
 	apps := flag.String("apps", "internal/catalog/apps", "the catalog's apps directory")
 	flag.Parse()
-	d := deps{releases: ghReleases, digest: registryDigest("https://ghcr.io"), verify: ghVerify,
+	d := deps{releases: ghReleases, digest: registryDigest("https://ghcr.io"), verify: ghVerify, object: ghObject,
 		warn: func(f string, a ...any) { fmt.Fprintf(os.Stderr, "::warning::"+f+"\n", a...) }}
 	bumps, err := follow(*apps, d)
 	if err != nil {
@@ -138,6 +148,10 @@ func followApp(app string, m []byte, d deps) (bump, []byte, bool) {
 	var man struct {
 		Version string            `yaml:"version"`
 		Images  map[string]string `yaml:"images"`
+		Upgrade struct {
+			MigratesData bool   `yaml:"migrates_data"`
+			DataSince    string `yaml:"data_since"`
+		} `yaml:"upgrade"`
 	}
 	if err := yaml.Unmarshal(m, &man); err != nil {
 		d.warn("%s: manifest does not parse: %v", app, err)
@@ -189,11 +203,50 @@ func followApp(app string, m []byte, d deps) (bump, []byte, bool) {
 	}
 	next, err := rewrite(m, man.Version, to, pins[0], image+":"+to+"@"+dg,
 		marker+"v"+to+" attested by "+src.repo+" "+src.workflow+"@refs/tags/v"+to)
+	if err == nil && man.Upgrade.MigratesData {
+		since := to
+		if sameData(src, man.Version, to, d) {
+			since = cmp.Or(man.Upgrade.DataSince, man.Version)
+		}
+		next, err = setDataSince(next, man.Upgrade.DataSince, since)
+	}
 	if err != nil {
 		d.warn("%s: %v; left at %s", app, err, man.Version)
 		return bump{}, nil, false
 	}
 	return bump{app, man.Version, to}, next, true
+}
+
+// sameData reports whether every migration path of src holds the same git object at to as at
+// from. No paths, a path absent at either tag or one that cannot be read is not the same.
+func sameData(src source, from, to string, d deps) bool {
+	for _, p := range src.migrations {
+		a, err := d.object(src.repo, "v"+from, p)
+		if err == nil && a != "" {
+			var b string
+			if b, err = d.object(src.repo, "v"+to, p); err == nil && a == b {
+				continue
+			}
+		}
+		if err != nil {
+			d.warn("%s: reading %s at v%s and v%s: %v; data_since moves to v%s", src.repo, p, from, to, err, to)
+		}
+		return false
+	}
+	return len(src.migrations) > 0
+}
+
+// setDataSince sets upgrade.data_since to since: it replaces the line for old, which must
+// occur once, or adds one after migrates_data.
+func setDataSince(m []byte, old, since string) ([]byte, error) {
+	r := [2]string{"\n  migrates_data: true\n", "\n  migrates_data: true\n  data_since: " + since + "\n"}
+	if old != "" {
+		r = [2]string{"\n  data_since: " + old + "\n", "\n  data_since: " + since + "\n"}
+	}
+	if n := bytes.Count(m, []byte(r[0])); n != 1 {
+		return nil, fmt.Errorf("%q occurs %d times, not once", strings.TrimSpace(r[0]), n)
+	}
+	return bytes.Replace(m, []byte(r[0]), []byte(r[1]), 1), nil
 }
 
 // newest returns the newest published, non-prerelease version after current on its
@@ -249,6 +302,26 @@ func ghReleases(repo string) ([]release, error) {
 		return nil, err
 	}
 	return slices.Concat(pages...), nil
+}
+
+// ghObject returns the git object (blob or tree) path names at tag, from its directory's
+// listing; "" when the directory has no such entry.
+func ghObject(repo, tag, path string) (string, error) {
+	dir, name := filepath.Split(path)
+	out, err := exec.Command("gh", "api", "repos/"+repo+"/contents/"+strings.TrimSuffix(dir, "/")+"?ref="+url.QueryEscape(tag)).Output()
+	if err != nil {
+		return "", fmt.Errorf("gh api: %w", err)
+	}
+	var entries []struct{ Name, SHA string }
+	if err := json.Unmarshal(out, &entries); err != nil {
+		return "", err
+	}
+	for _, e := range entries {
+		if e.Name == name {
+			return e.SHA, nil
+		}
+	}
+	return "", nil
 }
 
 func ghVerify(ref, repo, identity string) error {

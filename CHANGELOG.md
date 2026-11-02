@@ -14,6 +14,27 @@ state directory, target data and target-held credentials; do not reset them as a
 
 ## Unreleased
 
+- A catalog move that changes no migration no longer forces a pre-upgrade backup (#150). A
+  manifest's new `upgrade.data_since` names the oldest version whose data the pinned version
+  uses unchanged; upgrading from it or later takes no copy and asks for `--acknowledge-no-backup`
+  like any upgrade without one. `scripts/catalog-follow` keeps it: unchanged when the
+  product's migration files or directories (its `sources` entry) hold the same git objects at
+  the new tag as at the pinned one, moved to the new version when they differ or cannot be
+  read. KyCalendar, KyDNS, KyDrive, KyNotes, kyPulse, KyRecovery and KyYard start at
+  `data_since: 0.5.0`: none of their 0.5.0.x releases changes a migration.
+- On Kubernetes the pre-upgrade copy first proves the storage can provide the new claims, in a
+  pod that mounts them while the app still runs (#149). Storage that cannot fails the step
+  with the cluster's warnings and the earlier copies taking space, and the app is not stopped.
+  `kyquickstart prune-copies APP` lists an app's copies and, after a typed confirmation, deletes
+  those from versions older than the installed one; it never touches the app's own claims.
+
+Upgrade impact: an upgrade from 0.5.0 or later to the 0.5.0.x pins of those seven apps takes no
+copy or snapshot and needs `--acknowledge-no-backup`; from 0.4.x it is backed up as before.
+`prune-copies` and the storage check's details need `list`/`delete` on
+`persistentvolumeclaims` and `list` on `events`, which preflight does not require; grant them
+to use them. A line move (such as 0.5 to 0.6) is a human PR that sets each app's
+`data_since` from its product's release notes.
+
 - `upgrade`, and `apply`/`install` over a kept deployment, take a verified `kyquickstart backup`
   snapshot before a version that migrates data, then upgrade with no acknowledgement. The
   snapshot ID is recorded in `results/<app>.pre-upgrade-backup.json`; a failed snapshot

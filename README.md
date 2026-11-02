@@ -125,6 +125,7 @@ Choosing `finish` saves the plan without touching any server.
 | `backup`, `restore` | Snapshot a Docker app to its target's rest-server, or restore one ([guided setup](docs/guided-setup.md#backups-and-restore-on-docker)) |
 | `verify-edge` | Check public routing and forwarded headers |
 | `stop`, `start`, `restart`, `logs` | Control one installed app on Docker or Kubernetes (suspend/resume there); `status` adds its live state ([guided setup](docs/guided-setup.md#managing-apps)) |
+| `prune-copies` | List a Kubernetes app's pre-upgrade copy claims and delete those from older versions, after a typed confirmation ([guided setup](docs/guided-setup.md#managing-apps)) |
 | `integrate-identity`, `integrate-product`, `integrate-stack` | Configure existing Ky products against KyIdentity |
 | `review` | Show the saved plan |
 | `version` | Print the release set (`internal/appversion/VERSION` in a source build); `--runner-image` prints the runner image a release binary pins |

@@ -21,8 +21,9 @@ import (
 )
 
 // TestKubernetesPreUpgradeCopy upgrades hello in kind to a version that migrates data: the
-// upgrade copies its volume into a verified claim under the namespace's restricted pod
-// security, then deploys, and the copy holds what the app's uid wrote.
+// upgrade checks the storage on the app's node, copies its volume into a verified claim under
+// the namespace's restricted pod security, then deploys, and the copy holds what the app's uid
+// wrote. A release within data_since takes no copy, and prune-copies removes the old one.
 func TestKubernetesPreUpgradeCopy(t *testing.T) {
 	ctx := context.Background()
 	work := t.TempDir()
@@ -78,6 +79,27 @@ func TestKubernetesPreUpgradeCopy(t *testing.T) {
 	}
 	if out, err := run("upgrade"); err != nil || status(out, "hello.deploy") != "skipped" {
 		t.Fatalf("second upgrade: %v", err)
+	}
+
+	// A release whose data is unchanged since 1.12.0 takes no copy (#150).
+	b, _ = os.ReadFile(manifest)
+	os.WriteFile(manifest, bytes.Replace(b, []byte("version: 1.12.0\nupgrade:\n  migrates_data: true\n"), []byte("version: 1.12.0.1\nupgrade:\n  migrates_data: true\n  data_since: 1.12.0\n"), 1), 0o600)
+	if out, err := run("upgrade", "--acknowledge-no-backup"); err != nil || status(out, "hello.pre-upgrade-backup") != "" || status(out, "hello.deploy") != "ok" {
+		t.Fatalf("upgrade within data_since: %v", err)
+	}
+	if _, err := cs.CoreV1().PersistentVolumeClaims("kyq-hello").Get(ctx, kube.PreUpgradeClaim("1.12.0", "data"), metav1.GetOptions{}); err == nil {
+		t.Error("an upgrade within data_since copied the claims")
+	}
+
+	// prune-copies deletes the 1.11.0 copy and keeps the app's own claim (#149).
+	if out, err := run("prune-copies", "hello", "--yes"); err != nil || !strings.Contains(out, "Deleted claim "+claim+".") {
+		t.Fatalf("prune-copies: %v", err)
+	}
+	if _, err := cs.CoreV1().PersistentVolumeClaims("kyq-hello").Get(ctx, "vol-data", metav1.GetOptions{}); err != nil {
+		t.Fatalf("the app's claim: %v", err)
+	}
+	if out := podRun(t, ctx, cs, "vol-data", "cat sub/file"); out != "kept\n" {
+		t.Fatalf("the app's data after prune: %q", out)
 	}
 }
 

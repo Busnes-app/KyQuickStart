@@ -47,6 +47,7 @@ type fake struct {
 	rels     map[string][]release
 	digests  map[string]string // image:tag -> digest
 	bad      map[string]bool   // refs whose attestation fails
+	objects  map[string]string // "repo tag path" -> git object
 	verified []string          // "ref identity"
 	listed   []string
 	warnings []string
@@ -76,6 +77,12 @@ func (f *fake) deps() deps {
 				return fmt.Errorf("identity %s is not %s's", identity, repo)
 			}
 			return nil
+		},
+		object: func(repo, tag, path string) (string, error) {
+			if o, ok := f.objects[repo+" "+tag+" "+path]; ok {
+				return o, nil
+			}
+			return "", errors.New("HTTP 502")
 		},
 		warn: func(format string, a ...any) { f.warnings = append(f.warnings, fmt.Sprintf(format, a...)) },
 	}
@@ -149,6 +156,43 @@ func TestFollow(t *testing.T) {
 	// Nothing newer: nothing changes.
 	if bumps, err := follow(dir, f.deps()); err != nil || len(bumps) != 0 {
 		t.Fatalf("third run: %v %v", bumps, err)
+	}
+}
+
+// An app that migrates_data keeps data_since while its migration files are unchanged and moves
+// it to the new version when they change or cannot be read (#150).
+func TestFollowDataSince(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "cal"), 0o755)
+	m := manifest("cal", "ghcr.io/busnes-app/kycalendar:0.5.0@"+dig('a'), "0.5.0", "upgrade:\n  min_from: 0.4.2\n  migrates_data: true\n  note: Sign in again.\n")
+	os.WriteFile(filepath.Join(dir, "cal", "manifest.yaml"), []byte(m), 0o644)
+	os.WriteFile(filepath.Join(dir, "cal", "compose.yaml.tmpl"), []byte(compose), 0o644)
+	const repo, path = "Busnes-app/KyCalendar", "internal/store/migrations"
+	f := &fake{rels: map[string][]release{}, digests: map[string]string{}, objects: map[string]string{
+		repo + " v0.5.0 " + path: "t1", repo + " v0.5.0.1 " + path: "t1", repo + " v0.5.0.2 " + path: "t2",
+	}}
+	for _, c := range []struct{ to, since, warning string }{
+		{"0.5.0.1", "0.5.0", ""},      // unchanged: the old pin starts data_since
+		{"0.5.0.2", "0.5.0.2", ""},    // a changed migration moves it
+		{"0.5.0.3", "0.5.0.3", "502"}, // unreadable: as if changed
+	} {
+		f.rels[repo] = append(f.rels[repo], rel("v"+c.to))
+		f.digests["ghcr.io/busnes-app/kycalendar:"+c.to] = dig('b')
+		f.warnings = nil
+		if bumps, err := follow(dir, f.deps()); err != nil || len(bumps) != 1 || bumps[0].to != c.to {
+			t.Fatalf("%s: %v %v %v", c.to, bumps, err, f.warnings)
+		}
+		cat, err := catalog.Load(os.DirFS(dir))
+		if err != nil {
+			t.Fatal(err)
+		}
+		u := cat["cal"].Upgrade
+		if u.DataSince != c.since || !u.MigratesData || u.MinFrom != "0.4.2" || u.Note != "Sign in again." {
+			t.Errorf("%s: upgrade = %+v, want data_since %s", c.to, u, c.since)
+		}
+		if got := strings.Join(f.warnings, "\n"); c.warning != "" && !strings.Contains(got, c.warning) {
+			t.Errorf("%s: warnings %q lack %q", c.to, got, c.warning)
+		}
 	}
 }
 

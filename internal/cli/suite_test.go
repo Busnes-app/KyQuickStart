@@ -230,6 +230,9 @@ func TestUpgradeGate(t *testing.T) {
 	}{
 		{"version: 1.1.0\n", false, suite.AckRequired},
 		{"version: 1.1.0\nupgrade:\n  migrates_data: true\n", true, suite.BackupRequired},
+		// Data unchanged since the installed 1.0.0 (#150): no copy, so only the acknowledgement.
+		{"version: 1.1.0\nupgrade:\n  migrates_data: true\n  data_since: 1.0.0\n", false, suite.AckRequired},
+		{"version: 1.1.0\nupgrade:\n  migrates_data: true\n  data_since: 1.0.1\n", true, suite.BackupRequired},
 		{"version: 2.0.0\nupgrade:\n  min_from: 1.5.0\n", true, suite.UpgradeRefused},
 		{"version: 1.3.0\nupgrade:\n  no_skip: [1.2.0]\n", true, suite.UpgradeRefused},
 		{"version: 0.9.0\n", true, suite.UpgradeRefused},

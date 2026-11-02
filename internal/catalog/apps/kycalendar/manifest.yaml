@@ -30,6 +30,7 @@ upgrade:
   # nothing dropped, so 0.4.2 still upgrades directly.
   min_from: 0.4.2
   migrates_data: true
+  data_since: 0.5.0
   note: >-
     Signs out single sign-on sessions once, at first start; people sign in again.
 kubernetes:
