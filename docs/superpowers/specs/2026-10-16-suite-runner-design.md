@@ -131,7 +131,10 @@ ServiceAccount, roles, bindings and token, publishes a new revision, writes `own
 empty runner ID and removes `handoff.json`. Pull the plan first: a target holding a newer marker
 refuses. The runner keeps its copy, which can no longer reach the targets.
 
-Without `--kyyard-target`, `pull-plan` and `--revoke` use the runner recorded in `handoff.json`.
+Without `--kyyard-target`, or with the recorded one and no `--runner-pod`/`--runner-container`,
+`pull-plan` and `--revoke` use the runner recorded in `handoff.json`; any other target while a
+record exists is refused (`invalid_request`) unless its runner is named. `--runner-pod` defaults
+to the catalog KyYard's pod on a target holding it, else `kyq-runner/app=runner`.
 
 `pull-plan` runs `serve-export` and replaces the local `stack.yaml` (the previous one becomes
 `stack.yaml.bak`) only when the runner's revision is at least the local one. Kubeconfig paths and
