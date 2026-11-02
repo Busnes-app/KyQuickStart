@@ -1,13 +1,13 @@
 name: kydrive
 description: KyDrive, the suite's drive; personal and group workspaces for files and documents
 category: ky
-version: 0.5.0.1
+version: 0.6.0
 # Release image of v0.4.3 (commit 7eaa56fded8c), attested by
 # Busnes-app/kydrive-server release-image.yml@refs/tags/v0.4.3 (gh attestation verify).
 # It advertises restore-reset, which kyquickstart restore requires.
-# catalog-follow: v0.5.0.1 attested by Busnes-app/kydrive-server release-image.yml@refs/tags/v0.5.0.1
+# catalog-follow: v0.6.0 attested by Busnes-app/kydrive-server release-image.yml@refs/tags/v0.6.0
 images:
-  kydrive: ghcr.io/busnes-app/kydrive-server:0.5.0.1@sha256:a536e7b21dfaaceada1b6c9080c73a9bba13f3e885c92d7f87eb3c9e9775c893
+  kydrive: ghcr.io/busnes-app/kydrive-server:0.6.0@sha256:b99b57d1cbafcfa06bf64e9f49c6a6fe68b13cae9a4ee90c78f346fdc00f58ef
 # Generated on the target. The session secret signs sessions; the SCIM token is the bearer
 # KyIdentity's SCIM connector must present, and KyDrive's setup refuses to run without one.
 secrets: [session_secret, scim_token]
@@ -35,8 +35,9 @@ backup:
 upgrade:
   # 0.5.0 adds SQLite migration 9 and drive schema 17 at startup (back-channel logout, editor
   # session sso_sid); additive, so 0.4.2 still upgrades directly.
+  # 0.6.0 changes no migration (migrations and schema.go are unchanged since 0.5.0).
   min_from: 0.4.2
   migrates_data: true
   data_since: 0.5.0
   note: >-
-    Signs out single sign-on sessions once, at first start; people sign in again. Open document editor sessions of directory users are closed.
+    From 0.4.x: signs out single sign-on sessions once, at first start; people sign in again. Open document editor sessions of directory users are closed.

@@ -14,6 +14,18 @@ state directory, target data and target-held credentials; do not reset them as a
 
 ## Unreleased
 
+- The catalog moves every Ky app to its 0.6 line: KyCalendar, KyDNS, KyDrive, KyIdentity,
+  KyMessage, KyNotes, KyPost, kyPulse, KyRecovery and KyYard 0.6.0, the suite redesign release.
+  Each pin is the digest its release workflow attested. No app's 0.6.0 changes a migration (its
+  migration files are the same git objects as at 0.5.0, and its release notes name none), so the
+  seven apps that migrate data keep `data_since: 0.5.0`. KyCalendar's scheduling stays on its
+  default, automatic: on when KyPost is paired with it through KyIdentity.
+
+Upgrade impact: an upgrade from 0.5.0 or later to 0.6.0 takes no pre-upgrade copy or snapshot and
+needs `--acknowledge-no-backup`; from 0.4.x the seven apps that migrate data are backed up first,
+as before. KyPost devices that pair by QR code or pairing link now wait for approval on the page
+that showed the code, and KyPost apps from before device approval fail to pair until updated.
+
 - A catalog move that changes no migration no longer forces a pre-upgrade backup (#150). A
   manifest's new `upgrade.data_since` names the oldest version whose data the pinned version
   uses unchanged; upgrading from it or later takes no copy and asks for `--acknowledge-no-backup`
