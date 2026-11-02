@@ -518,7 +518,7 @@ func gate(name string, app catalog.App, d managed.Deployed, releaseSet string, a
 	if err := app.Upgrade.Allows(from, app.Version); err != nil {
 		return "", "", suite.Errorf(suite.UpgradeRefused, "%s: %w", name, err)
 	}
-	if app.Upgrade.MigratesData {
+	if app.Upgrade.Migrates(from) {
 		if noBackup != nil {
 			var se *suite.Error
 			reason := noBackup.Error()
@@ -530,7 +530,11 @@ func gate(name string, app catalog.App, d managed.Deployed, releaseSet string, a
 		note, backupFrom = fmt.Sprintf("upgrade %s to %s after a verified pre-upgrade backup", from, app.Version), from
 	} else {
 		if !ack {
-			return "", "", suite.Errorf(suite.AckRequired, "upgrading %s %s to %s takes no pre-upgrade backup; pass --acknowledge-no-backup to proceed", name, from, app.Version)
+			why := ""
+			if app.Upgrade.MigratesData {
+				why = fmt.Sprintf(" (its data is unchanged since %s)", app.Upgrade.DataSince)
+			}
+			return "", "", suite.Errorf(suite.AckRequired, "upgrading %s %s to %s takes no pre-upgrade backup%s; pass --acknowledge-no-backup to proceed", name, from, app.Version, why)
 		}
 		note = fmt.Sprintf("upgrade %s to %s; operator acknowledged no pre-upgrade backup", from, app.Version)
 	}

@@ -140,7 +140,10 @@ type Upgrade struct {
 	MinFrom      string   `yaml:"min_from"` // oldest installed version that may upgrade to this one
 	NoSkip       []string `yaml:"no_skip"`  // versions an upgrade must stop at on the way
 	MigratesData bool     `yaml:"migrates_data"`
-	Note         string   `yaml:"note"` // what the owner must check after upgrading to this version
+	// DataSince narrows MigratesData: the oldest version whose stored data this version uses
+	// unchanged, so an upgrade from it or later migrates nothing. Empty: every upgrade migrates.
+	DataSince string `yaml:"data_since"`
+	Note      string `yaml:"note"` // what the owner must check after upgrading to this version
 }
 
 type Health struct {
@@ -858,7 +861,15 @@ func (u Upgrade) validate(version string) error {
 	if err != nil {
 		return fmt.Errorf("no_skip: %w must be a unique version after min_from and before %s", err, version)
 	}
+	if u.DataSince != "" && (!u.MigratesData || !versionRE.MatchString(u.DataSince) || compareVersions(u.DataSince, version) > 0) {
+		return fmt.Errorf("data_since %q must be a version no newer than %s, set only with migrates_data", u.DataSince, version)
+	}
 	return nil
+}
+
+// Migrates reports whether upgrading from installed migrates the app's data.
+func (u Upgrade) Migrates(installed string) bool {
+	return u.MigratesData && (u.DataSince == "" || !versionRE.MatchString(installed) || compareVersions(installed, u.DataSince) < 0)
 }
 
 // Allows checks an upgrade from the installed version to version against min_from and no_skip.

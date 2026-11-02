@@ -652,3 +652,56 @@ func TestUpgradeTakesPreUpgradeBackup(t *testing.T) {
 		t.Errorf("snapshots:\n%s\nrecord: %s", f.out.String(), first.Diagnostics)
 	}
 }
+
+// prune-copies deletes, after the typed name, only the copies from versions older than the
+// installed one, never the app's own claims; Docker apps are refused (#149).
+func TestPruneCopies(t *testing.T) {
+	f := kubeFixture(t)
+	cat := t.TempDir()
+	writeApp(t, cat, "kweb", "version: 1.2.0\nkubernetes:\n  image: whoami\n  ports: [8080]\n  readiness_path: /\n  run_as: 65532\n  resources:\n    cpu: 50m\n    memory: 32Mi\n  volumes:\n    - name: data\n      mount: /data\n      size: 1Gi\n")
+	writeApp(t, cat, "web", "version: 1.0.0\n")
+	f.o.Catalog = os.DirFS(cat)
+	kc := filepath.Join(t.TempDir(), "kubeconfig")
+	os.WriteFile(kc, nil, 0o600)
+	f.plan(t, "  - name: k1\n    kubeconfig: "+kc+"\napps:\n  - name: kweb\n    target: k1\n  - name: web\n    target: nas\n")
+	ctx := context.Background()
+	labels := map[string]string{managed.Label: managed.Value, managed.ReleaseSetLabel: "test", managed.VersionLabel: "1.2.0"}
+	f.cs.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "kyq-kweb", Labels: labels}}, metav1.CreateOptions{})
+	for _, name := range []string{"vol-data", kube.PreUpgradeClaim("1.0.0", "data"), kube.PreUpgradeClaim("1.1.0", "data"), kube.PreUpgradeClaim("1.2.0", "data")} {
+		f.cs.CoreV1().PersistentVolumeClaims("kyq-kweb").Create(ctx, &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "kyq-kweb", Labels: labels}}, metav1.CreateOptions{})
+	}
+	claims := func() (names []string) {
+		list, _ := f.cs.CoreV1().PersistentVolumeClaims("kyq-kweb").List(ctx, metav1.ListOptions{})
+		for _, c := range list.Items {
+			names = append(names, c.Name)
+		}
+		slices.Sort(names)
+		return names
+	}
+	all := claims()
+	if err := f.runIn("nope\n", "prune-copies", "kweb"); code(err) != suite.InvalidRequest || !slices.Equal(claims(), all) {
+		t.Fatalf("unconfirmed: %v, claims %v", err, claims())
+	}
+	if err := f.runIn("kweb\n", "prune-copies", "kweb"); err != nil {
+		t.Fatal(err, f.out.String())
+	}
+	if got := claims(); !slices.Equal(got, []string{"pre-upgrade-1.2.0-vol-data", "vol-data"}) {
+		t.Errorf("claims left = %v", got)
+	}
+	out := f.out.String()
+	if !strings.Contains(out, "delete pre-upgrade-1.0.0-vol-data") || !strings.Contains(out, "keep   pre-upgrade-1.2.0-vol-data") || !strings.Contains(out, "Deleted claim pre-upgrade-1.1.0-vol-data.") {
+		t.Errorf("output:\n%s", out)
+	}
+	// apply's output reads a line whose first word holds a dot as a step result.
+	for _, line := range strings.Split(out, "\n") {
+		if w := strings.Fields(line); len(w) > 0 && strings.Contains(w[0], ".") {
+			t.Errorf("line reads as a step result: %q", line)
+		}
+	}
+	if err := f.run("prune-copies", "kweb", "--yes"); err != nil || !strings.Contains(f.out.String(), "nothing to delete") {
+		t.Errorf("second run: %v\n%s", err, f.out.String())
+	}
+	if err := f.run("prune-copies", "web", "--yes"); code(err) != suite.InvalidRequest || !strings.Contains(err.Error(), "runs on Docker") {
+		t.Errorf("Docker app: %v", err)
+	}
+}

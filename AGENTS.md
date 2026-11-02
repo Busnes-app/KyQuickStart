@@ -298,9 +298,12 @@ edge compatibility: `docs/redirect.md`.
   non-prerelease release of the image's repository (its `sources` table) on the pin's
   `MAJOR.MINOR` line, resolves the tag's digest from the registry, verifies it with
   `gh attestation verify` pinned to that repository's release workflow at the tag (KyDNS:
-  `release.yml`, the rest `release-image.yml`), and rewrites only `version`, the image and one
-  `# catalog-follow:` comment line above `images:`. Human comments, `upgrade` rules and docs are
-  not touched: an app's release that changes its upgrade rules, `status_path` or other fields
+  `release.yml`, the rest `release-image.yml`), and rewrites only `version`, the image, one
+  `# catalog-follow:` comment line above `images:` and, when `migrates_data`, `upgrade.data_since`:
+  kept (or started at the old pin) when the repository's migration paths (`sources`) hold the
+  same git objects at both tags, moved to the new version when they differ, are absent or
+  unreadable. A line move is a human PR that sets each `data_since` from the product's release
+  notes. Human comments, other `upgrade` rules and docs are not touched: an app's release that changes its upgrade rules, `status_path` or other fields
   needs a human PR. A newer `MAJOR.MINOR` only warns; an app that does not resolve, verify or
   load keeps its pin with a warning. The workflow tests `./internal/catalog/...` and builds,
   commits as `github-actions[bot]` ("catalog: follow <app> v<version>, ..."), pushes to `master`
@@ -478,9 +481,13 @@ edge compatibility: `docs/redirect.md`.
 - Deployments record their catalog version (`kyquickstart/version` in `compose.kyq.yaml` or on
   the app namespace), which outlives uninstall. Catalog versions are `MAJOR.MINOR.PATCH`, or
   `MAJOR.MINOR.PATCH.N` for a Ky product's dependency release (`X.Y.Z` orders as `X.Y.Z.0`). `apply`, `install` and `upgrade` gate a version
-  change on the manifest's upgrade rules: `migrates_data` first backs the app up (step
+  change on the manifest's upgrade rules: `migrates_data`, from a version older than
+  `data_since` when set, first backs the app up (step
   `<app>.pre-upgrade-backup`): a `kyquickstart backup` snapshot on Docker, a verified copy of each
-  claim into `pre-upgrade-<from>-vol-<name>` on Kubernetes (`internal/kube/preupgrade.go`). It is
+  claim into `pre-upgrade-<from>-vol-<name>` on Kubernetes (`internal/kube/preupgrade.go`), whose
+  new claims a pod mounts before the app stops, so storage without room fails with the app
+  running. `prune-copies APP` deletes copies from versions older than the installed one after a
+  typed confirmation, never the app's `vol-<name>` claims. It is
   `backup_required` where neither can run (no destination, named volumes, a root app on
   Kubernetes); any other upgrade needs an explicit, recorded acknowledgement. The manifest's `upgrade.note` is printed and recorded with it.
   Uninstall keeps data and secrets; unmanage drops the managed labels and the installer then

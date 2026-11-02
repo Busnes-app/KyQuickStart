@@ -60,6 +60,9 @@ commands:
   restore APP [--state DIR] [--snapshot ID [--replace] [--yes]]
                            list APP's snapshots, or restore one; a lost password comes on stdin
                            (its own line, then the typed app name, or the password alone with --yes)
+  prune-copies APP [--state DIR] [--yes]
+                           Kubernetes: list APP's pre-upgrade copy claims and, once the app name is
+                           typed back, delete those taken before upgrading from an older version
   handoff --kyyard-target T [--runner-container NAME] [--revoke]
                            hand the plan and target access to the suite runner on T, or take them back
   pull-plan --kyyard-target T [--runner-container NAME]
@@ -70,7 +73,7 @@ commands:
   verify-edge check NPM and product forwarded headers through public HTTPS (read-only)
   version [--runner-image]  print the release set, or the suite runner image this build pins
 
-flags for preflight, apply, verify-edge, backup, restore and the app commands:
+flags for preflight, apply, verify-edge, backup, restore, prune-copies and the app commands:
   --state DIR                          state directory holding stack.yaml (default .)
   --trust-host-key NAME=SHA256:<fp>    accept this unknown host key for target NAME
   --expected-client-ip ADDR           required for verify-edge: this workstation's address as the edge sees it
@@ -117,7 +120,7 @@ func Run(ctx context.Context, args []string, o Options) error {
 		return suiteCommand(ctx, cmd, args[1:], o)
 	case "handoff", "pull-plan":
 		return handoffCommand(ctx, cmd, args[1:], o)
-	case "backup", "restore":
+	case "backup", "restore", "prune-copies":
 		return backupCommand(ctx, cmd, args[1:], o)
 	case "version":
 		return versionCommand(args[1:], o)
