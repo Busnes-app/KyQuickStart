@@ -14,6 +14,13 @@ state directory, target data and target-held credentials; do not reset them as a
 
 ## Unreleased
 
+- An in-cluster NPM can take a LoadBalancer address from the cluster's Cilium LB IPAM or MetalLB
+  (#99): `load_balancer_address` on the `npm` app makes `app-public` a LoadBalancer on 80 and 443
+  at that address, so internal routes work on `client_port: 443` instead of `:30443`. Preflight
+  refuses an address no announced pool holds, or another Service holds, and needs `list` on the
+  pools and announcements; `handoff` grants the runner those `list` rules only for such a plan.
+  Choose it before KyIdentity's setup: `client_port` cannot change afterwards
+  ([edge guide](docs/edge.md#a-load-balancer-address-load_balancer_address)).
 - The catalog moves every Ky app to its 0.6 line: KyCalendar, KyDNS, KyDrive, KyIdentity,
   KyMessage, KyNotes, KyPost, kyPulse, KyRecovery and KyYard 0.6.0, the suite redesign release.
   Each pin is the digest its release workflow attested. No app's 0.6.0 changes a migration (its

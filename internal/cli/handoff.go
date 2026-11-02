@@ -233,7 +233,7 @@ func (s *session) handoff(ctx context.Context, r handoffRecord, revoke bool) err
 					err = d.c.RevokeRunner(ctx)
 				} else {
 					// One target per cluster: a runner on this target is in this cluster.
-					kubeconfigs[t.Name], err = d.c.GrantRunner(ctx, owner.RunnerID, t.Name == r.KyYardTarget)
+					kubeconfigs[t.Name], err = d.c.GrantRunner(ctx, owner.RunnerID, t.Name == r.KyYardTarget, len(s.loadBalancers(t.Name)) > 0)
 					s.redactTokens(kubeconfigs[t.Name])
 				}
 				summary = append(summary, t.Name+": service account kyquickstart-runner")

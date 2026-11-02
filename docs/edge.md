@@ -99,7 +99,9 @@ On Kubernetes you run the connector yourself: give it a source address of its ow
 `https://<node running NPM>:<client_port>`, origin server name and Host header set to the
 hostname. `<client_port>` is the NodePort publishing NPM's 443 (`node_ports`, default 30443).
 With a [`kube_vip_address`](#an-address-that-follows-npm-kube_vip_address), use
-`https://<kube_vip_address>:443` instead: it survives NPM moving node.
+`https://<kube_vip_address>:443` instead: it survives NPM moving node. With a
+[`load_balancer_address`](#a-load-balancer-address-load_balancer_address), use
+`https://<load_balancer_address>:443`.
 A connector on a Docker host behind NAT takes that host's address, which then cannot also be a
 client of the host's own internal routes; a container with its own LAN address (for example
 on an ipvlan network) avoids that.
@@ -333,8 +335,8 @@ apps:
   Service but this one already holds, naming it, before anything is created. Its
   `externalTrafficPolicy: Local` keeps the client address, which each route's `connector_cidr`
   check, or a lan edge's `allow_cidrs`, depends on: only the node running NPM answers.
-- With `kube_vip_address`, `app-public` is instead a LoadBalancer at that address (see below);
-  its NodePorts stay.
+- With `kube_vip_address` or `load_balancer_address`, `app-public` is instead a LoadBalancer at
+  that address, serving 80 and 443 there (see below); its NodePorts stay.
 - Service `app`, ClusterIP, for the admin API on port 81 only. Port 81 can never be published:
   the catalog refuses it in `node_ports`, and `apply` repairs a Service edited to expose other
   ports.
@@ -434,6 +436,50 @@ address a LoadBalancer Service asks for, so admit only approved namespace and ad
 (a ValidatingAdmissionPolicy is enough). The address must be an unused LAN IPv4 address
 outside DHCP. A node that dies takes the address with it until Kubernetes reschedules NPM
 (about five minutes with default eviction).
+
+### A load-balancer address (`load_balancer_address`)
+
+By default NPM is reached on NodePorts (30080/30443) and internal routes carry `:30443`. To
+serve them on 443, give NPM a LoadBalancer address from the cluster's own load-balancer
+implementation, Cilium LB IPAM (with L2 announcements or BGP) or MetalLB:
+
+```yaml
+apps:
+  - name: npm
+    target: k80
+    load_balancer_address: 192.168.1.80   # one unused LAN IPv4 address in a pool
+edges:
+  - target: k80
+    provider: lan                          # or a tunnel edge with internal routes
+    client_port: 443                       # the default: internal routes have no port
+```
+
+`app-public` becomes a LoadBalancer on ports 80 and 443 requesting that address with both
+implementations' annotations (`lbipam.cilium.io/ips`, `metallb.io/loadBalancerIPs`); each reads
+only its own. It keeps `externalTrafficPolicy: Local`, so NPM still sees the client's own
+address for `allow_cidrs`, and the address is announced from a node running NPM's pod. Its
+NodePorts stay. Reruns keep what MetalLB writes on the Service and repair a removed address
+request; removing the field returns `app-public` to a NodePort. It excludes `kube_vip_address`.
+
+Preflight refuses the plan, changing nothing, unless the cluster can assign the address:
+Cilium LB IPAM or MetalLB is installed, an enabled pool (`CiliumLoadBalancerIPPool` blocks or
+MetalLB `IPAddressPool` addresses) holds the address, that implementation has an announcement
+(`CiliumL2AnnouncementPolicy` or Cilium BGP advertisements; MetalLB `L2Advertisement` or
+`BGPAdvertisement`), and no other Service holds or requests it. It needs `list` on those
+resources; `handoff` grants the runner the same `list` rules only for a plan that sets the
+field. It does not check that Cilium's agent has L2 announcements enabled, or a pool's
+namespace or Service selectors: if the Service stays pending, `kubectl -n kyq-npm describe
+service app-public` names the reason.
+
+Unlike kube-vip, MetalLB and Cilium do not change where NPM's requests leave the cluster: they
+leave from the node running NPM, so `egress_address` is unchanged. Point connectors and
+`lan_dns.address` at the load-balancer address.
+
+**Decide this before the first apply.** `client_port` cannot change once KyIdentity's setup has
+run: it is part of the issuer and of every added client's redirect URLs, and apply then refuses
+moving it (`issuer_changed`). Choose the load-balancer address and `client_port: 443` before
+KyIdentity's setup and KyRecovery's custodian ceremony.
+
 ## Managed certificates
 
 On a Kubernetes edge, NPM can request a Let's Encrypt certificate through a DNS-01 challenge, so

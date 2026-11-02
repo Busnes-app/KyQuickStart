@@ -201,6 +201,12 @@ func render(a App) objects {
 						o.Public.Spec.Type = corev1.ServiceTypeLoadBalancer
 						o.Public.Annotations = kubeVIPAnnotations(k.KubeVIPAddress)
 					}
+					if k.LoadBalancerAddress != "" {
+						// The cluster's Cilium LB IPAM or MetalLB announces the address from a node
+						// running NPM (Local), so clients reach 80 and 443 there. Egress is unchanged.
+						o.Public.Spec.Type = corev1.ServiceTypeLoadBalancer
+						o.Public.Annotations = loadBalancerAnnotations(k.LoadBalancerAddress)
+					}
 				}
 				sp.NodePort = int32(node)
 				o.Public.Spec.Ports = append(o.Public.Spec.Ports, sp)
