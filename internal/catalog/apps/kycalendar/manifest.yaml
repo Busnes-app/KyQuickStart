@@ -38,6 +38,8 @@ kubernetes:
   image: kycalendar
   env:
     KYCALENDAR_BACKUP_ALLOW_PRIVATE_RECOVERY: "{{private_recovery}}"
+    # KyPost pairing through KyIdentity: true only when the plan routes KyPost privately.
+    KYCALENDAR_KYPOST_ALLOW_PRIVATE: "{{private_peer}}"
     KY_HOST: 0.0.0.0
     KY_PORT: "8080"
     KY_APP_NAME: KyCalendar

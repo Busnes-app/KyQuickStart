@@ -13,10 +13,11 @@ import (
 // before KyYard rendered them: adding a field for one app must not redeploy the others.
 // Ky release pins are replaced (catalogtest.Unpinned), so following a release changes none.
 // The non-root apps' hashes moved once, on purpose, with #105's fsGroup fix: apply redeploys
-// them, and their init container repairs the modes.
+// them, and their init container repairs the modes. KyCalendar's moved with #100's
+// KYCALENDAR_KYPOST_ALLOW_PRIVATE.
 var renderedHashes = map[string]string{
 	"euro-office": "a65a4a42bbe42da10dc46343eac3260d5dcf030b79e42f80cf270256f355e3e0",
-	"kycalendar":  "96bb33a50a77d2b5a9f43a5aa77537ecff07d5054f55073ab1f6a34668bbe62f",
+	"kycalendar":  "c86c0461c25c835054e03006f023479cd0a6a651c5018564e8ccfbe5dc4d3df3",
 	"kyidentity":  "84e774aa56fc0e360fcb8660367c144276224dfa878db5c130ecf4337b299f1f",
 	"kynotes":     "f73a4ae2b18c4402a84c1e3a8912568dece4b9db6f7b0b6c5cae1aa54414f39c",
 	"kypulse":     "042b82fb21ae7470f8958bc785efd69ccd861e436dfcbba50ffc0ff35894996b",
@@ -39,7 +40,7 @@ func TestRenderGolden(t *testing.T) {
 			t.Errorf("%s has no recorded hash", name)
 			continue
 		}
-		c = c.WithPrivateRecovery(false)
+		c = c.WithPrivateRecovery(false).WithPrivatePeer(false)
 		c.Kubernetes = c.Kubernetes.WithHost(name + ".example.test")
 		a := App{Name: name, Catalog: c, ReleaseSet: "rs-1", Edge: "npm", StorageClass: "standard", RunnerImage: testRunnerImage}
 		if got := render(a).hash(); got != want {

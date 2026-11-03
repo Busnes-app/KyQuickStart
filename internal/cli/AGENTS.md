@@ -11,7 +11,8 @@ Plain terminal planning and command orchestration for the operator-run installer
   and every plan change give a plan its `installation_id`, published after the steps pass;
   markers record it only once published. `--adopt-edge-hosts` and `--take-over-target` are
   apply-only. A `kube://` edge gets its token and tunnel from the
-  Kubernetes driver; an app's `node_ports` and `kube_vip_address` override the catalog's in the session only.
+  Kubernetes driver; an app's `node_ports`, `kube_vip_address` and `load_balancer_address` override the catalog's in the session only;
+  `loadBalancers` gives a target's addresses to `kube.LoadBalancerCheck` in preflight and to `GrantRunner`.
   `version` prints the release set; `version --runner-image` prints `Options.RunnerImage` or
   fails "this build pins no suite runner image (source build); use a release binary".
 - `suite.go` owns `install`, `uninstall`, `unmanage`, `upgrade` and `status`, the upgrade gate
@@ -33,7 +34,10 @@ Plain terminal planning and command orchestration for the operator-run installer
   them out, since KyYard decodes status strictly.
 - `handoff.go` owns `handoff` (grant, `--revoke`) and `pull-plan`: it reaches the runner only
   through the KyYard target driver's `execRunner` (`docker exec` over SSH, or `pods/exec` into
-  the one runner pod `--runner-pod` selects, permission-checked first), holds every target lock
+  the one runner pod `--runner-pod` selects, permission-checked first; its default is
+  `defaultRunnerPod`, the catalog KyYard's pod on a target holding it). `pull-plan` and `--revoke`
+  keep `handoff.json`'s runner without `--kyyard-target` or with the recorded one and no runner
+  flag, and refuse another target without one (`invalid_request`). It holds every target lock
   while granting, and publishes the plan before markers change owner. `handoff.json` in the state
   directory makes `plan` refuse while the runner owns the plan. `session.guard` is the
   ownership rule for every locked command and CLI `status`.
@@ -233,7 +237,9 @@ Plain terminal planning and command orchestration for the operator-run installer
   KyPost's `apply-setup --file -` on stdin, rechecks the pairing's key, deposits once and
   passes when KyRecovery lists KyPost's last backup; without the capability, the confirmation
   or the ceremony it passes with a pair-by-hand note. KyCalendar's and KyPost's handovers add
-  that their invitation pairing is not configured (#100); KyIdentity's names its default
+  `calendarPairing` (#100): with both in the plan, that they pair through KyIdentity's suite
+  directory and how to check it, else that the other app would pair; `privatePeer` sets their
+  `{{private_peer}}` option (`suitePeers`); KyIdentity's names its default
   Busnes.app push relays (#98).
   `amendLate` (apply only, read-only, before preflight) records an `identity_amendment` for each
   app whose client the running KyIdentity's retained setup lacks, all or one, when it advertises
