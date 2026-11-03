@@ -37,6 +37,9 @@ native_mail:
 # Ollama model are left out.
 backup:
   volumes: [config, private, state]
+# Before #151 these were named volumes owned by the image's kypost (uid 1000), which
+# kyquickstart backup cannot read. Apply copies each into its bind directory once.
+from_volumes: [config, private, state, logs, ollama-models]
 upgrade:
   # 0.4.3 -> 0.5.0.1 changes no table, only a column default; 0.6.0 changes no stored state (a
   # device awaiting approval is held in memory), so it needs an acknowledgement.

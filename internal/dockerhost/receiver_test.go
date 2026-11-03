@@ -14,7 +14,7 @@ import (
 )
 
 // ReceiverChecks run for real: only the pinned executable, never through a symlink or
-// writable by others, and a TLS directory the container's uid 1000 can read.
+// writable by others, and a TLS directory the container's user, the target user, can read.
 func TestReceiverChecks(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("Docker targets are Linux hosts; the checks use GNU or BusyBox stat")
@@ -44,9 +44,9 @@ func TestReceiverChecks(t *testing.T) {
 	if !got["maddy binary"] || got["smtp address"] {
 		t.Fatalf("findings = %v (192.0.2.77 is no address of this host)", got)
 	}
-	// Only uid 1000 owns the key as KyPost's container user does.
-	if want := os.Getuid() == 1000; got["receiver tls"] != want {
-		t.Errorf("receiver tls = %v, want %v for uid %d", got["receiver tls"], want, os.Getuid())
+	// The target user owns the key, as KyPost's container user (#151).
+	if !got["receiver tls"] {
+		t.Errorf("receiver tls refused the target user's own key (uid %d)", os.Getuid())
 	}
 	if want := runtime.GOARCH == "amd64"; got["mail receiver"] != want {
 		t.Errorf("mail receiver = %v on %s", got["mail receiver"], runtime.GOARCH)

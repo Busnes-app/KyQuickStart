@@ -117,10 +117,19 @@ func (s *session) refuseMailChange(ctx context.Context) error {
 			return err
 		}
 		if !found && m != nil {
-			// No Compose file, but data from an earlier install (uninstall keeps volumes) is
-			// of an unknown mode: never start native mail on it.
+			// No Compose file, but data from an earlier install (uninstall keeps its state
+			// directory, and the volume an install before #151 used) is of an unknown mode:
+			// never start native mail on it.
+			state := path.Join(t.Root, name, "state")
 			if _, err := host.c.Run(ctx, "docker volume inspect "+remote.Quote("kyq-"+name+"_state")+" >/dev/null 2>&1", nil); err == nil {
 				return fmt.Errorf("%s on %s has data from an earlier install (Docker volume kyq-%s_state) and no record of its mail mode: native mail needs a fresh KyPost. Remove the mail block, or install on a host without KyPost data; nothing was changed", name, t.Name, name)
+			}
+			out, err := host.c.Run(ctx, "d="+remote.Quote(state)+`; if [ -e "$d" ] || [ -L "$d" ]; then ls -A "$d" | head -c 1; fi`, nil)
+			if err != nil {
+				return err
+			}
+			if len(out) > 0 {
+				return fmt.Errorf("%s on %s has data from an earlier install (%s) and no record of its mail mode: native mail needs a fresh KyPost. Remove the mail block, or install on a host without KyPost data; nothing was changed", name, t.Name, state)
 			}
 		}
 		switch {
@@ -129,7 +138,7 @@ func (s *session) refuseMailChange(ctx context.Context) error {
 		case found && native && m == nil:
 			return fmt.Errorf("%s on %s runs native mail: without it its users lose access to their mailboxes, which are not converted back to IMAP. Restore the mail block; nothing was changed", name, t.Name)
 		case m != nil && m.Receiver != nil && !receiver:
-			_, test, err := nativeProductExec(host, stack.Integration{Product: name}, productAdapter{binary: "test", runtimeUser: "kypost"})
+			_, test, err := nativeProductExec(host, stack.Integration{Product: name}, productAdapter{binary: "test"})
 			if err != nil {
 				return err
 			}
@@ -137,7 +146,7 @@ func (s *session) refuseMailChange(ctx context.Context) error {
 				return fmt.Errorf("%s's receiver needs its receiving spool, which KyPost creates only after a domain is verified and a mailbox exists: apply native mail without mail.receiver first; nothing was changed", name)
 			}
 			if _, err := test(ctx, []string{"-d", postSpool}, nil); err != nil {
-				return fmt.Errorf("%s on %s has no receiving spool (%s), so its receiver would not start: once a domain is verified and a mailbox exists, create it once with\n  docker exec --user kypost -e KYPOST_NATIVE_RECEIVING=true %s kypost-server receiving init\nthen apply again; nothing was changed", name, t.Name, postSpool, postContainer)
+				return fmt.Errorf("%s on %s has no receiving spool (%s), so its receiver would not start: once a domain is verified and a mailbox exists, create it once with\n  docker exec -e KYPOST_NATIVE_RECEIVING=true %s kypost-server receiving init\nthen apply again; nothing was changed", name, t.Name, postSpool, postContainer)
 			}
 		}
 	}
@@ -308,10 +317,10 @@ KyPost at https://%[1]s/: native mail for %[6]s, chosen at install. KyPost store
   Outstanding human steps, on %[5]s for the commands:
   1. Its local "admin" break-glass account: separate from KyIdentity's %[2]s, for when
      KyIdentity is down and to release a restore hold. Read its one-time password:
-       docker exec --user kypost %[4]s cat /kypost/config/first-run-password.txt
+       docker exec %[4]s cat /kypost/config/first-run-password.txt
      Sign in with it once at https://%[1]s/ with KyPost's own password sign-in, not KyIdentity,
      and change it. Only after that, delete the file:
-       docker exec --user kypost %[4]s rm /kypost/config/first-run-password.txt
+       docker exec %[4]s rm /kypost/config/first-run-password.txt
   2. Publish each domain's TXT record below exactly, then, as %[2]s, Admin → Server → Mail
      domain → Verify. Keep it published for as long as the domain is in use.
   3. Outgoing mail goes only through an SMTP relay account you own; KyQuickStart configures
@@ -321,7 +330,7 @@ KyPost at https://%[1]s/: native mail for %[6]s, chosen at install. KyPost store
   4. Confirm %[3]s's mailbox appears in Admin → Server → Mail addresses. A mailbox waits while
      its domain is unverified or the identity has no primary email there.
 %[7]s  Then run KyPost's configuration report and resolve every failed check:
-       docker exec --user kypost %[4]s kypost-server setup-status
+       docker exec %[4]s kypost-server setup-status
      Its externalChecks remain yours: HTTPS and the forwarded client address, receiver TLS
      and reachability, actual incoming and outgoing mail (headers, Sent), and a backup restored
      on another host. A passing report is not acceptance.
@@ -336,7 +345,7 @@ KyPost at https://%[1]s/: native mail for %[6]s, chosen at install. KyPost store
 // postReceiverPending is step 5 before the receiver is in the plan.
 const postReceiverPending = `  5. Receiving is off: no mail port is open. Once a domain is verified and a mailbox exists,
      create the receiving spool, once (never again; it refuses an existing one):
-       docker exec --user kypost -e KYPOST_NATIVE_RECEIVING=true %[1]s kypost-server receiving init
+       docker exec -e KYPOST_NATIVE_RECEIVING=true %[1]s kypost-server receiving init
      Install the exact Maddy 0.9.5 binary KyPost pins and a certificate for the receiving
      hostname (docs/guided-setup.md, "KyPost native mail"), add mail.receiver to stack.yaml
      (or rerun plan) and apply again: that publishes TCP 25 and starts Maddy and Rspamd.
@@ -393,7 +402,7 @@ func askMailbox(p *prompts, out io.Writer, app, target string) (*stack.Mail, err
 	if r.MaddyBinary, err = p.ask(k+"maddy_binary", "Path on "+target+" of the Maddy 0.9.5 binary KyPost pins", "/opt/kypost-receiving/maddy", stack.ValidTargetPath); err != nil {
 		return nil, err
 	}
-	if r.TLSDir, err = p.ask(k+"tls_dir", "Directory on "+target+" holding fullchain.pem and privkey.pem (owned by uid 1000, 0600)", "", stack.ValidTargetPath); err != nil {
+	if r.TLSDir, err = p.ask(k+"tls_dir", "Directory on "+target+" holding fullchain.pem and privkey.pem (privkey.pem owned by the target's SSH user, 0600)", "", stack.ValidTargetPath); err != nil {
 		return nil, err
 	}
 	confirm, err := p.ask(k+"publish_port_25", "Publish TCP port 25 on "+r.SMTPAddress+" to the internet? yes/no (no leaves the receiver out)", "no", oneOf("yes", "no"))

@@ -81,7 +81,7 @@ func TestKyPostMailRenderings(t *testing.T) {
 		native := map[string]string{"imap": "false", "native": "true"}[mode]
 		if len(svc) != 1 || !slices.Equal(svc["app"].Ports, []string{"192.0.2.1:18866:5866"}) || strings.Contains(string(a.Compose), ":25:2525") || strings.Contains(string(a.Compose), "rspamd:") ||
 			e["KYPOST_NATIVE_MAIL"] != native || e["KYPOST_NATIVE_RECEIVING"] != "false" || e["KYPOST_NATIVE_RECEIVER"] != "false" || e["KYPOST_RECEIVING_RSPAMD"] != "" ||
-			len(a.Binds) != 0 || len(a.Nested) != 0 || !slices.Equal(a.Services, []string{"app"}) {
+			!slices.Equal(a.Binds, []string{"config", "logs", "ollama-models", "private", "state"}) || len(a.Nested) != 0 || !slices.Equal(a.Services, []string{"app"}) {
 			t.Errorf("%s: services %+v, binds %v", mode, svc, a.Binds)
 		}
 	}
@@ -205,8 +205,8 @@ func TestKyPostNativeHandover(t *testing.T) {
 	}{
 		{postMailNative, []string{"native mail for mail-test.example.com, chosen at install", "an administrator (kypost.admin) gets no\n  mailbox", "owner, the owner's everyday identity",
 			"controlled\n  qualification profile for a dedicated test domain", "change production MX only under your own approved plan", "Check\n     saved relay",
-			"Receiving is off: no mail port is open", "docker exec --user kypost -e KYPOST_NATIVE_RECEIVING=true kyq-kypost-app-1 kypost-server receiving init",
-			"add mail.receiver to stack.yaml", "docker exec --user kypost kyq-kypost-app-1 kypost-server setup-status", "64 MiB", "KYPOST_BULK_BACKUP_REPOSITORY",
+			"Receiving is off: no mail port is open", "docker exec -e KYPOST_NATIVE_RECEIVING=true kyq-kypost-app-1 kypost-server receiving init",
+			"add mail.receiver to stack.yaml", "docker exec kyq-kypost-app-1 kypost-server setup-status", "64 MiB", "KYPOST_BULK_BACKUP_REPOSITORY",
 			"This plan routes no KyRecovery", "Install KyCalendar from this catalog too and the two pair for calendar invitations"}},
 		{postMailReceiver, []string{"Maddy answers on 192.0.2.1:25 for mx.mail-test.example.com", "no TCP proxy in front", "supervisorctl -c /etc/supervisord.conf status receiver", "/srv/kypost-receiving/tls"}},
 	} {
@@ -307,6 +307,18 @@ func TestKyPostMailModeRefusals(t *testing.T) {
 	if err := refuse("", &fakePost{files: map[string]string{}}); err != nil {
 		t.Fatalf("IMAP over earlier data: %v", err)
 	}
+	// Since #151 an uninstall leaves the state bind directory instead; empty, it is no data.
+	f.h.fail = "docker volume inspect"
+	state := filepath.Join(f.h.root, "kypost", "state")
+	os.MkdirAll(state, 0o700)
+	if err := refuse(postMailNative, &fakePost{files: map[string]string{}}); err != nil {
+		t.Fatalf("native over an empty state directory: %v", err)
+	}
+	os.WriteFile(filepath.Join(state, "kypost.db"), []byte("x"), 0o600)
+	if err := refuse(postMailNative, &fakePost{files: map[string]string{}}); err == nil || !strings.Contains(err.Error(), "has data from an earlier install ("+state+")") {
+		t.Fatalf("earlier data in the state directory: %v", err)
+	}
+	os.RemoveAll(state)
 	// deploySteps refuses before any step.
 	deployed("false", "false")
 	postMailPlan(t, f, postMailNative)

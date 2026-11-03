@@ -371,7 +371,7 @@ func TestKyPostEntry(t *testing.T) {
 	}
 	a := cat["kypost"]
 	o := a.OIDC
-	if a.Category != "ky" || !VersionAtLeast(a.Version, "0.4.2") || a.Kubernetes != nil || len(a.Secrets) != 0 || len(a.Binds) != 0 || !slices.Equal(a.Services, []string{"app"}) || !slices.Equal(a.DependsOn, []string{"kyidentity"}) || a.Health.TimeoutSeconds != 300 {
+	if a.Category != "ky" || !VersionAtLeast(a.Version, "0.4.2") || a.Kubernetes != nil || len(a.Secrets) != 0 || !slices.Equal(a.Services, []string{"app"}) || !slices.Equal(a.DependsOn, []string{"kyidentity"}) || a.Health.TimeoutSeconds != 300 {
 		t.Fatalf("manifest = %+v", a.Manifest)
 	}
 	if !kyPin(a, "kypost", "kypost-server") {
@@ -399,8 +399,13 @@ func TestKyPostEntry(t *testing.T) {
 		Entrypoint      []string
 		Environment     map[string]string
 		Secrets         []string
+		Volumes         []string
+		Tmpfs           []string
 	}
-	var c struct{ Services map[string]service }
+	var c struct {
+		Services map[string]service
+		Volumes  map[string]any
+	}
 	if err := yaml.Unmarshal(a.WithRoute(Route{Host: "post.example.com", Forward: "192.168.1.91:18866"}).WithPrivateRecovery(false).Compose, &c); err != nil {
 		t.Fatal(err)
 	}
@@ -408,12 +413,24 @@ func TestKyPostEntry(t *testing.T) {
 	if len(c.Services) != 1 || !ok {
 		t.Fatalf("services = %v", c.Services)
 	}
-	if s.Image != a.Images["kypost"] || s.Platform != "linux/amd64" || s.User != "kypost" || !s.ReadOnly || !slices.Equal(s.CapDrop, []string{"ALL"}) || s.CapAdd != nil ||
+	// #151: every data directory is a ./<name> bind directory the target user owns, so
+	// kyquickstart backup can read it; installs from before have theirs copied by apply.
+	binds := []string{"config", "private", "state", "logs", "ollama-models"}
+	for i, v := range binds {
+		if i >= len(s.Volumes) || s.Volumes[i] != "./"+v+":/kypost/"+v {
+			t.Fatalf("volumes = %v", s.Volumes)
+		}
+	}
+	if len(s.Volumes) != len(binds) || c.Volumes != nil || !slices.Equal(a.Binds, slices.Sorted(slices.Values(binds))) || !slices.Equal(a.FromVolumes, binds) ||
+		!slices.Equal(a.Backup.Volumes, []string{"config", "private", "state"}) || !slices.Contains(s.Tmpfs, "/home/kypost:uid=${KYQ_UID:?},gid=${KYQ_GID:?},mode=0700") || s.Environment["HOME"] != "/home/kypost" {
+		t.Fatalf("volumes %v, top-level %v, binds %v, from_volumes %v, tmpfs %v", s.Volumes, c.Volumes, a.Binds, a.FromVolumes, s.Tmpfs)
+	}
+	if s.Image != a.Images["kypost"] || s.Platform != "linux/amd64" || s.User != "${KYQ_UID:?}:${KYQ_GID:?}" || !s.ReadOnly || !slices.Equal(s.CapDrop, []string{"ALL"}) || s.CapAdd != nil ||
 		!slices.Equal(s.SecurityOpt, []string{"no-new-privileges:true"}) || s.StopGracePeriod != "36m" || s.PidsLimit != 512 || s.MemLimit != "8g" || s.Secrets != nil {
 		t.Fatalf("service = %+v", s)
 	}
 	if !slices.Equal(s.Ports, []string{"192.168.1.91:18866:5866"}) ||
-		!slices.Equal(s.Entrypoint, []string{"/bin/sh", "-c", "kypost-server --mode bootstrap-admin && kypost-server migrate-native && exec supervisord -c /etc/supervisord.conf"}) {
+		!slices.Equal(s.Entrypoint, []string{"/bin/sh", "-c", "kypost-server --mode bootstrap-admin && kypost-server migrate-native && umask 077 && sed '/^chown=/d' /etc/supervisord.conf > /tmp/supervisord.conf && exec supervisord -c /tmp/supervisord.conf"}) {
 		t.Fatalf("ports %v, entrypoint %v", s.Ports, s.Entrypoint)
 	}
 	e := s.Environment
@@ -558,6 +575,8 @@ func TestLoadRejects(t *testing.T) {
 		"backup no service":     {manifest + strings.Replace(backup, "  service: web\n", "", 1), composeVol, "not a Compose service"},
 		"backup empty arg":      {manifest + strings.Replace(backup, "-Fc", `""`, 1), composeVol, "empty argument"},
 		"backup unknown volume": {manifest + backup, compose, "volumes"},
+		"from named volume":     {manifest + "from_volumes: [data]\n", composeVol, "from_volumes"},
+		"from twice":            {manifest + "from_volumes: [data, data]\n", compose + "    volumes: [./data:/data]\n", "from_volumes"},
 		"skip outside backup":   {manifest + strings.Replace(backup, "data/cache", "other/cache", 1), composeVol, "skip"},
 		"skip whole volume":     {manifest + strings.Replace(backup, "data/cache", "data", 1), composeVol, "skip"},
 		"skip dot-dot":          {manifest + strings.Replace(backup, "data/cache", "data/../x", 1), composeVol, "skip"},

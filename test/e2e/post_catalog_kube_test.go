@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -68,7 +69,7 @@ func preparePost(t *testing.T, work, catalogDir string, d driveTarget) int {
 	for i, r := range [][2]string{
 		{`    ports: ["{{forward}}:5866"]` + "\n", `    ports: ["{{forward}}:5866"]` + "\n    extra_hosts: [\"" + catalogIdentityHost + ":" + d.forward + "\", \"registry.ollama.ai:127.0.0.1\"]\n"},
 		{`      KYPOST_BACKUP_KEEP: "7"` + "\n", `      KYPOST_BACKUP_KEEP: "7"` + "\n      SSL_CERT_FILE: /test-ca/ca.pem\n"},
-		{"      - ollama-models:/kypost/ollama-models\n", "      - ollama-models:/kypost/ollama-models\n      - " + ca + ":/test-ca/ca.pem:ro\n"},
+		{"      - ./ollama-models:/kypost/ollama-models\n", "      - ./ollama-models:/kypost/ollama-models\n      - " + ca + ":/test-ca/ca.pem:ro\n"},
 	} {
 		if !strings.Contains(patched, r[0]) {
 			t.Fatalf("KyPost's compose template changed; test plumbing (%s) for %q", postPlumbing[i], r[0])
@@ -130,8 +131,8 @@ func checkCatalogPost(t *testing.T, out string, d driveTarget, port int, get, co
 	for _, want := range []string{
 		"KyPost at https://" + catalogPostURLHost + "/: webmail", "as prepared-admin, for administration only", "can also add mail", "or as prepared-user for mail",
 		"KyIdentity role kypost.user", "opens no mail port", "this release offers no setting to allow one", "about 2.9 GB", "for when\n     KyIdentity is down", recoveryLine(out),
-		"on nas:\n       docker exec --user kypost " + postContainer + " cat /kypost/config/first-run-password.txt",
-		"docker exec --user kypost " + postContainer + " rm /kypost/config/first-run-password.txt",
+		"on nas:\n       docker exec " + postContainer + " cat /kypost/config/first-run-password.txt",
+		"docker exec " + postContainer + " rm /kypost/config/first-run-password.txt",
 		"To end every live session, on nas:\n       docker restart " + postContainer,
 	} {
 		if !strings.Contains(out, want) {
@@ -146,7 +147,9 @@ func checkCatalogPost(t *testing.T, out string, d driveTarget, port int, get, co
 		t.Fatalf("KyPost container is %s, the handover names %s", name, postContainer)
 	}
 	hc := docker(t, "inspect", c, "--format", "{{.Config.User}} {{.HostConfig.ReadonlyRootfs}} {{.HostConfig.CapDrop}} {{len .HostConfig.CapAdd}} {{.HostConfig.SecurityOpt}} {{json .HostConfig.PortBindings}}")
-	want := `kypost true [ALL] 0 [no-new-privileges:true] {"5866/tcp":[{"HostIp":"` + d.forward + `","HostPort":"` + strconv.Itoa(port) + `"}]}`
+	// The target user (#151), who owns its bind directories.
+	uid := docker(t, "exec", d.name, "id", "-u")
+	want := uid + ":" + docker(t, "exec", d.name, "id", "-g") + ` true [ALL] 0 [no-new-privileges:true] {"5866/tcp":[{"HostIp":"` + d.forward + `","HostPort":"` + strconv.Itoa(port) + `"}]}`
 	if hc != want {
 		t.Fatalf("container = %s, want %s", hc, want)
 	}
@@ -189,15 +192,15 @@ func checkCatalogPost(t *testing.T, out string, d driveTarget, port int, get, co
 		}
 	}
 	t.Logf("KyPost listens on %v", bound)
-	stat := docker(t, "exec", "--user", "kypost", c, "stat", "-c", "%n %a %u", "/kypost/config", "/kypost/private", "/kypost/state", postSetupDir, postSetupDir+"/client.secret", postSetupDir+"/setup.json")
-	wantStat := "/kypost/config 700 1000\n/kypost/private 700 1000\n/kypost/state 700 1000\n" + postSetupDir + " 700 1000\n" + postSetupDir + "/client.secret 600 1000\n" + postSetupDir + "/setup.json 600 1000"
+	stat := docker(t, "exec", c, "stat", "-c", "%n %a %u", "/kypost/config", "/kypost/private", "/kypost/state", postSetupDir, postSetupDir+"/client.secret", postSetupDir+"/setup.json")
+	wantStat := strings.ReplaceAll("/kypost/config 700 U\n/kypost/private 700 U\n/kypost/state 700 U\n"+postSetupDir+" 700 U\n"+postSetupDir+"/client.secret 600 U\n"+postSetupDir+"/setup.json 600 U", "U", uid)
 	if stat != wantStat {
 		t.Fatalf("setup files:\n%s", stat)
 	}
 	if missing := docker(t, "exec", c, "sh", "-c", "test ! -e "+postSetupDir+"/directory.secret && echo absent"); missing != "absent" {
 		t.Fatal("KyPost was given a directory secret")
 	}
-	report := docker(t, "exec", "--user", "kypost", c, "/usr/local/bin/kypost-server", "apply-setup", "--file", postSetupDir+"/setup.json", "--check")
+	report := docker(t, "exec", c, "/usr/local/bin/kypost-server", "apply-setup", "--file", postSetupDir+"/setup.json", "--check")
 	var r struct {
 		Applied, Pending     []string
 		ConfigurationApplied bool
@@ -221,7 +224,7 @@ func checkCatalogPost(t *testing.T, out string, d driveTarget, port int, get, co
 	t.Logf("KyPost sees clients from %s through the edge", network.ClientIP)
 	var secrets []string
 	for _, f := range []string{postSetupDir + "/client.secret", "/kypost/private/pairing.key"} {
-		s := docker(t, "exec", "--user", "kypost", c, "cat", f)
+		s := docker(t, "exec", c, "cat", f)
 		if len(s) < 32 {
 			t.Fatalf("%s is %d bytes", f, len(s))
 		}
@@ -369,7 +372,7 @@ func checkPostHandover(t *testing.T, ctx context.Context, out string, d driveTar
 	if err != nil || !strings.HasPrefix(got, "username: admin\npassword: ") || len(strings.TrimSpace(strings.TrimPrefix(got, "username: admin\npassword: "))) < 12 {
 		t.Fatalf("handover read %q: %v", read, err)
 	}
-	if stat := docker(t, "exec", postContainer, "stat", "-c", "%a %u", "/kypost/config/first-run-password.txt"); stat != "600 1000" {
+	if stat := docker(t, "exec", postContainer, "stat", "-c", "%a %u", "/kypost/config/first-run-password.txt"); stat != "600 "+docker(t, "exec", d.name, "id", "-u") {
 		t.Fatalf("first-run password file: %s", stat)
 	}
 	status := func() int {
@@ -416,4 +419,55 @@ func listenAddr(hexAddr string) string {
 	}
 	ip, _ := netip.AddrFromSlice(b)
 	return netip.AddrPortFrom(ip, uint16(p)).String()
+}
+
+// postVolume is the named volume a KyPost installed before #151 kept its configuration in.
+const postVolume = "kyq-kypost_config"
+
+// seedPostVolume makes the Docker host look like it ran a KyPost from before #151: its
+// configuration in the named volume, owned by the image's kypost (uid 1000), 0700 and 0600.
+func seedPostVolume(t *testing.T) {
+	t.Helper()
+	docker(t, "volume", "create", postVolume)
+	t.Cleanup(func() { exec.Command("docker", "volume", "rm", "-f", postVolume).Run() })
+	docker(t, "run", "--rm", "--memory", "64m", "--memory-swap", "64m", "--cpus", "1", "--pids-limit", "32", "-v", postVolume+":/v", "--entrypoint", "sh", "kyq-e2e-sshd", "-c",
+		"mkdir /v/earlier && echo kept > /v/earlier/marker && chown -R 1000:1000 /v && chmod 700 /v /v/earlier && chmod 600 /v/earlier/marker")
+}
+
+// checkPostVolumes proves #151's move: apply copied the earlier volume into KyPost's config
+// bind directory before deploying, owned by the target user with its modes kept, said so,
+// and kept the volume.
+func checkPostVolumes(t *testing.T, out string, d driveTarget) {
+	t.Helper()
+	note := handoverLine(t, out, "copied Docker volumes ")
+	if status(out, "kypost.volumes") != "ok" || !strings.Contains(note, "copied Docker volumes "+postVolume+" into kypost's bind directories under "+d.root+"/kypost") || !strings.Contains(note, "docker volume rm "+postVolume) {
+		t.Fatalf("kypost.volumes: %q", note)
+	}
+	marker := d.root + "/kypost/config/earlier/marker"
+	uid := docker(t, "exec", d.name, "id", "-u")
+	if got := docker(t, "exec", d.name, "stat", "-c", "%a %u", d.root+"/kypost/config", d.root+"/kypost/config/earlier", marker); got != "700 "+uid+"\n700 "+uid+"\n600 "+uid {
+		t.Fatalf("copied configuration:\n%s", got)
+	}
+	if got := docker(t, "exec", d.name, "cat", marker); got != "kept" {
+		t.Fatalf("copied marker = %q", got)
+	}
+	docker(t, "volume", "inspect", postVolume)
+}
+
+var postSnapshot = regexp.MustCompile(`(?m)^kypost: snapshot ([0-9a-f]{64}) in `)
+
+// backupPost proves #151: the catalog KyPost, now on bind directories, backs up cold with
+// kyquickstart backup on a target with a destination (it was backup_unsupported) and comes
+// back healthy. It returns the output and its new repository password for the leak check.
+func backupPost(t *testing.T, ctx context.Context, state, catalogDir string, trust []string, out, plan string, d driveTarget) (string, string) {
+	t.Helper()
+	checkBackupHandover(t, out, "kypost", nasTarget(t, plan))
+	backup, err := kyq(t, ctx, state, catalogDir, trust, "", "backup", "kypost")
+	if err != nil || postSnapshot.FindStringSubmatch(backup) == nil {
+		t.Fatalf("backup kypost: %v", err)
+	}
+	if h := docker(t, "inspect", postContainer, "--format", "{{.State.Health.Status}}"); h != "healthy" {
+		t.Fatalf("KyPost is %s after the backup", h)
+	}
+	return backup, docker(t, "exec", d.name, "cat", d.root+"/kypost/secrets/restic_password")
 }

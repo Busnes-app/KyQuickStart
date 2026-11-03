@@ -360,7 +360,8 @@ edge compatibility: `docs/redirect.md`.
   refused before connecting.
   KyPost's bundle is its own native version-1 JSON (KyIdentity sign-in with `autoProvision`, the
   client secret in a file beside it), placed and applied as `kypost`; webmail KyPost has no
-  directory, SCIM or generated secrets, and its container runs as `kypost` with no capabilities.
+  directory, SCIM or generated secrets, and its container runs as the target user with no
+  capabilities, on `./<name>` bind directories (#151).
   An app's optional `mail` block (KyPost only, Docker only, owner amendment 2026-10-24) selects
   native mail at first install: its catalog's `native_mail` renderings (`.Mail` `native`, or
   `receiver` with Maddy, Rspamd and `{{smtp_address}}:25`, only with `publish_port_25: true`),
@@ -553,7 +554,10 @@ edge compatibility: `docs/redirect.md`.
   must exist before deploy starts the app.
   Compose runs with `KYQ_UID`/`KYQ_GID` set to the target user's; `./<name>` bind directories
   are created private by the driver before Compose, and no other relative bind source is
-  accepted.
+  accepted. A manifest's `from_volumes` names bind directories an earlier version kept in
+  Compose named volumes of the same name (KyPost's, before #151): `<app>.volumes`, before
+  deploy, stops the app and copies each such volume into its missing or empty bind directory
+  once, as the target user, and keeps the volume; `backup` refuses until it has.
 
 ## Work Guidance
 
@@ -658,12 +662,15 @@ calls and kind nodes must carry their own explicit bounds.
   proves `kydns.edge`, trusted headers through the edge, the closed `/setup` and admin-only
   sign-in; where it hides them (this workstation) it proves KyDNS refuses the edge, that
   `kydns.edge` fails apply and that `kydns.gate` refuses a gateway `egress_address`.
-  The catalog KyPost joins the Docker target beside KyDrive by amendment: container as `kypost`,
+  The catalog KyPost joins the Docker target beside KyDrive by amendment, over a configuration
+  volume left by a KyPost from before #151 that `kypost.volumes` copies into its bind directory
+  (owner and modes checked, volume kept): container as the target user,
   read-only, no capabilities, published on the forward address only and listening on no mail
   port, private setup files, live `--check`, health and an untrusted-proxy network status
   through the edge, admin and everyday sign-in (`/api/users` 200/403), the handover's
   break-glass read and session-ending restart run verbatim on the target, `kypost.recovery-pair`
-  passing with its pair-by-hand note (no confirmed key), and a skipped rerun.
+  passing with its pair-by-hand note (no confirmed key), a cold `kyquickstart backup kypost`
+  that leaves it healthy, and a skipped rerun.
   `TestKubernetesKyMessage` (`message_stack_test.go`, `message_chat_test.go`) installs the whole
   KyMessages stack on a non-root sshd target in the host's network namespace by amendment, with
   KyIdentity's first setup relaying mail through a test-only Mailpit (STARTTLS, AUTH, test CA)

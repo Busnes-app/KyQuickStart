@@ -71,8 +71,8 @@ func TestKyPostClientFromCatalog(t *testing.T) {
 	for _, want := range []string{
 		"KyPost at https://post.example.com/", "as owner-admin, for administration only", "it can also add mail\n  accounts", "or as owner for mail",
 		"KyIdentity role kypost.user and gets a KyPost account at first sign-in", "opens no mail port", "Native\n  mail, receiving, a relay and domains are not set up",
-		"this release offers no setting to allow one", "about 2.9 GB", "separate from KyIdentity's owner-admin, for when\n     KyIdentity is down", "on nas:\n       docker exec --user kypost kyq-kypost-app-1 cat /kypost/config/first-run-password.txt",
-		"docker exec --user kypost kyq-kypost-app-1 rm /kypost/config/first-run-password.txt", "stops new sign-ins",
+		"this release offers no setting to allow one", "about 2.9 GB", "separate from KyIdentity's owner-admin, for when\n     KyIdentity is down", "on nas:\n       docker exec kyq-kypost-app-1 cat /kypost/config/first-run-password.txt",
+		"docker exec kyq-kypost-app-1 rm /kypost/config/first-run-password.txt", "stops new sign-ins",
 		"To end every live session, on nas:\n       docker restart kyq-kypost-app-1", "This plan routes no KyRecovery", "Install KyCalendar from this catalog too and the two pair for calendar invitations",
 	} {
 		if !strings.Contains(s.handover, want) {
@@ -141,7 +141,8 @@ type fakePost struct {
 }
 
 // postArgs runs the shell words of cmd after KyPost's container lookup, as the target's shell
-// would, with the found container c0ffee: docker exec [-i] --user kypost c0ffee <args>.
+// would, with the found container c0ffee: docker exec [-i] c0ffee <args>, as the container's
+// own user, the target user (#151).
 func postArgs(t *testing.T, cmd string) []string {
 	t.Helper()
 	rest, ok := strings.CutPrefix(cmd, dockerAppContainer("kypost"))
@@ -156,10 +157,10 @@ func postArgs(t *testing.T, cmd string) []string {
 	if w[2] == "-i" {
 		w = slices.Delete(w, 2, 3)
 	}
-	if !slices.Equal(w[:5], []string{"docker", "exec", "--user", "kypost", "c0ffee"}) {
-		t.Fatalf("exec not as kypost into KyPost's container: %q", w)
+	if !slices.Equal(w[:3], []string{"docker", "exec", "c0ffee"}) {
+		t.Fatalf("exec not as the container's own user into KyPost's container: %q", w)
 	}
-	return w[5:]
+	return w[3:]
 }
 
 const postCaps = `{"schema":"ky.setup-capabilities/1","service":"kypost","bundleSchema":"kypost.setup/1","features":["sso","retained-pairing-key","domains","recovery-pairing","secret-files","check"]}`

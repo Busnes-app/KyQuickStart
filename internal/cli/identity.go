@@ -309,10 +309,8 @@ func nativeProductExec(target driver, i stack.Integration, adapter productAdapte
 	switch d := target.(type) {
 	case sshDriver:
 		input := dockerProductInputExec(d.c, i.Container, adapter.binary, adapter.runtimeUser)
-		if i.Container == "" { // an installed app: its one running container, found per call
-			if i.Product != "kypost" {
-				adapter.runtimeUser = ""
-			}
+		if i.Container == "" { // an installed app: its one running container, as its own user, found per call
+			adapter.runtimeUser = ""
 			input = dockerExec(d.c, dockerAppContainer(i.Product), `"$c"`, adapter.binary, adapter.runtimeUser)
 		}
 		return func(ctx context.Context, args []string) ([]byte, error) { return input(ctx, args, nil) }, input, nil

@@ -54,6 +54,10 @@ type Manifest struct {
 	// NativeMail renders the Compose template twice more, with .Mail "native" and
 	// "receiver", for a plan's opt-in mail block (KyPost's). Nil: the app has none.
 	NativeMail *NativeMail `yaml:"native_mail,omitempty"`
+	// FromVolumes are ./<name> bind directories that an earlier version of the app kept in
+	// Compose named volumes of the same name. Docker apply copies such a volume into its empty
+	// bind directory once, before deploying, and keeps the volume.
+	FromVolumes []string `yaml:"from_volumes,omitempty"`
 }
 
 // NativeMail is what the installer checks of the operator's receiver inputs before deploying
@@ -438,6 +442,9 @@ func loadApp(fsys fs.FS, dir string) (App, error) {
 		if err := m.validateBackup(nil); err != nil {
 			return App{}, fmt.Errorf("manifest.yaml: backup: %w", err)
 		}
+		if len(m.FromVolumes) > 0 {
+			return App{}, errors.New("manifest.yaml: from_volumes needs compose.yaml.tmpl")
+		}
 		return App{Manifest: m}, nil
 	case err != nil:
 		return App{}, err
@@ -500,6 +507,9 @@ func (m Manifest) render(t *template.Template, mode string, files map[string][]b
 	}
 	if err := m.validateBackup(&c); err != nil {
 		return rendering{}, fmt.Errorf("manifest.yaml: backup: %w", err)
+	}
+	if err := check(m.FromVolumes, func(v string) bool { return slices.Contains(c.binds, v) }); err != nil {
+		return rendering{}, fmt.Errorf("manifest.yaml: from_volumes: %w must be unique ./<name> bind directories", err)
 	}
 	if err := m.validateRoutes(b, c); err != nil {
 		return rendering{}, fmt.Errorf("manifest.yaml: %w", err)
