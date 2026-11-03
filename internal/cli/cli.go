@@ -394,16 +394,16 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 		}
 	}
 	for _, a := range st.Apps {
-		if len(a.NodePorts) == 0 && a.KubeVIPAddress == "" {
+		if len(a.NodePorts) == 0 && a.KubeVIPAddress == "" && a.LoadBalancerAddress == "" {
 			continue
 		}
 		app := cat[a.Name]
 		if !s.placed[a.Name].Kubernetes() {
-			return nil, fmt.Errorf("app %q: node_ports and kube_vip_address are for a Kubernetes target", a.Name)
+			return nil, fmt.Errorf("app %q: node_ports, kube_vip_address and load_balancer_address are for a Kubernetes target", a.Name)
 		}
 		k := *app.Kubernetes
-		if a.KubeVIPAddress != "" && len(k.NodePorts) == 0 {
-			return nil, fmt.Errorf("app %q publishes no node_ports: remove its kube_vip_address", a.Name)
+		if (a.KubeVIPAddress != "" || a.LoadBalancerAddress != "") && len(k.NodePorts) == 0 {
+			return nil, fmt.Errorf("app %q publishes no node_ports: remove its kube_vip_address or load_balancer_address", a.Name)
 		}
 		k.NodePorts = maps.Clone(k.NodePorts)
 		for port, node := range a.NodePorts {
@@ -412,7 +412,7 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 			}
 			k.NodePorts[port] = node
 		}
-		k.KubeVIPAddress = a.KubeVIPAddress
+		k.KubeVIPAddress, k.LoadBalancerAddress = a.KubeVIPAddress, a.LoadBalancerAddress
 		app.Kubernetes = &k
 		cat[a.Name] = app
 	}
@@ -555,6 +555,7 @@ func (s *session) connect(ctx context.Context, trust trustFlag) error {
 		}
 		if k, ok := d.(kubeDriver); ok {
 			k.edge, k.nodePorts, k.upstreams, k.runnerImage = s.edgeApp(t.Name), s.nodePorts(t.Name), s.upstreams(t.Name), s.o.RunnerImage
+			k.loadBalancers = s.loadBalancers(t.Name)
 			k.tunnel = tunnelEdge(s.plan, t.Name)
 			d = k
 		}
@@ -624,6 +625,17 @@ func (s *session) upstreams(target string) []netip.AddrPort {
 	}
 	slices.SortFunc(out, func(a, b netip.AddrPort) int { return a.Compare(b) })
 	return slices.Compact(out)
+}
+
+// loadBalancers maps each load_balancer_address of an app on target to the app.
+func (s *session) loadBalancers(target string) map[string]string {
+	out := map[string]string{}
+	for name, t := range s.placed {
+		if k := s.cat[name].Kubernetes; t.Name == target && k != nil && k.LoadBalancerAddress != "" {
+			out[k.LoadBalancerAddress] = name
+		}
+	}
+	return out
 }
 
 // nodePorts maps each NodePort an app on target publishes, node_ports applied, to the app.

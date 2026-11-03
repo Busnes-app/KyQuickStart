@@ -141,6 +141,9 @@ type App struct {
 	// KubeVIPAddress publishes an edge's node_ports as a kube-vip LoadBalancer at this LAN
 	// address, which follows NPM's pod and is also the address its egress leaves from.
 	KubeVIPAddress string `yaml:"kube_vip_address,omitempty" json:",omitempty"`
+	// LoadBalancerAddress publishes an edge's ports 80 and 443 as a LoadBalancer at this LAN
+	// address, assigned by the cluster's Cilium LB IPAM or MetalLB; its node_ports stay.
+	LoadBalancerAddress string `yaml:"load_balancer_address,omitempty" json:",omitempty"`
 	// Stopped is the operator's `kyquickstart stop`: commands that would start the app refuse.
 	Stopped bool `yaml:"stopped,omitempty" json:",omitempty"`
 	// Mail is KyPost's opt-in native mail; nil keeps it webmail for existing IMAP accounts.
@@ -299,6 +302,12 @@ func (s *Stack) validate() error {
 		}
 		if a.KubeVIPAddress != "" && !MediaAddress(a.KubeVIPAddress) {
 			return fmt.Errorf("app %q: kube_vip_address %q must be one IPv4 LAN address: not a hostname, IPv6, unspecified, loopback, link-local, multicast or broadcast", a.Name, a.KubeVIPAddress)
+		}
+		if a.LoadBalancerAddress != "" && !MediaAddress(a.LoadBalancerAddress) {
+			return fmt.Errorf("app %q: load_balancer_address %q must be one IPv4 LAN address: not a hostname, IPv6, unspecified, loopback, link-local, multicast or broadcast", a.Name, a.LoadBalancerAddress)
+		}
+		if a.LoadBalancerAddress != "" && a.KubeVIPAddress != "" {
+			return fmt.Errorf("app %q: set load_balancer_address (Cilium LB IPAM or MetalLB) or kube_vip_address (kube-vip), not both", a.Name)
 		}
 		if a.RecoveryKeyID != "" && (a.Name != "kyrecovery" || !keyIDRE.MatchString(a.RecoveryKeyID)) {
 			return fmt.Errorf("app %q: recovery_key_id belongs to kyrecovery only and is the 64 lowercase hex characters of the key ID its ceremony page shows", a.Name)
