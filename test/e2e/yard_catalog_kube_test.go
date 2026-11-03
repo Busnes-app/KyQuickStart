@@ -327,6 +327,10 @@ func TestKubernetesKyYard(t *testing.T) {
 	if _, err := run("under the runner", "apply"); err == nil || !strings.Contains(err.Error(), "owned_by_runner") {
 		t.Fatalf("workstation apply under the runner: %v", err)
 	}
+	// Naming the recorded target keeps the recorded runner pod (#159).
+	if out, err := run("pull-plan naming its target", "pull-plan", "--kyyard-target", "k8s"); err != nil || !strings.Contains(out, yardRunnerPod) {
+		t.Fatalf("pull-plan --kyyard-target k8s: %v\n%s", err, out)
+	}
 	if _, err := run("revoke", "handoff", "--revoke"); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}

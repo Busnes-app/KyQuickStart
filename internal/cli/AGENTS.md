@@ -34,7 +34,10 @@ Plain terminal planning and command orchestration for the operator-run installer
   them out, since KyYard decodes status strictly.
 - `handoff.go` owns `handoff` (grant, `--revoke`) and `pull-plan`: it reaches the runner only
   through the KyYard target driver's `execRunner` (`docker exec` over SSH, or `pods/exec` into
-  the one runner pod `--runner-pod` selects, permission-checked first), holds every target lock
+  the one runner pod `--runner-pod` selects, permission-checked first; its default is
+  `defaultRunnerPod`, the catalog KyYard's pod on a target holding it). `pull-plan` and `--revoke`
+  keep `handoff.json`'s runner without `--kyyard-target` or with the recorded one and no runner
+  flag, and refuse another target without one (`invalid_request`). It holds every target lock
   while granting, and publishes the plan before markers change owner. `handoff.json` in the state
   directory makes `plan` refuse while the runner owns the plan. `session.guard` is the
   ownership rule for every locked command and CLI `status`.

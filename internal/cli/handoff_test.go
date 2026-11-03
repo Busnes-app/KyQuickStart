@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/kube"
 	"github.com/Busnes-app/kyquickstart/internal/remote"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
@@ -390,5 +391,53 @@ func TestHandoffRefusesAStoppedApp(t *testing.T) {
 	}
 	if f.stack(t).Revision != rev {
 		t.Fatal("a refused hand-off changed the plan")
+	}
+}
+
+// Issue #159: naming the recorded target keeps the recorded runner; another target needs
+// its runner named; a catalog KyYard's pod is the default runner on its target.
+func TestPullPlanKeepsTheRecordedRunner(t *testing.T) {
+	f := kubeFixture(t)
+	r := newFakeRunner(t, f)
+	runnerPod(t, f, r, true)
+	if err := f.run("handoff", "--kyyard-target", "k1", "--runner-pod", "kyq-runner/app=runner"); err != nil {
+		t.Fatal(err, f.out.String())
+	}
+	rec, _ := os.ReadFile(filepath.Join(f.state, handoffFile))
+	// The record holds a runner the flag defaults would not find.
+	custom := strings.Replace(string(rec), `"runner_selector":"app=runner"`, `"runner_selector":"app=suite-runner"`, 1)
+	os.WriteFile(filepath.Join(f.state, handoffFile), []byte(custom), 0o600)
+	f.cs.CoreV1().Pods("kyq-runner").Delete(context.Background(), "runner-0", metav1.DeleteOptions{})
+	f.cs.CoreV1().Pods("kyq-runner").Create(context.Background(), &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "runner-0", Namespace: "kyq-runner", Labels: map[string]string{"app": "suite-runner"}},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "runner"}}},
+		Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+	}, metav1.CreateOptions{})
+	r.export = strings.Replace(r.imported["stack.yaml"], "revision: 1", "revision: 2", 1)
+	if err := f.run("pull-plan", "--kyyard-target", "k1"); err != nil {
+		t.Fatalf("pull-plan naming the recorded target: %v", err)
+	}
+	if f.stack(t).Revision != 2 {
+		t.Errorf("revision %d\n%s", f.stack(t).Revision, f.out.String())
+	}
+	if got, _ := os.ReadFile(filepath.Join(f.state, handoffFile)); string(got) != custom {
+		t.Errorf("handoff.json = %s", got)
+	}
+	// Another target than the record's needs its runner named.
+	if err := f.run("pull-plan", "--kyyard-target", "nas"); code(err) != suite.InvalidRequest || !strings.Contains(err.Error(), "--runner-container") {
+		t.Errorf("pull-plan from an unrecorded target: %v", err)
+	}
+	if err := f.run("handoff", "--revoke", "--kyyard-target", "nas"); code(err) != suite.InvalidRequest {
+		t.Errorf("revoke on an unrecorded target: %v", err)
+	}
+}
+
+func TestHandoffDefaultsToTheCatalogKyYardPod(t *testing.T) {
+	cat := catalog.Catalog{"kyyard": {Manifest: catalog.Manifest{Kubernetes: &catalog.Kubernetes{SuiteRunner: true}}}, "web": {}}
+	apps := []stack.App{{Name: "kyyard", Target: "k1"}, {Name: "web", Target: "k2"}}
+	for target, want := range map[string]string{"k1": yardRunnerPod, "k2": "kyq-runner/app=runner"} {
+		if got := defaultRunnerPod(apps, cat, target); got != want {
+			t.Errorf("default runner pod on %s = %q, want %q", target, got, want)
+		}
 	}
 }
