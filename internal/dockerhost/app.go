@@ -73,7 +73,8 @@ func hashOf(parts ...string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// Steps returns the app's install steps: secrets (when it declares any), deploy, health.
+// Steps returns the app's install steps: secrets (when it declares any), the copy of its
+// from_volumes (when it declares any), deploy, health.
 func Steps(a App) []engine.Step {
 	ov := a.override(labels(a.ReleaseSet, a.Catalog.Version))
 	parts := []string{string(a.Catalog.Compose), string(ov)}
@@ -82,6 +83,9 @@ func Steps(a App) []engine.Step {
 	}
 	hash := hashOf(parts...)
 	steps := []engine.Step{deployStep{a: a, override: ov, hash: hash}, healthStep{a: a, hash: hash}}
+	if len(a.Catalog.FromVolumes) > 0 {
+		steps = append([]engine.Step{fromVolumesStep{a: a, note: new(string)}}, steps...)
+	}
 	if len(a.Catalog.Secrets) > 0 {
 		steps = append([]engine.Step{secretsStep{a}}, steps...)
 	}

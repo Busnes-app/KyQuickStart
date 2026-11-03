@@ -82,10 +82,10 @@ KyPost at https://%[1]s/: webmail for mail accounts you already have. Sign in th
   Outstanding human steps:
   1. Its local "admin" break-glass account: separate from KyIdentity's %[2]s, for when
      KyIdentity is down; you never need it otherwise. Read its one-time password, on %[5]s:
-       docker exec --user kypost %[4]s cat /kypost/config/first-run-password.txt
+       docker exec %[4]s cat /kypost/config/first-run-password.txt
      Sign in with it once at https://%[1]s/ with KyPost's own password sign-in, not KyIdentity,
      and change it. Only after that, delete the file:
-       docker exec --user kypost %[4]s rm /kypost/config/first-run-password.txt
+       docker exec %[4]s rm /kypost/config/first-run-password.txt
   2. Offboarding: removing someone in KyIdentity stops new sign-ins, but KyPost keeps a live
      session until it restarts. To end every live session, on %[5]s:
        docker restart %[4]s

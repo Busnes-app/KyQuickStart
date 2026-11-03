@@ -62,7 +62,8 @@ Plain terminal planning and command orchestration for the operator-run installer
 - `backup.go` owns `backup` and `restore` (Docker apps only; `docs/guided-setup.md` "Backups
   and restore on Docker"). Both refuse before connecting a Kubernetes app, an app without a
   `backup` block or a target without a destination (`backup_unconfigured`), backup volumes in
-  named Docker volumes (`backup_unsupported`) and a plan without `installation_id`; both hold
+  named Docker volumes (`backup_unsupported`; no catalog app has any) and a plan without
+  `installation_id`; both hold
   the app's target lock (restore also KyIdentity's) and are refused under `owner: runner`.
   `dockerhost.Store` does the target work. `removalGate` refuses restoring an app with an
   `oidc` block unless the plan's KyIdentity deployment record is `replayVersion` (0.4.4) or

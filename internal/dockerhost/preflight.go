@@ -103,7 +103,7 @@ func AddressCheck(ctx context.Context, r remote.Runner, app, addr string) Findin
 // ReceiverChecks are the read-only checks of a native-mail receiver's inputs on the host: a
 // Linux x86_64 host (KyPost's only qualified engine), smtp_address one of its addresses, the
 // operator's Maddy executable exactly the pinned one, and the TLS directory as KyPost's
-// receiver reads it as the container's kypost (uid 1000). None follows a symlink.
+// receiver reads it as the container's user, the target user. None follows a symlink.
 func ReceiverChecks(ctx context.Context, r remote.Runner, app string, rc stack.MailReceiver, maddySHA256 string) []Finding {
 	f := []Finding{}
 	if out, err := r.Run(ctx, "uname -sm", nil); err != nil || strings.TrimSpace(string(out)) != "Linux x86_64" {
@@ -124,16 +124,16 @@ func ReceiverChecks(ctx context.Context, r remote.Runner, app string, rc stack.M
 	} else {
 		f = append(f, Finding{"maddy binary", true, app + ": " + rc.MaddyBinary + " is the pinned Maddy 0.9.5"})
 	}
-	// uid 1000 traverses the directory and reads both files; the key is its own, owner-only.
-	cmd = "d=" + remote.Quote(rc.TLSDir) + `; [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/fullchain.pem" ] && [ ! -L "$d/fullchain.pem" ] && [ -f "$d/privkey.pem" ] && [ ! -L "$d/privkey.pem" ] || exit 1
+	// The target user traverses the directory and reads both files; the key is its own, owner-only.
+	cmd = "d=" + remote.Quote(rc.TLSDir) + `; u=$(id -u) || exit 1; [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/fullchain.pem" ] && [ ! -L "$d/fullchain.pem" ] && [ -f "$d/privkey.pem" ] && [ ! -L "$d/privkey.pem" ] || exit 1
 set -- $(stat -c '%u %a' "$d" "$d/fullchain.pem" "$d/privkey.pem") || exit 1
-[ "$1" = 1000 ] || [ $(( 0$2 & 1 )) = 1 ] || exit 1
-[ "$3" = 1000 ] || [ $(( 0$4 & 4 )) = 4 ] || exit 1
-[ "$5" = 1000 ] && case $6 in 600|400) ;; *) exit 1;; esac`
+[ "$1" = "$u" ] || [ $(( 0$2 & 1 )) = 1 ] || exit 1
+[ "$3" = "$u" ] || [ $(( 0$4 & 4 )) = 4 ] || exit 1
+[ "$5" = "$u" ] && case $6 in 600|400) ;; *) exit 1;; esac`
 	if _, err := r.Run(ctx, cmd, nil); err != nil {
-		f = append(f, Finding{"receiver tls", false, app + ": want " + rc.TLSDir + " a directory (not a symlink) holding regular files fullchain.pem, readable by uid 1000, and privkey.pem, owned by uid 1000 with mode 0600; the certificate must name " + rc.Hostname})
+		f = append(f, Finding{"receiver tls", false, app + ": want " + rc.TLSDir + " a directory (not a symlink) holding regular files fullchain.pem, readable by this target's user, and privkey.pem, owned by that user with mode 0600 (KyPost runs as it); the certificate must name " + rc.Hostname})
 	} else {
-		f = append(f, Finding{"receiver tls", true, app + ": " + rc.TLSDir + " holds fullchain.pem and uid 1000's private privkey.pem"})
+		f = append(f, Finding{"receiver tls", true, app + ": " + rc.TLSDir + " holds fullchain.pem and the target user's private privkey.pem"})
 	}
 	return f
 }

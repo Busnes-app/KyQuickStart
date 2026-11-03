@@ -155,6 +155,17 @@ func (s Store) Backup(ctx context.Context) (id string, created bool, err error) 
 	if err := refuseUnfinishedRestore(ctx, s.App); err != nil {
 		return "", false, err
 	}
+	// Until apply copies them, an earlier install's data is in its volumes and the bind
+	// directories a snapshot would read are empty.
+	if len(s.App.Catalog.FromVolumes) > 0 {
+		left, err := fromVolumesStep{a: s.App}.pending(ctx)
+		if err == nil && len(left) > 0 {
+			err = fmt.Errorf("%s's data is still in Docker volumes (%s) from an earlier install: run kyquickstart apply, which copies it into its bind directories, then back it up", s.App.Name, strings.Join(left, ", "))
+		}
+		if err != nil {
+			return "", false, err
+		}
+	}
 	if created, err = s.ensureRepository(ctx); err != nil {
 		return "", created, err
 	}

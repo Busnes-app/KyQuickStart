@@ -195,17 +195,24 @@ func TestKubernetesNPMEdgeJoins(t *testing.T) {
 
 	// KyPost joins the Docker target beside KyDrive after KyIdentity's first setup, by setup
 	// amendment; its setup runs before the edges. The handover's commands run verbatim there.
+	// The host also holds the configuration volume of a KyPost from before #151, which apply
+	// copies into the bind directory once.
 	postPort := preparePost(t, work, catalogDir, drive)
+	seedPostVolume(t)
 	st, _ = stack.Load(plan)
 	addCatalogPost(st, certID, drive, postPort)
 	b, _ = yaml.Marshal(st)
 	os.WriteFile(plan, b, 0o600)
 	out = apply("post")
+	checkPostVolumes(t, out, drive)
 	postSecrets := checkCatalogPost(t, out, drive, postPort, viaEdge, code)
+	postBackup, postPassword := backupPost(t, ctx, state, catalogDir, trust, out, plan, drive)
+	outputs = append(outputs, postBackup)
+	postSecrets = append(postSecrets, postPassword)
 	postAdmin := postSignOn(t, ctx, connected, certPEM, nodeIP)
 	postSecrets = append(postSecrets, checkPostHandover(t, ctx, out, drive, postAdmin, code))
 	out = apply("post rerun")
-	for _, id := range []string{"kyidentity.amend.kypost", "kypost.deploy", "kypost.health", "kypost.setup", postRouteStep, "kypost.recovery-pair"} {
+	for _, id := range []string{"kyidentity.amend.kypost", "kypost.volumes", "kypost.deploy", "kypost.health", "kypost.setup", postRouteStep, "kypost.recovery-pair"} {
 		if status(out, id) != "skipped" {
 			t.Errorf("rerun: %s = %q", id, status(out, id))
 		}

@@ -26,6 +26,21 @@ needs `--acknowledge-no-backup`; from 0.4.x the seven apps that migrate data are
 as before. KyPost devices that pair by QR code or pairing link now wait for approval on the page
 that showed the code, and KyPost apps from before device approval fail to pair until updated.
 
+- The catalog KyPost can be backed up (#151). It kept its data in named Docker volumes owned by
+  the image's uid 1000, so `kyquickstart backup kypost` refused (`backup_unsupported`) and every
+  KyPost upgrade needed `--acknowledge-no-backup`. It now runs as the target user, like KyDrive
+  and KyDNS, on `./config`, `./private`, `./state`, `./logs` and `./ollama-models` bind
+  directories, and a cold backup takes `config`, `private` and `state`. A manifest's new
+  `from_volumes` drives a one-time copy: `kypost.volumes`, before `kypost.deploy`, copies each
+  earlier volume into its empty bind directory with the app stopped (read-only, offline,
+  read with only `CAP_DAC_READ_SEARCH`, written as the target user) and keeps the volume.
+
+Upgrade impact for KyPost: the first `apply` stops KyPost, copies its volumes (the Ollama model
+is about 2.9 GB) and restarts it on the copies; once it runs, remove the volumes the step names
+with `docker volume rm`. `backup kypost` refuses until that apply. Handover commands drop
+`--user kypost`. A native-mail receiver's `tls_dir` key must now be owned by the target user,
+not uid 1000: `chown` it before applying, or preflight refuses.
+
 - A catalog move that changes no migration no longer forces a pre-upgrade backup (#150). A
   manifest's new `upgrade.data_since` names the oldest version whose data the pinned version
   uses unchanged; upgrading from it or later takes no copy and asks for `--acknowledge-no-backup`

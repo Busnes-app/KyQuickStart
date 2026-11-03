@@ -291,8 +291,12 @@ app with a dump `command`, the dump, taken while the app runs (`docker compose e
 empty or failed dump takes no snapshot). An app without a dump command is backed up cold:
 `docker compose stop`, restic, then `docker compose start` and a health wait, also when the
 snapshot failed. KyDrive is backed up cold (its SQLite has no dump command): `data`, `backups`,
-`session_secret` and `scim_token`, a stop of seconds to minutes. Apps that keep backup data in
-named Docker volumes (KyPost) are refused with `backup_unsupported`.
+`session_secret` and `scim_token`, a stop of seconds to minutes. KyPost is backed up cold too:
+`config`, `private` and `state` (settings and accounts, its generated keys, mail state; not its
+logs or the re-downloadable Ollama model), with up to 36 minutes for its stop. Its data moved from
+named volumes to bind directories in #151: until `apply` has copied an earlier install's volumes
+(`kypost.volumes`), backup refuses. An app that keeps backup data in named Docker volumes is
+refused with `backup_unsupported`; no catalog app does.
 
 **How restic runs.** On the target, as the SSH user: `docker run --rm` of the pinned
 `restic/restic:0.19.1` (linux/amd64 digest; its only provenance is an unsigned BuildKit SLSA
@@ -1675,12 +1679,27 @@ What apply does:
   entrypoint. The stock entrypoint starts as root to chown its volumes and needs CHOWN, SETUID,
   SETGID and DAC_OVERRIDE; the catalog runs the same bootstrap, migration and supervisor
   (`kypost-server --mode bootstrap-admin && kypost-server migrate-native && exec supervisord`)
-  as `kypost` (uid 1000) with every capability dropped, `no-new-privileges`, a read-only root,
+  as the target user with every capability dropped, `no-new-privileges`, a read-only root,
   8 GiB, 4 CPUs, 512 PIDs and 36 minutes to stop (API and daemon each drain up to 1000 s, one
-  after the other). Its named volumes `config`, `private`, `state`, `logs` and `ollama-models`
-  start from the image's kypost-owned 0700 directories. Two tmpfs mounts are needed and no more:
-  `/tmp` (supervisord refuses to start without a temporary directory) and `/home/kypost` (Ollama
-  writes its key under `~/.ollama`). Health is its `/api/health`, with a 180 s start allowance.
+  after the other). Its data is in the bind directories `config`, `private`, `state`, `logs` and
+  `ollama-models` under `<root>/kypost`, private to the target user, so `kyquickstart backup`
+  covers it (#151). Two tmpfs mounts are needed and no more: `/tmp` (supervisord refuses to
+  start without a temporary directory) and `/home/kypost`, the target user's (Ollama writes its
+  key under `~/.ollama`; `HOME` is set, since the target user may have no passwd entry in the
+  image). supervisord starts from the image's own `/etc/supervisord.conf` without its
+  `chown=kypost:kypost` line, written to `/tmp`: only uid 1000 may chown the control socket, which
+  stays 0700 and is owned by the user that creates it. Health is its `/api/health`, with a
+  180 s start allowance.
+- `kypost.volumes`, before `kypost.deploy`: a KyPost installed before #151 kept the same five
+  directories in named volumes (`kyq-kypost_config` and so on) owned by the image's `kypost`
+  (uid 1000). For each such volume whose bind directory is missing or empty, apply stops the
+  running KyPost (with its own grace period), copies the volume with `tar` in two offline,
+  read-only containers of the pinned restic image (the volume mounted read-only and read as
+  root with only `CAP_DAC_READ_SEARCH`; the copy written as the target user, who then owns every
+  file, modes kept), checks both ends succeeded and the entry counts match, and only then renames
+  the copy into place. The volumes are kept: the step's note names them, and once KyPost runs on
+  the copies `docker volume rm` removes them. A rerun skips. Until this step has run,
+  `kyquickstart backup kypost` refuses (its bind directories would be empty).
 - `SERVER_BASE_URL` is `https://<route URL host>`: its callback, and Secure session cookies.
   Native mail, receiving and the receiver are off. The catalog sets no `PAIRING_SECRET`,
   `POW_SECRET`, `BOOTSTRAP_ADMIN_*`, TLS or SMTP settings: KyPost
@@ -1689,9 +1708,9 @@ What apply does:
 - `kypost.setup`, after its health and before the edges (KyPost's setup makes no call to
   KyIdentity; discovery happens at sign-in): KyIdentity's `--export-client` frame is read into
   memory, the client secret and then KyPost's native bundle are placed as 0600 files, as
-  `kypost`, in the bundle's directory through `docker exec` over SSH, never replacing one. The
+  the container's user, in the bundle's directory through `docker exec` over SSH, never replacing one. The
   bundle is `{"version":1,"sso":{"enabled":true,"issuerUrl":…,"clientId":"kypost","autoProvision":true},"clientSecretFile":…}`.
-  Then `apply-setup` runs as `kypost`, SSO applies live (KyPost re-reads it per request), and
+  Then `apply-setup` runs in the container, SSO applies live (KyPost re-reads it per request), and
   KyIdentity is re-exported to confirm nothing changed. KyPost's report always lists its
   external gates as pending: relay, receiving, everyday assignment, backup/restore and
   HTTPS/proxy. A rerun skips.
@@ -1719,8 +1738,8 @@ account, the assignment rule above, the mail-port facts and the first-start mode
 - The local break-glass `admin`: a KyPost account separate from KyIdentity's admin, for when
   KyIdentity is down; owners signing in through KyIdentity never need it. It signs in with
   KyPost's own password sign-in and is created with a must-change password in
-  `/kypost/config/first-run-password.txt` (0600, owned by kypost). On the Docker target:
-  `docker exec --user kypost kyq-kypost-app-1 cat /kypost/config/first-run-password.txt`. Sign in
+  `/kypost/config/first-run-password.txt` (0600, owned by the target user). On the Docker target:
+  `docker exec kyq-kypost-app-1 cat /kypost/config/first-run-password.txt`. Sign in
   once and change it; only then delete the file (the same command with `rm`). Apply never reads
   it.
 - Offboarding: webmail KyPost has no directory, so disabling or unassigning someone in KyIdentity stops
@@ -1751,7 +1770,7 @@ Limits and residuals:
   who on the LAN may connect: see the firewall note under KyDrive.
 - Unproven: separation of the admin account from mail (an upstream gate in this mode), and real
   IMAP/SMTP mail exchange; the kind test proves sign-in and sessions only. Not configured unless
-  chosen: native mail and receiving (below). Never configured: KyRecovery pairing, bulk restic backups, mobile or desktop pairing, push
+  chosen: native mail and receiving (below). Never configured: KyRecovery pairing, KyPost's own bulk restic backups, mobile or desktop pairing, push
   relays, CAPTCHA and Kubernetes placement.
 
 ## KyPost native mail
@@ -1801,9 +1820,10 @@ Refused before anything changes:
 
 - Converting an installed KyPost either way. A Docker target whose `kypost/compose.yaml` shows
   webmail refuses a plan with `mail` (KyPost converts no IMAP account; native mail needs a fresh
-  KyPost with new KyIdentity identities, so uninstalling is not enough: its volumes stay). One
+  KyPost with new KyIdentity identities, so uninstalling is not enough: its data stays). One
   that shows native mail refuses a plan without it (native users would lose their mailboxes).
-  Without a Compose file, an existing `kyq-kypost_state` volume (an uninstall leaves it) of no
+  Without a Compose file, a non-empty `<root>/kypost/state` or an existing `kyq-kypost_state`
+  volume (an uninstall leaves either; the volume is from an install before #151) of no
   recorded mode refuses native mail too. KyPost's guide supports enabling native mail on an
   existing deployment, but its installer contract asks for new identities and a new deployment;
   KyQuickStart takes the stricter reading.
@@ -1825,7 +1845,7 @@ What apply does, besides KyPost's ordinary steps:
   11333, read-only, no capabilities, 512 MiB, with no published port. Its configuration is
   KyPost's `scripts/rspamd/rspamd.conf` of v0.4.3 byte for byte, shipped in the catalog
   (`internal/catalog/apps/kypost/files/rspamd/rspamd.conf`) and written mode 0644 into the app's
-  private `rspamd` directory. Nothing else in KyPost's container changes: still `kypost`, read-only,
+  private `rspamd` directory. Nothing else in KyPost's container changes: still the target user, read-only,
   no capabilities.
 - `kypost.setup` adds `"domains"` to KyPost's version-1 bundle (no secret: the client secret
   stays in its file beside it). The bundle may be replaced as domains are added; KyPost keeps
@@ -1843,8 +1863,8 @@ What apply does, besides KyPost's ordinary steps:
 Preflight, with the receiver, on the Docker target (read-only): Linux x86_64; `smtp_address` is
 one of the host's addresses; `maddy_binary` is a regular executable, not a symlink, writable by
 neither group nor others, with KyPost's pinned SHA-256 `6ea4b951…d5e2`; `tls_dir` is a real
-directory holding `fullchain.pem` (readable by uid 1000) and `privkey.pem` (owned by uid 1000,
-mode 0600 or 0400). The certificate's name and dates are KyPost's own check when the receiver
+directory holding `fullchain.pem` (readable by the target user, whom KyPost runs as) and
+`privkey.pem` (owned by the target user, mode 0600 or 0400). The certificate's name and dates are KyPost's own check when the receiver
 starts.
 
 ### Operator flow
@@ -1874,11 +1894,13 @@ starts.
 
    The hash pins content; the upstream signature is not verified, and Maddy's GPLv3 obligations
    are yours to review. KyQuickStart downloads nothing. Put the receiving hostname's certificate
-   in `tls_dir` as `fullchain.pem` and `privkey.pem`, the key owned by uid 1000 with mode 0600.
+   in `tls_dir` as `fullchain.pem` and `privkey.pem`, the key owned by the target user (the
+   SSH user apply connects as) with mode 0600. A receiver set up before #151 had it owned by
+   uid 1000: `chown` it to the target user, or preflight refuses.
 6. Create the receiving spool, once (it refuses an existing one; never delete it to retry):
 
    ```sh
-   docker exec --user kypost -e KYPOST_NATIVE_RECEIVING=true kyq-kypost-app-1 kypost-server receiving init
+   docker exec -e KYPOST_NATIVE_RECEIVING=true kyq-kypost-app-1 kypost-server receiving init
    ```
 
 7. Add `receiver` to the plan (or rerun `plan`) and `apply` again. Publish the printed MX and A
@@ -1893,7 +1915,7 @@ starts.
    reachability, actual incoming and outgoing mail, a restore on another host):
 
    ```sh
-   docker exec --user kypost kyq-kypost-app-1 kypost-server setup-status
+   docker exec kyq-kypost-app-1 kypost-server setup-status
    ```
 
 After renewing the certificate (copy the files in, then `mv`) or adding a domain, restart the
