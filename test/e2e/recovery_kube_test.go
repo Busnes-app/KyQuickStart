@@ -7,16 +7,21 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/ky-primitives/recoverykey"
 	"github.com/Busnes-app/kyquickstart/internal/kube"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
 	corev1 "k8s.io/api/core/v1"
@@ -273,9 +278,93 @@ func catalogSignOn(t *testing.T, ctx context.Context, cs kubernetes.Interface, k
 			t.Logf("owner admin signed in to %s through KyIdentity as %q, role %s", app.client, me.User.Name+me.User.Username, me.User.Role)
 			if app.client == "kypulse" {
 				pulseTargetsHealthy(t, ctx, send, app.origin)
+				pulseBacksUpByHand(t, ctx, c, jar, send)
 			}
 		}
 	}
+}
+
+// pulseBacksUpByHand proves #93 on the catalog's internal KyRecovery, whose URL resolves to
+// the kind node's private address: the owner's admin, signed in to both, runs the ceremony
+// (a throwaway key; only its public half reaches KyRecovery, as the ceremony page sends it),
+// mints a code with the handover's command, and pairs kyPulse on its backup API with the
+// handover's URL. kyPulse accepts the private address only because the catalog set
+// KYPULSE_BACKUP_ALLOW_PRIVATE_RECOVERY; its deposit then reaches KyRecovery, which lists it.
+func pulseBacksUpByHand(t *testing.T, ctx context.Context, c *kube.Client, jar http.CookieJar, send func(method, endpoint string, body []byte, csrf string) (*http.Response, []byte)) {
+	t.Helper()
+	recovery, pulse := "https://"+catalogRecoveryURLHost, "https://"+catalogPulseURLHost
+	key, err := recoverykey.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub := key.Public()
+	body, _ := json.Marshal(map[string]any{"public_key": base64.StdEncoding.EncodeToString(pub.Bytes()), "threshold": 2, "total_shares": 3})
+	r, b := send("POST", recovery+"/api/recovery-key", body, "")
+	var imported struct {
+		KeyID string `json:"key_id"`
+	}
+	if r.StatusCode != http.StatusCreated || json.Unmarshal(b, &imported) != nil || imported.KeyID != pub.ID() {
+		t.Fatalf("ceremony key import: %d %s", r.StatusCode, b)
+	}
+
+	// The handover's mint command: <kubectl> -n kyq-kyrecovery exec deployment/app -- /app/kyrecovery pair generate ...
+	ns, pod, container, err := c.AppPod(ctx, "kyrecovery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := c.Exec(ctx, ns, pod, container, []string{"/app/kyrecovery", "pair", "generate", "--service", "kypulse", "--app", "kyPulse"})
+	m := regexp.MustCompile(`(?m)^Pairing Code: ([0-9]{6})\r?$`).FindSubmatch(out)
+	if err != nil || m == nil {
+		t.Fatalf("pair generate printed no code: %v", err)
+	}
+	code := string(m[1])
+	clear(out)
+
+	csrf := ""
+	if u, err := url.Parse(pulse); err == nil {
+		for _, ck := range jar.Cookies(u) {
+			if ck.Name == "ky_csrf" {
+				csrf = ck.Value
+			}
+		}
+	}
+	if csrf == "" {
+		t.Fatal("kyPulse set no CSRF cookie")
+	}
+	body, _ = json.Marshal(map[string]string{"recovery_url": recovery + "/", "pairing_code": code})
+	r, b = send("POST", pulse+"/api/backup/pair-remote", body, csrf)
+	var paired struct {
+		RecoveryKeyID string `json:"recovery_key_id"`
+	}
+	if r.StatusCode != http.StatusOK || json.Unmarshal(b, &paired) != nil || paired.RecoveryKeyID != pub.ID() {
+		t.Fatalf("kyPulse pairing with the internal KyRecovery: %d %s", r.StatusCode, b)
+	}
+	r, b = send("POST", pulse+"/api/backup/deposit", nil, csrf)
+	var run struct {
+		Receipt *struct {
+			CapsuleID string `json:"capsule_id"`
+		} `json:"receipt"`
+	}
+	if r.StatusCode != http.StatusOK || json.Unmarshal(b, &run) != nil || run.Receipt == nil || run.Receipt.CapsuleID == "" {
+		t.Fatalf("kyPulse deposit: %d %s", r.StatusCode, b)
+	}
+
+	r, b = send("GET", recovery+"/api/pairing/list", nil, "")
+	type pairing struct {
+		Status        string     `json:"status"`
+		RecoveryKeyID string     `json:"recovery_key_id"`
+		LastBackupAt  *time.Time `json:"last_backup_at"`
+	}
+	var list []pairing
+	if r.StatusCode != http.StatusOK || json.Unmarshal(b, &list) != nil {
+		t.Fatalf("KyRecovery pairings: %d %s", r.StatusCode, b)
+	}
+	if !slices.ContainsFunc(list, func(p pairing) bool {
+		return p.Status == "paired" && p.RecoveryKeyID == pub.ID() && p.LastBackupAt != nil
+	}) {
+		t.Fatalf("KyRecovery lists no backup from kyPulse:\n%s", b)
+	}
+	t.Logf("kyPulse paired by hand with the internal KyRecovery at %s and deposited capsule %s", recovery, run.Receipt.CapsuleID)
 }
 
 // trustTestCA restarts app with the edge's throwaway certificate as its only trusted root.

@@ -26,6 +26,12 @@ needs `--acknowledge-no-backup`; from 0.4.x the seven apps that migrate data are
 as before. KyPost devices that pair by QR code or pairing link now wait for approval on the page
 that showed the code, and KyPost apps from before device approval fail to pair until updated.
 
+- The handover no longer says that no catalog product can pair with KyRecovery (#93): with an
+  internal KyRecovery each product pairs by hand after the ceremony, as KyRecovery's step says.
+  A plan without one says it routes no KyRecovery, and KyDNS, whose private-recovery option stays
+  off, says it does not pair. CI now proves the pairing on kind: kyPulse, paired through its
+  backup API with a code minted by the handover's command, deposits to the catalog's internal
+  KyRecovery at its private address, and KyRecovery lists the backup.
 - A catalog move that changes no migration no longer forces a pre-upgrade backup (#150). A
   manifest's new `upgrade.data_since` names the oldest version whose data the pinned version
   uses unchanged; upgrading from it or later takes no copy and asks for `--acknowledge-no-backup`

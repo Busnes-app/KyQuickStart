@@ -965,8 +965,10 @@ other installation's.
 - Not yet, needs a human or a product change: no everyday viewer (KyIdentity's export names only
   the owner's admin account, and KyIdentity refuses the everyday one for this client); no log
   sources (none of the catalog apps sends logs yet: a source needs a sender holding its token,
-  such as `kypulse-send`); the alert webhook is set in its UI;
-  KyRecovery pairing is not possible (see KyRecovery above).
+  such as `kypulse-send`); the alert webhook is set in its UI.
+- KyRecovery pairing is by hand after the ceremony (see KyRecovery above). CI proves it on
+  kyPulse: paired through its backup API with the handover's code and URL, its deposit reaches
+  the internal KyRecovery, which lists it (#93).
 - `KYPULSE_TRUSTED_PROXIES` is unset here, so kyPulse sees the edge pod as every client
   ([forwarded headers](#forwarded-headers-trusted-proxy)).
   kyPulse 0.4.2 verifies directory events as an HMAC of the body alone while
@@ -1044,7 +1046,8 @@ Limits:
   rate-limits by the edge pod's address ([forwarded headers](#forwarded-headers-trusted-proxy)).
 - Not yet, or unproven: sign-out is local (KyIdentity's setup registers no
   back-channel logout); a directory event (offboarding) reaching KyNotes is not proven live;
-  KyRecovery pairing, `KYNOTES_BLOB_TARGET` and restic/K8up blob backups are not configured.
+  `KYNOTES_BLOB_TARGET` and restic/K8up blob backups are not configured. Pair it with
+  KyRecovery by hand after the ceremony (see KyRecovery above).
 
 ## Catalog KyCalendar on Kubernetes
 
@@ -1130,8 +1133,8 @@ Limits:
 - Not yet, or unproven: everyday accounts beyond the owner's; sign-out is
   local (no back-channel logout); a directory event (offboarding) reaching KyCalendar is not
   proven live; real CalDAV clients with app passwords are not tested (the kind test proves the
-  web/API session only); KyRecovery pairing, PostgreSQL mode, MCP access and ICS subscriptions
-  are not configured.
+  web/API session only); PostgreSQL mode, MCP access and ICS subscriptions are not
+  configured. Pair it with KyRecovery by hand after the ceremony (see KyRecovery above).
 
 ## Catalog KyYard on Kubernetes
 
@@ -1238,8 +1241,9 @@ Limits:
   server and the targets' SSH; no policy narrows it yet.
 - With the edge untrusted every client shares the edge's rate-limit bucket.
 - Unproven or not configured: a directory event (offboarding) reaching KyYard; back-channel
-  logout; everyday accounts and organizations; retiring the break-glass account; KyRecovery
-  pairing, private recovery and PostgreSQL; enrolling hosts or clusters with `kyyard-agent`.
+  logout; everyday accounts and organizations; retiring the break-glass account; PostgreSQL;
+  enrolling hosts or clusters with `kyyard-agent`. Pair it with KyRecovery by hand after the
+  ceremony (see KyRecovery above).
 
 ## Catalog KyDrive on Docker
 
@@ -1344,7 +1348,7 @@ graceful restart and its live `--check`.
 - With `euro-office` in the plan, see "Catalog Euro-Office on Kubernetes".
 - `KY_TRUSTED_PROXIES` is the edge's `egress_address` as a `/32` or `/128`. Without one it is
   empty and KyDrive sees the edge as every client ([forwarded headers](#forwarded-headers-trusted-proxy)).
-- Not yet: recovery pairing.
+- Pair it with KyRecovery by hand after the ceremony (see "Catalog KyRecovery on Kubernetes").
 
 ## Catalog Euro-Office on Kubernetes
 
@@ -1602,7 +1606,7 @@ address `<forward_host>:53`, then these outstanding human steps, then its notes:
 - Set the local recovery administrator's password on the target:
   `docker exec -it kyq-kydns-app-1 /usr/local/bin/kydns admin reset-password` (it asks twice;
   `-t` keeps it off the screen). Use it only to recover, at `/login`.
-- No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery.
+- KyDNS does not pair with KyRecovery (its private-recovery option stays off), so it deposits no backups there.
 
 The notes name the firewall facts: ports 53 and `forward_port` are open on `forward_host`; the
 admin UI trusts forwarded requests only from `egress_address` (apply checked the edge is trusted
