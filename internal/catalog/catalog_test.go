@@ -885,3 +885,25 @@ func TestPinnedImage(t *testing.T) {
 		t.Errorf("KyYard's KY_AGENT_IMAGE is not %s: env %q", want, a.Kubernetes.Env["KY_AGENT_IMAGE"])
 	}
 }
+
+// KyPost and KyCalendar take their peer's private-address option from the plan, in Compose and
+// in the Kubernetes env, under the name each reads (#100).
+func TestWithPrivatePeer(t *testing.T) {
+	cat, err := Load(Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, env := range map[string]string{"kypost": "KYPOST_KYCALENDAR_ALLOW_PRIVATE", "kycalendar": "KYCALENDAR_KYPOST_ALLOW_PRIVATE"} {
+		a := cat[name]
+		for _, allow := range []bool{true, false} {
+			got := a.WithPrivatePeer(allow)
+			want := env + `: "` + strconv.FormatBool(allow) + `"`
+			if !strings.Contains(string(got.Compose), want) || strings.Contains(string(got.Compose), PrivatePeerRef) {
+				t.Errorf("%s Compose with %v lacks %s or keeps the reference", name, allow, want)
+			}
+			if k := got.Kubernetes; k != nil && k.Env[env] != strconv.FormatBool(allow) {
+				t.Errorf("%s Kubernetes env %s = %q with %v", name, env, k.Env[env], allow)
+			}
+		}
+	}
+}

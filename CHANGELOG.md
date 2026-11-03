@@ -14,6 +14,12 @@ state directory, target data and target-held credentials; do not reset them as a
 
 ## Unreleased
 
+- KyPost and KyCalendar from the catalog pair for calendar invitations (#100). Their 0.6 releases
+  pair through KyIdentity's suite directory on their own; the installer now sets
+  `KYPOST_KYCALENDAR_ALLOW_PRIVATE` and `KYCALENDAR_KYPOST_ALLOW_PRIVATE` to `true` only when the
+  plan routes the other app to a private address (an internal route, or `lan_dns`), and the
+  handovers say how to check the pairing instead of "not configured". Upgrade impact: `apply`
+  redeploys KyPost and KyCalendar once (their environment gained the option).
 - An in-cluster NPM can take a LoadBalancer address from the cluster's Cilium LB IPAM or MetalLB
   (#99): `load_balancer_address` on the `npm` app makes `app-public` a LoadBalancer on 80 and 443
   at that address, so internal routes work on `client_port: 443` instead of `:30443`. Preflight

@@ -486,7 +486,7 @@ func withRoute(st *stack.Stack, name string, t stack.Target, app catalog.App) (c
 	if err != nil {
 		return app, err
 	}
-	app = app.WithPrivateRecovery(privateRecovery(st))
+	app = app.WithPrivateRecovery(privateRecovery(st)).WithPrivatePeer(privatePeer(st, name))
 	for _, a := range st.Apps {
 		if a.Name != name {
 			continue
@@ -1039,6 +1039,26 @@ func privateRecovery(st *stack.Stack) bool {
 	for _, e := range st.Edges {
 		for _, r := range e.Routes {
 			if r.App == "kyrecovery" && e.Internal(r) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// suitePeers are the pairs KyIdentity's suite directory pairs on its own (/api/suite/peer).
+var suitePeers = map[string]string{"kypost": "kycalendar", "kycalendar": "kypost"}
+
+// privatePeer reports whether app's suite peer is in the plan with a URL that resolves to a
+// private address: an internal route, or a route an edge's lan_dns publishes on the LAN.
+func privatePeer(st *stack.Stack, app string) bool {
+	peer, ok := suitePeers[app]
+	if !ok || !slices.ContainsFunc(st.Apps, func(a stack.App) bool { return a.Name == peer }) {
+		return false
+	}
+	for _, e := range st.Edges {
+		for _, r := range e.Routes {
+			if r.App == peer && (e.Internal(r) || e.LANDNS != nil) {
 				return true
 			}
 		}
