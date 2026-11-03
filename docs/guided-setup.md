@@ -719,7 +719,9 @@ The catalog's `kyidentity` app installs KyIdentity on a Kubernetes target from t
 Each catalog app's manifest holds its version, digest and attesting workflow, and
 `scripts/catalog-follow` keeps the Ky pins current, so this guide names no pin.
 It needs an edge route: its issuer is `https://<route hostname>`, plus `:<client_port>` on an
-internal route whose edge's `client_port` is not 443, and a plan without exactly one route for it is refused. Select its setup with an `integrations` entry that names no
+internal route whose edge's `client_port` is not 443 (an in-cluster NPM serves 443 only with a
+[`load_balancer_address`](edge.md#a-load-balancer-address-load_balancer_address) or
+`kube_vip_address`; choose it before this setup runs), and a plan without exactly one route for it is refused. Select its setup with an `integrations` entry that names no
 container, namespace or pod; `apply` finds the app's own pod.
 
 ```yaml

@@ -569,3 +569,24 @@ func TestKubeVIPAddress(t *testing.T) {
 		}
 	}
 }
+
+// load_balancer_address is one IPv4 LAN address for the cluster's own load balancer; it
+// needs no egress_address (nothing SNATs NPM's egress) and excludes kube_vip_address.
+func TestLoadBalancerAddress(t *testing.T) {
+	with := func(extra string) string {
+		return strings.Replace(kubeEdgeStack, "  - name: npm\n    target: k8s\n", "  - name: npm\n    target: k8s\n"+extra, 1)
+	}
+	if s, err := Parse([]byte(with("    load_balancer_address: 192.168.1.80\n"))); err != nil || s.Apps[0].LoadBalancerAddress != "192.168.1.80" {
+		t.Fatalf("load_balancer_address refused: %v", err)
+	}
+	for name, plan := range map[string]string{
+		"IPv6":          with("    load_balancer_address: 'fd00::80'\n"),
+		"hostname":      with("    load_balancer_address: lb.example.com\n"),
+		"loopback":      with("    load_balancer_address: 127.0.0.1\n"),
+		"with kube-vip": with("    load_balancer_address: 192.168.1.80\n    kube_vip_address: 192.168.1.78\n"),
+	} {
+		if _, err := Parse([]byte(plan)); err == nil || !strings.Contains(err.Error(), "load_balancer_address") {
+			t.Errorf("%s accepted: %v", name, err)
+		}
+	}
+}

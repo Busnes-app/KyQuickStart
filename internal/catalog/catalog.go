@@ -169,6 +169,9 @@ type Kubernetes struct {
 	NodePorts map[int]int `yaml:"node_ports"`
 	// KubeVIPAddress makes the NodePort Service a kube-vip LoadBalancer; set from the stack.
 	KubeVIPAddress string `yaml:"-"`
+	// LoadBalancerAddress makes the NodePort Service a LoadBalancer at this address from the
+	// cluster's Cilium LB IPAM or MetalLB; set from the stack.
+	LoadBalancerAddress string `yaml:"-"`
 	// TerminationGraceSeconds lets a stopping pod drain this long; 0 keeps Kubernetes' default.
 	TerminationGraceSeconds int64 `yaml:"termination_grace_seconds"`
 	// SuiteRunner adds the suite runner (kyquickstart serve) as a sidecar sharing only its
