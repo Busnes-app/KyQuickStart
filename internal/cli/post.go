@@ -90,5 +90,5 @@ KyPost at https://%[1]s/: webmail for mail accounts you already have. Sign in th
      session until it restarts. To end every live session, on %[5]s:
        docker restart %[4]s
   The KyPost-KyCalendar invitation pairing is not configured by this installer.
-  No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery.
+  This plan routes no KyRecovery, so no backups are deposited in KyRecovery.
 `

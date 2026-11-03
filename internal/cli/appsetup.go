@@ -126,7 +126,7 @@ func (s *session) composeClients(st *stack.Stack) error {
 			}
 			if privateRecovery(st) {
 				post := slices.ContainsFunc(st.Integrations, func(i stack.Integration) bool { return i.Product == "kypost" && i.Installed(st) })
-				text = strings.ReplaceAll(text, noPairing, recoveryPairing(s.state, host, s.placed["kyrecovery"], post))
+				text = strings.ReplaceAll(text, recoveryUnreachable, recoveryPairing(s.state, host, s.placed["kyrecovery"], post))
 			}
 			s.handover += text
 		case "kydrive":
@@ -289,11 +289,16 @@ Outstanding human step, unless already done: the KyRecovery custodian ceremony.
   print the custodian cards. KyRecovery refuses every product pairing until then, so mint no
   pairing codes before it. Its local "admin" break-glass password is printed once, to its first
   pod's log (kubectl -n kyq-kyrecovery logs deployment/app), and lost when that pod is replaced.
-  No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery.
+  ` + recoveryUnreachable + `
 `
 
-// noPairing ends each product's handover while no catalog product can reach KyRecovery.
-const noPairing = "No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery."
+// recoveryUnreachable ends KyRecovery's step when the plan does not route it as internal, so
+// no product may reach its private address; with an internal route, recoveryPairing replaces it.
+const recoveryUnreachable = "No product can pair with it until the plan routes it as internal; no backups are deposited in it."
+
+// noPairing ends each product's handover when the plan routes no KyRecovery; with an internal
+// one, pairingLines replaces it (#93).
+const noPairing = "This plan routes no KyRecovery, so no backups are deposited in KyRecovery."
 
 // pairByHand replaces noPairing in a product's handover when the plan routes KyRecovery as
 // internal: every product but KyDNS may then pair with it (#93).
@@ -368,7 +373,7 @@ const notesHandover = `
 KyNotes at https://%[1]s/: sign in through KyIdentity as %[2]s (administers only; it cannot
   open notes) or %[3]s, whose account KyNotes creates at first sign-in. Assign KyIdentity role
   kynotes.user to anyone else who should sign in. KyNotes has no local password.
-  No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery.
+  This plan routes no KyRecovery, so no backups are deposited in KyRecovery.
 `
 
 // noCalendarPairing marks, in KyPost's and KyCalendar's handovers, where calendarPairing goes.
@@ -400,7 +405,7 @@ KyCalendar at https://%[1]s/: sign in through KyIdentity as %[2]s (its console o
      Sign in with it once at https://%[1]s/ and change it. Only after that, delete the file:
        %[4]s -n kyq-kycalendar exec deployment/app -- rm /app/data/initial-admin-password
   The KyPost-KyCalendar invitation pairing is not configured by this installer.
-  No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery.
+  This plan routes no KyRecovery, so no backups are deposited in KyRecovery.
 `
 
 // dnsHandover is printed after every apply that installs KyDNS; %[3]s is its DNS address,
@@ -415,7 +420,7 @@ KyDNS at https://%[1]s/: sign in through KyIdentity as %[2]s, the one account it
        docker exec -it kyq-kydns-app-1 /usr/local/bin/kydns admin reset-password
      It asks for the password twice. Use it only to recover, at https://%[1]s/login.
   Notes:
-  - No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery.
+  - KyDNS does not pair with KyRecovery (its private-recovery option stays off), so it deposits no backups there.
   - Firewall: ports 53 and %[6]d are open on %[5]s. Its admin UI on %[6]d trusts forwarded
     requests only from egress_address %[7]s; apply checked that the edge is trusted and this
     workstation is refused. DNS answers the private ranges KyDNS sees. Both rest on the Docker

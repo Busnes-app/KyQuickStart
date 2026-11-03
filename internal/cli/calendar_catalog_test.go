@@ -77,7 +77,7 @@ func TestKyCalendarClientFromCatalog(t *testing.T) {
 	}
 	kubectl := "kubectl --kubeconfig '" + s.placed["kycalendar"].Kubeconfig + "' -n kyq-kycalendar exec deployment/app -- "
 	for _, want := range []string{"KyCalendar at https://calendar.example.com/", "as owner-admin (its console only", "or owner (calendars)",
-		kubectl + "cat /app/data/initial-admin-password", `local "admin" break-glass`, "No catalog product can pair with KyRecovery in this release", "Install KyPost from this catalog too and the two pair for calendar invitations"} {
+		kubectl + "cat /app/data/initial-admin-password", `local "admin" break-glass`, "This plan routes no KyRecovery", "Install KyPost from this catalog too and the two pair for calendar invitations"} {
 		if !strings.Contains(s.handover, want) {
 			t.Errorf("handover lacks %q: %s", want, s.handover)
 		}

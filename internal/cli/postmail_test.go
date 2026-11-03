@@ -207,7 +207,7 @@ func TestKyPostNativeHandover(t *testing.T) {
 			"controlled\n  qualification profile for a dedicated test domain", "change production MX only under your own approved plan", "Check\n     saved relay",
 			"Receiving is off: no mail port is open", "docker exec --user kypost -e KYPOST_NATIVE_RECEIVING=true kyq-kypost-app-1 kypost-server receiving init",
 			"add mail.receiver to stack.yaml", "docker exec --user kypost kyq-kypost-app-1 kypost-server setup-status", "64 MiB", "KYPOST_BULK_BACKUP_REPOSITORY",
-			"No catalog product can pair with KyRecovery in this release", "Install KyCalendar from this catalog too and the two pair for calendar invitations"}},
+			"This plan routes no KyRecovery", "Install KyCalendar from this catalog too and the two pair for calendar invitations"}},
 		{postMailReceiver, []string{"Maddy answers on 192.0.2.1:25 for mx.mail-test.example.com", "no TCP proxy in front", "supervisorctl -c /etc/supervisord.conf status receiver", "/srv/kypost-receiving/tls"}},
 	} {
 		postMailPlan(t, f, c.mail)
