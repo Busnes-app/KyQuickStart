@@ -14,6 +14,12 @@ state directory, target data and target-held credentials; do not reset them as a
 
 ## Unreleased
 
+- KyPost and KyCalendar from the catalog pair for calendar invitations (#100). Their 0.6 releases
+  pair through KyIdentity's suite directory on their own; the installer now sets
+  `KYPOST_KYCALENDAR_ALLOW_PRIVATE` and `KYCALENDAR_KYPOST_ALLOW_PRIVATE` to `true` only when the
+  plan routes the other app to a private address (an internal route, or `lan_dns`), and the
+  handovers say how to check the pairing instead of "not configured". Upgrade impact: `apply`
+  redeploys KyPost and KyCalendar once (their environment gained the option).
 - The catalog moves every Ky app to its 0.6 line: KyCalendar, KyDNS, KyDrive, KyIdentity,
   KyMessage, KyNotes, KyPost, kyPulse, KyRecovery and KyYard 0.6.0, the suite redesign release.
   Each pin is the digest its release workflow attested. No app's 0.6.0 changes a migration (its

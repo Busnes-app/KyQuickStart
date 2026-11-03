@@ -77,7 +77,7 @@ func TestKyCalendarClientFromCatalog(t *testing.T) {
 	}
 	kubectl := "kubectl --kubeconfig '" + s.placed["kycalendar"].Kubeconfig + "' -n kyq-kycalendar exec deployment/app -- "
 	for _, want := range []string{"KyCalendar at https://calendar.example.com/", "as owner-admin (its console only", "or owner (calendars)",
-		kubectl + "cat /app/data/initial-admin-password", `local "admin" break-glass`, "No catalog product can pair with KyRecovery in this release", "The KyPost-KyCalendar invitation pairing is not configured by this installer."} {
+		kubectl + "cat /app/data/initial-admin-password", `local "admin" break-glass`, "No catalog product can pair with KyRecovery in this release", "Install KyPost from this catalog too and the two pair for calendar invitations"} {
 		if !strings.Contains(s.handover, want) {
 			t.Errorf("handover lacks %q: %s", want, s.handover)
 		}
@@ -519,5 +519,44 @@ func TestKubernetesUpgradeCopiesClaimsFirst(t *testing.T) {
 	}
 	if n := list[note].(engine.Noter).Note(); !strings.HasPrefix(n, "upgrade 0.4.2 to "+s.cat["kycalendar"].Version+" after a verified pre-upgrade backup") {
 		t.Errorf("note = %q", n)
+	}
+}
+
+// KyPost and KyCalendar may reach each other at a private address only when the other's route
+// resolves to one: an internal route, or an edge whose lan_dns publishes it on the LAN (#100).
+func TestPrivatePeer(t *testing.T) {
+	route := func(app, exposure string) stack.Route {
+		return stack.Route{App: app, Hostname: app + ".example.com", Exposure: exposure}
+	}
+	both := []stack.App{{Name: "kypost"}, {Name: "kycalendar"}}
+	for name, c := range map[string]struct {
+		st             stack.Stack
+		post, calendar bool
+	}{
+		"external tunnel routes":    {stack.Stack{Apps: both, Edges: []stack.Edge{{Provider: "cloudflare", Routes: []stack.Route{route("kypost", ""), route("kycalendar", "")}}}}, false, false},
+		"internal KyCalendar":       {stack.Stack{Apps: both, Edges: []stack.Edge{{Provider: "cloudflare", Routes: []stack.Route{route("kypost", ""), route("kycalendar", "internal")}}}}, true, false},
+		"lan edge":                  {stack.Stack{Apps: both, Edges: []stack.Edge{{Provider: "lan", Routes: []stack.Route{route("kypost", ""), route("kycalendar", "")}}}}, true, true},
+		"lan_dns":                   {stack.Stack{Apps: both, Edges: []stack.Edge{{Provider: "cloudflare", LANDNS: &stack.LANDNS{}, Routes: []stack.Route{route("kypost", ""), route("kycalendar", "")}}}}, true, true},
+		"KyPost without KyCalendar": {stack.Stack{Apps: both[:1], Edges: []stack.Edge{{Provider: "lan", Routes: []stack.Route{route("kypost", "")}}}}, false, true},
+	} {
+		if got := privatePeer(&c.st, "kypost"); got != c.post {
+			t.Errorf("%s: KyPost allows a private KyCalendar = %v", name, got)
+		}
+		if got := privatePeer(&c.st, "kycalendar"); got != c.calendar {
+			t.Errorf("%s: KyCalendar allows a private KyPost = %v", name, got)
+		}
+	}
+}
+
+// With both in the plan, each handover says they pair through KyIdentity and how to check it.
+func TestCalendarPairingHandover(t *testing.T) {
+	st := &stack.Stack{Apps: []stack.App{{Name: "kypost"}, {Name: "kycalendar"}}}
+	for _, app := range []string{"kypost", "kycalendar"} {
+		got := calendarPairing(st, app)
+		for _, want := range []string{"pair for calendar invitations through KyIdentity on their own", "Server -> KyCalendar", "kyquickstart restart kycalendar"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s: %q lacks %q", app, got, want)
+			}
+		}
 	}
 }

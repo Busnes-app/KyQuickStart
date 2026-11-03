@@ -23,6 +23,9 @@ services:
       # Forwarded headers only from the edge's own address; none without the edge's egress_address.
       KY_TRUSTED_PROXIES: "{{edge_prefix}}"
       KYCALENDAR_BACKUP_ALLOW_PRIVATE_RECOVERY: "{{private_recovery}}"
+      # KyCalendar pairs with a catalog KyPost through KyIdentity's suite directory; true only
+      # when the plan routes KyPost to a private address.
+      KYCALENDAR_KYPOST_ALLOW_PRIVATE: "{{private_peer}}"
       KY_DB_DRIVER: "sqlite"
       KY_DATA_DIR: "/app/data"
       KY_SSO_ENABLED: "true"

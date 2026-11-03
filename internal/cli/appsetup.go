@@ -146,7 +146,7 @@ func (s *session) composeClients(st *stack.Stack) error {
 		case "kyyard":
 			s.handover += yardHandover(s.state, host, n.Admin.Username, s.placed["kyyard"])
 		case "kycalendar":
-			s.handover += calendarRuntimeHandover(s.state, host, n.Admin.Username, n.Everyday.Username, s.placed["kycalendar"])
+			s.handover += strings.Replace(calendarRuntimeHandover(s.state, host, n.Admin.Username, n.Everyday.Username, s.placed["kycalendar"]), noCalendarPairing, calendarPairing(st, "kycalendar"), 1)
 		case "kypost":
 			text := fmt.Sprintf(postHandover, host, n.Admin.Username, n.Everyday.Username, postContainer, s.placed["kypost"].Name)
 			if m := mailOf(st, "kypost"); m != nil {
@@ -155,7 +155,7 @@ func (s *session) composeClients(st *stack.Stack) error {
 			if _, ok := s.placed["kyrecovery"]; ok && privateRecovery(st) {
 				text = strings.Replace(text, noPairing, pairByApply, 1)
 			}
-			s.handover += text
+			s.handover += strings.Replace(text, noCalendarPairing, calendarPairing(st, "kypost"), 1)
 		case "kymessage":
 			s.handover += messageHandover(st, i.Product, s.placed[i.Product], n.Admin.Username, n.Everyday.Username)
 		case "kypulse":
@@ -370,6 +370,25 @@ KyNotes at https://%[1]s/: sign in through KyIdentity as %[2]s (administers only
   kynotes.user to anyone else who should sign in. KyNotes has no local password.
   No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery.
 `
+
+// noCalendarPairing marks, in KyPost's and KyCalendar's handovers, where calendarPairing goes.
+const noCalendarPairing = "  The KyPost-KyCalendar invitation pairing is not configured by this installer.\n"
+
+// calendarPairing is how KyPost and KyCalendar pair (#100): KyIdentity's suite directory gives
+// both the other's URL and their shared secret when both sign in through it, which every
+// catalog install does, so the installer configures nothing; it sets only the private-address
+// option (privatePeer).
+func calendarPairing(st *stack.Stack, app string) string {
+	if !slices.ContainsFunc(st.Apps, func(a stack.App) bool { return a.Name == suitePeers[app] }) {
+		other := map[string]string{"kypost": "KyCalendar", "kycalendar": "KyPost"}[app]
+		return "  Install " + other + " from this catalog too and the two pair for calendar invitations through\n  KyIdentity on their own.\n"
+	}
+	return `  KyPost and KyCalendar pair for calendar invitations through KyIdentity on their own; KyPost's
+  Server -> KyCalendar shows the pairing. Each person's switch is KyPost's Settings -> Mail ->
+  KyCalendar, on by default. KyCalendar turns invitation scheduling on only if it starts
+  paired: if KyPost was installed after KyCalendar, run kyquickstart restart kycalendar once.
+`
+}
 
 // calendarHandover is printed after every apply that installs KyCalendar; %[4]s is kubectl
 // pointed at its target.
