@@ -20,6 +20,12 @@ state directory, target data and target-held credentials; do not reset them as a
   plan routes the other app to a private address (an internal route, or `lan_dns`), and the
   handovers say how to check the pairing instead of "not configured". Upgrade impact: `apply`
   redeploys KyPost and KyCalendar once (their environment gained the option).
+- `pull-plan --kyyard-target T` and `handoff --revoke --kyyard-target T` naming the target
+  `handoff` recorded keep the recorded runner instead of falling back to the flag defaults (#159),
+  which failed on a catalog KyYard (`0 running pods in namespace kyq-runner`). Another target than
+  the recorded one is refused (`invalid_request`) unless `--runner-pod` or `--runner-container`
+  names its runner, and `--runner-pod` now defaults to the catalog KyYard's pod on a Kubernetes
+  target that holds it.
 - The catalog moves every Ky app to its 0.6 line: KyCalendar, KyDNS, KyDrive, KyIdentity,
   KyMessage, KyNotes, KyPost, kyPulse, KyRecovery and KyYard 0.6.0, the suite redesign release.
   Each pin is the digest its release workflow attested. No app's 0.6.0 changes a migration (its

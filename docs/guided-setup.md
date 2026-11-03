@@ -436,6 +436,12 @@ private Unix socket. The runner holds its own SSH key and kubeconfigs; KyYard ho
    ./kyquickstart pull-plan --state ./morning-test   # the runner handoff used; keeps stack.yaml.bak
    ```
 
+   Leave out `--kyyard-target` to use the runner `handoff` recorded; naming the recorded
+   target again keeps that runner. Naming another target also needs `--runner-pod`
+   (Kubernetes) or `--runner-container` (Docker). Without `--runner-pod`, a Kubernetes target
+   holding the catalog KyYard uses its pod (`kyq-kyyard/app.kubernetes.io/name=kyyard`), any
+   other `kyq-runner/app=runner`.
+
 To take the plan back, pull it, then run `./kyquickstart handoff --revoke --state
 ./morning-test`. That removes the runner's key lines, ServiceAccount and token and records the
 CLI as owner; the runner can no longer reach any target.
