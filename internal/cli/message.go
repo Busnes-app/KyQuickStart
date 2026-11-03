@@ -630,6 +630,6 @@ KyMessages chat at https://%[1]s/ (Element), its console at https://%[2]s/.
   one-time password is in the first lines of docker logs kyq-%[7]s-app-1 on %[8]s. On %[8]s,
   pipe a new one of at least 12 characters (stdin only, never on the command line) into:
     %[9]s
-  No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery.
+  This plan routes no KyRecovery, so no backups are deposited in KyRecovery.
 `, roleHost(st, app, "chat"), roleHost(st, app, ""), server, admin, everyday, media, app, t.Name, compose, relay)
 }

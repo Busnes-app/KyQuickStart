@@ -633,7 +633,10 @@ calls and kind nodes must carry their own explicit bounds.
   every other routed app in its live `--check`, and health through the edge. Then, with
   test-only cluster DNS and CA trust, the owner's admin signs in to KyRecovery and kyPulse
   through KyIdentity, the everyday account is refused by both, and kyPulse reports every
-  target ok. `TestKubernetesNPMEdgeJoins` (its own CI shard) rebuilds that stack (KyIdentity,
+  target ok. The admin then runs KyRecovery's ceremony with a throwaway key (public half only),
+  mints a code in its container and pairs kyPulse by hand with it and the handover's URL, a
+  private address kyPulse accepts only through the catalog's private-recovery option; kyPulse's
+  deposit is listed by KyRecovery (#93). `TestKubernetesNPMEdgeJoins` (its own CI shard) rebuilds that stack (KyIdentity,
   KyRecovery, kyPulse, KyDrive signed in and backed up), then the catalog KyNotes joins after KyIdentity's first setup
   through a setup amendment: restricted uid-65532 pod, staged/imported private setup files (checked from an
   ephemeral BusyBox container, the image has no shell), live present-only `--check`, no route

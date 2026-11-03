@@ -95,6 +95,6 @@ KyYard at https://%[1]s/: sign in through KyIdentity as %[2]s (administration on
      KyYard: handoff --revoke, apply, then handoff again. KyYard's Suite page shows the runner;
      only the local "admin" account from step 1 can start operations there, and %[2]s can
      only view it.
-  No catalog product can pair with KyRecovery in this release; no backups are deposited in KyRecovery.
+  This plan routes no KyRecovery, so no backups are deposited in KyRecovery.
 `, host, admin, kubectl(state, t), remote.Quote(state), t.Name, yardRunnerPod)
 }
