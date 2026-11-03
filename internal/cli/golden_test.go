@@ -18,7 +18,8 @@ var updateGolden = flag.Bool("update-golden", false, "rewrite testdata/steps.gol
 // kydrive.deploy and kydrive.health, whose healthcheck gained start_interval: backup and
 // restore change no other deployment or setup input. KyPost's native mail plans add their own
 // entries and leave the others alone. #105's fsGroup fix moved the Kubernetes non-root apps'
-// deploy and health hashes, so apply redeploys them once. Ky release pins are replaced
+// deploy and health hashes, so apply redeploys them once. #100's private_peer option moved
+// KyPost's and KyCalendar's deploy and health hashes, so apply redeploys them once. Ky release pins are replaced
 // (catalogtest.Unpinned), so following a release changes no hash here.
 func TestStepInputsGolden(t *testing.T) {
 	ctx := context.Background()

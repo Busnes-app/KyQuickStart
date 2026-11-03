@@ -12,8 +12,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
+	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/dockerhost"
 	"github.com/Busnes-app/kyquickstart/internal/engine"
 	"github.com/Busnes-app/kyquickstart/internal/kube"
@@ -74,15 +76,25 @@ func runnerOwned(state string) error {
 	return err
 }
 
+// defaultRunnerPod is --runner-pod's default on a target: the pod of an app there that runs the
+// suite runner (the catalog KyYard), else the pod kyyard-runner.k8s.yaml makes.
+func defaultRunnerPod(apps []stack.App, cat catalog.Catalog, target string) string {
+	if slices.ContainsFunc(apps, func(a stack.App) bool { return a.Target == target && hostsRunner(cat[a.Name]) }) {
+		return yardRunnerPod
+	}
+	return "kyq-runner/app=runner"
+}
+
 // handoffCommand parses handoff and pull-plan. Without --kyyard-target, pull-plan and
-// --revoke use the runner recorded in handoff.json.
+// --revoke use the runner recorded in handoff.json; with the recorded target and no runner
+// named, they keep the recorded runner, and another target needs its runner named.
 func handoffCommand(ctx context.Context, cmd string, args []string, o Options) error {
 	fl := flag.NewFlagSet(cmd, flag.ContinueOnError)
 	fl.SetOutput(o.Out)
 	state := fl.String("state", ".", "state directory holding stack.yaml")
 	kyyard := fl.String("kyyard-target", "", "target running KyYard and the runner")
 	container := fl.String("runner-container", "kyquickstart-runner", "Docker target: the runner container's name")
-	pod := fl.String("runner-pod", "kyq-runner/app=runner", "Kubernetes target: the runner pod, as NAMESPACE/LABEL_SELECTOR")
+	pod := fl.String("runner-pod", "", "Kubernetes target: the runner pod, as NAMESPACE/LABEL_SELECTOR (default: the catalog KyYard's pod on that target, else kyq-runner/app=runner)")
 	revoke := false
 	if cmd == "handoff" {
 		fl.BoolVar(&revoke, "revoke", false, "take the plan back: remove the runner's access, record the CLI as owner")
@@ -107,8 +119,16 @@ func handoffCommand(ctx context.Context, cmd string, args []string, o Options) e
 	if err != nil {
 		return err
 	}
-	if *kyyard != "" {
+	switch {
+	case *kyyard == "" || !named && r.KyYardTarget == *kyyard:
+		// The recorded runner, also when its target is named again.
+	case !named && r.KyYardTarget != "":
+		return suite.Errorf(suite.InvalidRequest, "handoff recorded the runner %s; name the runner on %s with --runner-pod (Kubernetes) or --runner-container (Docker), or leave out --kyyard-target", r, *kyyard)
+	default:
 		r = handoffRecord{KyYardTarget: *kyyard, Container: *container}
+		if *pod == "" {
+			*pod = defaultRunnerPod(s.plan.Apps, s.cat, *kyyard)
+		}
 		if t, ok := s.target(*kyyard); ok && t.Kubernetes() {
 			if set["runner-container"] {
 				return suite.Errorf(suite.InvalidRequest, "--kyyard-target %s is a Kubernetes target: name its runner with --runner-pod", *kyyard)
@@ -233,7 +253,7 @@ func (s *session) handoff(ctx context.Context, r handoffRecord, revoke bool) err
 					err = d.c.RevokeRunner(ctx)
 				} else {
 					// One target per cluster: a runner on this target is in this cluster.
-					kubeconfigs[t.Name], err = d.c.GrantRunner(ctx, owner.RunnerID, t.Name == r.KyYardTarget)
+					kubeconfigs[t.Name], err = d.c.GrantRunner(ctx, owner.RunnerID, t.Name == r.KyYardTarget, len(s.loadBalancers(t.Name)) > 0)
 					s.redactTokens(kubeconfigs[t.Name])
 				}
 				summary = append(summary, t.Name+": service account kyquickstart-runner")

@@ -85,7 +85,9 @@ func exposure(s *corev1.Service) string {
 		t = corev1.ServiceTypeClusterIP
 	}
 	out := fmt.Sprint(t, s.Spec.ExternalTrafficPolicy, s.Spec.ExternalIPs)
-	for _, k := range slices.Sorted(maps.Keys(kubeVIPAnnotations(""))) {
+	keys := slices.Concat(slices.Collect(maps.Keys(kubeVIPAnnotations(""))), slices.Collect(maps.Keys(loadBalancerAnnotations(""))))
+	slices.Sort(keys)
+	for _, k := range keys {
 		out += " " + k + "=" + s.Annotations[k]
 	}
 	for _, p := range s.Spec.Ports {
@@ -95,10 +97,18 @@ func exposure(s *corev1.Service) string {
 }
 
 // keepKubeVIPState keeps the annotations kube-vip writes for its election and egress rules,
-// so an apply does not make it re-announce the address.
+// and those MetalLB and Cilium write about the assignment, so an apply does not make the
+// load balancer re-announce the address.
 func keepKubeVIPState(want, have *corev1.Service) {
 	for k, v := range have.Annotations {
-		if _, ours := want.Annotations[k]; !ours && strings.HasPrefix(k, kubeVIPPrefix) {
+		// Another mode's address request is never kept: it would announce a second address.
+		_, ours := want.Annotations[k]
+		_, vip := kubeVIPAnnotations("")[k]
+		_, lb := loadBalancerAnnotations("")[k]
+		if ours || vip || lb {
+			continue
+		}
+		if strings.HasPrefix(k, kubeVIPPrefix) || strings.HasPrefix(k, metalLBGroup+"/") || strings.HasPrefix(k, "lbipam."+ciliumGroup+"/") {
 			want.Annotations[k] = v
 		}
 	}

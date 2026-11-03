@@ -7,6 +7,7 @@ import (
 	"net"
 	"time"
 
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -15,6 +16,7 @@ import (
 
 type Client struct {
 	cs          kubernetes.Interface
+	dyn         dynamic.Interface // reads load-balancer pools, which have no typed client
 	config      *rest.Config
 	execCommand func(context.Context, string, string, string, []string) ([]byte, error)
 	execStream  func(context.Context, string, string, string, []string, remotecommand.StreamOptions) error
@@ -39,7 +41,11 @@ func Connect(kubeconfig, context string) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("kubeconfig %s: %w", kubeconfig, err)
 	}
+	dyn, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("kubeconfig %s: %w", kubeconfig, err)
+	}
 	c := New(cs)
-	c.config = cfg
+	c.config, c.dyn = cfg, dyn
 	return c, nil
 }

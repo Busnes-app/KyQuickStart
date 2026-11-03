@@ -436,6 +436,12 @@ private Unix socket. The runner holds its own SSH key and kubeconfigs; KyYard ho
    ./kyquickstart pull-plan --state ./morning-test   # the runner handoff used; keeps stack.yaml.bak
    ```
 
+   Leave out `--kyyard-target` to use the runner `handoff` recorded; naming the recorded
+   target again keeps that runner. Naming another target also needs `--runner-pod`
+   (Kubernetes) or `--runner-container` (Docker). Without `--runner-pod`, a Kubernetes target
+   holding the catalog KyYard uses its pod (`kyq-kyyard/app.kubernetes.io/name=kyyard`), any
+   other `kyq-runner/app=runner`.
+
 To take the plan back, pull it, then run `./kyquickstart handoff --revoke --state
 ./morning-test`. That removes the runner's key lines, ServiceAccount and token and records the
 CLI as owner; the runner can no longer reach any target.
@@ -713,7 +719,9 @@ The catalog's `kyidentity` app installs KyIdentity on a Kubernetes target from t
 Each catalog app's manifest holds its version, digest and attesting workflow, and
 `scripts/catalog-follow` keeps the Ky pins current, so this guide names no pin.
 It needs an edge route: its issuer is `https://<route hostname>`, plus `:<client_port>` on an
-internal route whose edge's `client_port` is not 443, and a plan without exactly one route for it is refused. Select its setup with an `integrations` entry that names no
+internal route whose edge's `client_port` is not 443 (an in-cluster NPM serves 443 only with a
+[`load_balancer_address`](edge.md#a-load-balancer-address-load_balancer_address) or
+`kube_vip_address`; choose it before this setup runs), and a plan without exactly one route for it is refused. Select its setup with an `integrations` entry that names no
 container, namespace or pod; `apply` finds the app's own pod.
 
 ```yaml
@@ -1126,7 +1134,8 @@ administration). Outstanding human steps it names:
   file (the same command with `rm`), since it is the only copy. Apply never reads it and never
   sets `KY_ADMIN_PASSWORD`.
 - With an internal KyRecovery in the plan, pair it by hand after the ceremony (KyRecovery's handover step); unpaired, it deposits no backup.
-- The KyPost-KyCalendar invitation pairing is not configured by this installer.
+- The KyPost-KyCalendar invitation pairing: see [KyPost and KyCalendar
+  invitations](#kypost-and-kycalendar-invitations).
 
 Limits:
 
@@ -1733,7 +1742,8 @@ account, the assignment rule above, the mail-port facts and the first-start mode
 - With an internal KyRecovery in the plan, apply pairs it once the owner confirms KyRecovery's
   recovery key ([KyRecovery](#catalog-kyrecovery-on-kubernetes)); until then, or with a KyRecovery that cannot report
   its key, the handover says to pair it by hand. Unpaired, it deposits no backup.
-- The KyPost-KyCalendar invitation pairing is not configured by this installer.
+- The KyPost-KyCalendar invitation pairing: see [KyPost and KyCalendar
+  invitations](#kypost-and-kycalendar-invitations).
 
 Limits and residuals:
 
@@ -1757,6 +1767,31 @@ Limits and residuals:
   IMAP/SMTP mail exchange; the kind test proves sign-in and sessions only. Not configured unless
   chosen: native mail and receiving (below). Never configured: KyRecovery pairing, bulk restic backups, mobile or desktop pairing, push
   relays, CAPTCHA and Kubernetes placement.
+
+## KyPost and KyCalendar invitations
+
+With KyPost and KyCalendar both installed from the catalog, KyCalendar sends invitations,
+cancellations and replies from each person's own KyPost mailbox, and KyPost hands KyCalendar the
+DKIM-verified invitations that arrive there. The installer configures no secret for it: both sign
+in through KyIdentity, whose suite directory (`GET /api/suite/peer`, KyIdentity 0.6) gives each
+the other's URL (its route) and the secret the pair shares, derived from KyIdentity's encryption
+key and never stored. `KYPOST_KYCALENDAR_URL`, `KYPOST_KYCALENDAR_SECRET_FILE`,
+`KYCALENDAR_KYPOST_URL` and `KYCALENDAR_KYPOST_SECRET_FILE` stay unset, since set they would win
+over KyIdentity.
+
+Each product refuses a peer at a private address unless allowed, so the installer sets
+`KYPOST_KYCALENDAR_ALLOW_PRIVATE` and `KYCALENDAR_KYPOST_ALLOW_PRIVATE` to `true` only when the
+plan routes the other app to one: an internal route (every route of a `lan` edge), or an edge
+whose `lan_dns` publishes it on the LAN. Otherwise both are `false`; loopback and link-local stay
+refused either way. A plan that resolves the names privately some other way (a resolver of your
+own) leaves the pairing off; KyPost's Server -> KyCalendar names the reason.
+
+Check it in KyPost under Server -> KyCalendar (source `kyidentity`, connected) and on KyCalendar's
+Sign-in screen. Each person's switch is KyPost's Settings -> Mail -> KyCalendar, on by default
+when KyIdentity paired the two. KyCalendar's `KYCALENDAR_SCHEDULING` stays unset (automatic): on
+when KyPost is paired at its start. If KyPost was installed after KyCalendar, run `kyquickstart
+restart kycalendar` once. The handovers say the same. Unproven on a live install: no e2e
+exercises the two together.
 
 ## KyPost native mail
 

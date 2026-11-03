@@ -152,20 +152,24 @@ func (d sshDriver) connectorSteps(ctx context.Context, e stack.Edge, release str
 }
 
 type kubeDriver struct {
-	c            *kube.Client
-	needsStorage bool
-	storageClass string
-	edge         string           // the edge app on this cluster, admitted to the other apps' ports
-	nodePorts    map[int]string   // NodePort -> the app here publishing it
-	upstreams    []netip.AddrPort // where the edge's routes forward off the cluster
-	runnerImage  string           // the suite runner beside KyYard
-	tunnel       bool             // the edge here admits only its connector on external routes
+	c             *kube.Client
+	needsStorage  bool
+	storageClass  string
+	edge          string            // the edge app on this cluster, admitted to the other apps' ports
+	nodePorts     map[int]string    // NodePort -> the app here publishing it
+	loadBalancers map[string]string // load_balancer_address -> the app here asking for it
+	upstreams     []netip.AddrPort  // where the edge's routes forward off the cluster
+	runnerImage   string            // the suite runner beside KyYard
+	tunnel        bool              // the edge here admits only its connector on external routes
 }
 
 func (d kubeDriver) preflight(ctx context.Context) []finding {
 	var out []finding
 	for _, f := range kube.Preflight(ctx, d.c, d.needsStorage, d.storageClass, d.nodePorts) {
 		out = append(out, finding(f))
+	}
+	if len(d.loadBalancers) > 0 {
+		out = append(out, finding(d.c.LoadBalancerCheck(ctx, d.loadBalancers)))
 	}
 	return out
 }

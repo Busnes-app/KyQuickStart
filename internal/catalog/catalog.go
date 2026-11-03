@@ -169,6 +169,9 @@ type Kubernetes struct {
 	NodePorts map[int]int `yaml:"node_ports"`
 	// KubeVIPAddress makes the NodePort Service a kube-vip LoadBalancer; set from the stack.
 	KubeVIPAddress string `yaml:"-"`
+	// LoadBalancerAddress makes the NodePort Service a LoadBalancer at this address from the
+	// cluster's Cilium LB IPAM or MetalLB; set from the stack.
+	LoadBalancerAddress string `yaml:"-"`
 	// TerminationGraceSeconds lets a stopping pod drain this long; 0 keeps Kubernetes' default.
 	TerminationGraceSeconds int64 `yaml:"termination_grace_seconds"`
 	// SuiteRunner adds the suite runner (kyquickstart serve) as a sidecar sharing only its
@@ -288,6 +291,12 @@ const EdgePrefixRef = "{{edge_prefix}}"
 // It may appear in a Compose template and as a whole kubernetes.env value.
 const PrivateRecoveryRef = "{{private_recovery}}"
 
+// PrivatePeerRef stands for "true" when the plan routes the app's suite peer (KyPost's is
+// KyCalendar, KyCalendar's is KyPost) so that its URL resolves to a private address: an internal
+// route, or an edge whose lan_dns publishes it. The products refuse such a peer unless allowed.
+// It may appear in a Compose template and as a whole kubernetes.env value.
+const PrivatePeerRef = "{{private_peer}}"
+
 // PinnedImagePrefix starts a kubernetes.env value "{{pinned_image:<key>}}": the manifest's
 // image <key> as repository@sha256:<digest>, without its tag. KyYard needs that form for the
 // agents it enrolls, and cannot find it itself without a Docker socket.
@@ -346,6 +355,7 @@ var routeFuncs = template.FuncMap{
 	"edge_prefix":      func() string { return EdgePrefixRef },
 	"media_address":    func() string { return MediaAddressRef },
 	"private_recovery": func() string { return PrivateRecoveryRef },
+	"private_peer":     func() string { return PrivatePeerRef },
 	"pinned_image":     PinnedImage,
 	"smtp_address":     func() string { return SMTPAddressRef },
 	"mail_hostname":    func() string { return MailHostnameRef },
@@ -585,14 +595,20 @@ func (a App) WithRoute(r Route) App {
 
 // WithPrivateRecovery returns a copy whose Compose file and Kubernetes env have every
 // PrivateRecoveryRef replaced by allow.
-func (a App) WithPrivateRecovery(allow bool) App {
+func (a App) WithPrivateRecovery(allow bool) App { return a.withFlag(PrivateRecoveryRef, allow) }
+
+// WithPrivatePeer returns a copy whose Compose file and Kubernetes env have every
+// PrivatePeerRef replaced by allow.
+func (a App) WithPrivatePeer(allow bool) App { return a.withFlag(PrivatePeerRef, allow) }
+
+func (a App) withFlag(ref string, allow bool) App {
 	v := strconv.FormatBool(allow)
-	a.Compose = bytes.ReplaceAll(a.Compose, []byte(PrivateRecoveryRef), []byte(v))
+	a.Compose = bytes.ReplaceAll(a.Compose, []byte(ref), []byte(v))
 	if a.Kubernetes != nil {
 		k := *a.Kubernetes
 		k.Env = make(map[string]string, len(a.Kubernetes.Env))
 		for key, val := range a.Kubernetes.Env {
-			k.Env[key] = strings.ReplaceAll(val, PrivateRecoveryRef, v)
+			k.Env[key] = strings.ReplaceAll(val, ref, v)
 		}
 		a.Kubernetes = &k
 	}
@@ -734,11 +750,11 @@ func (k Kubernetes) validate(images map[string]string, baseline, edge bool) erro
 		if !envRE.MatchString(key) {
 			return fmt.Errorf("env: name %q must match %s", key, envRE)
 		}
-		if v == PrivateRecoveryRef {
+		if v == PrivateRecoveryRef || v == PrivatePeerRef {
 			continue
 		}
 		if rest := strings.ReplaceAll(v, HostRef, ""); strings.Contains(rest, "{{") || strings.Contains(rest, "}}") {
-			return fmt.Errorf("env: %s: the only references are %s and a whole %s", key, HostRef, PrivateRecoveryRef)
+			return fmt.Errorf("env: %s: the only references are %s and a whole %s or %s", key, HostRef, PrivateRecoveryRef, PrivatePeerRef)
 		}
 	}
 	switch {

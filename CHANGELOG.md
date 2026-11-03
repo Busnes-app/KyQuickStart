@@ -14,6 +14,25 @@ state directory, target data and target-held credentials; do not reset them as a
 
 ## Unreleased
 
+- KyPost and KyCalendar from the catalog pair for calendar invitations (#100). Their 0.6 releases
+  pair through KyIdentity's suite directory on their own; the installer now sets
+  `KYPOST_KYCALENDAR_ALLOW_PRIVATE` and `KYCALENDAR_KYPOST_ALLOW_PRIVATE` to `true` only when the
+  plan routes the other app to a private address (an internal route, or `lan_dns`), and the
+  handovers say how to check the pairing instead of "not configured". Upgrade impact: `apply`
+  redeploys KyPost and KyCalendar once (their environment gained the option).
+- An in-cluster NPM can take a LoadBalancer address from the cluster's Cilium LB IPAM or MetalLB
+  (#99): `load_balancer_address` on the `npm` app makes `app-public` a LoadBalancer on 80 and 443
+  at that address, so internal routes work on `client_port: 443` instead of `:30443`. Preflight
+  refuses an address no announced pool holds, or another Service holds, and needs `list` on the
+  pools and announcements; `handoff` grants the runner those `list` rules only for such a plan.
+  Choose it before KyIdentity's setup: `client_port` cannot change afterwards
+  ([edge guide](docs/edge.md#a-load-balancer-address-load_balancer_address)).
+- `pull-plan --kyyard-target T` and `handoff --revoke --kyyard-target T` naming the target
+  `handoff` recorded keep the recorded runner instead of falling back to the flag defaults (#159),
+  which failed on a catalog KyYard (`0 running pods in namespace kyq-runner`). Another target than
+  the recorded one is refused (`invalid_request`) unless `--runner-pod` or `--runner-container`
+  names its runner, and `--runner-pod` now defaults to the catalog KyYard's pod on a Kubernetes
+  target that holds it.
 - The catalog moves every Ky app to its 0.6 line: KyCalendar, KyDNS, KyDrive, KyIdentity,
   KyMessage, KyNotes, KyPost, kyPulse, KyRecovery and KyYard 0.6.0, the suite redesign release.
   Each pin is the digest its release workflow attested. No app's 0.6.0 changes a migration (its

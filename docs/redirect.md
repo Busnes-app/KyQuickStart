@@ -116,7 +116,9 @@ target markers from earlier builds stay valid.
   pre-upgrade backup.
 - KyAuth push approval on a live install: KyIdentity 0.4.8 and later default to the Busnes.app
   relays and the catalog leaves them unset (#98); no e2e or live run has delivered a push.
-- The KyPost-KyCalendar invitation pairing (#100).
+- The KyPost-KyCalendar invitation pairing (#100): automatic through KyIdentity's suite
+  directory since the 0.6 catalog, with the private-address options from the plan; no e2e or
+  live run has sent an invitation through it.
 
 ## Compatibility consequences
 
