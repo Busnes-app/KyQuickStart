@@ -265,6 +265,7 @@ func (t trustFlag) Set(v string) error {
 
 type session struct {
 	changesPlan  bool          // install, uninstall or unmanage; refused on a runner-owned target
+	restores     bool          // restore: refused on a runner-owned target, which cannot restore
 	deploys      bool          // apply or upgrade: redeploys every app in order
 	owner        *stack.Marker // set by a published handoff: the owner markers now record
 	integrations []stack.Integration
@@ -992,6 +993,8 @@ func (s *session) guard(target string, m stack.Marker) error {
 		return suite.Errorf(suite.OwnedByCLI, "%s is managed from the kyquickstart CLI; hand it to this runner with kyquickstart handoff", target)
 	case s.o.RunnerID != "" && m.RunnerID != s.o.RunnerID:
 		return suite.Errorf(suite.OwnedByRunner, "%s is owned by runner %s, not this runner; rerun kyquickstart handoff to move it here", target, m.RunnerID)
+	case s.o.RunnerID == "" && m.Owner == "runner" && s.restores:
+		return suite.Errorf(suite.OwnedByRunner, "%s is managed by the KyYard suite runner, which cannot restore; run kyquickstart handoff --revoke, then kyquickstart restore, then kyquickstart handoff again", target)
 	case s.o.RunnerID == "" && m.Owner == "runner" && s.changesPlan:
 		return suite.Errorf(suite.OwnedByRunner, "%s is managed by the KyYard suite runner; change it from KyYard's Suite page, or run kyquickstart handoff --revoke", target)
 	case s.o.RunnerID == "" && m.Owner == "runner" && s.deploys && slices.ContainsFunc(s.order, func(a string) bool { return hostsRunner(s.cat[a]) }):

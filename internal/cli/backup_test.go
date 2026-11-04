@@ -770,3 +770,24 @@ func TestUpgradeOverAnAppThatDidNotRestart(t *testing.T) {
 		t.Fatalf("not upgraded:\n%s", b)
 	}
 }
+
+// Q3: a runner-owned target still takes backups (they change no plan and hold the target lock
+// the runner takes); restore is refused and says how to restore.
+func TestBackupOnRunnerOwnedTarget(t *testing.T) {
+	f, _, _ := backupFixture(t)
+	if err := f.run("backup", "dumpdemo"); err != nil {
+		t.Fatal(err, f.out.String())
+	}
+	runner := fmt.Sprintf(`{"revision":%d,"owner":"runner","runner_id":"9b6c1f3e-2a1d-4f6e-9c3b-5d7e8f9a0b1c","installation_id":"%s"}`, f.stack(t).Revision, installation)
+	os.WriteFile(filepath.Join(f.h.root, ".plan"), []byte(runner), 0o600)
+	if err := f.run("backup", "dumpdemo"); err != nil {
+		t.Fatalf("backup on a runner-owned target: %v\n%s", err, f.out.String())
+	}
+	if m := f.marker(t); !strings.Contains(m, `"owner":"runner"`) {
+		t.Fatalf("backup changed the owner: %s", m)
+	}
+	err := f.runIn("", "restore", "dumpdemo", "--snapshot", "0123abcd", "--replace", "--yes")
+	if code(err) != suite.OwnedByRunner || !strings.Contains(err.Error(), "handoff --revoke, then kyquickstart restore, then kyquickstart handoff again") {
+		t.Fatalf("restore on a runner-owned target: %v", err)
+	}
+}

@@ -405,6 +405,9 @@ func guided(ctx context.Context, args []string, o Options) error {
 		}
 		st.Apps = append(st.Apps, a)
 	}
+	if err := askBulk(p, st); err != nil {
+		return err
+	}
 	for _, app := range st.Apps {
 		if err := guidedIntegration(p, st, stack.Existing{Product: app.Name, Target: app.Target}); err != nil {
 			return err
@@ -670,6 +673,9 @@ func showPlan(out io.Writer, st *stack.Stack, cat catalog.Catalog) {
 					ca = "CA " + b.CAFile
 				}
 				fmt.Fprintf(out, "  Backups: %s/<app> (rest-server password in %s, %s); run by kyquickstart backup, never on a schedule\n", b.Repository, b.CredentialFile, ca)
+				if b.BulkRepository != "" {
+					fmt.Fprintf(out, "  KyDrive's document backups: %s/kydrive-bulk (its own rest-server password in %s)\n", b.BulkRepository, b.BulkCredentialFile)
+				}
 			}
 		}
 	}
@@ -832,6 +838,7 @@ func seedAnswers(a map[string]string, st *stack.Stack) {
 		a[k+"storage_class"] = t.StorageClass
 		if b := t.Backup; b != nil {
 			a[k+"backup.repository"], a[k+"backup.credential_file"], a[k+"backup.ca_file"] = b.Repository, b.CredentialFile, b.CAFile
+			a[k+"backup.bulk_repository"], a[k+"backup.bulk_credential_file"] = b.BulkRepository, b.BulkCredentialFile
 		}
 		a[k+"kind"] = "docker"
 		if t.Kubernetes() {
@@ -884,6 +891,30 @@ func askBackup(p *prompts, key string) (*stack.BackupDestination, error) {
 		return s == "" || stack.ValidTargetPath(s)
 	})
 	return b, err
+}
+
+// askBulk asks for KyDrive's own rest-server user when its target's destination holds its bulk
+// repository (a destination with ca_file cannot; see bulkPlan).
+func askBulk(p *prompts, st *stack.Stack) error {
+	for i := range st.Targets {
+		b := st.Targets[i].Backup
+		if b == nil || b.CAFile != "" || !slices.ContainsFunc(st.Apps, func(a stack.App) bool { return a.Name == "kydrive" && a.Target == st.Targets[i].Name }) {
+			continue
+		}
+		key := fmt.Sprintf("target.%d.backup.", i)
+		var err error
+		if b.BulkRepository, err = p.ask(key+"bulk_repository", "KyDrive's own rest-server user for its document backups, rest:https://<host>[:port]/<user> (not "+b.RestUser()+")", "", func(s string) bool {
+			return stack.ValidBackupRepository(s) && (stack.BackupDestination{Repository: s}).RestUser() != b.RestUser()
+		}); err != nil {
+			return err
+		}
+		if b.BulkCredentialFile, err = p.ask(key+"bulk_credential_file", "Absolute path on the target of that user's rest-server password file (mode 0600)", "", func(s string) bool {
+			return stack.ValidTargetPath(s) && s != b.CredentialFile
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func guidedEdges(p *prompts, st *stack.Stack, cat catalog.Catalog) error {

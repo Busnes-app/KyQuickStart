@@ -249,7 +249,9 @@ owner and has no network or published ports.
 Encrypt through DNS-01) when KyDrive is on the target: KyDrive's own restic, which holds its
 documents (`<repository>/kydrive-bulk`), trusts only the system's CAs. Run [rest-server](https://github.com/restic/rest-server) 0.14.0 on
 another machine than the app's target (the installer never deploys it), with TLS and
-`--append-only --private-repos`, and one htpasswd user per Docker target. Append-only means the
+`--append-only --private-repos`, and one htpasswd user per Docker target, plus one more for
+KyDrive's documents on a target holding KyDrive: KyDrive is internet-facing, so it never gets
+the target's user, which owns every app's repository. Append-only means the
 target can add snapshots but not delete them; `forget` and `prune` need the server's own
 administrator credential, which stays off the target. The installer prescribes no firewall rule.
 
@@ -281,13 +283,24 @@ targets:
       repository: rest:https://backup.example.lan:8000/nas   # <user> is the one path segment
       credential_file: /home/kyq/.config/kyquickstart/rest-password
       ca_file: /home/kyq/.config/kyquickstart/rest-ca.pem   # optional; system trust otherwise
+      # With KyDrive on this target (and no ca_file): KyDrive's own rest-server user.
+      bulk_repository: rest:https://backup.example.lan:8000/nas-kydrive
+      bulk_credential_file: /home/kyq/.config/kyquickstart/kydrive-rest-password
 ```
+
+`plan` asks for `bulk_repository` and `bulk_credential_file` when KyDrive is placed on a target
+whose destination has no `ca_file`, and every command refuses a plan with KyDrive there
+without them. The bulk user must differ from the target's, and its password file is another
+0600 file. KyDrive's documents go to `<bulk_repository>/kydrive-bulk`. A plan made before this
+release kept them in `<repository>/kydrive-bulk` under the target's user: those snapshots stay
+there (append-only), so keep that repository and the target's password until no KyDrive
+capsule you might restore predates the change.
 
 `review`, `plan --noninteractive` and `apply` refuse, before connecting, any scheme but
 `rest:https`, credentials, a query or fragment in the URL, a missing user segment, relative
 paths, and a `backup` block on a Kubernetes target. Preflight refuses a credential or CA file
-that is a symlink, not a regular file or not owned by the SSH user, and a credential file that
-is not 0600. Each app's repository is `<repository>/<app>`.
+that is a symlink, not a regular file or not owned by the SSH user, and a credential file
+(either one) that is not 0600. Each app's repository is `<repository>/<app>`.
 
 **What a snapshot holds.** The app's catalog `backup` block decides: its bind directories minus
 `skip`, its `capsule_secrets` (encrypted by restic, never sealed to KyRecovery here) and, for an
@@ -449,8 +462,10 @@ private Unix socket. The runner holds its own SSH key and kubeconfigs; KyYard ho
    cluster at `kubernetes.default.svc`; every other Kubernetes API server at the address in
    the workstation's kubeconfig, so that address must work from where the runner runs.
 3. From now on the CLI refuses `plan`, `install`, `uninstall` and `unmanage`
-   (`owned_by_runner`): use the Suite page. `apply`, `upgrade`, `status` and `integrate-*`
-   still run from the runner's plan, except that `apply` and `upgrade` refuse while they would
+   (`owned_by_runner`): use the Suite page. The runner cannot restore, so `restore` is refused
+   too: run `handoff --revoke`, `restore`, then `handoff` again. `backup` still runs (it holds
+   the target lock the runner takes), and so do `apply`, `upgrade`, `status` and `integrate-*`,
+   from the runner's plan, except that `apply` and `upgrade` refuse while they would
    redeploy the catalog KyYard the runner runs in; copy the plan first:
 
    ```sh
@@ -933,6 +948,9 @@ secrets never reach the workstation, its output or its state.
   never written to a file, the plan, state or output. A KyPost already paired by hand is not
   paired again. A failed claim fails the step; a rerun mints a new code, and the unclaimed one
   expires. A suite runner older than this release refuses a plan with `recovery_key_id`.
+  The step and KyPost's handover go by KyRecovery's list alone ("KyRecovery lists KyPost as
+  paired"): if KyPost was unpaired on its own side, KyRecovery keeps listing it until its admin
+  revokes it, so check KyPost's backup page.
 - `KYRECOVERY_TRUSTED_PROXIES` is unset here, so its rate limits see the edge pod as every
   client ([forwarded headers](#forwarded-headers-trusted-proxy)).
 - The pod reaches KyIdentity at its public issuer URL, so cluster DNS
@@ -1368,8 +1386,9 @@ graceful restart and its live `--check`.
   deposit included, first writes the files to a Restic repository
   (`KYDRIVE_BULK_BACKUP_REPOSITORY`); without one each fails with "KYDRIVE_BULK_BACKUP_REPOSITORY
   is required for document backups". With a backup destination on KyDrive's target, the catalog
-  points it at `<repository>/kydrive-bulk` on that rest-server, as the target's user, beside
-  kyquickstart's own `<repository>/kydrive`. The rest-server password file is mounted read-only
+  points it at `<bulk_repository>/kydrive-bulk`, as KyDrive's own rest-server user, never the
+  target's (which owns kyquickstart's `<repository>/kydrive` and every other app's). That
+  user's password file (`bulk_credential_file`) is mounted read-only
   as a Compose secret, and KyDrive's entrypoint writes the two-line credentials file KyDrive
   reads into its private `/tmp` (mode 0600); the password is not in Compose or the environment.
   `kydrive.bulk-init` then runs KyDrive's `bulk-init` (a no-op once initialized). KyDrive's

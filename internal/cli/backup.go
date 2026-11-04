@@ -99,7 +99,7 @@ func backupCommand(ctx context.Context, cmd string, args []string, o Options) er
 }
 
 // backupSession loads the plan and refuses, before connecting, an app backup cannot cover.
-func backupSession(state, name string, trust trustFlag, o Options) (*session, stack.Target, error) {
+func backupSession(state, name string, restore bool, trust trustFlag, o Options) (*session, stack.Target, error) {
 	s, err := load(state, trust, o)
 	if err != nil {
 		return nil, stack.Target{}, err
@@ -112,8 +112,9 @@ func backupSession(state, name string, trust trustFlag, o Options) (*session, st
 		s.close()
 		return nil, t, err
 	}
-	// Refused on a runner-owned target like any change.
-	s.changesPlan, s.edges = true, nil
+	// A backup changes no plan and holds the target lock the runner also takes; a restore is
+	// refused on a runner-owned target, which has no restore operation.
+	s.changesPlan, s.restores, s.edges = restore, restore, nil
 	return s, t, nil
 }
 
@@ -302,7 +303,7 @@ func (s *session) locked(ctx context.Context, f func(context.Context) error) (er
 }
 
 func backup(ctx context.Context, state, name string, trust trustFlag, o Options) error {
-	s, t, err := backupSession(state, name, trust, o)
+	s, t, err := backupSession(state, name, false, trust, o)
 	if err != nil {
 		return err
 	}
@@ -379,7 +380,7 @@ func restore(ctx context.Context, state string, r restoreRequest, trust trustFla
 	if r.snapshot != "" && !dockerhost.ValidSnapshotID(r.snapshot) {
 		return suite.Errorf(suite.InvalidRequest, "--snapshot must be 8 or 64 lowercase hex characters")
 	}
-	s, t, err := backupSession(state, r.app, trust, o)
+	s, t, err := backupSession(state, r.app, true, trust, o)
 	if err != nil {
 		return err
 	}
