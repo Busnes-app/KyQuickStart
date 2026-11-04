@@ -359,6 +359,10 @@ func (s *session) pullPlan(ctx context.Context, r handoffRecord) error {
 	if st.Revision < s.revision {
 		return suite.Errorf(suite.PlanStale, "the runner holds plan revision %d, older than this plan's %d; nothing was pulled", st.Revision, s.revision)
 	}
+	// Revisions count per plan: another installation's plan is never "newer" than this one.
+	if st.InstallationID != "" && s.installation != "" && st.InstallationID != s.installation {
+		return suite.Errorf(suite.OwnedByOtherPlan, "the runner holds the plan of installation %s, not this plan's %s; nothing was pulled. Pull it into an empty state directory instead", st.InstallationID, s.installation)
+	}
 	for i, t := range st.Targets {
 		if !t.Kubernetes() {
 			continue

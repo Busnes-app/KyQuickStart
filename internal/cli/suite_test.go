@@ -497,3 +497,13 @@ func TestInstallRouteIsPlans(t *testing.T) {
 		}
 	}
 }
+
+// install --bundle refuses, rather than panics, when the installed KyIdentity has no setup in
+// the plan to add the new app's client to.
+func TestInstallBundleNeedsIdentitySetup(t *testing.T) {
+	st := &stack.Stack{Apps: []stack.App{{Name: "kyidentity", Target: "k1"}}}
+	r := Request{Target: "k1", Bundle: "/data/installer/271333e2-c221-4601-b249-563b3d828530/setup.json"}
+	if _, _, _, err := installRoute(st, catalog.App{}, "kyrecovery", r); code(err) != suite.InvalidRequest || !strings.Contains(err.Error(), "without its setup") {
+		t.Fatalf("installRoute = %v", err)
+	}
+}

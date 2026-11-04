@@ -194,18 +194,38 @@ func TestGuidedResumeKeepsHandEditedPreparation(t *testing.T) {
 // An installed app's setup names no container, namespace or pod (apply finds its own), so the
 // wizard asks only for the bundle, and a resumed plan keeps its installed setup.
 func TestGuidedInstalledIntegrationAsksNoWorkload(t *testing.T) {
-	for _, kube := range []bool{false, true} {
+	// Sol pass 2 R9: an installed app whose setup needs a runtime user (KyRecovery) runs in its
+	// catalog pod as that user, so Kubernetes is no refusal for it.
+	for _, product := range []string{"kyidentity", "kyrecovery"} {
+		for _, kube := range []bool{false, true} {
+			guidedInstalledIntegration(t, product, kube)
+		}
+	}
+	st, _ := stack.Parse([]byte("version: 1\ntargets:\n  - name: nas\n    kubeconfig: kubeconfigs/nas.yaml\n"))
+	p := &prompts{ctx: context.Background(), in: bufio.NewReader(strings.NewReader("yes\n")), out: &bytes.Buffer{}, answers: map[string]string{}, draft: filepath.Join(t.TempDir(), "answers.json")}
+	if err := guidedIntegration(p, st, stack.Existing{Product: "kyrecovery", Target: "nas"}); err == nil || !strings.Contains(err.Error(), "service user") {
+		t.Fatalf("an existing KyRecovery on Kubernetes: %v", err)
+	}
+}
+
+func guidedInstalledIntegration(t *testing.T, product string, kube bool) {
+	t.Helper()
+	{
 		target := "  - name: nas\n    host: 192.0.2.1\n    user: kyq\n"
 		if kube {
 			target = "  - name: nas\n    kubeconfig: kubeconfigs/nas.yaml\n"
 		}
-		st, err := stack.Parse([]byte("version: 1\ntargets:\n" + target + "apps:\n  - name: kyidentity\n    target: nas\n"))
+		st, err := stack.Parse([]byte("version: 1\ntargets:\n" + target + "apps:\n  - name: " + product + "\n    target: nas\n"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		var out bytes.Buffer
-		p := &prompts{ctx: context.Background(), in: bufio.NewReader(strings.NewReader("yes\n/data/installer/setup.json\n")), out: &out, answers: map[string]string{}, draft: filepath.Join(t.TempDir(), "answers.json")}
-		if err := guidedIntegration(p, st, stack.Existing{Product: "kyidentity", Target: "nas"}); err != nil {
+		bundle, answers := "/data/installer/setup.json", map[string]string{}
+		if product != "kyidentity" { // an installed app's own client and setup bundle
+			bundle, answers["integration."+product+".nas.identity-client"] = "/data/installer/271333e2-c221-4601-b249-563b3d828530/setup.json", product
+		}
+		p := &prompts{ctx: context.Background(), in: bufio.NewReader(strings.NewReader("yes\n" + bundle + "\n")), out: &out, answers: answers, draft: filepath.Join(t.TempDir(), "answers.json")}
+		if err := guidedIntegration(p, st, stack.Existing{Product: product, Target: "nas"}); err != nil {
 			t.Fatal(err, out.String())
 		}
 		data, _ := yaml.Marshal(st)

@@ -106,6 +106,12 @@ func (d deployStep) Apply(ctx context.Context) error {
 			return err
 		}
 	}
+	// compose.kyq.yaml records the installed version (Deployed): keep the deployed files until
+	// the new images are pulled, so a failed pull leaves the record of what still runs.
+	dir := remote.Quote(d.a.dir())
+	if _, err := d.a.Runner.Run(ctx, "cd "+dir+" 2>/dev/null || exit 0; for f in compose.yaml compose.kyq.yaml; do rm -f .$f.prev || exit 1; if [ -e $f ]; then cp -p $f .$f.prev || exit 1; fi; done", nil); err != nil {
+		return fmt.Errorf("keep the deployed Compose files: %w", err)
+	}
 	if err := d.a.writeCompose(ctx, d.override); err != nil {
 		return err
 	}
@@ -116,7 +122,13 @@ func (d deployStep) Apply(ctx context.Context) error {
 		}
 	}
 	if _, err := d.a.Runner.Run(ctx, d.a.compose("pull --quiet"), nil); err != nil {
+		if _, rerr := d.a.Runner.Run(ctx, "cd "+dir+" && for f in compose.yaml compose.kyq.yaml; do if [ -e .$f.prev ]; then mv -f .$f.prev $f || exit 1; fi; done", nil); rerr != nil {
+			err = errors.Join(err, fmt.Errorf("put the deployed Compose files back: %w", rerr))
+		}
 		return fmt.Errorf("docker compose pull: %w: %w", engine.ErrTransient, err)
+	}
+	if _, err := d.a.Runner.Run(ctx, "rm -f "+dir+"/.compose.yaml.prev "+dir+"/.compose.kyq.yaml.prev", nil); err != nil {
+		return fmt.Errorf("remove the previous Compose files: %w", err)
 	}
 	up := "up -d --remove-orphans"
 	if d.a.Only != "" {

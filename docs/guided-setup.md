@@ -423,10 +423,15 @@ then, for KyDrive:
 
 ```sh
 ./kyquickstart restore kydrive --state ./morning-test                 # list; paste the password when asked
-./kyquickstart restore kydrive --snapshot 1a2b3c4d --state ./morning-test   # password, then type kydrive
+./kyquickstart restore kydrive --snapshot 1a2b3c4d --state ./morning-test   # type kydrive
 ```
 
-Piped instead: `printf '%s\nkydrive\n' "$PW" | ./kyquickstart restore kydrive --snapshot 1a2b3c4d`.
+A password that opens the repository is kept on the target, so the restore does not ask again,
+and `kyquickstart backup` works again even if you restore nothing (a rebuilt target whose
+apps were installed fresh). Piped instead: `printf '%s\n' "$PW" | ./kyquickstart restore
+kydrive`, then `printf 'kydrive\n' | ./kyquickstart restore kydrive --snapshot 1a2b3c4d`; a
+restore given the password directly (none kept yet) reads it first:
+`printf '%s\nkydrive\n' "$PW" | ./kyquickstart restore kydrive --snapshot 1a2b3c4d`.
 
 ## Installer TLS and key strength
 
@@ -1495,7 +1500,10 @@ run every product as the target user with no capabilities, which this editor can
     DNS and must fail to connect to that API server address on 443. Otherwise the step fails
     with `egress_unenforced` (code `step_failed`) and no Deployment is written. A plugin that
     ignores NetworkPolicy egress, such as plain flannel, is refused. An open result is retried
-    for about 8 seconds while the policy settles.
+    for about 8 seconds while the policy settles. Behind a `cloudflare` or `frp` edge the
+    policy also admits public addresses on 443, so on a cluster whose API server endpoint is a
+    public address on port 443 (GKE's or AKS's public endpoint) the check cannot tell and
+    refuses; kubeadm and k3s endpoints listen on 6443 and are unaffected.
   - **Residual.** Any KyDrive user who can edit a document can make the editor GET any
     hostname this NPM routes, over HTTPS, as a client inside the cluster's pod network (which a
     `lan` edge's `allow_cidrs` must admit for the editor to reach KyDrive). That reaches every

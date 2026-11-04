@@ -9,8 +9,11 @@
 # /run/kyquickstart/sock/runner.sock. Add that container before applying.
 #
 # Edit before applying: the image digest, the claim's storage class, and the NetworkPolicy's
-# API server and SSH target addresses. The placeholders are documentation addresses, so an
-# unedited policy allows nothing but DNS.
+# addresses: the API server, the Docker targets' SSH, and, since the policy covers the whole
+# pod (KyYard included), KyYard's web port from your edge, KyIdentity, each NPM management
+# origin the plan's edges name (`npm_url`; uninstall disables routes there) and every other
+# Kubernetes target's API server. The placeholders are documentation addresses, so an unedited
+# policy allows nothing but DNS.
 #
 # On Cilium (unless policy-cidr-match-mode includes nodes), ipBlock does not match node addresses,
 # so the API server rule below allows nothing; use a CiliumNetworkPolicy with
@@ -113,7 +116,8 @@ spec:
         - name: socket
           emptyDir: {}
 ---
-# No ingress; egress only to DNS, the API server and the Docker targets' SSH.
+# Ingress only to KyYard's web port; egress only to DNS, the API servers, the Docker targets'
+# SSH, KyIdentity and the NPM management origins.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -148,3 +152,17 @@ spec:
             cidr: 192.0.2.20/32
       ports:
         - {protocol: TCP, port: 22}
+    # KyIdentity's HTTPS address (KyYard's sign-in), each NPM management origin in npm_url, and
+    # every other Kubernetes target's API server, at their addresses and ports.
+    - to:
+        - ipBlock:
+            cidr: 192.0.2.30/32
+      ports:
+        - {protocol: TCP, port: 443}
+  ingress:
+    # KyYard's web port (the KyYard container you add), from the edge that routes it.
+    - from:
+        - ipBlock:
+            cidr: 192.0.2.40/32
+      ports:
+        - {protocol: TCP, port: 9273}

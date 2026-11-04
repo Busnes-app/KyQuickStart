@@ -87,7 +87,7 @@ func TestDeployApplyOrder(t *testing.T) {
 	if err := d.Apply(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"test -e '/opt/kyq/hello/.restore-pending'", "pwd -P", "rm -f '/opt/kyq/hello/.input-hash'", "cat > '/opt/kyq/hello/compose.yaml'", "cat > '/opt/kyq/hello/compose.kyq.yaml'", "pull --quiet", "up -d --remove-orphans", "> '/opt/kyq/hello/.input-hash'"}
+	want := []string{"test -e '/opt/kyq/hello/.restore-pending'", "cp -p $f .$f.prev", "pwd -P", "rm -f '/opt/kyq/hello/.input-hash'", "cat > '/opt/kyq/hello/compose.yaml'", "cat > '/opt/kyq/hello/compose.kyq.yaml'", "pull --quiet", ".compose.kyq.yaml.prev", "up -d --remove-orphans", "> '/opt/kyq/hello/.input-hash'"}
 	if len(f.calls) != len(want) {
 		t.Fatalf("calls = %v", f.calls)
 	}
@@ -96,14 +96,14 @@ func TestDeployApplyOrder(t *testing.T) {
 			t.Errorf("call %d = %q, want %q", i, f.calls[i].cmd, w)
 		}
 	}
-	if f.calls[3].stdin != string(a.Catalog.Compose) || !strings.Contains(f.calls[4].stdin, managed.Value) {
-		t.Errorf("stdin: %q / %q", f.calls[3].stdin, f.calls[4].stdin)
+	if f.calls[4].stdin != string(a.Catalog.Compose) || !strings.Contains(f.calls[5].stdin, managed.Value) {
+		t.Errorf("stdin: %q / %q", f.calls[4].stdin, f.calls[5].stdin)
 	}
-	if !strings.Contains(f.calls[6].cmd, "-p 'kyq-hello'") {
-		t.Errorf("project name missing: %q", f.calls[6].cmd)
+	if !strings.Contains(f.calls[8].cmd, "-p 'kyq-hello'") {
+		t.Errorf("project name missing: %q", f.calls[8].cmd)
 	}
-	if !strings.Contains(f.calls[7].cmd, d.hash) {
-		t.Errorf("hash not written: %q", f.calls[7].cmd)
+	if !strings.Contains(f.calls[9].cmd, d.hash) {
+		t.Errorf("hash not written: %q", f.calls[9].cmd)
 	}
 }
 
@@ -255,4 +255,39 @@ type runFunc func(context.Context, string, []byte) ([]byte, error)
 
 func (f runFunc) Run(ctx context.Context, cmd string, stdin []byte) ([]byte, error) {
 	return f(ctx, cmd, stdin)
+}
+
+// pullFails runs commands under sh, except docker compose: pull fails, the rest pass.
+type pullFails struct{}
+
+func (pullFails) Run(ctx context.Context, cmd string, stdin []byte) ([]byte, error) {
+	if strings.Contains(cmd, "docker compose") {
+		if strings.Contains(cmd, " pull ") {
+			return nil, errors.New("registry unreachable")
+		}
+		return nil, nil
+	}
+	return remote.Local{}.Run(ctx, cmd, stdin)
+}
+func (pullFails) Close() error { return nil }
+
+// An upgrade whose pull fails keeps the record of the version that still runs.
+func TestFailedPullKeepsDeployedVersion(t *testing.T) {
+	ctx := context.Background()
+	a := fakeApp(pullFails{})
+	a.Root = realTemp(t)
+	a.Catalog.Version = "1.0.0"
+	if err := a.writeCompose(ctx, a.override(labels(a.ReleaseSet, "1.0.0"))); err != nil {
+		t.Fatal(err)
+	}
+	a.Catalog.Version = "2.0.0"
+	if err := deployOf(a).Apply(ctx); err == nil || !strings.Contains(err.Error(), "registry unreachable") {
+		t.Fatalf("Apply = %v", err)
+	}
+	if d, err := Deployed(ctx, a); err != nil || d.Version != "1.0.0" {
+		t.Fatalf("Deployed = %+v, %v; want 1.0.0", d, err)
+	}
+	if left, _ := filepath.Glob(filepath.Join(a.dir(), ".compose*.prev")); len(left) != 0 {
+		t.Fatalf("left %v", left)
+	}
 }

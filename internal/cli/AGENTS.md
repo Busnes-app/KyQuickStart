@@ -35,7 +35,9 @@ Plain terminal planning and command orchestration for the operator-run installer
   run under `operate` (lock, `guard`, marker), refuse an app its target does not hold as
   managed (`not_installed`) and, on Docker, an unfinished restore; stop and start are plan
   changes (`owned_by_runner` under the runner) that publish `stopped` once the app is in that
-  state, and change nothing on an app already there. While an app is `stopped`, `apply`,
+  state (on Docker no container running, restarting or paused), and change nothing on an app
+  already there. Removing `euro-office` redeploys KyDrive only at its installed version
+  (`upgrade_refused` otherwise). While an app is `stopped`, `apply`,
   `upgrade`, `restart` and Docker `backup` (`dockerhost.App.Stopped`) refuse `app_stopped`
   (`refuseStopped`); a container or Deployment stopped by hand without it is still repaired by
   apply. `logs` takes no lock, reads the marker for `guard`, redacts the app's catalog
@@ -48,7 +50,8 @@ Plain terminal planning and command orchestration for the operator-run installer
   the one runner pod `--runner-pod` selects, permission-checked first; its default is
   `defaultRunnerPod`, the catalog KyYard's pod on a target holding it). `pull-plan` and `--revoke`
   keep `handoff.json`'s runner without `--kyyard-target` or with the recorded one and no runner
-  flag, and refuse another target without one (`invalid_request`). It holds every target lock
+  flag, and refuse another target without one (`invalid_request`). `pull-plan` refuses another
+  installation's plan (`owned_by_other_plan`, both `installation_id`s set). It holds every target lock
   while granting, and publishes the plan before markers change owner. `handoff.json` in the state
   directory makes `plan` refuse while the runner owns the plan. `session.guard` is the
   ownership rule for every locked command and CLI `status`.
@@ -72,8 +75,9 @@ Plain terminal planning and command orchestration for the operator-run installer
 - `backup.go` owns `prune-copies` (Kubernetes only, `docs/guided-setup.md` "Managing apps"):
   under the target lock and refused under `owner: runner`, it lists the app's
   `kube.PreUpgradeCopies` and, after the typed app name or `--yes`, deletes through
-  `kube.DeletePreUpgradeCopy` only those whose `<from>` is older than the installed version.
-  Its output lines never start with a dotted word.
+  `kube.DeletePreUpgradeCopy` only those whose `<from>` is older than the installed version,
+  and only while the app's workload is `running` (the version is recorded at submission, so a
+  failed upgrade's copies stay). Its output lines never start with a dotted word.
 - `backup.go` owns `backup` and `restore` (Docker apps only; `docs/guided-setup.md` "Backups
   and restore on Docker"). Both refuse before connecting a Kubernetes app, an app without a
   `backup` block or a target without a destination (`backup_unconfigured`), backup volumes in
@@ -88,7 +92,7 @@ Plain terminal planning and command orchestration for the operator-run installer
   running (or restarting) app and existing data without `--replace` before contacting the
   repository, then a foreign snapshot and one whose `version=` tag is newer than the catalog's
   or outside its `upgrade` rules; `--replace`/`--yes` without `--snapshot` are refused; it wants the typed name
-  or `--yes`, reads a lost password from `Options.Stdin` (no echo on a terminal) and records
+  or `--yes`, reads a lost password from `Options.Stdin` (no echo on a terminal; a listing whose password opened the repository keeps it) and records
   its stage in `.restore-pending`, so a rerun resumes; while that file exists every other
   Docker operation on the app refuses: deploy (`apply`, `install`, `upgrade`; `App.Restoring`
   is set only by restore), `backup` and `unmanage` (`dockerhost.refuseUnfinishedRestore`). `finishRestore` deploys through
@@ -101,8 +105,9 @@ Plain terminal planning and command orchestration for the operator-run installer
   the backup, restore and password-record lines to apply's handover.
   KyDrive requires the pinned image's `restore-reset` capability before replacing data and
   uses `dockerhost.Store.ResetDriveRestore` before every startup/replay, including resume;
-  older pinned images are refused, never replaced with unpublished ones. An atomic
-  `preparing` fence precedes publication; incomplete extraction requires the same snapshot
+  older pinned images are refused, never replaced with unpublished ones. For every app an
+  atomic `preparing` fence precedes moving data aside and publication, and a resume re-checks
+  the snapshot's `version=` tag; incomplete extraction requires the same snapshot
   with explicit `--replace`, preserving partial files before retry. `files` is recorded
   only after complete publication. Empty/symlink/malformed fences and ordinary secret
   generation over a pending restore fail closed.

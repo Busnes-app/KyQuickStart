@@ -279,6 +279,9 @@ func installRoute(st *stack.Stack, app catalog.App, name string, r Request) (int
 		return 0, nil, nil, suite.Errorf(suite.InvalidRequest, "KyIdentity's setup needs its identity settings; add it with kyquickstart plan")
 	case r.Bundle != "" && productAdapters[name].setup == nil:
 		return 0, nil, nil, suite.Errorf(suite.InvalidRequest, "%s has no setup that apply runs; install it without --bundle", name)
+	case r.Bundle != "" && slices.ContainsFunc(st.Apps, func(a stack.App) bool { return a.Name == "kyidentity" }) &&
+		!slices.ContainsFunc(st.Integrations, func(i stack.Integration) bool { return i.Product == "kyidentity" && i.Identity != nil }):
+		return 0, nil, nil, suite.Errorf(suite.InvalidRequest, "KyIdentity is installed without its setup in the plan, so %s's client cannot be added to it; add both with kyquickstart plan", name)
 	case r.Bundle != "":
 		setup = &stack.Integration{Product: name, Target: r.Target, Bundle: r.Bundle, IdentityClient: cmp.Or(r.IdentityClient, name)}
 	}
@@ -485,7 +488,16 @@ func remove(ctx context.Context, state string, r Request, trust trustFlag, o Opt
 			steps = append(steps, connector...)
 		}
 		if drive != nil { // KyDrive first: it never points at an editor that is gone
-			steps = append(steps, s.drivers[s.placed["kydrive"].Name].steps("kydrive", *drive, s.o.ReleaseSet, s.redact)...)
+			dd := s.drivers[s.placed["kydrive"].Name]
+			// Only as installed: an upgrade goes through its gate and backup, in kyquickstart upgrade.
+			dep, err := dd.deployed(ctx, "kydrive")
+			if err != nil {
+				return nil, err
+			}
+			if v := installedVersion(dep, *drive, s.o.ReleaseSet); dep.Found && v != drive.Version {
+				return nil, suite.Errorf(suite.UpgradeRefused, "removing %s redeploys kydrive, which is %s here and %s in this release; run kyquickstart upgrade kydrive first. Nothing was changed", euroOffice, cmp.Or(v, "of an unknown version"), drive.Version)
+			}
+			steps = append(steps, dd.steps("kydrive", *drive, s.o.ReleaseSet, s.redact)...)
 		}
 		if !unmanage {
 			return append(steps, d.removeSteps(name, s.cat[name])...), nil

@@ -204,7 +204,9 @@ func (s *server) serve(ctx context.Context, l net.Listener) error {
 	waitFor(&s.wg, 45*time.Second) // the cancelled run releases its target locks
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.stopped(rec)
+	if rec.State != "succeeded" { // a cancelled run may have stopped halfway; a success stands
+		s.stopped(rec)
+	}
 	return errors.Join(err, s.write(rec))
 }
 

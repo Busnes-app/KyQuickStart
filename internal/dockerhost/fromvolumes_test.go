@@ -2,6 +2,7 @@ package dockerhost
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -82,7 +83,7 @@ func TestFromVolumesStep(t *testing.T) {
 		"--user 0:0 --cap-add DAC_READ_SEARCH -v 'kyq-post_state:/from:ro' --entrypoint tar " + ResticImage + " -C /from -cf - .",
 		`-i --user "$(id -u):$(id -g)" -v "$PWD/$t:/to" --entrypoint tar ` + ResticImage + " -C /to -xpf -",
 		"--network none --read-only --cap-drop ALL --security-opt no-new-privileges",
-		`if [ -L "$v" ]`, "*src=0*dst=0*", `[ "$n" = "$m" ]`, `chmod 700 "$t"`, `mv "$t" "$v"`,
+		`if [ -L "$v" ]`, "*src=0*dst=0*", `[ "$n" = "$m" ]`, `chmod 700 "$t"`,
 	} {
 		if !strings.Contains(copied, want) {
 			t.Errorf("copy lacks %q:\n%s", want, copied)
@@ -90,6 +91,9 @@ func TestFromVolumesStep(t *testing.T) {
 	}
 	if strings.Contains(copied, "kyq-post_config") || strings.Contains(copied, "volume rm") {
 		t.Errorf("copy touched more than the pending volume:\n%s", copied)
+	}
+	if strings.Contains(copied, "mv ") {
+		t.Errorf("a copy is renamed into place before every copy succeeded:\n%s", copied)
 	}
 	note := step.(engine.Noter).Note()
 	if !strings.Contains(note, "copied Docker volumes kyq-post_state into post's bind directories under /srv/kyq/post") || !strings.Contains(note, "docker volume rm kyq-post_state") {
@@ -149,5 +153,41 @@ func TestFromVolumesSkippedByRestore(t *testing.T) {
 	}
 	if len(f.calls) != 0 {
 		t.Fatalf("ran %v", f.calls)
+	}
+}
+
+// Opus pass 2 R1: a copy that fails leaves every bind directory missing, including those
+// copied before it, so the next apply copies the volumes whole, never partly stale.
+func TestFromVolumesFailedCopyPlacesNothing(t *testing.T) {
+	a, f := fromVolumesApp(t, "config\nstate\n")
+	f.reply = func(cmd string) ([]byte, error) {
+		switch {
+		case strings.HasPrefix(cmd, "vols=$(docker volume ls -q)"):
+			return []byte("config\nstate\n"), nil
+		case strings.Contains(cmd, "v='state'"):
+			return nil, errors.New("no space left on device")
+		}
+		return nil, nil
+	}
+	if err := Steps(a)[0].Apply(context.Background()); err == nil {
+		t.Fatal("a failed copy passed")
+	}
+	for _, c := range f.calls {
+		if strings.Contains(c.cmd, `mv ".$v.from-volume" "$v"`) {
+			t.Fatalf("renamed into place after a failed copy: %s", c.cmd)
+		}
+	}
+	f.reply = func(cmd string) ([]byte, error) {
+		if strings.HasPrefix(cmd, "vols=$(docker volume ls -q)") {
+			return []byte("config\nstate\n"), nil
+		}
+		return nil, nil
+	}
+	f.calls = nil
+	if err := Steps(a)[0].Apply(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if last := f.calls[len(f.calls)-3].cmd; !strings.Contains(last, "for v in 'config' 'state'; do") || !strings.Contains(last, `mv ".$v.from-volume" "$v"`) {
+		t.Fatalf("placing: %v", f.calls)
 	}
 }

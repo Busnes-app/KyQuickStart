@@ -504,7 +504,7 @@ func TestBackupKeepsNoPasswordForAnExistingRepository(t *testing.T) {
 	}
 	os.Remove(st.PasswordFile()) // rebuilt, reinstalled by apply
 	_, created, err := st.Backup(ctx)
-	if err == nil || created || !strings.Contains(err.Error(), "kyquickstart restore fixture and the password you recorded") {
+	if err == nil || created || !strings.Contains(err.Error(), "kyquickstart restore fixture and give the password you recorded") {
 		t.Fatalf("backup: created %v, %v", created, err)
 	}
 	if has, err := st.HasPassword(ctx); has || err != nil {
@@ -573,5 +573,76 @@ func TestRestoreOptionalCapsuleSecret(t *testing.T) {
 	received, _ := st.ReceivePassword(ctx, pw)
 	if err := st.RestoreFiles(ctx, received, old[:8]); err == nil || !strings.Contains(err.Error(), "the snapshot has no secret file other") {
 		t.Fatalf("a required secret missing: %v", err)
+	}
+}
+
+// Sol and Opus pass 2: replacing data keeps the live optional secret (KyDrive's editor_secret,
+// which Euro-Office's jwt_secret matches) unless the snapshot holds its own.
+func TestReplaceKeepsLiveOptionalSecret(t *testing.T) {
+	st, _ := backupFixture(t, false)
+	ctx := context.Background()
+	dir := st.App.dir()
+	old, _, err := st.Backup(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := *st.App.Catalog.Backup
+	b.CapsuleSecrets, b.OptionalSecrets = []string{"db_password", "other"}, []string{"other"}
+	st.App.Catalog.Backup = &b
+	st.App.Catalog.Secrets = append(slices.Clone(st.App.Catalog.Secrets), "other")
+	os.WriteFile(filepath.Join(dir, "secrets", "other"), []byte("snapshot-key"), 0o600)
+	current, _, err := st.Backup(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]string{old: "live-key", current: "snapshot-key"} {
+		os.WriteFile(filepath.Join(dir, "secrets", "other"), []byte("live-key"), 0o600)
+		aside, err := st.MoveAside(ctx, "20261104T00000"+id[:1]+"Z")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(filepath.Join(aside, "secrets", "other")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("the live optional secret was moved aside")
+		}
+		if err := st.RestoreFiles(ctx, st.PasswordFile(), id[:8]); err != nil {
+			t.Fatalf("snapshot %s: %v", id[:8], err)
+		}
+		if got, _ := os.ReadFile(filepath.Join(dir, "secrets", "other")); string(got) != want {
+			t.Errorf("snapshot %s: other = %q, want %q", id[:8], got, want)
+		}
+	}
+}
+
+// cancelOnRestic cancels its context when restic runs, as an interrupted command does, and
+// records whether the password cleanup still ran with a live context.
+type cancelOnRestic struct {
+	cancel  context.CancelFunc
+	cleaned bool
+}
+
+func (c *cancelOnRestic) Run(ctx context.Context, cmd string, _ []byte) ([]byte, error) {
+	switch {
+	case strings.Contains(cmd, "'cat' 'config'"):
+		c.cancel()
+		return nil, context.Canceled
+	case strings.HasPrefix(cmd, "rm -f ") && strings.Contains(cmd, catalog.ResticPassword):
+		c.cleaned = ctx.Err() == nil
+	}
+	return nil, nil
+}
+func (c *cancelOnRestic) Close() error { return nil }
+
+// Sol pass 2 R10: a password generated for a run that was cancelled is still removed, so a
+// later restore asks for the recorded one.
+func TestCancelledBackupRemovesGeneratedPassword(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	r := &cancelOnRestic{cancel: cancel}
+	st, _ := backupFixture(t, false)
+	st.App.Runner = r
+	if _, err := st.ensureRepository(ctx); err == nil {
+		t.Fatal("ensureRepository passed")
+	}
+	if !r.cleaned {
+		t.Fatal("the generated password was not removed with a live context")
 	}
 }
