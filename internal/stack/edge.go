@@ -182,6 +182,9 @@ func (s *Stack) validateEdges() error {
 			if !target.Kubernetes() {
 				return fmt.Errorf("edge %s: a kube:// npm_url needs a Kubernetes target", e.Target)
 			}
+			if e.Provider == "frp" {
+				return fmt.Errorf("edge %s: frp reaches NPM's PROXY-protocol listener (proxy_port), which the catalog NPM on a cluster does not publish; use cloudflare or lan", e.Target)
+			}
 			adminHost, adminPort = svc+"."+ns, strconv.Itoa(port)
 		} else {
 			u, err := url.Parse(e.NPMURL)

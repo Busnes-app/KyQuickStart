@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/engine"
 	"github.com/Busnes-app/kyquickstart/internal/managed"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
@@ -372,7 +374,7 @@ func TestSetupSourcesConnectIdentityTarget(t *testing.T) {
 	kube, nas, other := stack.Target{Name: "kube"}, stack.Target{Name: "nas"}, stack.Target{Name: "other"}
 	s := &session{
 		allTargets: []stack.Target{kube, nas, other},
-		placed:     map[string]stack.Target{"kyidentity": kube, "kyrecovery": other, "kypost": nas, "kymessage": nas, "db": nas},
+		placed:     map[string]stack.Target{"kyidentity": kube, "kyrecovery": other, "kypost": nas, "kymessage": nas, "db": nas, "kydrive": nas, euroOffice: kube},
 		integrations: []stack.Integration{
 			{Product: "kyidentity", Target: "kube"},
 			{Product: "kypost", Target: "nas"},
@@ -396,10 +398,31 @@ func TestSetupSourcesConnectIdentityTarget(t *testing.T) {
 		{[]string{"kymessage", "kypost"}, "kube,nas,other"},
 		{[]string{"db"}, "nas"}, // no integration: nothing to read from elsewhere
 		{[]string{"kyidentity"}, "kube"},
+		{[]string{euroOffice}, "kube,nas"}, // its jwt_secret is KyDrive's, read on KyDrive's target
 	} {
 		s.order = c.order
 		if got := names(s.withSetupSources([]stack.Target{s.placed[c.order[0]]})); got != c.want {
 			t.Errorf("%v: targets = %s, want %s", c.order, got, c.want)
 		}
+	}
+}
+
+// The plan's catalog NPM serves every route of its target's edge, which catalog dependencies do
+// not record: uninstall and unmanage refuse it while another app is routed through it, before
+// connecting.
+func TestRemoveRefusesNPMWithRoutes(t *testing.T) {
+	f := newFixture(t, "../catalog/testdata/apps")
+	f.o.Catalog = catalog.Embedded()
+	drivePlan(t, f, "192.0.2.1")
+	for _, cmd := range []string{"uninstall", "unmanage"} {
+		if err := f.run(cmd, "npm"); code(err) != suite.Dependency || !strings.Contains(err.Error(), "edge k1 routes its apps through npm") {
+			t.Fatalf("%s npm: %v", cmd, err)
+		}
+	}
+	// An edge on an existing NPM elsewhere does not need the catalog's.
+	b, _ := os.ReadFile(filepath.Join(f.state, "stack.yaml"))
+	os.WriteFile(filepath.Join(f.state, "stack.yaml"), bytes.Replace(b, []byte("kube://kyq-npm/app:81"), []byte("https://npm.example.com"), 1), 0o600)
+	if err := f.run("uninstall", "npm"); code(err) == suite.Dependency {
+		t.Fatalf("uninstall beside an external NPM: %v", err)
 	}
 }

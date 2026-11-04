@@ -225,10 +225,13 @@ func withRoutes(st *stack.Stack, name string, t stack.Target, app catalog.App) (
 		}
 		forward := r.ForwardHost + ":" + fmt.Sprint(r.ForwardPort)
 		if cr.Role == app.Primary() {
-			c = catalog.Route{Host: edge.URLHost(r), Hostname: r.Hostname, Forward: forward, ForwardAddr: r.ForwardHost, EdgeAddress: edge.EgressAddress, Roles: map[string]catalog.RoleAddress{}}
+			c = catalog.Route{Host: edge.URLHost(r), Hostname: r.Hostname, Forward: forward, ForwardAddr: r.ForwardHost, EdgeAddress: edge.TrustedAddress(), Roles: map[string]catalog.RoleAddress{}}
 			continue
 		}
 		c.Roles[cr.Role] = catalog.RoleAddress{Host: edge.URLHost(r), Hostname: r.Hostname, Forward: forward}
+	}
+	if app.UsesEdgeAddress() && edge.TrustedAddress() == "" {
+		return app, fmt.Errorf("app %q trusts exactly the address its edge connects from: set egress_address on edge %s to the edge's own address as %s sees it (for NPM on a cluster, the IP of the node running NPM)", name, edge.Target, t.Name)
 	}
 	for _, sa := range st.Apps {
 		if sa.Name == name {

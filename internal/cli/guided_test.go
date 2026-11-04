@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/kube"
+	"github.com/Busnes-app/kyquickstart/internal/remote"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
 	"go.yaml.in/yaml/v3"
 )
@@ -318,5 +320,72 @@ func TestGuidedKubernetesStorageClassResumes(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "StorageClass for app volumes (blank uses the cluster default) [local-path]") {
 		t.Fatal("resume did not seed the storage class")
+	}
+}
+
+// Re-running plan keeps what it never asks: a stop (apply would start the app again), node
+// ports, LoadBalancer addresses, the confirmed recovery key, and an edge's egress_address and
+// lan_dns. A moved app or a changed provider starts from its answers.
+func TestGuidedKeepsUnaskedFields(t *testing.T) {
+	dir := t.TempDir()
+	var out bytes.Buffer
+	o := Options{Catalog: catalog.Embedded(), In: strings.NewReader("yes\n1\nnas\ndocker\n192.0.2.1\nkyq\n22\n/opt/test\ninstall\nnas\n0\nnone\nyes\nfinish\n"), Out: &out}
+	if err := Run(context.Background(), []string{"plan", "--demo", "--state", dir}, o); err != nil {
+		t.Fatal(err, out.String())
+	}
+	file := filepath.Join(dir, "stack.yaml")
+	b, _ := os.ReadFile(file)
+	os.WriteFile(file, []byte(strings.Replace(string(b), "      target: nas\n", "      target: nas\n      stopped: true\n", 1)), 0o600)
+	o.In = strings.NewReader(strings.Repeat("\n", 16))
+	if err := Run(context.Background(), []string{"plan", "--state", dir}, o); err != nil {
+		t.Fatal(err, out.String())
+	}
+	if st, err := stack.Load(file); err != nil || st.Revision != 2 || !st.Apps[0].Stopped {
+		t.Fatalf("re-planned: %+v, %v", st, err)
+	}
+
+	// check and deploy run with plan.lock released: apply publishes under the same lock.
+	saved := dialTarget
+	t.Cleanup(func() { dialTarget = saved })
+	locked := true
+	dialTarget = func(context.Context, stack.Target, remote.SSHConfig, bool) (driver, error) {
+		_, err := os.Stat(filepath.Join(dir, "plan.lock"))
+		locked = err == nil
+		return nil, errors.New("not connected")
+	}
+	o.In = strings.NewReader(strings.Repeat("\n", 13) + "check\n")
+	out.Reset()
+	err := Run(context.Background(), []string{"plan", "--state", dir}, o)
+	if locked {
+		t.Errorf("preflight ran with plan.lock held (%v):\n%s", err, out.String())
+	}
+
+	previous := &stack.Stack{
+		Apps:         []stack.App{{Name: "npm", Target: "k1", NodePorts: map[int]int{443: 31443}, LoadBalancerAddress: "192.0.2.9", Stopped: true}, {Name: "kyrecovery", Target: "k1", RecoveryKeyID: strings.Repeat("ab", 32)}},
+		Edges:        []stack.Edge{{Target: "k1", Provider: "lan", EgressAddress: "192.0.2.9", LANDNS: &stack.LANDNS{Provider: "kydns"}}},
+		Domains:      &stack.Domains{Internal: "lan.example.com", External: "example.com"},
+		Integrations: []stack.Integration{{Product: "kypulse", Target: "k1", IdentityAmendment: "2b4c3d6e-0a1b-4c2d-8e3f-4a5b6c7d8e9f"}},
+	}
+	st := &stack.Stack{
+		Apps:         []stack.App{{Name: "npm", Target: "k1"}, {Name: "kyrecovery", Target: "k2"}},
+		Edges:        []stack.Edge{{Target: "k1", Provider: "lan"}},
+		Integrations: []stack.Integration{{Product: "kypulse", Target: "k1"}},
+	}
+	keepUnasked(st, previous)
+	if st.Domains == nil || st.Domains.External != "example.com" || st.Integrations[0].IdentityAmendment != previous.Integrations[0].IdentityAmendment {
+		t.Errorf("domains %+v, integration %+v", st.Domains, st.Integrations[0])
+	}
+	if a := st.Apps[0]; !a.Stopped || a.NodePorts[443] != 31443 || a.LoadBalancerAddress != "192.0.2.9" {
+		t.Errorf("npm = %+v", a)
+	}
+	if st.Apps[1].RecoveryKeyID != "" {
+		t.Error("a moved app kept its recovery key")
+	}
+	if e := st.Edges[0]; e.EgressAddress != "192.0.2.9" || e.LANDNS == nil {
+		t.Errorf("edge = %+v", e)
+	}
+	st.Edges[0] = stack.Edge{Target: "k1", Provider: "cloudflare"}
+	if keepUnasked(st, previous); st.Edges[0].EgressAddress != "" {
+		t.Error("a changed provider kept egress_address")
 	}
 }

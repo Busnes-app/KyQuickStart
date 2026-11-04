@@ -132,6 +132,11 @@ func TestKubeNPMURL(t *testing.T) {
 	if _, err := Parse([]byte(admin)); err == nil || !strings.Contains(err.Error(), "administration endpoint") {
 		t.Fatalf("route to the kube:// admin service: %v", err)
 	}
+	// frp needs NPM's PROXY-protocol listener, which the cluster's NPM does not publish.
+	frp := strings.Replace(kubeEdgeStack, "provider: cloudflare", "provider: frp", 1)
+	if _, err := Parse([]byte(frp)); err == nil || !strings.Contains(err.Error(), "does not publish; use cloudflare or lan") {
+		t.Fatalf("frp to the cluster's NPM: %v", err)
+	}
 }
 
 func TestInstallationIDAndNodePorts(t *testing.T) {

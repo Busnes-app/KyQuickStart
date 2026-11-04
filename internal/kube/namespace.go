@@ -22,8 +22,23 @@ func (a App) namespaceLabels() map[string]string {
 	return l
 }
 
-func (a App) ensureNamespace(ctx context.Context) error {
-	return a.Client.ensureNamespace(ctx, namespaceOf(a.Name), a.namespaceLabels())
+// ensureNamespace brings the app's namespace up to its labels. The version label records the
+// deployed version, so it is written (version true) only once deploy has written the
+// Deployment: a run that fails before leaves the installed version, which the upgrade gate
+// and prune-copies read.
+func (a App) ensureNamespace(ctx context.Context, version bool) error {
+	l := a.namespaceLabels()
+	if !version {
+		// A new namespace, or one that records no version, gets this one at once.
+		d, err := a.Client.Deployed(ctx, a.Name)
+		if err != nil {
+			return err
+		}
+		if d.Version != "" {
+			delete(l, managed.VersionLabel)
+		}
+	}
+	return a.Client.ensureNamespace(ctx, namespaceOf(a.Name), l)
 }
 
 // ensureNamespace creates name with labels, or brings the installer's existing namespace up to

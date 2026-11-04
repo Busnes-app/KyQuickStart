@@ -397,3 +397,181 @@ func TestRestorePendingFailsClosedAndPublishesAtomically(t *testing.T) {
 		t.Fatalf("marker temporary files left: %v", tmp)
 	}
 }
+
+// kyPulse binds and backs up its whole secrets directory, where restic_password also lives:
+// the password is never in a snapshot, survives --replace, and an older snapshot that holds a
+// copy of it restores on a lost target without clobbering the one given.
+func TestRestoreKeepsPasswordInASecretsVolume(t *testing.T) {
+	st, fake := backupFixture(t, false)
+	st.App.Catalog.Secrets, st.App.Catalog.Binds = nil, []string{"files", "secrets"}
+	st.App.Catalog.Backup = &catalog.Backup{Volumes: []string{"files", "secrets"}}
+	dir := st.App.dir()
+	os.Remove(filepath.Join(dir, "secrets", "db_password"))
+	os.WriteFile(filepath.Join(dir, "secrets", "audit.key"), []byte("audit"), 0o600)
+	ctx := context.Background()
+	id, _, err := st.Backup(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := filepath.Join(fake, "repo", "rest_https___backup.lan_8000_nas_fixture", "snapshots", id)
+	if _, err := os.Stat(filepath.Join(snap, "kyq", "volumes", "secrets", catalog.ResticPassword)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("restic_password is in the snapshot")
+	}
+	pw, _ := os.ReadFile(st.PasswordFile())
+
+	// Rollback on the same target: stopped, --replace.
+	st.Stop(ctx)
+	if _, err := st.MoveAside(ctx, "20261103T000000Z"); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(st.PasswordFile()); err != nil || string(b) != string(pw) {
+		t.Fatalf("restic_password moved aside: %v", err)
+	}
+	if err := st.RestoreFiles(ctx, st.PasswordFile(), id[:8]); err != nil {
+		t.Fatal(err)
+	}
+	for file, want := range map[string]string{"secrets/audit.key": "audit", "secrets/" + catalog.ResticPassword: string(pw), "files/docs/a.txt": "kept"} {
+		if b, err := os.ReadFile(filepath.Join(dir, file)); err != nil || string(b) != want {
+			t.Errorf("after rollback %s = %q, %v", file, b, err)
+		}
+	}
+	st.Finish(ctx)
+
+	// Lost target, restoring a snapshot taken before the password was excluded.
+	os.WriteFile(filepath.Join(snap, "kyq", "volumes", "secrets", catalog.ResticPassword), []byte("stale"), 0o600)
+	os.RemoveAll(dir)
+	received, err := st.ReceivePassword(ctx, pw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RestoreFiles(ctx, received, id[:8]); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PublishPassword(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(st.PasswordFile()); err != nil || string(b) != string(pw) {
+		t.Fatalf("restic_password after a lost-target restore = %q, %v", b, err)
+	}
+}
+
+// With a dump, the backup block's stop services (KyMessages' console, whose SQLite is in a
+// backed-up volume) stop before the dump and only they start again; the rest keep running, and
+// without stop nothing stops.
+func TestDumpBackupStopsTheOtherServices(t *testing.T) {
+	st, fake := backupFixture(t, true)
+	if _, _, err := st.Backup(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range fakedocker.Calls(t, fake) {
+		if c.Args[0] == "compose" && slices.ContainsFunc(c.Args, func(a string) bool { return a == "stop" || a == "start" }) {
+			t.Fatalf("a hot backup without stop ran %v", c.Args)
+		}
+	}
+	st, fake = backupFixture(t, true)
+	st.App.Catalog.Backup.Stop = []string{"app"}
+	if _, _, err := st.Backup(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var seq []string
+	for _, c := range fakedocker.Calls(t, fake) {
+		if c.Args[0] != "compose" {
+			continue
+		}
+		args := c.Args[1:]
+		for len(args) > 0 && (args[0] == "-p" || args[0] == "-f") {
+			args = args[2:]
+		}
+		if args[0] == "stop" || args[0] == "start" || args[0] == "exec" {
+			seq = append(seq, strings.Join(args, " "))
+		}
+	}
+	if want := []string{"stop app", "exec -T db dump --clean", "start app"}; !slices.Equal(seq, want) {
+		t.Fatalf("compose calls = %q, want %q", seq, want)
+	}
+	if r := fakedocker.Running(t, fake); !r["app"] || !r["db"] {
+		t.Fatalf("running after backup: %v", r)
+	}
+}
+
+// A backup on a rebuilt target, before its restore, finds a repository its new password cannot
+// open: it keeps no password and says to restore with the recorded one, so restore asks for it.
+func TestBackupKeepsNoPasswordForAnExistingRepository(t *testing.T) {
+	st, _ := backupFixture(t, false)
+	ctx := context.Background()
+	if _, _, err := st.Backup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(st.PasswordFile()) // rebuilt, reinstalled by apply
+	_, created, err := st.Backup(ctx)
+	if err == nil || created || !strings.Contains(err.Error(), "kyquickstart restore fixture and the password you recorded") {
+		t.Fatalf("backup: created %v, %v", created, err)
+	}
+	if has, err := st.HasPassword(ctx); has || err != nil {
+		t.Fatalf("a generated password stayed: %v %v", has, err)
+	}
+}
+
+// A crash-looping container is restarting between attempts, not running: restore still
+// refuses it, or Docker would restart it on half-moved bind directories.
+func TestRunningCountsRestarting(t *testing.T) {
+	f := &fakeRunner{reply: func(cmd string) ([]byte, error) {
+		if strings.Contains(cmd, "--filter status=running --filter status=restarting") {
+			return []byte("c0ffee\n"), nil
+		}
+		return nil, nil
+	}}
+	if up, err := (Store{App: App{Name: "fixture", Runner: f}}).Running(context.Background()); err != nil || !up {
+		t.Fatalf("running = %v, %v", up, err)
+	}
+}
+
+// A capsule secret added later (KyDrive's editor_secret with euro-office) travels in new
+// snapshots, and an older snapshot without it still restores, leaving it to be generated.
+func TestRestoreOptionalCapsuleSecret(t *testing.T) {
+	st, _ := backupFixture(t, false)
+	ctx := context.Background()
+	dir := st.App.dir()
+	old, _, err := st.Backup(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := *st.App.Catalog.Backup
+	b.CapsuleSecrets, b.OptionalSecrets = []string{"db_password", "other"}, []string{"other"}
+	st.App.Catalog.Backup = &b
+	// Not generated yet: left out of the snapshot, never bound (Docker would create it as a directory).
+	if _, _, err := st.Backup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "secrets", "other")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("backup created the optional secret's path")
+	}
+	os.WriteFile(filepath.Join(dir, "secrets", "other"), []byte("editor-key"), 0o600)
+	current, _, err := st.Backup(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pw, _ := os.ReadFile(st.PasswordFile())
+	for id, want := range map[string]string{old: "", current: "editor-key"} {
+		os.RemoveAll(dir)
+		received, err := st.ReceivePassword(ctx, pw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := st.RestoreFiles(ctx, received, id[:8]); err != nil {
+			t.Fatalf("snapshot %s: %v", id[:8], err)
+		}
+		if got, _ := os.ReadFile(filepath.Join(dir, "secrets", "other")); string(got) != want {
+			t.Errorf("snapshot %s: other = %q, want %q", id[:8], got, want)
+		}
+		if got, _ := os.ReadFile(filepath.Join(dir, "secrets", "db_password")); string(got) != dbSecret {
+			t.Errorf("snapshot %s: db_password = %q", id[:8], got)
+		}
+	}
+	b.OptionalSecrets = nil
+	os.RemoveAll(dir)
+	received, _ := st.ReceivePassword(ctx, pw)
+	if err := st.RestoreFiles(ctx, received, old[:8]); err == nil || !strings.Contains(err.Error(), "the snapshot has no secret file other") {
+		t.Fatalf("a required secret missing: %v", err)
+	}
+}

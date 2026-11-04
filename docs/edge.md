@@ -91,6 +91,8 @@ Omit `connector` when a connector is already managed outside the installer. Its 
 address must match `connector_cidr`. External DNS and server-side frp settings must already
 route the listed hostnames. frp reaches the dedicated NPM PROXY-protocol listener (default
 8443), not its ordinary 443 listener. Keep that listener private to the connector network.
+The catalog NPM on a cluster (`kube://` `npm_url`) publishes no such listener, so the plan
+refuses `frp` there; use `cloudflare` or `lan`.
 
 ### A connector for a Kubernetes edge
 

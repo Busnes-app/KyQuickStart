@@ -423,9 +423,11 @@ edge compatibility: `docs/redirect.md`.
 - Bulk data goes to restic on an operator-run, append-only (`--append-only --private-repos`)
   TLS rest-server off the app's host, one repository (`<repository>/<app>`) and password per
   app. `kyquickstart backup APP` (Docker apps only, no schedule, no prune) snapshots the app's
-  dump or, without a dump command, its stopped bind directories, plus its `capsule_secrets`,
+  dump and bind directories (with its `backup.stop` services stopped: KyMessages' console) or,
+  without a dump command, its stopped bind directories, plus its `capsule_secrets`,
   tagged with app and installation. The password (`restic_password`) is generated on the app's
-  target, never leaves it through the installer and is never in a snapshot; the owner records
+  target, never leaves it through the installer and is never in a snapshot (excluded from
+  kyPulse's `secrets` volume, and kept in place by a restore); the owner records
   it once with the printed `ssh … cat` command. Sealing it in KyRecovery and K8up on
   Kubernetes come later; the rest-server host never holds one.
 - Every installer-owned restic container sets its own `GODEBUG=fips140=on`; the workstation's
@@ -556,8 +558,9 @@ edge compatibility: `docs/redirect.md`.
   are created private by the driver before Compose, and no other relative bind source is
   accepted. A manifest's `from_volumes` names bind directories an earlier version kept in
   Compose named volumes of the same name (KyPost's, before #151): `<app>.volumes`, before
-  deploy, stops the app and copies each such volume into its missing or empty bind directory
-  once, as the target user, and keeps the volume; `backup` refuses until it has.
+  deploy, stops the app and copies each such volume into its missing bind directory once (an
+  existing directory, even empty, is done), as the target user, and keeps the volume; `backup`
+  refuses until it has, and a restore skips the step.
 
 ## Work Guidance
 

@@ -41,6 +41,16 @@ func copyFixture(t *testing.T, run func(args []string) ([]byte, error)) (App, *f
 		d.Status = appsv1.DeploymentStatus{}
 		if replicas(d) == 1 {
 			d.Status = readyStatus()
+		} else {
+			// Scaled to zero, the controller removes the app's pods.
+			gvr := corev1.SchemeGroupVersion.WithResource("pods")
+			if l, err := cs.Tracker().List(gvr, corev1.SchemeGroupVersion.WithKind("Pod"), "kyq-hello"); err == nil {
+				for _, p := range l.(*corev1.PodList).Items {
+					if p.Labels[nameLabel] == "hello" {
+						cs.Tracker().Delete(gvr, "kyq-hello", p.Name)
+					}
+				}
+			}
 		}
 		return true, d, nil
 	})
@@ -116,7 +126,7 @@ func TestPreUpgradeCopy(t *testing.T) {
 			t.Errorf("source mount %+v", m)
 		}
 	}
-	if list, _ := cs.CoreV1().Pods("kyq-hello").List(ctx, metav1.ListOptions{}); len(list.Items) != 1 {
+	if list, _ := cs.CoreV1().Pods("kyq-hello").List(ctx, metav1.ListOptions{}); slices.ContainsFunc(list.Items, func(p corev1.Pod) bool { return strings.HasPrefix(p.Name, "kyq-pre-upgrade-") }) {
 		t.Error("the copy pod was left behind")
 	}
 	if replicas(deployment(t, a)) != 1 {

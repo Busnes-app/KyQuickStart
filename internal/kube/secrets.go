@@ -55,7 +55,7 @@ func (s secretsStep) Inspect(ctx context.Context) (bool, error) {
 }
 
 func (s secretsStep) Apply(ctx context.Context) error {
-	if err := s.a.ensureNamespace(ctx); err != nil {
+	if err := s.a.ensureNamespace(ctx, false); err != nil {
 		return err
 	}
 	sec, found, err := s.read(ctx)

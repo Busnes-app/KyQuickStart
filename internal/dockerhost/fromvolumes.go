@@ -13,8 +13,11 @@ import (
 // fromVolumesStep (<app>.volumes) moves an app off the Compose named volumes an earlier
 // version kept (its manifest's from_volumes) and onto ./<name> bind directories, which
 // kyquickstart backup can read (#151). Before deploy, each volume kyq-<app>_<name> whose bind
-// directory is missing or empty is copied into it once, with the app stopped. The volume is
-// kept, so nothing is lost if the new layout fails; the owner removes it by hand.
+// directory is missing is copied into it once, with the app stopped: the copy is renamed into
+// place whole, and only deploy creates a bind directory otherwise, so an existing one (even
+// empty) is done. The volume is kept, so nothing is lost if the new layout fails; the owner
+// removes it by hand. A restore skips the step: it restores the directories it backs up, and
+// deploy creates the rest empty.
 type fromVolumesStep struct {
 	a    App
 	note *string
@@ -27,11 +30,11 @@ func (s fromVolumesStep) Note() string      { return *s.note }
 func (s fromVolumesStep) volume(name string) string { return "kyq-" + s.a.Name + "_" + name }
 
 // pending lists the from_volumes still to copy: a volume exists and its bind directory is
-// missing or empty.
+// missing.
 func (s fromVolumesStep) pending(ctx context.Context) ([]string, error) {
 	cmd := "vols=$(docker volume ls -q) || exit 1\nd=" + remote.Quote(s.a.dir()) + "\nfor v in " + quoteAll(s.a.Catalog.FromVolumes) + `; do
   printf '%s\n' "$vols" | grep -Fqx "kyq-` + s.a.Name + `_$v" || continue
-  if [ -d "$d/$v" ] && [ -n "$(ls -A "$d/$v")" ]; then continue; fi
+  if [ -e "$d/$v" ] || [ -L "$d/$v" ]; then continue; fi
   echo "$v"
 done`
 	out, err := s.a.Runner.Run(ctx, cmd, nil)
@@ -42,6 +45,9 @@ done`
 }
 
 func (s fromVolumesStep) Inspect(ctx context.Context) (bool, error) {
+	if s.a.Restoring {
+		return true, nil
+	}
 	p, err := s.pending(ctx)
 	return len(p) == 0, err
 }
@@ -66,7 +72,7 @@ func (s fromVolumesStep) Apply(ctx context.Context) error {
 	if _, err := s.a.Runner.Run(ctx, stop, nil); err != nil {
 		return fmt.Errorf("stop %s before copying its volumes: %w", s.a.Name, err)
 	}
-	if out, err := s.a.Runner.Run(ctx, "docker ps -q --filter "+remote.Quote("label=com.docker.compose.project=kyq-"+s.a.Name)+" --filter status=running", nil); err != nil || strings.TrimSpace(string(out)) != "" {
+	if out, err := s.a.Runner.Run(ctx, "docker ps -q --filter "+remote.Quote("label=com.docker.compose.project=kyq-"+s.a.Name)+" --filter status=running --filter status=restarting", nil); err != nil || strings.TrimSpace(string(out)) != "" {
 		return fmt.Errorf("a container of %s still runs, so its volumes are not copied: %w", s.a.Name, errors.Join(err, errors.New("stop it and rerun apply")))
 	}
 	for _, v := range names {
@@ -107,6 +113,9 @@ mv "$t" "$v"`
 }
 
 func (s fromVolumesStep) Verify(ctx context.Context) error {
+	if s.a.Restoring {
+		return nil
+	}
 	p, err := s.pending(ctx)
 	if err == nil && len(p) > 0 {
 		err = fmt.Errorf("%s's volumes %s are still not in its bind directories", s.a.Name, strings.Join(p, ", "))

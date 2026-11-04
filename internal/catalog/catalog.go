@@ -131,7 +131,13 @@ type Backup struct {
 	Skip           []string `yaml:"skip"`
 	// CapsuleSecrets travel in the restic snapshot, encrypted by restic; a subset of secrets.
 	CapsuleSecrets []string `yaml:"capsule_secrets"`
-	RestoreOrder   []string `yaml:"restore_order"` // Compose services, service first
+	// OptionalSecrets are capsule secrets an older snapshot may lack (KyDrive's editor_secret,
+	// added with euro-office): restore leaves them to be generated again instead of refusing.
+	OptionalSecrets []string `yaml:"-"`
+	RestoreOrder    []string `yaml:"restore_order"` // Compose services, service first
+	// Stop are the Compose services a dump backup stops while it runs: those whose backed-up
+	// files are consistent only at rest (KyMessages' console and its SQLite). The rest stay up.
+	Stop []string `yaml:"stop"`
 	// ReplayAfter is the restore_order service after which a restore replays KyIdentity's
 	// removals; the services after it start only once the replay is delivered.
 	ReplayAfter string `yaml:"replay_after"`
@@ -966,6 +972,9 @@ func (m Manifest) validateBackup(c *composeFile) error {
 	}
 	if b.ReplayAfter != "" && (m.OIDC == nil || !slices.Contains(b.RestoreOrder, b.ReplayAfter)) {
 		return fmt.Errorf("replay_after must be a restore_order service of an app with oidc")
+	}
+	if err := check(b.Stop, func(s string) bool { return len(b.Command) > 0 && s != b.Service && isService(s) }); err != nil {
+		return fmt.Errorf("stop: %w must be a unique Compose service other than service, with a command", err)
 	}
 	return nil
 }

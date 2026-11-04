@@ -109,6 +109,9 @@ func TestKyMessageEntry(t *testing.T) {
 	if a.Kubernetes != nil || !slices.Equal(a.Init, []string{"matrix-init"}) || !slices.Equal(a.Services, []string{"app", "element", "livekit", "mas", "postgres", "synapse"}) {
 		t.Errorf("kubernetes %v, init %v, services %v", a.Kubernetes, a.Init, a.Services)
 	}
+	if !slices.Equal(a.Backup.Stop, []string{"app"}) {
+		t.Errorf("backup stops %v, want the console alone", a.Backup.Stop)
+	}
 	if !slices.Equal(a.Binds, []string{"backups", "data", "matrix", "media", "pgdata"}) || !slices.Contains(a.Nested, "./matrix/mas/config.yaml") {
 		t.Errorf("binds %v nested %v", a.Binds, a.Nested)
 	}

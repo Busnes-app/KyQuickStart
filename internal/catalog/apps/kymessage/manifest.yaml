@@ -71,6 +71,9 @@ backup:
   # The console's session secret; the hot copy of data carries the directory secret.
   capsule_secrets: [session_secret]
   restore_order: [postgres, mas, app, synapse, element, livekit]
+  # The console's SQLite (data) and sealed capsules (backups) are consistent only at rest: it
+  # stops for the dump and snapshot. Chat stays up; Synapse's media files are written once.
+  stop: [app]
   # KyIdentity's removals reach the console, whose sweep ends sessions in MAS, before Synapse
   # starts: a restored session of someone removed later has no homeserver to use until then.
   replay_after: app

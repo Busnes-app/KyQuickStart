@@ -169,7 +169,9 @@ the plan is saved only after every step passed.
   `restore`; a finished restore starts it and clears the flag. `logs` changes nothing, takes
   no lock and redacts only the secrets the app's catalog entry generates. `status` reads each app's live
   state (`running`, `stopped`, `missing`, `unknown`).
-- `uninstall` refuses while another installed app depends on it. It drops the app, its routes
+- `uninstall` refuses while another installed app depends on it, and `uninstall`/`unmanage`
+  refuse the catalog `npm` while its target's edge routes other apps through it (`kube://`
+  `npm_url`; remove those routes first). It drops the app, its routes
   and its `integrations` entry from the plan, disables the app's NPM routes, removes its containers (`docker compose down`, never `-v`) or its Deployment and
   Service, and keeps the app directory, data volumes, claims and secrets on the target.
 - `unmanage` removes `ky.managed-by` and `ky.release-set` and records the hand-over in
@@ -192,7 +194,9 @@ the plan is saved only after every step passed.
   stops, with the cluster's warnings (such as Longhorn's `insufficient storage`) and the earlier
   copies that take space. Then the app is stopped, each claim is copied as the app's uid under
   its pod security, and the copy is compared with the original before the claim is marked
-  verified. Either way a failed backup leaves the old version running. It is refused
+  verified. Either way a failed backup leaves the old version running. A Docker app that does
+  not come back healthy after a snapshot that passed `restic check` (often the reason for the
+  upgrade) is still upgraded, and the backup's result says so. It is refused
   (`backup_required`) where neither can run: a Docker target without a backup destination, a
   named volume, or a Kubernetes app that runs as root. Any other upgrade needs
   `--acknowledge-no-backup` (`ack_required`), recorded in `results/<app>.upgrade.json` with
@@ -288,10 +292,15 @@ is not 0600. Each app's repository is `<repository>/<app>`.
 **What a snapshot holds.** The app's catalog `backup` block decides: its bind directories minus
 `skip`, its `capsule_secrets` (encrypted by restic, never sealed to KyRecovery here) and, for an
 app with a dump `command`, the dump, taken while the app runs (`docker compose exec -T`; an
-empty or failed dump takes no snapshot). An app without a dump command is backed up cold:
+empty or failed dump takes no snapshot). The services its `backup.stop` names are stopped
+first and started again afterwards, also when the snapshot failed: KyMessages stops its
+console, whose SQLite in `data` is consistent only at rest, for a few seconds while chat stays
+up. An app without a dump command is backed up cold:
 `docker compose stop`, restic, then `docker compose start` and a health wait, also when the
 snapshot failed. KyDrive is backed up cold (its SQLite has no dump command): `data`, `backups`,
-`session_secret` and `scim_token`, a stop of seconds to minutes. KyPost is backed up cold too:
+`session_secret`, `scim_token` and, with `euro-office`, `editor_secret` (a snapshot from before
+euro-office was added restores without it, and a new one is generated), a stop of seconds to
+minutes. KyPost is backed up cold too:
 `config`, `private` and `state` (settings and accounts, its generated keys, mail state; not its
 logs or the re-downloadable Ollama model), with up to 36 minutes for its stop. Its data moved from
 named volumes to bind directories in #151: until `apply` has copied an earlier install's volumes
@@ -309,7 +318,9 @@ must reach the rest-server; the installer does not open a firewall for it.
 **The repository password.** The first `backup` generates `restic_password` on the target, in
 the app's `secrets` directory (0600, never in a snapshot), runs `restic init` only when the
 repository does not exist, and prints the command that reads the password. Read it once into
-the owner's printed record: without it a lost target cannot be restored. The handover prints
+the owner's printed record: without it a lost target cannot be restored. If the repository
+already exists under another password (a rebuilt target, backed up before its restore), the
+backup keeps no new password and fails, telling you to restore with the recorded one first. The handover prints
 the same command for every Docker app whose target has a destination:
 
 ```sh
@@ -324,7 +335,11 @@ refused without `--snapshot`:
 1. It refuses (`restore_refused`, nothing changed) a running app (`kyquickstart stop APP` first) and an app with any non-empty
    bind directory or secret file unless `--replace`, which moves them to
    `<root>/<app>/.replaced-<UTC time>/` and never deletes them; neither refusal contacts the
-   repository. It then refuses a snapshot not tagged for this app and installation. If
+   repository. It then refuses a snapshot not tagged for this app and installation, and one
+   whose `version=` tag is newer than the catalog's version or one the catalog's `upgrade`
+   rules do not start on (`min_from`, `no_skip`): restore deploys the catalog's version on the
+   snapshot's data, so use the kyquickstart release that matches (a snapshot of an app deployed
+   before versions were recorded has none and is not checked). If
    `restic_password` is gone, it reads the recorded one from stdin (without echo on a
    terminal; piped, on its own line, followed by the app name, or alone with `--yes`) and saves
    it only once the files are restored.
@@ -411,7 +426,9 @@ private Unix socket. The runner holds its own SSH key and kubeconfigs; KyYard ho
    On a Kubernetes target the catalog KyYard runs the runner in its own pod ("Catalog KyYard
    on Kubernetes"); for a KyYard the installer does not deploy, use
    [`kyyard-runner.k8s.yaml`](kyyard-runner.k8s.yaml) after editing its image digest, storage
-   class and NetworkPolicy addresses.
+   class and NetworkPolicy addresses (on a block storage class, a new claim also needs the
+   `fsGroup` with `fsGroupChangePolicy: OnRootMismatch` its comment describes), and adding KyYard as a container in the same pod: the
+   socket is in a pod-local volume.
 2. KyYard's target must be in `stack.yaml`. On a Docker target its SSH user must be able to run
    `docker exec`; on a Kubernetes target the workstation's kubeconfig must allow list pods and
    create `pods/exec` in the runner's namespace, which `handoff` checks before changing
@@ -1705,14 +1722,15 @@ What apply does:
   180 s start allowance.
 - `kypost.volumes`, before `kypost.deploy`: a KyPost installed before #151 kept the same five
   directories in named volumes (`kyq-kypost_config` and so on) owned by the image's `kypost`
-  (uid 1000). For each such volume whose bind directory is missing or empty, apply stops the
+  (uid 1000). For each such volume whose bind directory is missing, apply stops the
   running KyPost (with its own grace period), copies the volume with `tar` in two offline,
   read-only containers of the pinned restic image (the volume mounted read-only and read as
   root with only `CAP_DAC_READ_SEARCH`; the copy written as the target user, who then owns every
   file, modes kept), checks both ends succeeded and the entry counts match, and only then renames
   the copy into place. The volumes are kept: the step's note names them, and once KyPost runs on
-  the copies `docker volume rm` removes them. A rerun skips. Until this step has run,
-  `kyquickstart backup kypost` refuses (its bind directories would be empty).
+  the copies `docker volume rm` removes them. A rerun skips: a bind directory that exists, even
+  empty (an empty volume's copy), is done, and `restore kypost` skips the step. Until this step
+  has run, `kyquickstart backup kypost` refuses (its bind directories would be empty).
 - `SERVER_BASE_URL` is `https://<route URL host>`: its callback, and Secure session cookies.
   Native mail, receiving and the receiver are off. The catalog sets no `PAIRING_SECRET`,
   `POW_SECRET`, `BOOTSTRAP_ADMIN_*`, TLS or SMTP settings: KyPost

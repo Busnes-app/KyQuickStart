@@ -150,3 +150,32 @@ func TestLogs(t *testing.T) {
 		t.Fatalf("forbidden: %v", err)
 	}
 }
+
+// A Deployment's status.replicas leaves out terminating pods, which may write for their whole
+// grace period: the app is stopped only once none is left (an evicted pod does not count), so a
+// pre-upgrade copy never reads a volume still in use.
+func TestStoppedWaitsForTerminatingPods(t *testing.T) {
+	a, ctx := deployed(t)
+	setStatus(t, a, appsv1.DeploymentStatus{})
+	zero := int32(0)
+	d := deployment(t, a)
+	d.Spec.Replicas = &zero
+	if _, err := a.Client.cs.AppsV1().Deployments("kyq-hello").Update(ctx, d, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	pods := a.Client.cs.CoreV1().Pods("kyq-hello")
+	pod, err := pods.Create(ctx, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "draining", Namespace: "kyq-hello", Labels: d.Spec.Selector.MatchLabels}}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := state(t, a); s != "unknown" {
+		t.Fatalf("state with a terminating pod: %s", s)
+	}
+	pod.Status.Phase = corev1.PodFailed // evicted
+	if _, err := pods.Update(ctx, pod, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if s := state(t, a); s != "stopped" {
+		t.Fatalf("state with only an evicted pod: %s", s)
+	}
+}

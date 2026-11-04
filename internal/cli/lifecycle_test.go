@@ -209,7 +209,8 @@ func TestLifecycleOnKubernetes(t *testing.T) {
 	f.cs.Tracker().Add(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "kyq-secrets", Namespace: "kyq-hello", Labels: labels}, Data: map[string][]byte{"token": []byte("kube-generated-token")}})
 	f.cs.Tracker().Add(&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "kyq-hello", Labels: labels},
 		Spec: appsv1.DeploymentSpec{Replicas: ptr.To(int32(1)), Selector: &metav1.LabelSelector{MatchLabels: sel}}})
-	f.cs.Tracker().Add(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "app-1", Namespace: "kyq-hello", Labels: map[string]string{managed.Label: managed.Value, "app.kubernetes.io/name": "hello"}}})
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "app-1", Namespace: "kyq-hello", Labels: map[string]string{managed.Label: managed.Value, "app.kubernetes.io/name": "hello"}}}
+	f.cs.Tracker().Add(pod)
 	f.cs.PrependReactor("get", "deployments", func(a ktesting.Action) (bool, runtime.Object, error) {
 		g := a.(ktesting.GetAction)
 		o, err := f.cs.Tracker().Get(appsv1.SchemeGroupVersion.WithResource("deployments"), g.GetNamespace(), g.GetName())
@@ -218,6 +219,13 @@ func TestLifecycleOnKubernetes(t *testing.T) {
 		}
 		d := o.(*appsv1.Deployment).DeepCopy()
 		n := *d.Spec.Replicas
+		// The controller: the app's pod goes at zero replicas and comes back at one.
+		pods := corev1.SchemeGroupVersion.WithResource("pods")
+		if n == 0 {
+			f.cs.Tracker().Delete(pods, "kyq-hello", "app-1")
+		} else if _, err := f.cs.Tracker().Get(pods, "kyq-hello", "app-1"); err != nil {
+			f.cs.Tracker().Add(pod)
+		}
 		d.Status = appsv1.DeploymentStatus{ObservedGeneration: d.Generation, Replicas: n, UpdatedReplicas: n, ReadyReplicas: n, AvailableReplicas: n}
 		return true, d, nil
 	})

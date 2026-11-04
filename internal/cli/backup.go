@@ -179,10 +179,15 @@ func (p *preUpgradeBackup) Apply(ctx context.Context) error {
 	if created {
 		p.s.passwordCreated(p.name, p.t, st)
 	}
-	if err != nil {
+	// An app that was failing before is often why it is upgraded: a verified snapshot is enough.
+	var down *dockerhost.NotRestartedError
+	if err != nil && !errors.As(err, &down) {
 		return fmt.Errorf("no upgrade: the pre-upgrade backup failed: %s", p.s.redact.Redact(err.Error()))
 	}
 	p.note = fmt.Sprintf("snapshot %s of %s %s in %s/%s (restic check passed); kyquickstart restore %s --snapshot %s restores it", id[:8], p.name, p.from, p.t.Backup.Repository, p.name, p.name, id[:8])
+	if down != nil {
+		p.note += fmt.Sprintf("; %s did not come back healthy after it (%s), and the upgrade deploys over it", p.name, p.s.redact.Redact(down.Err.Error()))
+	}
 	return nil
 }
 
@@ -317,6 +322,8 @@ func backup(ctx context.Context, state, name string, trust trustFlag, o Options)
 		cold := len(s.cat[name].Backup.Command) == 0
 		if cold {
 			fmt.Fprintf(s.o.Out, "%s: stopping for a cold backup; it starts again when the snapshot ends.\n", name)
+		} else if stop := s.cat[name].Backup.Stop; len(stop) > 0 {
+			fmt.Fprintf(s.o.Out, "%s: stopping %s for the backup; it starts again when the snapshot ends.\n", name, strings.Join(stop, ", "))
 		}
 		start := time.Now()
 		id, created, err := st.Backup(ctx)
@@ -324,6 +331,9 @@ func backup(ctx context.Context, state, name string, trust trustFlag, o Options)
 			s.passwordCreated(name, t, st)
 		}
 		if err != nil {
+			if errors.As(err, new(*dockerhost.NotRestartedError)) {
+				fmt.Fprintf(s.o.Out, "%s: snapshot %s in %s/%s (restic check passed)\n", name, id, t.Backup.Repository, name)
+			}
 			err = fmt.Errorf("%s: backup: %s", name, s.redact.Redact(err.Error()))
 			if cold {
 				if up, rerr := st.Running(ctx); rerr == nil && up {
@@ -331,6 +341,8 @@ func backup(ctx context.Context, state, name string, trust trustFlag, o Options)
 				} else {
 					fmt.Fprintf(s.o.Out, "%s is NOT running: start it with ssh -p %d %s@%s docker compose -p kyq-%s start\n", name, t.Port, t.User, t.Host, name)
 				}
+			} else if len(s.cat[name].Backup.Stop) > 0 {
+				fmt.Fprintf(s.o.Out, "If a service of %s is still stopped, start it with ssh -p %d %s@%s docker compose -p kyq-%s start\n", name, t.Port, t.User, t.Host, name)
 			}
 			return err
 		}
@@ -513,6 +525,21 @@ func (s *session) restoreLocked(ctx context.Context, st dockerhost.Store, r rest
 	snap := list[0]
 	if !st.Bound(snap) {
 		return refuse("snapshot %s is not tagged for %s of this installation (%s); nothing was changed", snap.Short, r.app, strings.Join(st.Tags(), ","))
+	}
+	// Restore starts this release's version on the snapshot's data: the upgrade rules apply.
+	app := st.App.Catalog
+	for _, tag := range snap.Tags {
+		// A snapshot of an app deployed before versions were recorded has an empty one.
+		v, ok := strings.CutPrefix(tag, "version=")
+		if !ok || v == "" || v == app.Version {
+			continue
+		}
+		if catalog.VersionAtLeast(v, app.Version) {
+			return refuse("snapshot %s holds %s %s, newer than this release's %s, which may not read its data; restore it with a kyquickstart whose catalog has %s %s. Nothing was changed", snap.Short, r.app, v, app.Version, r.app, v)
+		}
+		if err := app.Upgrade.Allows(v, app.Version); err != nil {
+			return refuse("snapshot %s holds %s %s, which this release's %s cannot start on: %s; restore it with an earlier kyquickstart release and upgrade from there. Nothing was changed", snap.Short, r.app, v, app.Version, err)
+		}
 	}
 	fmt.Fprintf(out, "Restore %s from snapshot %s\n  taken %s on %s\n  paths %s\n", r.app, snap.ID, snap.Time.UTC().Format(time.RFC3339), snap.Host, strings.Join(snap.Paths, " "))
 	if err := s.confirm(in, r); err != nil {

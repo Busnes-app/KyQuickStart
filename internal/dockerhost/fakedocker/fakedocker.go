@@ -184,7 +184,7 @@ func compose(dir string, args []string, stdin io.Reader, stdout io.Writer) (int,
 			fmt.Fprintf(stdout, `{"Service":%q,"State":%q,"Health":""}`+"\n", s, st)
 		}
 	case "stop":
-		set(false)
+		set(false, args[1:]...)
 	case "start": // no depends_on: only the named services start (no catalog app uses it)
 		set(true, args[1:]...)
 	case "pull":

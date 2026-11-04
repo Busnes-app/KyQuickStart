@@ -2,11 +2,15 @@ package kube
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/Busnes-app/kyquickstart/internal/managed"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 // deployed installs the fixture app through its secrets and deploy steps.
@@ -105,5 +109,35 @@ func TestUnmanageRemovesLabelsEverywhere(t *testing.T) {
 	// The installer no longer adopts what it handed over.
 	if err := deployOf(a).Apply(ctx); err == nil || !strings.Contains(err.Error(), "not managed") {
 		t.Errorf("deploy after unmanage: %v", err)
+	}
+}
+
+// A deploy that fails before its Deployment is written leaves the namespace naming the
+// installed version, so the upgrade gate and prune-copies do not take the upgrade as done.
+func TestFailedDeployKeepsInstalledVersion(t *testing.T) {
+	a, ctx := deployed(t)
+	cs := a.Client.cs.(*fake.Clientset)
+	cs.PrependReactor("update", "deployments", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("refused")
+	})
+	next := a
+	next.Catalog.Version = "1.12.0"
+	steps := Steps(next)
+	if err := steps[1].Apply(ctx); err == nil {
+		t.Fatal("deploy did not fail")
+	}
+	if d, err := a.Client.Deployed(ctx, "hello"); err != nil || d.Version != "1.11.0" {
+		t.Fatalf("deployed = %+v, %v", d, err)
+	}
+	// A new install that fails records its version at once, so a later release's gate knows it.
+	fresh, _ := testApp(t)
+	fresh.Client.cs.(*fake.Clientset).PrependReactor("create", "deployments", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("refused")
+	})
+	for _, s := range Steps(fresh)[:2] {
+		s.Apply(ctx)
+	}
+	if d, err := fresh.Client.Deployed(ctx, "hello"); err != nil || d.Version != "1.11.0" {
+		t.Fatalf("failed new install = %+v, %v", d, err)
 	}
 }

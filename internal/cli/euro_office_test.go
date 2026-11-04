@@ -59,6 +59,11 @@ func TestEditorConnectsKyDrive(t *testing.T) {
 	if !slices.Equal(drive.Secrets, []string{"session_secret", "scim_token", "editor_secret"}) || !slices.Equal(cat["kydrive"].Secrets, []string{"session_secret", "scim_token"}) {
 		t.Fatalf("secrets = %v", drive.Secrets)
 	}
+	// Its backups carry the editor's key too; snapshots from before may lack it.
+	if !slices.Equal(drive.Backup.CapsuleSecrets, []string{"session_secret", "scim_token", "editor_secret"}) || !slices.Equal(drive.Backup.OptionalSecrets, []string{"editor_secret"}) ||
+		!slices.Equal(cat["kydrive"].Backup.CapsuleSecrets, []string{"session_secret", "scim_token"}) || plain.cat["kydrive"].Backup.OptionalSecrets != nil {
+		t.Fatalf("backup = %+v", drive.Backup)
+	}
 	// The image pin is the catalog's, not the editor's; catalog-follow bumps it.
 	compose := bytes.ReplaceAll(drive.Compose, []byte(cat["kydrive"].Images["kydrive"]), []byte("KYDRIVE_IMAGE"))
 	const file = "testdata/kydrive-editor.compose.golden"

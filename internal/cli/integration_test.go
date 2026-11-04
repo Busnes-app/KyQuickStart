@@ -190,3 +190,27 @@ func TestGuidedResumeKeepsHandEditedPreparation(t *testing.T) {
 		}
 	}
 }
+
+// An installed app's setup names no container, namespace or pod (apply finds its own), so the
+// wizard asks only for the bundle, and a resumed plan keeps its installed setup.
+func TestGuidedInstalledIntegrationAsksNoWorkload(t *testing.T) {
+	for _, kube := range []bool{false, true} {
+		target := "  - name: nas\n    host: 192.0.2.1\n    user: kyq\n"
+		if kube {
+			target = "  - name: nas\n    kubeconfig: kubeconfigs/nas.yaml\n"
+		}
+		st, err := stack.Parse([]byte("version: 1\ntargets:\n" + target + "apps:\n  - name: kyidentity\n    target: nas\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		p := &prompts{ctx: context.Background(), in: bufio.NewReader(strings.NewReader("yes\n/data/installer/setup.json\n")), out: &out, answers: map[string]string{}, draft: filepath.Join(t.TempDir(), "answers.json")}
+		if err := guidedIntegration(p, st, stack.Existing{Product: "kyidentity", Target: "nas"}); err != nil {
+			t.Fatal(err, out.String())
+		}
+		data, _ := yaml.Marshal(st)
+		if _, err := stack.Parse(data); err != nil || strings.Contains(out.String(), "container name") {
+			t.Fatalf("kube %v: %v\n%s", kube, err, out.String())
+		}
+	}
+}

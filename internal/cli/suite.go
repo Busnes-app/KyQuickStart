@@ -271,9 +271,10 @@ func upgrade(ctx context.Context, state string, r Request, trust trustFlag, o Op
 }
 
 // withSetupSources adds to targets the other targets the setup steps of s.order's apps read
-// from: KyIdentity's (each app's client is exported there), KyRecovery's (KyPost's pairing)
-// and KyDNS's edge (its trust check runs in NPM's pod). Their apps are not redeployed, but
-// deploySteps needs their drivers, and the targets are locked while it runs.
+// from: KyIdentity's (each app's client is exported there), KyRecovery's (KyPost's pairing),
+// KyDNS's edge (its trust check runs in NPM's pod) and KyDrive's (euro-office's jwt_secret).
+// Their apps are not redeployed, but deploySteps needs their drivers, and the targets are
+// locked while it runs.
 func (s *session) withSetupSources(targets []stack.Target) []stack.Target {
 	add := func(name string) {
 		k := slices.IndexFunc(s.allTargets, func(t stack.Target) bool { return t.Name == name })
@@ -293,6 +294,9 @@ func (s *session) withSetupSources(targets []stack.Target) []stack.Target {
 			e, _ := appRoute(s.plan, "kydns")
 			add(e.Target)
 		}
+	}
+	if slices.Contains(s.order, euroOffice) {
+		add(s.placed["kydrive"].Name)
 	}
 	slices.SortFunc(targets, func(a, b stack.Target) int { return strings.Compare(a.Name, b.Name) })
 	return targets
@@ -335,6 +339,12 @@ func remove(ctx context.Context, state string, r Request, trust trustFlag, o Opt
 	for _, other := range s.order {
 		if slices.Contains(s.cat[other].DependsOn, name) {
 			return suite.Errorf(suite.Dependency, "%s depends on %s", other, name)
+		}
+	}
+	// The catalog NPM is the one a kube:// npm_url on its target names.
+	for _, e := range s.plan.Edges {
+		if _, _, _, kube := stack.KubeService(e.NPMURL); name == "npm" && kube && e.Target == t.Name && slices.ContainsFunc(e.Routes, func(r stack.Route) bool { return r.App != name }) {
+			return suite.Errorf(suite.Dependency, "edge %s routes its apps through npm; remove those routes from stack.yaml first", e.Target)
 		}
 	}
 	routed := func(r stack.Route) bool { return r.App == name }

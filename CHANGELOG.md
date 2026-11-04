@@ -14,6 +14,22 @@ state directory, target data and target-held credentials; do not reset them as a
 
 ## Unreleased
 
+- Hostile-review fixes (council pass 1). Backup and restore: kyPulse's `restic_password` is no
+  longer in its own snapshots and survives `restore --replace`; KyMessages stops its console
+  for the dump and snapshot so its SQLite is at rest (chat stays up); a backup on a rebuilt target
+  no longer replaces the repository password it cannot open; restore refuses a crash-looping
+  app and a snapshot from a newer version or outside the upgrade rules; KyDrive with
+  `euro-office` backs up `editor_secret`; KyPost's volume migration no longer loops on an empty
+  volume or blocks its restore. Upgrades: `upgrade euro-office` no longer panics; a Docker app
+  that does not come back healthy after a verified pre-upgrade snapshot is still upgraded;
+  on Kubernetes an app is stopped only once its pods are gone, and a failed deploy no longer
+  records the new version. `plan` keeps the fields it does not ask (`stopped`, `node_ports`,
+  LoadBalancer addresses, `recovery_key_id`, `egress_address`, `lan_dns`, `identity_amendment`,
+  `domains`), accepts a `kube://`
+  `npm_url` and an installed app's setup, and its `deploy` no longer collides with its own
+  `plan.lock`. Refusals: removing `npm` while its edge routes other apps, KyMessages without
+  the edge's `egress_address`, and `frp` on a cluster's NPM. Upgrade impact: a KyMessages plan
+  without `egress_address` on its edge is refused until it is set.
 - KyPost and KyCalendar from the catalog pair for calendar invitations (#100). Their 0.6 releases
   pair through KyIdentity's suite directory on their own; the installer now sets
   `KYPOST_KYCALENDAR_ALLOW_PRIVATE` and `KYCALENDAR_KYPOST_ALLOW_PRIVATE` to `true` only when the
