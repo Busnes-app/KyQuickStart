@@ -317,6 +317,15 @@ func (f runFunc) Run(ctx context.Context, cmd string, stdin []byte) ([]byte, err
 // pullFails runs commands under sh, except docker: pull fails, the rest pass.
 type pullFails struct{}
 
+type putBackFails struct{ pullFails }
+
+func (p putBackFails) Run(ctx context.Context, cmd string, stdin []byte) ([]byte, error) {
+	if strings.Contains(cmd, "mv -f .compose.yaml.init") {
+		return nil, errors.New("disk gone")
+	}
+	return p.pullFails.Run(ctx, cmd, stdin)
+}
+
 func (pullFails) Run(ctx context.Context, cmd string, stdin []byte) ([]byte, error) {
 	if strings.Contains(cmd, "docker compose") || strings.HasPrefix(cmd, "docker ps") {
 		if strings.Contains(cmd, " pull ") {
@@ -370,6 +379,15 @@ func TestFailedPullKeepsDeployedVersion(t *testing.T) {
 	if left, _ := filepath.Glob(filepath.Join(a.dir(), ".compose*")); len(left) != 0 {
 		t.Fatalf("left %v", left)
 	}
+	// A put-back that fails is RunInit's error, not a silent success.
+	a.Runner = putBackFails{}
+	if _, err := RunInit(ctx, a, "init", nil, nil); err == nil || !strings.Contains(err.Error(), "put the deployed Compose files back") {
+		t.Fatalf("RunInit with a failed put-back = %v", err)
+	}
+	a.Runner = pullFails{}
+	os.Remove(filepath.Join(a.dir(), ".compose.yaml.init"))
+	os.Remove(filepath.Join(a.dir(), ".compose.kyq.yaml.init"))
+	os.WriteFile(filepath.Join(a.dir(), "compose.yaml"), old, 0o600)
 	// After a volume migration removed the old compose.yaml, a failed pull keeps the new
 	// layout: the old one would start the app on its volumes again.
 	os.Remove(filepath.Join(a.dir(), "compose.yaml"))

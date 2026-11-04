@@ -71,6 +71,9 @@ func (s fromVolumesStep) Apply(ctx context.Context) error {
 	if err := trustedDir(ctx, s.a.Runner, s.a.dir()); err != nil {
 		return err
 	}
+	if err := s.a.owned(ctx); err != nil {
+		return err
+	}
 	// The earlier deployment's own files stop it with its stop_grace_period.
 	stop := "if [ -e " + remote.Quote(path.Join(s.a.dir(), "compose.yaml")) + " ]; then " + s.a.compose("stop") + "; fi"
 	if _, err := s.a.Runner.Run(ctx, stop, nil); err != nil {

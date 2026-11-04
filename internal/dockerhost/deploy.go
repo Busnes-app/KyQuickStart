@@ -232,9 +232,11 @@ func RunInit(ctx context.Context, a App, svc string, env []string, stdin []byte)
 		return nil, fmt.Errorf("%s is not a one-shot service of %s", svc, a.Name)
 	}
 	l := labels(a.ReleaseSet, a.Catalog.Version)
-	if d, err := Deployed(ctx, a); err != nil {
+	d, err := Deployed(ctx, a) // err is the result, which the put-back below joins
+	if err != nil {
 		return nil, err
-	} else if d.Found {
+	}
+	if d.Found {
 		l = labels(d.ReleaseSet, d.Version)
 		dir := remote.Quote(a.dir())
 		if _, err := a.Runner.Run(ctx, "cd "+dir+" || exit 1; for f in compose.yaml compose.kyq.yaml; do rm -f .$f.init || exit 1; if [ -e $f ]; then cp -p $f .$f.init || exit 1; fi; done", nil); err != nil {

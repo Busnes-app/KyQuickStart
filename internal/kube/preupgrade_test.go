@@ -164,6 +164,15 @@ func TestPreUpgradeCopyCancelledStop(t *testing.T) {
 	if replicas(deployment(t, a)) != 1 {
 		t.Error("a cancelled stop left the app scaled to zero")
 	}
+	// A stop refused before it scaled anything starts nothing either.
+	patches := 0
+	cs.PrependReactor("patch", "deployments", func(k8stesting.Action) (bool, runtime.Object, error) {
+		patches++
+		return true, nil, errors.New("conflict")
+	})
+	if _, err := PreUpgradeCopy(context.Background(), a, "1.10.0"); err == nil || patches != 1 {
+		t.Fatalf("refused stop: %v, %d patches", err, patches)
+	}
 }
 
 func TestPreUpgradeCopyFailure(t *testing.T) {
