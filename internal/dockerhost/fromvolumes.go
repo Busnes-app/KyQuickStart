@@ -27,6 +27,10 @@ func (s fromVolumesStep) ID() string        { return s.a.Name + ".volumes" }
 func (s fromVolumesStep) InputHash() string { return strings.Join(s.a.Catalog.FromVolumes, " ") }
 func (s fromVolumesStep) Note() string      { return *s.note }
 
+// PreVolumesCompose is where the volume migration keeps the earlier compose.yaml until a
+// deploy succeeds.
+const PreVolumesCompose = ".compose.yaml.pre-volumes"
+
 func (s fromVolumesStep) volume(name string) string { return "kyq-" + s.a.Name + "_" + name }
 
 // pending lists the from_volumes still to copy: a volume exists and its bind directory is
@@ -83,10 +87,11 @@ func (s fromVolumesStep) Apply(ctx context.Context) error {
 			return err
 		}
 	}
-	// The earlier compose.yaml mounts the volumes: once a copy is in place it goes, so the app
-	// cannot start on its volumes again (kyquickstart start) and leave the copies stale. Only
-	// deploy writes the new one, and a failed deploy does not bring the old one back.
-	place := "cd " + remote.Quote(s.a.dir()) + " || exit 1\nrm -f compose.yaml .input-hash || exit 1\nfor v in " + quoteAll(names) + `; do
+	// The earlier compose.yaml mounts the volumes: once a copy is in place it is moved to
+	// PreVolumesCompose (still the record of KyPost's mail mode), so the app cannot start on its
+	// volumes again (kyquickstart start) and leave the copies stale. Only deploy writes the new
+	// one, and a failed deploy does not bring the old one back.
+	place := "cd " + remote.Quote(s.a.dir()) + " || exit 1\nif [ -e compose.yaml ]; then mv -f compose.yaml " + PreVolumesCompose + " || exit 1; fi\nrm -f .input-hash || exit 1\nfor v in " + quoteAll(names) + `; do
   if [ -d "$v" ]; then rmdir "$v" || exit 1; fi
   mv ".$v.from-volume" "$v" || exit 1
 done`

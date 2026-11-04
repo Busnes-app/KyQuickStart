@@ -187,7 +187,7 @@ func TestFromVolumesFailedCopyPlacesNothing(t *testing.T) {
 	if err := Steps(a)[0].Apply(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if last := f.calls[len(f.calls)-3].cmd; !strings.Contains(last, "for v in 'config' 'state'; do") || !strings.Contains(last, `mv ".$v.from-volume" "$v"`) || !strings.Contains(last, "rm -f compose.yaml .input-hash") {
+	if last := f.calls[len(f.calls)-3].cmd; !strings.Contains(last, "for v in 'config' 'state'; do") || !strings.Contains(last, `mv ".$v.from-volume" "$v"`) || !strings.Contains(last, "mv -f compose.yaml "+PreVolumesCompose) {
 		t.Fatalf("placing: %v", f.calls)
 	}
 }

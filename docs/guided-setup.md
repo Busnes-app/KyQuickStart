@@ -307,8 +307,10 @@ without them. The bulk user must differ from the target's, and its password file
 release kept them in `<repository>/kydrive-bulk` under the target's user: those snapshots stay
 there (append-only), so keep that repository and the target's password until no KyDrive
 capsule you might restore predates the change. Until the keys are added every command refuses
-the plan; for a plan handed to KyYard's runner, run `pull-plan`, `handoff --revoke`, add them
-(rerun `plan`), `apply`, then `handoff` again.
+the plan, `pull-plan` and `handoff --revoke` included. So for a plan handed to KyYard's runner,
+first run `pull-plan` and `handoff --revoke` with the release you have (or the previous one,
+from the releases page), then add the keys with this release (rerun `plan`), `apply`, and
+`handoff` again.
 
 `review`, `plan --noninteractive` and `apply` refuse, before connecting, any scheme but
 `rest:https`, credentials, a query or fragment in the URL, a missing user segment, relative

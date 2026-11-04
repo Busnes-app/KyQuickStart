@@ -126,7 +126,7 @@ func (d deployStep) Apply(ctx context.Context) error {
 		}
 		return err
 	}
-	if _, err := d.a.Runner.Run(ctx, "rm -f "+dir+"/.compose.yaml.prev "+dir+"/.compose.kyq.yaml.prev", nil); err != nil {
+	if _, err := d.a.Runner.Run(ctx, "rm -f "+dir+"/.compose.yaml.prev "+dir+"/.compose.kyq.yaml.prev "+dir+"/"+PreVolumesCompose, nil); err != nil {
 		return fmt.Errorf("remove the previous Compose files: %w", err)
 	}
 	up := "up -d --remove-orphans"
