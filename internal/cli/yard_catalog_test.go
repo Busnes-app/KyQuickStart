@@ -414,7 +414,7 @@ func TestKyYardWorkstationDeployRefusedUnderRunner(t *testing.T) {
 		t.Fatalf("status/handoff under the runner: %v", err)
 	}
 	s.deploys = true
-	if err := s.guard("k1", runner); code(err) != suite.OwnedByRunner || !strings.Contains(err.Error(), "handoff --revoke, then this command, then handoff again") {
+	if err := s.guard("k1", runner); code(err) != suite.OwnedByRunner || !strings.Contains(err.Error(), "handoff --revoke, then this command, then kyquickstart handoff --kyyard-target") {
 		t.Fatalf("apply under the runner: %v", err)
 	}
 	if err := s.guard("k1", stack.Marker{Owner: "cli", InstallationID: s.installation}); err != nil {
