@@ -463,6 +463,11 @@ func TestInstallRouteFlags(t *testing.T) {
 			t.Errorf("%v: %v", c.args, err)
 		}
 	}
+	// install routes only the app named: a missing dependency with its own route is refused.
+	writeApp(t, cat, "front", "version: 1.0.0\ndepends_on: [site]\n")
+	if err := f.run("install", "front", "--target", "nas"); code(err) != suite.InvalidRequest || !strings.Contains(err.Error(), "front needs site, which is not installed and takes its URL from a route of its own") {
+		t.Fatalf("routed dependency: %v", err)
+	}
 	// A complete route passes every check, then the deploy needs NPM's token: nothing is saved.
 	if err := f.run(append([]string{"install", "site", "--target", "nas"}, route...)...); err == nil || code(err) == suite.InvalidRequest || !strings.Contains(err.Error(), "edge nas") {
 		t.Fatalf("complete route: %v", err)

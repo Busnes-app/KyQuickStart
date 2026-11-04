@@ -594,6 +594,9 @@ func TestStopForRestore(t *testing.T) {
 		t.Fatalf("backup of a stopped app: %v\n%s", err, f.out.String())
 	}
 	rev := f.stack(t).Revision
+	if err := f.run("restore", "dumpdemo"); err != nil || !f.stack(t).Apps[0].Stopped || f.stack(t).Revision != rev {
+		t.Fatalf("listing the snapshots ended the stop: %v\n%s", err, f.out.String())
+	}
 	if err := f.runIn("dumpdemo\n", "restore", "dumpdemo", "--snapshot", id, "--replace"); err != nil {
 		t.Fatal(err, f.out.String())
 	}

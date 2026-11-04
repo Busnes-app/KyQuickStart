@@ -96,7 +96,7 @@ func suiteCommand(ctx context.Context, cmd string, args []string, o Options) err
 		fl.StringVar(&r.ForwardHost, "forward-host", "", "routed app: its address as NPM reaches it (on Docker, an IP address of the target)")
 		fl.IntVar(&r.ForwardPort, "forward-port", 0, "routed app: its port as NPM reaches it")
 		fl.IntVar(&r.CertificateID, "certificate-id", 0, "routed app: the existing NPM certificate ID for its hostname")
-		fl.StringVar(&r.Bundle, "bundle", "", "the app's setup bundle path inside its container (an integrations entry)")
+		fl.StringVar(&r.Bundle, "bundle", "", "the app's setup bundle path inside its container, which apply creates: /data/installer/<new UUID, from uuidgen>/setup.json (an integrations entry)")
 		fl.StringVar(&r.IdentityClient, "identity-client", "", "with --bundle: its KyIdentity client ID (default: the app's name)")
 	}
 	if cmd == "install" || cmd == "upgrade" {
@@ -210,6 +210,14 @@ func install(ctx context.Context, state string, r Request, trust trustFlag, o Op
 		}
 	}
 	add(name)
+	// install routes only name: a missing dependency with a route of its own (KyIdentity) is
+	// added with kyquickstart plan, which also asks its setup.
+	t := s.allTargets[slices.IndexFunc(s.allTargets, func(t stack.Target) bool { return t.Name == r.Target })]
+	for _, a := range slices.Sorted(maps.Keys(added)) {
+		if app := s.cat[a]; a != name && (len(app.Routes) > 0 && !t.Kubernetes() || t.Kubernetes() && app.Kubernetes != nil && app.Kubernetes.UsesHost() || !t.Kubernetes() && app.UsesRoute()) {
+			return suite.Errorf(suite.InvalidRequest, "%s needs %s, which is not installed and takes its URL from a route of its own; add %s with kyquickstart plan first. Nothing was changed", name, a, a)
+		}
+	}
 	edgeAt, route, setup, err := installRoute(s.plan, s.cat[name], name, r)
 	if err != nil {
 		return err

@@ -569,11 +569,12 @@ func (s clientSetupStep) Apply(ctx context.Context) error  { return s.run(ctx, f
 func (s clientSetupStep) Verify(ctx context.Context) error { return s.run(ctx, true) }
 
 // placeScript publishes $2 from stdin. write never replaces a file: an existing one must
-// match. replace swaps in a regular file atomically. check only compares. Created directories
-// and files are private to the pod's user.
+// match. replace swaps in a regular file atomically. check only compares. exists only asks
+// for a regular file. Created directories and files are private to the pod's user.
 const placeScript = `set -eu
 f=$2
 [ ! -L "$f" ]
+if [ "$1" = exists ]; then [ -f "$f" ]; exit; fi
 if [ -e "$f" ] && [ "$1" != replace ]; then [ -f "$f" ] && cmp -s - "$f"; exit; fi
 [ "$1" = write ] || [ "$1" = replace ]
 umask 077
@@ -870,7 +871,7 @@ func (s *session) setupSteps(d driver, i stack.Integration) (steps []engine.Step
 	if i.Product == "kyidentity" {
 		first := identitySetupStep{id: "kyidentity.setup", i: i, intent: i.Identity, exec: exec, input: input, late: s.derived}
 		if m := i.Identity.Mail; m != nil {
-			first.caps, first.mail = []string{"mail-relay"}, m
+			first.caps, first.mail, first.runner = []string{"mail-relay"}, m, s.o.RunnerID != ""
 			if m.PasswordFile != "" {
 				if first.place, err = place(d, i, ""); err != nil {
 					return nil, nil, err

@@ -447,6 +447,10 @@ func restore(ctx context.Context, state string, r restoreRequest, trust trustFla
 		if err := s.restoreLocked(ctx, st, r, in); err != nil {
 			return err
 		}
+		// Listing the snapshots leaves a stopped app stopped.
+		if running, err := st.Running(ctx); err != nil || !running {
+			return err
+		}
 		return resumed()
 	})
 }

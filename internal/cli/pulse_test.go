@@ -283,7 +283,7 @@ func TestPlaceScript(t *testing.T) {
 		return c.Run()
 	}
 	read := func() string { b, _ := os.ReadFile(f); return string(b) }
-	if run("check", f, "a") == nil || run("write", f, "a") != nil || read() != "a" || run("check", f, "a") != nil || run("write", f, "a") != nil {
+	if run("exists", f, "") == nil || run("check", f, "a") == nil || run("write", f, "a") != nil || run("exists", f, "") != nil || read() != "a" || run("check", f, "a") != nil || run("write", f, "a") != nil {
 		t.Fatal("write or check")
 	}
 	if fi, _ := os.Stat(f); fi.Mode().Perm() != 0o600 {
@@ -298,7 +298,7 @@ func TestPlaceScript(t *testing.T) {
 	link := filepath.Join(dir, "link")
 	os.Symlink(f, link)
 	os.Mkdir(filepath.Join(dir, "d"), 0o700)
-	for _, c := range [][2]string{{"write", link}, {"replace", link}, {"check", link}, {"replace", filepath.Join(dir, "d")}} {
+	for _, c := range [][2]string{{"write", link}, {"replace", link}, {"check", link}, {"exists", link}, {"exists", filepath.Join(dir, "d")}, {"replace", filepath.Join(dir, "d")}} {
 		if run(c[0], c[1], "c") == nil {
 			t.Errorf("%s %s accepted", c[0], c[1])
 		}

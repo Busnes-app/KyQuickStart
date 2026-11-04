@@ -351,6 +351,7 @@ type identitySetupStep struct {
 	late   []string                                                     // clients other installed apps added to the intent
 	mail   *stack.IdentityMail                                          // the first setup's relay; nil for none
 	place  func(ctx context.Context, args []string, input []byte) error // KyIdentity's shell, for its relay password
+	runner bool                                                         // the suite runner, which has no workstation password file
 }
 
 func (s identitySetupStep) ID() string { return s.id }
@@ -387,6 +388,13 @@ func (s identitySetupStep) Apply(ctx context.Context) error {
 // in memory and on stdin only, never replacing a different copy; check only compares.
 func (s identitySetupStep) relayPassword(ctx context.Context, mode string) error {
 	if s.mail == nil || s.mail.PasswordFile == "" {
+		return nil
+	}
+	if s.runner {
+		// The password file is on the workstation: the copy KyIdentity's first setup took stands.
+		if s.place(ctx, []string{"exists", s.mail.TargetFile}, nil) != nil {
+			return fmt.Errorf("KyIdentity's copy of the SMTP password, %s, is missing or unsafe, and the suite runner has no %s to copy it from; run kyquickstart handoff --revoke and apply from the workstation, then hand off again", s.mail.TargetFile, s.mail.PasswordFile)
+		}
 		return nil
 	}
 	b, err := readMailPassword(s.mail.PasswordFile)
