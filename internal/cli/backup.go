@@ -447,6 +447,9 @@ func restore(ctx context.Context, state string, r restoreRequest, trust trustFla
 		if err := s.restoreLocked(ctx, st, r, in); err != nil {
 			return err
 		}
+		if !s.restored { // listing the snapshots leaves a stopped app stopped
+			return nil
+		}
 		return resumed()
 	})
 }
@@ -483,7 +486,9 @@ func (s *session) restoreLocked(ctx context.Context, st dockerhost.Store, r rest
 			if err := s.confirm(in, r); err != nil {
 				return err
 			}
-			return s.finishRestore(ctx, st, pendingID, stage)
+			err = s.finishRestore(ctx, st, pendingID, stage)
+			s.restored = err == nil
+			return err
 		}
 	}
 	// Refusals that need no repository come first: the server is not contacted for them.
@@ -591,7 +596,9 @@ func (s *session) restoreLocked(ctx context.Context, st dockerhost.Store, r rest
 		return err
 	}
 	fmt.Fprintf(out, "%s: files restored (%s).\n", r.app, time.Since(start).Round(time.Second))
-	return s.finishRestore(ctx, st, snap.ID, "files")
+	err = s.finishRestore(ctx, st, snap.ID, "files")
+	s.restored = err == nil
+	return err
 }
 
 // versionRefusal refuses restoring snap with this release's app: restore starts this release's

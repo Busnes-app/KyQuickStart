@@ -24,7 +24,8 @@ Plain terminal planning and command orchestration for the operator-run installer
   and plan publication. `installRoute` turns install's `--hostname`, `--forward-host`,
   `--forward-port`, `--certificate-id` and `--bundle`/`--identity-client` into exactly the route
   and `integrations` entry `plan` writes (refusing what install cannot express: no or a direct
-  edge, multi-route apps, KyIdentity's setup, an internal route without `allow_cidrs`); install
+  edge, multi-route apps, KyIdentity's setup, an internal route without `allow_cidrs`, a missing
+  dependency with a route of its own); install
   then deploys that target's edge with all its routes and, with a bundle beside an installed
   KyIdentity, its setup steps first and `amendLate` over the install's change (`planChange`). `withSetupSources` also connects KyDrive's target for `euro-office`
   (its `jwt_secret`); removing `npm` is refused while an edge on its target names it (`kube://` `npm_url`) and routes other apps. The exported `Install`, `Uninstall`, `Unmanage`, `Upgrade` and `Status`
@@ -53,7 +54,8 @@ Plain terminal planning and command orchestration for the operator-run installer
   `defaultRunnerPod`, the catalog KyYard's pod on a target holding it). `pull-plan` and `--revoke`
   keep `handoff.json`'s runner without `--kyyard-target` or with the recorded one and no runner
   flag, and refuse another target without one (`invalid_request`). `pull-plan` refuses another
-  installation's plan (`owned_by_other_plan`, both `installation_id`s set). It holds every target lock
+  installation's plan (`owned_by_other_plan`, both `installation_id`s set), naming the steps that
+  take it into a copy of the plan without them. It holds every target lock
   while granting, and publishes the plan before markers change owner. `handoff.json` in the state
   directory makes `plan` refuse while the runner owns the plan. `session.guard` is the
   ownership rule for every locked command and CLI `status`.
@@ -201,7 +203,8 @@ Plain terminal planning and command orchestration for the operator-run installer
   regular, 0600, this user's; `O_NOFOLLOW`, `O_NONBLOCK`) and names each refusal's reason, which
   `askMail` prints. `identitySetupStep` copies `identity.mail`'s workstation
   password file (`readMailPassword`) to KyIdentity's `<installer>/smtp.password` before staging,
-  and requires `mail-relay`; `identitySetup` accepts 0.4.5's one relay object
+  and requires `mail-relay`; under the suite runner, which has no workstation file, it only
+  requires KyIdentity's copy (`placeScript` `exists`); `identitySetup` accepts 0.4.5's one relay object
   (`{mail, settings, mail}`) in its report. The console's HMAC copy of the directory secret is
   `data/installer/directory_secret`, inside a backed-up volume. `messageHandover` (with the mail relay or its absence, and that removing "KyMessages chat" alone
   ends no open session) and `initAdminLine` are what apply prints. `askRoutes` (guided) asks the

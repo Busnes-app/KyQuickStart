@@ -59,6 +59,16 @@ func metalLB(addresses []any, announce bool) map[string]map[string][]map[string]
 	return map[string]map[string][]map[string]any{"metallb.io/v1beta1": rs}
 }
 
+// twoPools is MetalLB with pool a (192.168.1.0/24) and pool b (10.0.0.0/24), and one L2
+// advertisement with spec adv.
+func twoPools(adv map[string]any) map[string]map[string][]map[string]any {
+	return map[string]map[string][]map[string]any{"metallb.io/v1beta1": {
+		"ipaddresspools":    {{"addresses": []any{"192.168.1.0/24"}}, {"addresses": []any{"10.0.0.0/24"}}},
+		"l2advertisements":  {adv},
+		"bgpadvertisements": nil,
+	}}
+}
+
 func TestLoadBalancerCheck(t *testing.T) {
 	ctx := context.Background()
 	want := map[string]string{"192.168.1.80": "npm"}
@@ -71,14 +81,17 @@ func TestLoadBalancerCheck(t *testing.T) {
 		ok     bool
 		detail string
 	}{
-		"MetalLB CIDR":           {lbCluster(t, "", metalLB([]any{"192.168.1.80/32"}, true)), true, "192.168.1.80 from MetalLB"},
-		"MetalLB range":          {lbCluster(t, "", metalLB([]any{"192.168.1.75-192.168.1.85"}, true)), true, "MetalLB"},
-		"Cilium start/stop":      {lbCluster(t, "", cilium), true, "192.168.1.80 from Cilium LB IPAM"},
-		"no implementation":      {lbCluster(t, "", nil), false, "no load-balancer implementation"},
-		"address in no pool":     {lbCluster(t, "", metalLB([]any{"10.0.0.0/24"}, true)), false, "192.168.1.80 (for npm) is in no enabled MetalLB address pool"},
-		"nothing announces":      {lbCluster(t, "", metalLB([]any{"192.168.1.0/24"}, false)), false, "nothing announces it"},
-		"pools cannot be listed": {lbCluster(t, "list ipaddresspools", metalLB([]any{"192.168.1.0/24"}, true)), false, "denied: list ipaddresspools"},
-		"Cilium disabled pool":   {lbCluster(t, "", map[string]map[string][]map[string]any{"cilium.io/v2": {"ciliumloadbalancerippools": {{"disabled": true, "blocks": []any{map[string]any{"cidr": "192.168.1.0/24"}}}}, "ciliuml2announcementpolicies": {{}}}}), false, "no enabled Cilium LB IPAM"},
+		"MetalLB CIDR":                   {lbCluster(t, "", metalLB([]any{"192.168.1.80/32"}, true)), true, "192.168.1.80 from MetalLB"},
+		"MetalLB range":                  {lbCluster(t, "", metalLB([]any{"192.168.1.75-192.168.1.85"}, true)), true, "MetalLB"},
+		"Cilium start/stop":              {lbCluster(t, "", cilium), true, "192.168.1.80 from Cilium LB IPAM"},
+		"no implementation":              {lbCluster(t, "", nil), false, "no load-balancer implementation"},
+		"address in no pool":             {lbCluster(t, "", metalLB([]any{"10.0.0.0/24"}, true)), false, "192.168.1.80 (for npm) is in no enabled MetalLB address pool"},
+		"nothing announces":              {lbCluster(t, "", metalLB([]any{"192.168.1.0/24"}, false)), false, "nothing announces it"},
+		"advertisement for another pool": {lbCluster(t, "", twoPools(map[string]any{"ipAddressPools": []any{"ipaddresspoolsb"}})), false, "nothing announces it"},
+		"advertisement for its pool":     {lbCluster(t, "", twoPools(map[string]any{"ipAddressPools": []any{"ipaddresspoolsa"}})), true, "MetalLB"},
+		"selector matching no pool":      {lbCluster(t, "", twoPools(map[string]any{"ipAddressPoolSelectors": []any{map[string]any{"matchLabels": map[string]any{"zone": "public"}}}})), false, "nothing announces it"},
+		"pools cannot be listed":         {lbCluster(t, "list ipaddresspools", metalLB([]any{"192.168.1.0/24"}, true)), false, "denied: list ipaddresspools"},
+		"Cilium disabled pool":           {lbCluster(t, "", map[string]map[string][]map[string]any{"cilium.io/v2": {"ciliumloadbalancerippools": {{"disabled": true, "blocks": []any{map[string]any{"cidr": "192.168.1.0/24"}}}}, "ciliuml2announcementpolicies": {{}}}}), false, "no enabled Cilium LB IPAM"},
 	} {
 		f := c.client.LoadBalancerCheck(ctx, want)
 		if f.OK != c.ok || !strings.Contains(f.Detail, c.detail) || f.Check != "loadbalancer" {

@@ -82,6 +82,10 @@ func words(t *testing.T, cmd string) []string {
 func fakePlace(files map[string]string, mode, path string, stdin []byte) error {
 	old, ok := files[path]
 	switch {
+	case mode == "exists" && !ok:
+		return errors.New("missing")
+	case mode == "exists":
+		return nil
 	case mode == "replace":
 	case ok && old != string(stdin):
 		return errors.New("differs")

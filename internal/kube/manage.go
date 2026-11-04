@@ -12,6 +12,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 )
 
 // Deployed reads the app namespace's labels, which uninstall keeps.
@@ -44,8 +45,8 @@ func (c *Client) AppEnv(ctx context.Context, app, name string) (value string, fo
 	return "", false, nil
 }
 
-// RemoveSteps deletes the app's Deployment and Services. The namespace, its claims, Secret
-// and default-deny policy stay, so a later install finds the data.
+// RemoveSteps deletes the app's Deployment and Services and waits for its pods to go. The
+// namespace, its claims, Secret and default-deny policy stay, so a later install finds the data.
 func RemoveSteps(a App) []engine.Step { return []engine.Step{removeStep{a}} }
 
 type removeStep struct{ a App }
@@ -73,9 +74,15 @@ func (s removeStep) objects(ctx context.Context) (*appsv1.Deployment, []*corev1.
 	return dep, svcs, nil
 }
 
+// Inspect is done once no pod of the app is left either: a terminating one may still write
+// to the claims a reinstall mounts.
 func (s removeStep) Inspect(ctx context.Context) (bool, error) {
 	dep, svcs, err := s.objects(ctx)
-	return dep == nil && len(svcs) == 0, err
+	if err != nil || dep != nil || len(svcs) > 0 {
+		return false, err
+	}
+	left, err := s.a.Client.podsLeft(ctx, s.a.Name, &metav1.LabelSelector{MatchLabels: selector(s.a.Name)})
+	return !left, err
 }
 
 // Apply deletes by UID, so an object replaced in between is left alone.
@@ -90,7 +97,11 @@ func (s removeStep) Apply(ctx context.Context) error {
 		return metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}
 	}
 	if dep != nil {
-		if err := s.a.Client.cs.AppsV1().Deployments(ns).Delete(ctx, appName, byUID(dep)); err != nil && !apierrors.IsNotFound(err) {
+		// Foreground: the Deployment stays until its ReplicaSet and pods are gone, so no
+		// ReplicaSet outlives it to start another pod.
+		opts := byUID(dep)
+		opts.PropagationPolicy = ptr.To(metav1.DeletePropagationForeground)
+		if err := s.a.Client.cs.AppsV1().Deployments(ns).Delete(ctx, appName, opts); err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("delete deployment: %w", err)
 		}
 	}
@@ -99,13 +110,13 @@ func (s removeStep) Apply(ctx context.Context) error {
 			return fmt.Errorf("delete service %s: %w", svc.Name, err)
 		}
 	}
-	return nil
+	return waitGone(ctx, s.a, s.Verify)
 }
 
 func (s removeStep) Verify(ctx context.Context) error {
 	done, err := s.Inspect(ctx)
 	if err == nil && !done {
-		err = errors.New("deployment or service remains")
+		err = errors.New("deployment, service or pod remains (a pod stuck terminating: check its node and finalizers)")
 	}
 	return err
 }

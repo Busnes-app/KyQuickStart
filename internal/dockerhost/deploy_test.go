@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -87,7 +88,7 @@ func TestDeployApplyOrder(t *testing.T) {
 	if err := d.Apply(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"test -e '/opt/kyq/hello/.restore-pending'", "pwd -P", "cp -p $f .$f.prev", "pwd -P", "rm -f '/opt/kyq/hello/.input-hash'", "cat > '/opt/kyq/hello/compose.yaml'", "cat > '/opt/kyq/hello/compose.kyq.yaml'", "pull --quiet", ".compose.kyq.yaml.prev", "up -d --remove-orphans", "> '/opt/kyq/hello/.input-hash'"}
+	want := []string{"test -e '/opt/kyq/hello/.restore-pending'", "pwd -P", "cp -p $f .$f.prev", "docker ps -aq", "pwd -P", "rm -f '/opt/kyq/hello/.input-hash'", "cat > '/opt/kyq/hello/compose.yaml'", "cat > '/opt/kyq/hello/compose.kyq.yaml'", "pull --quiet", ".compose.kyq.yaml.prev", "up -d --remove-orphans", "> '/opt/kyq/hello/.input-hash'"}
 	if len(f.calls) != len(want) {
 		t.Fatalf("calls = %v", f.calls)
 	}
@@ -96,14 +97,14 @@ func TestDeployApplyOrder(t *testing.T) {
 			t.Errorf("call %d = %q, want %q", i, f.calls[i].cmd, w)
 		}
 	}
-	if f.calls[5].stdin != string(a.Catalog.Compose) || !strings.Contains(f.calls[6].stdin, managed.Value) {
-		t.Errorf("stdin: %q / %q", f.calls[5].stdin, f.calls[6].stdin)
+	if f.calls[6].stdin != string(a.Catalog.Compose) || !strings.Contains(f.calls[7].stdin, managed.Value) {
+		t.Errorf("stdin: %q / %q", f.calls[6].stdin, f.calls[7].stdin)
 	}
-	if !strings.Contains(f.calls[9].cmd, "-p 'kyq-hello'") {
-		t.Errorf("project name missing: %q", f.calls[9].cmd)
+	if !strings.Contains(f.calls[10].cmd, "-p 'kyq-hello'") {
+		t.Errorf("project name missing: %q", f.calls[10].cmd)
 	}
-	if !strings.Contains(f.calls[10].cmd, d.hash) {
-		t.Errorf("hash not written: %q", f.calls[10].cmd)
+	if !strings.Contains(f.calls[11].cmd, d.hash) {
+		t.Errorf("hash not written: %q", f.calls[11].cmd)
 	}
 }
 
@@ -186,6 +187,32 @@ func TestDeployInspectSeesStoppedService(t *testing.T) {
 	}
 }
 
+// Compose project kyq-<app> is the Docker host's: its containers from another root (another
+// plan, or this one before its root moved) are never replaced; this root's own are.
+func TestDeployRefusesProjectFromAnotherRoot(t *testing.T) {
+	for _, here := range []string{"", "c1\n", "c1\nc2\n"} {
+		f := &fakeRunner{reply: func(cmd string) ([]byte, error) {
+			if strings.Contains(cmd, "working_dir=/opt/kyq/hello'") {
+				return []byte(here), nil
+			}
+			if strings.HasPrefix(cmd, "docker ps -aq") {
+				return []byte("c1\nc2\n"), nil
+			}
+			return nil, nil
+		}}
+		err := deployOf(fakeApp(f)).Apply(context.Background())
+		if here != "c1\nc2\n" && (err == nil || !strings.Contains(err.Error(), "from another directory than /opt/kyq/hello")) {
+			t.Fatalf("%q here: %v", here, err)
+		}
+		if here == "c1\nc2\n" && err != nil {
+			t.Fatalf("all here: %v", err)
+		}
+		if here != "c1\nc2\n" && slices.ContainsFunc(f.calls, func(c call) bool { return strings.Contains(c.cmd, "cat > ") }) {
+			t.Fatal("wrote Compose files")
+		}
+	}
+}
+
 // A compose.yaml truncated by a failed write must not wedge re-runs: Inspect has to report
 // "not done" rather than fail on `docker compose ps`.
 func TestFailedComposeWriteLeavesDeployRetryable(t *testing.T) {
@@ -204,7 +231,7 @@ func TestFailedComposeWriteLeavesDeployRetryable(t *testing.T) {
 				return nil, nil
 			}
 			return []byte(d.hash), nil
-		case strings.Contains(cmd, " ps "):
+		case strings.Contains(cmd, " ps --all"):
 			return nil, &remote.ExitError{Code: 15, Stderr: []byte("yaml: unexpected end of stream")}
 		}
 		return nil, nil
@@ -225,6 +252,9 @@ func TestDeployCreatesBindDirectories(t *testing.T) {
 	r := runFunc(func(ctx context.Context, cmd string, stdin []byte) ([]byte, error) {
 		if strings.Contains(cmd, "docker compose") {
 			compose = append(compose, cmd)
+			return nil, nil
+		}
+		if strings.HasPrefix(cmd, "docker ps") { // no containers yet
 			return nil, nil
 		}
 		return remote.Local{}.Run(ctx, cmd, stdin)
@@ -257,11 +287,11 @@ func (f runFunc) Run(ctx context.Context, cmd string, stdin []byte) ([]byte, err
 	return f(ctx, cmd, stdin)
 }
 
-// pullFails runs commands under sh, except docker compose: pull fails, the rest pass.
+// pullFails runs commands under sh, except docker: pull fails, the rest pass.
 type pullFails struct{}
 
 func (pullFails) Run(ctx context.Context, cmd string, stdin []byte) ([]byte, error) {
-	if strings.Contains(cmd, "docker compose") {
+	if strings.Contains(cmd, "docker compose") || strings.HasPrefix(cmd, "docker ps") {
 		if strings.Contains(cmd, " pull ") {
 			return nil, errors.New("registry unreachable")
 		}
@@ -289,6 +319,17 @@ func TestFailedPullKeepsDeployedVersion(t *testing.T) {
 	}
 	if left, _ := filepath.Glob(filepath.Join(a.dir(), ".compose*.prev")); len(left) != 0 {
 		t.Fatalf("left %v", left)
+	}
+	// A one-shot init before the deploy (KyMessages' matrix-init) keeps the record too.
+	a.Catalog.Init = []string{"init"}
+	if _, err := RunInit(ctx, a, "init", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := deployOf(a).Apply(ctx); err == nil {
+		t.Fatal("Apply passed")
+	}
+	if d, err := Deployed(ctx, a); err != nil || d.Version != "1.0.0" {
+		t.Fatalf("Deployed after an init = %+v, %v; want 1.0.0", d, err)
 	}
 	// After a volume migration removed the old compose.yaml, a failed pull keeps the new
 	// layout: the old one would start the app on its volumes again.

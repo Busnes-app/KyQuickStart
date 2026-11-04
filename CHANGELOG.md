@@ -30,6 +30,16 @@ state directory, target data and target-held credentials; do not reset them as a
   `plan.lock`. Refusals: removing `npm` while its edge routes other apps, KyMessages without
   the edge's `egress_address`, and `frp` on a cluster's NPM. Upgrade impact: a KyMessages plan
   without `egress_address` on its edge is refused until it is set.
+- Hostile-review fixes (council pass 3). The suite runner can install with a setup bundle and
+  upgrade KyIdentity when `identity.mail` names a workstation password file: it keeps KyIdentity's
+  copy. On Kubernetes, uninstall ends only once the app's pods are gone. A Docker deploy refuses
+  a Compose project `kyq-<app>` deployed from another root. KyMessages' `matrix-init` no longer
+  records the new version before the deploy pulls it. Listing snapshots with `restore APP` no
+  longer ends a `stop`. `install` refuses a missing dependency with its own route (KyIdentity)
+  up front, naming `plan`. pull-plan's refusal of another installation's plan gives steps that
+  work. A MetalLB advertisement counts only for the pools it selects. Upgrade impact: a target
+  whose root moved under running apps is refused until the root is put back or the apps are
+  uninstalled from the old one.
 - KyPost and KyCalendar from the catalog pair for calendar invitations (#100). Their 0.6 releases
   pair through KyIdentity's suite directory on their own; the installer now sets
   `KYPOST_KYCALENDAR_ALLOW_PRIVATE` and `KYCALENDAR_KYPOST_ALLOW_PRIVATE` to `true` only when the

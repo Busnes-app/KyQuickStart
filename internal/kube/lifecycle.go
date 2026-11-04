@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/Busnes-app/kyquickstart/internal/engine"
@@ -31,20 +32,27 @@ func (c *Client) State(ctx context.Context, app string) (string, error) {
 	case replicas(dep) == 0 && dep.Status.Replicas == 0:
 		// status.replicas leaves out terminating pods, which may still write for their whole
 		// grace period: stopped only once no pod of the app is left.
-		pods, err := c.cs.CoreV1().Pods(namespaceOf(app)).List(ctx, metav1.ListOptions{LabelSelector: metav1.FormatLabelSelector(dep.Spec.Selector)})
-		if err != nil {
-			return "", err
-		}
-		for _, p := range pods.Items {
-			if p.Status.Phase != corev1.PodSucceeded && p.Status.Phase != corev1.PodFailed {
-				return "unknown", nil
-			}
+		left, err := c.podsLeft(ctx, app, dep.Spec.Selector)
+		if err != nil || left {
+			return "unknown", err
 		}
 		return "stopped", nil
 	case replicas(dep) == 1 && ready(dep):
 		return "running", nil
 	}
 	return "unknown", nil
+}
+
+// podsLeft reports whether a pod of sel in app's namespace may still run (an evicted or
+// finished pod does not count).
+func (c *Client) podsLeft(ctx context.Context, app string, sel *metav1.LabelSelector) (bool, error) {
+	pods, err := c.cs.CoreV1().Pods(namespaceOf(app)).List(ctx, metav1.ListOptions{LabelSelector: metav1.FormatLabelSelector(sel)})
+	if err != nil {
+		return false, err
+	}
+	return slices.ContainsFunc(pods.Items, func(p corev1.Pod) bool {
+		return p.Status.Phase != corev1.PodSucceeded && p.Status.Phase != corev1.PodFailed
+	}), nil
 }
 
 func replicas(d *appsv1.Deployment) int32 {
@@ -137,21 +145,24 @@ func (s lifecycleStep) patch(ctx context.Context, change map[string]any) error {
 	return nil
 }
 
-func (s lifecycleStep) waitStopped(ctx context.Context) error {
+func (s lifecycleStep) waitStopped(ctx context.Context) error { return waitGone(ctx, s.a, s.Verify) }
+
+// waitGone waits until done passes, for as long as a's pods may take to drain.
+func waitGone(ctx context.Context, a App, done func(context.Context) error) error {
 	// Its pods drain for up to their grace period (Kubernetes' default is 30 s) before they go.
 	grace := int64(30)
-	if k := s.a.Catalog.Kubernetes; k != nil && k.TerminationGraceSeconds > 0 {
+	if k := a.Catalog.Kubernetes; k != nil && k.TerminationGraceSeconds > 0 {
 		grace = k.TerminationGraceSeconds
 	}
-	timeout := time.Duration(s.a.Catalog.Health.TimeoutSeconds+int(grace)) * time.Second
+	timeout := time.Duration(a.Catalog.Health.TimeoutSeconds+int(grace)) * time.Second
 	deadline := time.Now().Add(timeout)
 	for {
-		err := s.Verify(ctx)
+		err := done(ctx)
 		if err == nil {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("not stopped after %s: %w", timeout, err)
+			return fmt.Errorf("not done after %s: %w", timeout, err)
 		}
 		select {
 		case <-ctx.Done():

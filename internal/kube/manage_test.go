@@ -5,8 +5,10 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Busnes-app/kyquickstart/internal/managed"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
@@ -69,6 +71,44 @@ func TestRemoveKeepsData(t *testing.T) {
 		if err != nil {
 			t.Errorf("%s removed: %v", kind, err)
 		}
+	}
+}
+
+// Uninstall ends only once the app's pods are gone: a terminating one may still write to the
+// claims a reinstall mounts at once.
+func TestRemoveWaitsForPods(t *testing.T) {
+	a, ctx := deployed(t)
+	pollInterval = time.Millisecond
+	s := RemoveSteps(a)[0]
+	if err := s.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, act := range a.Client.cs.(*fake.Clientset).Actions() {
+		if d, ok := act.(k8stesting.DeleteAction); ok && d.GetResource().Resource == "deployments" {
+			if p := d.GetDeleteOptions().PropagationPolicy; p == nil || *p != metav1.DeletePropagationForeground {
+				t.Errorf("deployment deleted with propagation %v, want Foreground", p)
+			}
+		}
+	}
+	// Deployment and Services gone, a pod still draining (the fake has no garbage collector).
+	pods := a.Client.cs.CoreV1().Pods("kyq-hello")
+	pod, err := pods.Create(ctx, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "draining", Namespace: "kyq-hello", Labels: selector("hello")}}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done, err := s.Inspect(ctx); err != nil || done {
+		t.Fatalf("Inspect with a pod left = %v %v", done, err)
+	}
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		pod.Status.Phase = corev1.PodSucceeded
+		pods.Update(context.Background(), pod, metav1.UpdateOptions{})
+	}()
+	if err := s.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Verify(ctx); err != nil {
+		t.Fatal(err)
 	}
 }
 

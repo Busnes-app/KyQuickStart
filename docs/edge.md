@@ -466,8 +466,9 @@ request; removing the field returns `app-public` to a NodePort. It excludes `kub
 Preflight refuses the plan, changing nothing, unless the cluster can assign the address:
 Cilium LB IPAM or MetalLB is installed, an enabled pool (`CiliumLoadBalancerIPPool` blocks or
 MetalLB `IPAddressPool` addresses) holds the address, that implementation has an announcement
-(`CiliumL2AnnouncementPolicy` or Cilium BGP advertisements; MetalLB `L2Advertisement` or
-`BGPAdvertisement`), and no other Service holds or requests it. It needs `list` on those
+(`CiliumL2AnnouncementPolicy` or Cilium BGP advertisements; a MetalLB `L2Advertisement` or
+`BGPAdvertisement` selecting that pool by name or label, or naming no pool), and no other
+Service holds or requests it. It needs `list` on those
 resources; `handoff` grants the runner the same `list` rules only for a plan that sets the
 field. It does not check that Cilium's agent has L2 announcements enabled, or a pool's
 namespace or Service selectors: if the Service stays pending, `kubectl -n kyq-npm describe

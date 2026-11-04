@@ -175,9 +175,20 @@ func TestHandoffToARunnerPod(t *testing.T) {
 	// Opus pass 2 R6: another installation's plan is never pulled over this one.
 	id := f.stack(t).InstallationID
 	r.export = strings.Replace(strings.Replace(r.imported["stack.yaml"], "revision: 3", "revision: 9", 1), id, "0b6c1f3e-2a1d-4f6e-9c3b-5d7e8f9a0b1c", 1)
-	if err := f.run("pull-plan"); code(err) != suite.OwnedByOtherPlan || f.stack(t).Revision != 3 || f.stack(t).InstallationID != id {
+	if err := f.run("pull-plan"); code(err) != suite.OwnedByOtherPlan || !strings.Contains(err.Error(), "delete its installation_id and revision lines") || f.stack(t).Revision != 3 || f.stack(t).InstallationID != id {
 		t.Fatalf("pull-plan of another installation: %v, revision %d", err, f.stack(t).Revision)
 	}
+	// What that refusal says to do: a copy of this plan without its installation and revision
+	// takes the runner's.
+	saved := f.state
+	f.state = t.TempDir()
+	b, _ := os.ReadFile(filepath.Join(saved, "stack.yaml"))
+	b = []byte(strings.Replace(strings.Replace(string(b), "installation_id: "+id+"\n", "", 1), "revision: 3\n", "", 1))
+	os.WriteFile(filepath.Join(f.state, "stack.yaml"), b, 0o600)
+	if err := f.run("pull-plan", "--kyyard-target", "k1", "--runner-pod", "kyq-runner/app=runner"); err != nil || f.stack(t).InstallationID != "0b6c1f3e-2a1d-4f6e-9c3b-5d7e8f9a0b1c" || f.stack(t).Revision != 9 {
+		t.Fatalf("pull-plan into a copy without installation_id: %v\n%s", err, f.out.String())
+	}
+	f.state = saved
 	// pull-plan and --revoke find the runner in handoff.json.
 	r.export = strings.Replace(r.imported["stack.yaml"], "revision: 3", "revision: 4", 1)
 	if err := f.run("pull-plan"); err != nil || f.stack(t).Revision != 4 || r.ran[len(r.ran)-1] != "serve-export" {

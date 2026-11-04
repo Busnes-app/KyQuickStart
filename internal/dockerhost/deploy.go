@@ -166,6 +166,21 @@ func (d deployStep) prepare(ctx context.Context) error {
 // never reaches docker compose ps on a half-written compose.yaml.
 func (a App) writeCompose(ctx context.Context, override []byte) error {
 	dir := a.dir()
+	// Compose project kyq-<app> is one per Docker host, whatever the root: its containers from
+	// another directory belong to another plan, or to this one before its root moved.
+	all, err := a.containers(ctx, "")
+	if err != nil {
+		return err
+	}
+	if all != "" {
+		here, err := a.containers(ctx, "com.docker.compose.project.working_dir="+dir)
+		if err != nil {
+			return err
+		}
+		if len(strings.Fields(here)) < len(strings.Fields(all)) {
+			return fmt.Errorf("this Docker host runs Compose project kyq-%s from another directory than %s: another installation, or this plan with another target root, owns it, and its containers were left alone. Point the target's root back at that directory, or uninstall the app there first", a.Name, dir)
+		}
+	}
 	for _, p := range append([]string{dir}, a.binds()...) {
 		if err := trustedDir(ctx, a.Runner, p); err != nil {
 			return err
@@ -199,12 +214,19 @@ func (a App) writeCompose(ctx context.Context, override []byte) error {
 }
 
 // RunInit runs the app's one-shot Compose service svc (a profile service) with env and stdin,
-// removing its container afterwards. It writes the app's Compose files first.
+// removing its container afterwards. It writes the app's Compose files first, keeping the
+// deployed version's labels: deploy records the new version once its images are pulled.
 func RunInit(ctx context.Context, a App, svc string, env []string, stdin []byte) ([]byte, error) {
 	if !slices.Contains(a.Catalog.Init, svc) {
 		return nil, fmt.Errorf("%s is not a one-shot service of %s", svc, a.Name)
 	}
-	if err := a.writeCompose(ctx, a.override(labels(a.ReleaseSet, a.Catalog.Version))); err != nil {
+	l := labels(a.ReleaseSet, a.Catalog.Version)
+	if d, err := Deployed(ctx, a); err != nil {
+		return nil, err
+	} else if d.Found {
+		l = labels(d.ReleaseSet, d.Version)
+	}
+	if err := a.writeCompose(ctx, a.override(l)); err != nil {
 		return nil, err
 	}
 	args := "run --rm -T"
