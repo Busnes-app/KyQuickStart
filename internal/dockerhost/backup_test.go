@@ -539,6 +539,13 @@ func TestRestoreOptionalCapsuleSecret(t *testing.T) {
 	b := *st.App.Catalog.Backup
 	b.CapsuleSecrets, b.OptionalSecrets = []string{"db_password", "other"}, []string{"other"}
 	st.App.Catalog.Backup = &b
+	// Not generated yet: left out of the snapshot, never bound (Docker would create it as a directory).
+	if _, _, err := st.Backup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "secrets", "other")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("backup created the optional secret's path")
+	}
 	os.WriteFile(filepath.Join(dir, "secrets", "other"), []byte("editor-key"), 0o600)
 	current, _, err := st.Backup(ctx)
 	if err != nil {

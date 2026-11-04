@@ -75,9 +75,11 @@ spec:
         runAsUser: 10001
         runAsGroup: 10001
         # A block storage class (Longhorn, Ceph RBD, EBS) gives a new claim a root-owned 0755
-        # root that uid 10001 cannot write: for such a class, on a new claim only, add
-        # fsGroup: 10001 here. On a claim the runner already uses, it would loosen the runner's
-        # private files, which it then refuses.
+        # root that uid 10001 cannot write: for such a class, on a new claim only, add both
+        #   fsGroup: 10001
+        #   fsGroupChangePolicy: OnRootMismatch
+        # here. Without OnRootMismatch (the default is Always), and on a claim the runner already
+        # uses, the kubelet loosens the runner's private files, which it then refuses.
         seccompProfile:
           type: RuntimeDefault
       containers:

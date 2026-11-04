@@ -230,7 +230,15 @@ func (s Store) Backup(ctx context.Context) (id string, created bool, err error) 
 		add(path.Join(s.App.dir(), v), ctrData+"/volumes/"+v)
 	}
 	for _, n := range b.CapsuleSecrets {
-		add(path.Join(s.App.dir(), "secrets", n), ctrData+"/secrets/"+n)
+		f := path.Join(s.App.dir(), "secrets", n)
+		// An optional secret not generated yet (euro-office planned, KyDrive not redeployed) is
+		// left out: Docker would create the missing bind source as a root-owned directory.
+		if slices.Contains(b.OptionalSecrets, n) {
+			if _, err := s.App.Runner.Run(ctx, "test -f "+remote.Quote(f), nil); err != nil {
+				continue
+			}
+		}
+		add(f, ctrData+"/secrets/"+n)
 	}
 	args := []string{"backup", "--json", "--host", s.Host}
 	for _, t := range append(s.Tags(), "version="+s.Version) {

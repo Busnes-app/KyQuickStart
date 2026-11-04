@@ -427,7 +427,7 @@ private Unix socket. The runner holds its own SSH key and kubeconfigs; KyYard ho
    on Kubernetes"); for a KyYard the installer does not deploy, use
    [`kyyard-runner.k8s.yaml`](kyyard-runner.k8s.yaml) after editing its image digest, storage
    class and NetworkPolicy addresses (on a block storage class, a new claim also needs the
-   `fsGroup` its comment describes), and adding KyYard as a container in the same pod: the
+   `fsGroup` with `fsGroupChangePolicy: OnRootMismatch` its comment describes), and adding KyYard as a container in the same pod: the
    socket is in a pod-local volume.
 2. KyYard's target must be in `stack.yaml`. On a Docker target its SSH user must be able to run
    `docker exec`; on a Kubernetes target the workstation's kubeconfig must allow list pods and
