@@ -84,7 +84,7 @@ Plain terminal planning and command orchestration for the operator-run installer
   start: KyMessages replays after its console, before Synapse), then runs the setup steps'
   `Verify` (KyMessages' through `messageSteps`, every other app's through `setupSteps`); for a gated app any failure before the replay is delivered
   stops the app (decision 11). A cold `backup` says it stops the app and, on failure, whether
-  it runs again. `backupLines` adds
+  it runs again; a dump `backup` says it stops every service but the dump's. `backupLines` adds
   the backup, restore and password-record lines to apply's handover.
   KyDrive requires the pinned image's `restore-reset` capability before replacing data and
   uses `dockerhost.Store.ResetDriveRestore` before every startup/replay, including resume;

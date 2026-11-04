@@ -320,3 +320,48 @@ func TestGuidedKubernetesStorageClassResumes(t *testing.T) {
 		t.Fatal("resume did not seed the storage class")
 	}
 }
+
+// Re-running plan keeps what it never asks: a stop (apply would start the app again), node
+// ports, LoadBalancer addresses, the confirmed recovery key, and an edge's egress_address and
+// lan_dns. A moved app or a changed provider starts from its answers.
+func TestGuidedKeepsUnaskedFields(t *testing.T) {
+	dir := t.TempDir()
+	var out bytes.Buffer
+	o := Options{Catalog: catalog.Embedded(), In: strings.NewReader("yes\n1\nnas\ndocker\n192.0.2.1\nkyq\n22\n/opt/test\ninstall\nnas\n0\nnone\nyes\nfinish\n"), Out: &out}
+	if err := Run(context.Background(), []string{"plan", "--demo", "--state", dir}, o); err != nil {
+		t.Fatal(err, out.String())
+	}
+	file := filepath.Join(dir, "stack.yaml")
+	b, _ := os.ReadFile(file)
+	os.WriteFile(file, []byte(strings.Replace(string(b), "      target: nas\n", "      target: nas\n      stopped: true\n", 1)), 0o600)
+	o.In = strings.NewReader(strings.Repeat("\n", 16))
+	if err := Run(context.Background(), []string{"plan", "--state", dir}, o); err != nil {
+		t.Fatal(err, out.String())
+	}
+	if st, err := stack.Load(file); err != nil || st.Revision != 2 || !st.Apps[0].Stopped {
+		t.Fatalf("re-planned: %+v, %v", st, err)
+	}
+
+	previous := &stack.Stack{
+		Apps:  []stack.App{{Name: "npm", Target: "k1", NodePorts: map[int]int{443: 31443}, LoadBalancerAddress: "192.0.2.9", Stopped: true}, {Name: "kyrecovery", Target: "k1", RecoveryKeyID: strings.Repeat("ab", 32)}},
+		Edges: []stack.Edge{{Target: "k1", Provider: "lan", EgressAddress: "192.0.2.9", LANDNS: &stack.LANDNS{Provider: "kydns"}}},
+	}
+	st := &stack.Stack{
+		Apps:  []stack.App{{Name: "npm", Target: "k1"}, {Name: "kyrecovery", Target: "k2"}},
+		Edges: []stack.Edge{{Target: "k1", Provider: "lan"}},
+	}
+	keepUnasked(st, previous)
+	if a := st.Apps[0]; !a.Stopped || a.NodePorts[443] != 31443 || a.LoadBalancerAddress != "192.0.2.9" {
+		t.Errorf("npm = %+v", a)
+	}
+	if st.Apps[1].RecoveryKeyID != "" {
+		t.Error("a moved app kept its recovery key")
+	}
+	if e := st.Edges[0]; e.EgressAddress != "192.0.2.9" || e.LANDNS == nil {
+		t.Errorf("edge = %+v", e)
+	}
+	st.Edges[0] = stack.Edge{Target: "k1", Provider: "cloudflare"}
+	if keepUnasked(st, previous); st.Edges[0].EgressAddress != "" {
+		t.Error("a changed provider kept egress_address")
+	}
+}

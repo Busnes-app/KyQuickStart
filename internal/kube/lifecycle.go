@@ -29,6 +29,17 @@ func (c *Client) State(ctx context.Context, app string) (string, error) {
 	case !found:
 		return "missing", nil
 	case replicas(dep) == 0 && dep.Status.Replicas == 0:
+		// status.replicas leaves out terminating pods, which may still write for their whole
+		// grace period: stopped only once no pod of the app is left.
+		pods, err := c.cs.CoreV1().Pods(namespaceOf(app)).List(ctx, metav1.ListOptions{LabelSelector: metav1.FormatLabelSelector(dep.Spec.Selector)})
+		if err != nil {
+			return "", err
+		}
+		for _, p := range pods.Items {
+			if p.Status.Phase != corev1.PodSucceeded && p.Status.Phase != corev1.PodFailed {
+				return "unknown", nil
+			}
+		}
 		return "stopped", nil
 	case replicas(dep) == 1 && ready(dep):
 		return "running", nil

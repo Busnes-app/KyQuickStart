@@ -142,14 +142,27 @@ func (s Store) ensureRepository(ctx context.Context) (bool, error) {
 	}
 	_, err = s.restic(ctx, s.PasswordFile(), nil, "cat", "config")
 	var ee *remote.ExitError
-	if errors.As(err, &ee) && ee.Code == 10 {
+	switch {
+	case errors.As(err, &ee) && ee.Code == 10:
 		_, err = s.restic(ctx, s.PasswordFile(), nil, "init")
+	case err != nil && !has:
+		// The password this run generated opened nothing and protects nothing yet: it goes, so
+		// a restore asks for the recorded one. 12 is restic's wrong password: a repository
+		// from before the target was rebuilt.
+		if _, rerr := s.App.Runner.Run(ctx, "rm -f "+remote.Quote(s.PasswordFile()), nil); rerr != nil {
+			return false, errors.Join(err, rerr)
+		}
+		if ee != nil && ee.Code == 12 {
+			err = fmt.Errorf("%s already holds a repository whose password this target does not have: restore %s first with kyquickstart restore %s and the password you recorded. Nothing was backed up: %w", s.repo(), s.App.Name, s.App.Name, err)
+		}
+		return false, err
 	}
 	return !has, err
 }
 
-// Backup takes one snapshot of the app: its dump or, without a dump command, its stopped
-// volumes; then its capsule_secrets. created reports that this run generated the password.
+// Backup takes one snapshot of the app: its dump and volumes with every other service stopped
+// or, without a dump command, its stopped volumes; then its capsule_secrets. created reports
+// that this run generated the password.
 func (s Store) Backup(ctx context.Context) (id string, created bool, err error) {
 	b := s.App.Catalog.Backup
 	if err := refuseUnfinishedRestore(ctx, s.App); err != nil {
@@ -176,6 +189,20 @@ func (s Store) Backup(ctx context.Context) (id string, created bool, err error) 
 	var binds []bind
 	var paths []string
 	add := func(src, dst string) { binds, paths = append(binds, bind{src: src, dst: dst}), append(paths, dst) }
+	// Cold: SQLite and friends are consistent only at rest. With a dump, every service but the
+	// dump's stops first (KyMessages' console keeps SQLite in data), so the dump matches the
+	// files. Started again whatever happens.
+	svcs := ""
+	if len(b.Command) > 0 {
+		svcs = quoteAll(slices.DeleteFunc(slices.Clone(s.App.Catalog.Services), func(svc string) bool { return svc == b.Service }))
+	}
+	if len(b.Command) == 0 || svcs != "" {
+		if _, err := s.App.Runner.Run(ctx, s.App.compose(strings.TrimSpace("stop "+svcs)), nil); err != nil {
+			err = fmt.Errorf("docker compose stop: %w", err)
+			return "", created, errors.Join(err, s.restart(ctx, svcs))
+		}
+		defer func() { err = errors.Join(err, s.restart(ctx, svcs)) }()
+	}
 	if len(b.Command) > 0 {
 		// The dump is plaintext: it never outlives this run, whatever fails.
 		defer func() {
@@ -192,13 +219,6 @@ func (s Store) Backup(ctx context.Context) (id string, created bool, err error) 
 			return "", created, fmt.Errorf("dump command failed or wrote nothing; no snapshot taken: %w", err)
 		}
 		add(dump, ctrData+"/dump")
-	} else {
-		// Cold: SQLite and friends are consistent only at rest. Started again whatever happens.
-		if _, err := s.App.Runner.Run(ctx, s.App.compose("stop"), nil); err != nil {
-			err = fmt.Errorf("docker compose stop: %w", err)
-			return "", created, errors.Join(err, s.restart(ctx))
-		}
-		defer func() { err = errors.Join(err, s.restart(ctx)) }()
 	}
 	for _, v := range b.Volumes {
 		add(path.Join(s.App.dir(), v), ctrData+"/volumes/"+v)
@@ -213,6 +233,9 @@ func (s Store) Backup(ctx context.Context) (id string, created bool, err error) 
 	for _, x := range b.Skip {
 		args = append(args, "--exclude", ctrData+"/volumes/"+x)
 	}
+	if slices.Contains(b.Volumes, "secrets") { // kyPulse's: never the repository's own password
+		args = append(args, "--exclude", ctrData+"/volumes/secrets/"+catalog.ResticPassword)
+	}
 	out, err := s.restic(ctx, s.PasswordFile(), binds, append(args, paths...)...)
 	if err != nil {
 		return "", created, err
@@ -226,11 +249,12 @@ func (s Store) Backup(ctx context.Context) (id string, created bool, err error) 
 	return id, created, nil
 }
 
-// restart starts the stopped project and waits for its health, even after ctx is cancelled.
-func (s Store) restart(ctx context.Context) error {
+// restart starts the stopped project, or only the quoted services svcs, and waits for its
+// health, even after ctx is cancelled.
+func (s Store) restart(ctx context.Context, svcs string) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Duration(s.App.Catalog.Health.TimeoutSeconds)*time.Second+time.Minute)
 	defer cancel()
-	if _, err := s.App.Runner.Run(ctx, s.App.compose("start"), nil); err != nil {
+	if _, err := s.App.Runner.Run(ctx, s.App.compose(strings.TrimSpace("start "+svcs)), nil); err != nil {
 		return fmt.Errorf("docker compose start: %w", err)
 	}
 	return healthStep{a: s.App}.Apply(ctx)
@@ -338,9 +362,16 @@ func (s Store) MoveAside(ctx context.Context, stamp string) (string, error) {
 	for _, n := range s.App.Catalog.Secrets {
 		names = append(names, "secrets/"+n)
 	}
-	cmd := "cd " + remote.Quote(s.App.dir()) + " || exit 1\nfor p in " + quoteAll(append(slices.Clone(s.App.Catalog.Binds), names...)) + `; do
+	// An app that binds its whole secrets directory (kyPulse) moves it aside, but
+	// restic_password in it stays: restore reads it next.
+	keep, kept := "", ""
+	if slices.Contains(s.App.Catalog.Binds, "secrets") {
+		keep = "if [ -e secrets/" + catalog.ResticPassword + " ]; then mv secrets/" + catalog.ResticPassword + " .kept-" + catalog.ResticPassword + " || exit 1; fi\n"
+		kept = "\nif [ -e .kept-" + catalog.ResticPassword + " ]; then mkdir -p secrets && chmod 700 secrets && mv .kept-" + catalog.ResticPassword + " secrets/" + catalog.ResticPassword + " || exit 1; fi"
+	}
+	cmd := "cd " + remote.Quote(s.App.dir()) + " || exit 1\n" + keep + "for p in " + quoteAll(append(slices.Clone(s.App.Catalog.Binds), names...)) + `; do
   if [ -e "$p" ] || [ -L "$p" ]; then mv "$p" ` + remote.Quote(dest) + `/"$p" || exit 1; fi
-done`
+done` + kept
 	if _, err := s.App.Runner.Run(ctx, cmd, nil); err != nil {
 		return "", fmt.Errorf("move the current data aside: %w", err)
 	}
@@ -404,6 +435,14 @@ func (s Store) RestoreFiles(ctx context.Context, password, id string) error {
 	if len(b.CapsuleSecrets) > 0 {
 		parents = append(parents, "secrets")
 	}
+	// A secrets volume (kyPulse's) takes the target's restic_password along; an older
+	// snapshot's copy of it is dropped.
+	keepPassword := ""
+	if slices.Contains(b.Volumes, "secrets") {
+		keepPassword = `rm -rf "$f/volumes/secrets/` + catalog.ResticPassword + `" || exit 1
+if [ -e secrets/` + catalog.ResticPassword + ` ]; then mv secrets/` + catalog.ResticPassword + ` "$f/volumes/secrets/` + catalog.ResticPassword + `" || exit 1; fi
+`
+	}
 	dumpCheck := ""
 	if len(b.Command) > 0 {
 		dumpCheck = `[ ! -L "$f/dump" ] && [ -n "$(find "$f/dump" -prune -type f)" ] || { echo "the snapshot has no dump file" >&2; exit 1; }`
@@ -420,7 +459,7 @@ done
 for n in ` + quoteAll(b.CapsuleSecrets) + `; do
   [ ! -L "$f/secrets/$n" ] && [ -n "$(find "$f/secrets/$n" -prune -type f)" ] || { echo "the snapshot has no secret file $n" >&2; exit 1; }
 done
-for v in ` + quoteAll(b.Volumes) + `; do
+` + keepPassword + `for v in ` + quoteAll(b.Volumes) + `; do
   if [ -d "$v" ]; then rmdir "$v" || exit 1; fi
   mv "$f/volumes/$v" "$v" || exit 1
 done

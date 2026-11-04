@@ -287,8 +287,11 @@ is not 0600. Each app's repository is `<repository>/<app>`.
 
 **What a snapshot holds.** The app's catalog `backup` block decides: its bind directories minus
 `skip`, its `capsule_secrets` (encrypted by restic, never sealed to KyRecovery here) and, for an
-app with a dump `command`, the dump, taken while the app runs (`docker compose exec -T`; an
-empty or failed dump takes no snapshot). An app without a dump command is backed up cold:
+app with a dump `command`, the dump, taken with every other service of the app stopped
+(`docker compose stop` of those, then `docker compose exec -T` into the dump's service; an
+empty or failed dump takes no snapshot), so KyMessages' console SQLite in `data` is at rest and
+matches the dump; those services start again afterwards, also when the snapshot failed. An
+app without a dump command is backed up cold:
 `docker compose stop`, restic, then `docker compose start` and a health wait, also when the
 snapshot failed. KyDrive is backed up cold (its SQLite has no dump command): `data`, `backups`,
 `session_secret` and `scim_token`, a stop of seconds to minutes. KyPost is backed up cold too:
@@ -309,7 +312,9 @@ must reach the rest-server; the installer does not open a firewall for it.
 **The repository password.** The first `backup` generates `restic_password` on the target, in
 the app's `secrets` directory (0600, never in a snapshot), runs `restic init` only when the
 repository does not exist, and prints the command that reads the password. Read it once into
-the owner's printed record: without it a lost target cannot be restored. The handover prints
+the owner's printed record: without it a lost target cannot be restored. If the repository
+already exists under another password (a rebuilt target, backed up before its restore), the
+backup keeps no new password and fails, telling you to restore with the recorded one first. The handover prints
 the same command for every Docker app whose target has a destination:
 
 ```sh
@@ -1705,14 +1710,15 @@ What apply does:
   180 s start allowance.
 - `kypost.volumes`, before `kypost.deploy`: a KyPost installed before #151 kept the same five
   directories in named volumes (`kyq-kypost_config` and so on) owned by the image's `kypost`
-  (uid 1000). For each such volume whose bind directory is missing or empty, apply stops the
+  (uid 1000). For each such volume whose bind directory is missing, apply stops the
   running KyPost (with its own grace period), copies the volume with `tar` in two offline,
   read-only containers of the pinned restic image (the volume mounted read-only and read as
   root with only `CAP_DAC_READ_SEARCH`; the copy written as the target user, who then owns every
   file, modes kept), checks both ends succeeded and the entry counts match, and only then renames
   the copy into place. The volumes are kept: the step's note names them, and once KyPost runs on
-  the copies `docker volume rm` removes them. A rerun skips. Until this step has run,
-  `kyquickstart backup kypost` refuses (its bind directories would be empty).
+  the copies `docker volume rm` removes them. A rerun skips: a bind directory that exists, even
+  empty (an empty volume's copy), is done, and `restore kypost` skips the step. Until this step
+  has run, `kyquickstart backup kypost` refuses (its bind directories would be empty).
 - `SERVER_BASE_URL` is `https://<route URL host>`: its callback, and Secure session cookies.
   Native mail, receiving and the receiver are off. The catalog sets no `PAIRING_SECRET`,
   `POW_SECRET`, `BOOTSTRAP_ADMIN_*`, TLS or SMTP settings: KyPost

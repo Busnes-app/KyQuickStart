@@ -127,17 +127,21 @@ func guidedIntegration(p *prompts, st *stack.Stack, e stack.Existing) error {
 	if err := validateProductTarget(e.Product, t); err != nil {
 		return err
 	}
+	// apply finds an installed app's own container or pod; only an existing product names one.
+	installed := i.Installed(st)
 	validContainer := workloadName.MatchString
 	if t.Kubernetes() {
 		validContainer = func(s string) bool {
 			return kubeWorkloadName.MatchString(s) && !strings.Contains(s, ".") && len(s) <= 63
 		}
 	}
-	i.Container, err = p.ask(key+"container", "Product container name", "", validContainer)
-	if err != nil {
-		return err
+	if !installed {
+		i.Container, err = p.ask(key+"container", "Product container name", "", validContainer)
+		if err != nil {
+			return err
+		}
 	}
-	if t.Kubernetes() {
+	if t.Kubernetes() && !installed {
 		i.Namespace, err = p.ask(key+"namespace", "Product Kubernetes namespace", "", func(s string) bool {
 			return kubeWorkloadName.MatchString(s) && !strings.Contains(s, ".") && len(s) <= 63
 		})

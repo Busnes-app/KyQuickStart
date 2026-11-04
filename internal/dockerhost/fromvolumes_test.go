@@ -2,6 +2,9 @@ package dockerhost
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -46,7 +49,7 @@ func TestFromVolumesStep(t *testing.T) {
 	if err != nil || !done {
 		t.Fatalf("nothing pending: done %v, %v", done, err)
 	}
-	if !strings.Contains(f.calls[0].cmd, `grep -Fqx "kyq-post_$v"`) || !strings.Contains(f.calls[0].cmd, `[ -n "$(ls -A "$d/$v")" ]`) || !strings.Contains(f.calls[0].cmd, "d='/srv/kyq/post'") {
+	if !strings.Contains(f.calls[0].cmd, `grep -Fqx "kyq-post_$v"`) || !strings.Contains(f.calls[0].cmd, `if [ -e "$d/$v" ] || [ -L "$d/$v" ]; then continue; fi`) || !strings.Contains(f.calls[0].cmd, "d='/srv/kyq/post'") {
 		t.Fatalf("pending check: %s", f.calls[0].cmd)
 	}
 
@@ -109,5 +112,42 @@ func TestBackupRefusesUncopiedVolumes(t *testing.T) {
 		if strings.Contains(c.cmd, "restic") || strings.Contains(c.cmd, " stop") {
 			t.Fatalf("backup went on: %s", c.cmd)
 		}
+	}
+}
+
+// volumesRunner runs pending's real shell locally, its Docker volume list given.
+type volumesRunner struct{ vols string }
+
+func (r volumesRunner) Run(ctx context.Context, cmd string, stdin []byte) ([]byte, error) {
+	return remote.Local{}.Run(ctx, strings.Replace(cmd, "docker volume ls -q", "printf '%s' "+remote.Quote(r.vols), 1), stdin)
+}
+
+// An empty volume's copy is an empty directory, which is done, so apply does not stop KyPost
+// and copy again on every run; only a missing directory is pending.
+func TestFromVolumesEmptyCopyIsDone(t *testing.T) {
+	root := realTemp(t)
+	os.MkdirAll(filepath.Join(root, "post", "config"), 0o700)
+	a, _ := fromVolumesApp(t, "")
+	a.Root, a.Runner = root, volumesRunner{vols: "kyq-post_config\nkyq-post_state\nother\n"}
+	p, err := fromVolumesStep{a: a}.pending(context.Background())
+	if err != nil || !slices.Equal(p, []string{"state"}) {
+		t.Fatalf("pending = %v, %v", p, err)
+	}
+}
+
+// A restore moves every bind directory aside and restores only those it backs up: the step
+// neither copies an old volume over the rest nor refuses the restore's own record.
+func TestFromVolumesSkippedByRestore(t *testing.T) {
+	a, f := fromVolumesApp(t, "logs\n")
+	a.Restoring = true
+	step := Steps(a)[0]
+	if done, err := step.Inspect(context.Background()); err != nil || !done {
+		t.Fatalf("inspect while restoring: %v %v", done, err)
+	}
+	if err := step.Verify(context.Background()); err != nil {
+		t.Fatalf("verify while restoring: %v", err)
+	}
+	if len(f.calls) != 0 {
+		t.Fatalf("ran %v", f.calls)
 	}
 }

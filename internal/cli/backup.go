@@ -317,6 +317,8 @@ func backup(ctx context.Context, state, name string, trust trustFlag, o Options)
 		cold := len(s.cat[name].Backup.Command) == 0
 		if cold {
 			fmt.Fprintf(s.o.Out, "%s: stopping for a cold backup; it starts again when the snapshot ends.\n", name)
+		} else {
+			fmt.Fprintf(s.o.Out, "%s: stopping every service but %s for the backup; they start again when the snapshot ends.\n", name, s.cat[name].Backup.Service)
 		}
 		start := time.Now()
 		id, created, err := st.Backup(ctx)
@@ -331,6 +333,8 @@ func backup(ctx context.Context, state, name string, trust trustFlag, o Options)
 				} else {
 					fmt.Fprintf(s.o.Out, "%s is NOT running: start it with ssh -p %d %s@%s docker compose -p kyq-%s start\n", name, t.Port, t.User, t.Host, name)
 				}
+			} else {
+				fmt.Fprintf(s.o.Out, "If a service of %s is still stopped, start it with ssh -p %d %s@%s docker compose -p kyq-%s start\n", name, t.Port, t.User, t.Host, name)
 			}
 			return err
 		}

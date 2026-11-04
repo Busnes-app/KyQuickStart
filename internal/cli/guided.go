@@ -224,6 +224,9 @@ func guided(ctx context.Context, args []string, o Options) error {
 				if seen[r.App+":"+r.Role] {
 					return errors.New("this saved plan has multiple routes per app; edit stack.yaml directly to preserve them")
 				}
+				if r.Certificate != "" {
+					return errors.New("this saved plan's routes use named certificates, which plan cannot ask for; edit stack.yaml directly to preserve them")
+				}
 				seen[r.App+":"+r.Role] = true
 			}
 		}
@@ -434,6 +437,7 @@ func guided(ctx context.Context, args []string, o Options) error {
 	if err := guidedEdges(p, st, cat); err != nil {
 		return err
 	}
+	keepUnasked(st, previous)
 	data, err := yaml.Marshal(st)
 	if err != nil {
 		return err
@@ -776,6 +780,29 @@ func review(args []string, o Options) error {
 	return nil
 }
 
+// keepUnasked carries over from the saved plan what the wizard never asks: an app's stop intent,
+// node ports, LoadBalancer addresses and confirmed recovery key while it stays on its target,
+// and an edge's egress_address and lan_dns while it keeps its provider.
+func keepUnasked(st, previous *stack.Stack) {
+	if previous == nil {
+		return
+	}
+	for i := range st.Apps {
+		a := &st.Apps[i]
+		if j := slices.IndexFunc(previous.Apps, func(p stack.App) bool { return p.Name == a.Name && p.Target == a.Target }); j >= 0 {
+			p := previous.Apps[j]
+			a.Stopped, a.NodePorts, a.KubeVIPAddress, a.LoadBalancerAddress, a.RecoveryKeyID = p.Stopped, p.NodePorts, p.KubeVIPAddress, p.LoadBalancerAddress, p.RecoveryKeyID
+		}
+	}
+	for i := range st.Edges {
+		e := &st.Edges[i]
+		if j := slices.IndexFunc(previous.Edges, func(p stack.Edge) bool { return p.Target == e.Target && p.Provider == e.Provider }); j >= 0 {
+			p := previous.Edges[j]
+			e.EgressAddress, e.LANDNS = p.EgressAddress, p.LANDNS
+		}
+	}
+}
+
 // preparationKey reports an integration answer owned by stack.yaml: notes and identity are
 // never asked, and identity-client is asked only with stack.yaml's value as the default.
 func preparationKey(k string) bool {
@@ -877,7 +904,10 @@ func guidedEdges(p *prompts, st *stack.Stack, cat catalog.Catalog) error {
 			err = askDirect(p, key, &e)
 		} else {
 			fmt.Fprintln(p.out, "This build reuses existing NPM and certificates, and an existing tunnel or frp server. No credential values are entered here.")
-			if e.NPMURL, err = p.ask(key+"npm", "Existing NPM LAN HTTPS management origin", "", httpsOrigin); err != nil {
+			if e.NPMURL, err = p.ask(key+"npm", "Existing NPM LAN HTTPS management origin", "", func(s string) bool {
+				_, _, _, kube := stack.KubeService(s) // the catalog NPM's, kube://<namespace>/<service>:<port>
+				return httpsOrigin(s) || kube && t.Kubernetes()
+			}); err != nil {
 				return err
 			}
 			if provider == "lan" {

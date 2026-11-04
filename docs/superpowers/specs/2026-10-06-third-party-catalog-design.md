@@ -213,7 +213,8 @@ rest-server is the operator's (`--append-only --private-repos`, TLS, off the app
 per Docker target in `stack.yaml` (`backup.repository`, `credential_file`, `ca_file`). The
 catalog `backup` block's `command` writes the dump to a private scratch file before restic runs
 (an empty or failed dump takes no snapshot), its `restore_command` reads it back on stdin in the
-same `service`, which `restore_order` starts first; an app without a dump command is backed up
+same `service`, which `restore_order` starts first; the app's other services stop for the dump
+and snapshot and start again; an app without a dump command is backed up
 cold (stopped, then always started again). `capsule_secrets` travel inside the restic snapshot,
 encrypted by restic; sealing them, and the repository password, to KyRecovery is not built. The
 password is generated on the target and recorded once by the owner from the handover's command.
