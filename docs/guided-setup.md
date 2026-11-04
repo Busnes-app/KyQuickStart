@@ -487,9 +487,11 @@ private Unix socket. The runner holds its own SSH key and kubeconfigs; KyYard ho
    cluster at `kubernetes.default.svc`; every other Kubernetes API server at the address in
    the workstation's kubeconfig, so that address must work from where the runner runs.
 3. From now on the CLI refuses `plan`, `install`, `uninstall` and `unmanage`
-   (`owned_by_runner`): use the Suite page. The runner cannot restore, so `restore` is refused
-   too: run `handoff --revoke`, `restore`, then `handoff` again. `backup` still runs (it holds
-   the target lock the runner takes), and so do `apply`, `upgrade`, `status` and `integrate-*`,
+   (`owned_by_runner`): use the Suite page. The runner cannot restore, so `restore --snapshot`
+   is refused too, and so is `restore APP` while a restore of APP is unfinished: run
+   `handoff --revoke`, `restore`, then `handoff --kyyard-target <T>` (the error names the full
+   command). `backup` and listing snapshots with `restore APP` still run (they hold the target
+   lock the runner takes), and so do `apply`, `upgrade`, `status` and `integrate-*`,
    from the runner's plan, except that `apply` and `upgrade` refuse while they would
    redeploy the catalog KyYard the runner runs in; copy the plan first:
 

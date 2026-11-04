@@ -806,9 +806,25 @@ func TestBackupOnRunnerOwnedTarget(t *testing.T) {
 	if m := f.marker(t); !strings.Contains(m, `"owner":"runner"`) {
 		t.Fatalf("backup changed the owner: %s", m)
 	}
+	os.WriteFile(filepath.Join(f.state, handoffFile), []byte(`{"kyyard_target":"nas","runner_container":"kyquickstart-runner"}`), 0o600)
 	err := f.runIn("", "restore", "dumpdemo", "--snapshot", "0123abcd", "--replace", "--yes")
-	if code(err) != suite.OwnedByRunner || !strings.Contains(err.Error(), "handoff --revoke, then kyquickstart restore, then kyquickstart handoff again") {
+	if code(err) != suite.OwnedByRunner || !strings.Contains(err.Error(), "handoff --revoke, then kyquickstart restore, then kyquickstart handoff --kyyard-target nas --runner-container kyquickstart-runner again") {
 		t.Fatalf("restore on a runner-owned target: %v", err)
+	}
+	// Q7: listing the snapshots changes no plan and runs, keeping the runner as owner.
+	f.out.Reset()
+	snapshotID(t, f, "")
+	if m := f.marker(t); !strings.Contains(m, `"owner":"runner"`) {
+		t.Fatalf("listing changed the owner: %s", m)
+	}
+	// A listing that would resume an unfinished restore is refused, naming the way through.
+	os.WriteFile(filepath.Join(f.h.root, "dumpdemo", ".restore-pending"), []byte(strings.Repeat("ab", 32)+" files\n"), 0o600)
+	err = f.runIn("dumpdemo\n", "restore", "dumpdemo")
+	if code(err) != suite.OwnedByRunner || !strings.Contains(err.Error(), "is unfinished") || !strings.Contains(err.Error(), "handoff --kyyard-target nas") {
+		t.Fatalf("resuming listing on a runner-owned target: %v\n%s", err, f.out.String())
+	}
+	if _, err := os.Stat(filepath.Join(f.h.root, "dumpdemo", ".restore-pending")); err != nil {
+		t.Fatalf("the refused listing touched the restore record: %v", err)
 	}
 }
 

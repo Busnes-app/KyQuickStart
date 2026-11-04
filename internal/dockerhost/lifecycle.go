@@ -49,6 +49,10 @@ func (s lifecycleStep) Inspect(ctx context.Context) (bool, error) {
 	if err := refuseUnfinishedRestore(ctx, s.a); err != nil {
 		return false, err
 	}
+	// start recreates containers from another root here, on this root's (perhaps stale) files.
+	if err := s.a.owned(ctx); err != nil {
+		return false, err
+	}
 	if s.op == "restart" {
 		return false, nil
 	}

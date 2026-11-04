@@ -100,6 +100,7 @@ func backupCommand(ctx context.Context, cmd string, args []string, o Options) er
 }
 
 // backupSession loads the plan and refuses, before connecting, an app backup cannot cover.
+// restore is set for a restore of a snapshot, not for listing them.
 func backupSession(state, name string, restore bool, trust trustFlag, o Options) (*session, stack.Target, error) {
 	s, err := load(state, trust, o)
 	if err != nil {
@@ -113,8 +114,8 @@ func backupSession(state, name string, restore bool, trust trustFlag, o Options)
 		s.close()
 		return nil, t, err
 	}
-	// A backup changes no plan and holds the target lock the runner also takes; a restore is
-	// refused on a runner-owned target, which has no restore operation.
+	// A backup or a restore listing changes no plan and holds the target lock the runner also
+	// takes; a restore is refused on a runner-owned target, which has no restore operation.
 	s.changesPlan, s.restores, s.edges = restore, restore, nil
 	return s, t, nil
 }
@@ -386,7 +387,7 @@ func restore(ctx context.Context, state string, r restoreRequest, trust trustFla
 	if r.snapshot != "" && !dockerhost.ValidSnapshotID(r.snapshot) {
 		return suite.Errorf(suite.InvalidRequest, "--snapshot must be 8 or 64 lowercase hex characters")
 	}
-	s, t, err := backupSession(state, r.app, true, trust, o)
+	s, t, err := backupSession(state, r.app, r.snapshot != "", trust, o)
 	if err != nil {
 		return err
 	}
@@ -460,6 +461,9 @@ func (s *session) restoreLocked(ctx context.Context, st dockerhost.Store, r rest
 	pendingID, stage, err := st.Pending(ctx)
 	if err != nil {
 		return err
+	}
+	if pendingID != "" && r.snapshot == "" && s.runnerOwned && s.o.RunnerID == "" {
+		return suite.Errorf(suite.OwnedByRunner, "a restore of %s from snapshot %s is unfinished, and %s is managed by the KyYard suite runner, which cannot restore; run kyquickstart handoff --revoke, then kyquickstart restore %s, then %s", r.app, pendingID, st.Host, r.app, s.rehandoff())
 	}
 	if pendingID != "" {
 		if r.snapshot != "" && !strings.HasPrefix(pendingID, r.snapshot) {

@@ -87,8 +87,10 @@ Plain terminal planning and command orchestration for the operator-run installer
   `backup` block or a target without a destination (`backup_unconfigured`), backup volumes in
   named Docker volumes (`backup_unsupported`; no catalog app has any) and a plan without
   `installation_id`; both hold
-  the app's target lock (restore also KyIdentity's). Under `owner: runner` backup runs (it
-  changes no plan) and restore is refused, naming `handoff --revoke`, restore, `handoff`.
+  the app's target lock (restore also KyIdentity's). Under `owner: runner` backup and a
+  restore listing run (they change no plan); `restore --snapshot`, and a listing that would
+  resume an unfinished restore, are refused, naming `handoff --revoke`, restore and the full
+  `handoff --kyyard-target` command (`session.rehandoff`, from `handoff.json`).
   `dockerhost.Store` does the target work. `removalGate` refuses restoring an app with an
   `oidc` block unless the plan's KyIdentity deployment record is `replayVersion` (0.4.4) or
   later (an `existing` KyIdentity is refused); `replayRemovals` runs `resync-system --client

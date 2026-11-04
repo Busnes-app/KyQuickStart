@@ -145,14 +145,19 @@ func PreUpgradeCopy(ctx context.Context, a App, from string) (claims []string, e
 		return nil, a.storageRefusal(ctx, from, todo, start, err)
 	}
 	stop := lifecycleStep{a: a, op: "stop"}
-	if err := stop.Apply(ctx); err != nil {
+	if err := stop.patch(ctx, map[string]any{"spec": map[string]any{"replicas": 0}}); err != nil {
 		return nil, fmt.Errorf("stop for the pre-upgrade copy: %w", err)
 	}
+	// Scaled to zero: started again however the rest ends, also when the wait for its pods to
+	// drain is cancelled or times out.
 	defer func() {
 		if serr := (lifecycleStep{a: a, op: "start"}).Apply(context.WithoutCancel(ctx)); serr != nil {
 			err = errors.Join(err, fmt.Errorf("start %s again: %w", a.Name, serr))
 		}
 	}()
+	if err := stop.waitStopped(ctx); err != nil {
+		return nil, fmt.Errorf("stop for the pre-upgrade copy: %w", err)
+	}
 	err = a.Client.podSession(ctx, a.copyPod(from, todo), "pre-upgrade copy", func(pod string) error {
 		out, err := a.Client.ExecReport(ctx, ns, pod, "copy", append([]string{"/bin/sh", "-euc", copyCommand, "copy"}, todo...))
 		if err != nil {

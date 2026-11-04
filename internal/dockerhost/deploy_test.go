@@ -210,6 +210,33 @@ func TestDeployRefusesProjectFromAnotherRoot(t *testing.T) {
 		if here != "c1\nc2\n" && slices.ContainsFunc(f.calls, func(c call) bool { return strings.Contains(c.cmd, "cat > ") }) {
 			t.Fatal("wrote Compose files")
 		}
+		if here == "c1\nc2\n" {
+			continue
+		}
+		// Sol pass 4 R1: a copied root carries a current input hash; its deploy is not current,
+		// and backup and start/stop are refused too, before any compose command.
+		a := fakeApp(f)
+		d := deployOf(a)
+		f.calls = nil
+		inner := f.reply
+		f.reply = func(cmd string) ([]byte, error) {
+			if strings.Contains(cmd, ".input-hash") {
+				return []byte(d.hash), nil
+			}
+			return inner(cmd)
+		}
+		for name, run := range map[string]func() error{
+			"deploy inspect": func() error { _, err := d.Inspect(context.Background()); return err },
+			"start":          func() error { _, err := StartStep(a).Inspect(context.Background()); return err },
+			"backup":         func() error { _, _, err := (Store{App: a}).Backup(context.Background()); return err },
+		} {
+			if err := run(); err == nil || !strings.Contains(err.Error(), "from another directory than /opt/kyq/hello") {
+				t.Fatalf("%q here, %s: %v", here, name, err)
+			}
+		}
+		if slices.ContainsFunc(f.calls, func(c call) bool { return strings.Contains(c.cmd, "docker compose") }) {
+			t.Fatal("ran docker compose on another root's project")
+		}
 	}
 }
 
@@ -290,6 +317,15 @@ func (f runFunc) Run(ctx context.Context, cmd string, stdin []byte) ([]byte, err
 // pullFails runs commands under sh, except docker: pull fails, the rest pass.
 type pullFails struct{}
 
+type putBackFails struct{ pullFails }
+
+func (p putBackFails) Run(ctx context.Context, cmd string, stdin []byte) ([]byte, error) {
+	if strings.Contains(cmd, "mv -f .compose.yaml.init") {
+		return nil, errors.New("disk gone")
+	}
+	return p.pullFails.Run(ctx, cmd, stdin)
+}
+
 func (pullFails) Run(ctx context.Context, cmd string, stdin []byte) ([]byte, error) {
 	if strings.Contains(cmd, "docker compose") || strings.HasPrefix(cmd, "docker ps") {
 		if strings.Contains(cmd, " pull ") {
@@ -320,10 +356,16 @@ func TestFailedPullKeepsDeployedVersion(t *testing.T) {
 	if left, _ := filepath.Glob(filepath.Join(a.dir(), ".compose*.prev")); len(left) != 0 {
 		t.Fatalf("left %v", left)
 	}
-	// A one-shot init before the deploy (KyMessages' matrix-init) keeps the record too.
+	// A one-shot init before the deploy (KyMessages' matrix-init) keeps the record too, and
+	// the deployed compose.yaml: a later compose up must not start the new images unrecorded.
+	old, _ := os.ReadFile(filepath.Join(a.dir(), "compose.yaml"))
+	a.Catalog.Compose = []byte("services:\n  web:\n    image: new\n")
 	a.Catalog.Init = []string{"init"}
 	if _, err := RunInit(ctx, a, "init", nil, nil); err != nil {
 		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(a.dir(), "compose.yaml")); string(b) != string(old) {
+		t.Fatalf("compose.yaml after an init = %q, want the deployed %q", b, old)
 	}
 	if err := deployOf(a).Apply(ctx); err == nil {
 		t.Fatal("Apply passed")
@@ -331,6 +373,21 @@ func TestFailedPullKeepsDeployedVersion(t *testing.T) {
 	if d, err := Deployed(ctx, a); err != nil || d.Version != "1.0.0" {
 		t.Fatalf("Deployed after an init = %+v, %v; want 1.0.0", d, err)
 	}
+	if b, _ := os.ReadFile(filepath.Join(a.dir(), "compose.yaml")); string(b) != string(old) {
+		t.Fatalf("compose.yaml after an init and a failed pull = %q, want the deployed %q", b, old)
+	}
+	if left, _ := filepath.Glob(filepath.Join(a.dir(), ".compose*")); len(left) != 0 {
+		t.Fatalf("left %v", left)
+	}
+	// A put-back that fails is RunInit's error, not a silent success.
+	a.Runner = putBackFails{}
+	if _, err := RunInit(ctx, a, "init", nil, nil); err == nil || !strings.Contains(err.Error(), "put the deployed Compose files back") {
+		t.Fatalf("RunInit with a failed put-back = %v", err)
+	}
+	a.Runner = pullFails{}
+	os.Remove(filepath.Join(a.dir(), ".compose.yaml.init"))
+	os.Remove(filepath.Join(a.dir(), ".compose.kyq.yaml.init"))
+	os.WriteFile(filepath.Join(a.dir(), "compose.yaml"), old, 0o600)
 	// After a volume migration removed the old compose.yaml, a failed pull keeps the new
 	// layout: the old one would start the app on its volumes again.
 	os.Remove(filepath.Join(a.dir(), "compose.yaml"))

@@ -267,7 +267,8 @@ func (t trustFlag) Set(v string) error {
 
 type session struct {
 	changesPlan  bool          // install, uninstall or unmanage; refused on a runner-owned target
-	restores     bool          // restore: refused on a runner-owned target, which cannot restore
+	restores     bool          // restore --snapshot: refused on a runner-owned target, which cannot restore
+	runnerOwned  bool          // a target this run locked is owned by the runner
 	restored     bool          // a restore finished in this run, which ends a stop
 	deploys      bool          // apply or upgrade: redeploys every app in order
 	owner        *stack.Marker // set by a published handoff: the owner markers now record
@@ -926,6 +927,7 @@ func (s *session) lock(ctx context.Context, holder string, targets []stack.Targe
 			return nil, errors.Join(err, finish(ctx, unlock))
 		}
 		releases, markers[t.Name] = append(releases, release), m
+		s.runnerOwned = s.runnerOwned || m.Owner == "runner"
 	}
 	return func(ctx context.Context) (err error) {
 		for _, t := range targets {
@@ -998,13 +1000,26 @@ func (s *session) guard(target string, m stack.Marker) error {
 	case s.o.RunnerID != "" && m.RunnerID != s.o.RunnerID:
 		return suite.Errorf(suite.OwnedByRunner, "%s is owned by runner %s, not this runner; rerun kyquickstart handoff to move it here", target, m.RunnerID)
 	case s.o.RunnerID == "" && m.Owner == "runner" && s.restores:
-		return suite.Errorf(suite.OwnedByRunner, "%s is managed by the KyYard suite runner, which cannot restore; run kyquickstart handoff --revoke, then kyquickstart restore, then kyquickstart handoff again", target)
+		return suite.Errorf(suite.OwnedByRunner, "%s is managed by the KyYard suite runner, which cannot restore; run kyquickstart handoff --revoke, then kyquickstart restore, then %s", target, s.rehandoff())
 	case s.o.RunnerID == "" && m.Owner == "runner" && s.changesPlan:
 		return suite.Errorf(suite.OwnedByRunner, "%s is managed by the KyYard suite runner; change it from KyYard's Suite page, or run kyquickstart handoff --revoke", target)
 	case s.o.RunnerID == "" && m.Owner == "runner" && s.deploys && slices.ContainsFunc(s.order, func(a string) bool { return hostsRunner(s.cat[a]) }):
-		return suite.Errorf(suite.OwnedByRunner, "%s is managed by the suite runner in KyYard's pod, which this command could replace mid-operation; run kyquickstart handoff --revoke, then this command, then handoff again", target)
+		return suite.Errorf(suite.OwnedByRunner, "%s is managed by the suite runner in KyYard's pod, which this command could replace mid-operation; run kyquickstart handoff --revoke, then this command, then %s", target, s.rehandoff())
 	}
 	return nil
+}
+
+// rehandoff is the command that hands this plan back to its runner after a revoke, which
+// deletes the handoff record it is read from.
+func (s *session) rehandoff() string {
+	r, err := readRecord(s.state)
+	switch {
+	case err != nil || r.KyYardTarget == "":
+		return "kyquickstart handoff --kyyard-target <KyYard's target> again"
+	case r.Namespace != "":
+		return fmt.Sprintf("kyquickstart handoff --kyyard-target %s --runner-pod %s/%s again", r.KyYardTarget, r.Namespace, r.Selector)
+	}
+	return fmt.Sprintf("kyquickstart handoff --kyyard-target %s --runner-container %s again", r.KyYardTarget, r.Container)
 }
 
 // finish runs a cleanup that must happen even after ctx is cancelled.

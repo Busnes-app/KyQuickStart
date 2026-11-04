@@ -85,6 +85,10 @@ func (d deployStep) check(ctx context.Context) (string, error) {
 	if strings.TrimSpace(string(out)) != d.hash {
 		return "deployed files differ from this release", nil
 	}
+	// A copied root carries the hash: its files are current, but the containers may not be its.
+	if err := d.a.owned(ctx); err != nil {
+		return "", err
+	}
 	cs, err := d.a.ps(ctx)
 	if err != nil {
 		return "", err
@@ -160,26 +164,32 @@ func (d deployStep) prepare(ctx context.Context) error {
 	return nil
 }
 
+// owned refuses Compose project kyq-<app> when this Docker host runs any of its containers
+// from another directory than the app's: they belong to another plan, or to this one before
+// its root moved (perhaps to a copy), and acting on them would act on other files.
+func (a App) owned(ctx context.Context) error {
+	all, err := a.containers(ctx, "")
+	if err != nil || all == "" {
+		return err
+	}
+	here, err := a.containers(ctx, "com.docker.compose.project.working_dir="+a.dir())
+	if err != nil {
+		return err
+	}
+	if len(strings.Fields(here)) < len(strings.Fields(all)) {
+		return fmt.Errorf("this Docker host runs Compose project kyq-%s from another directory than %s: another installation, or this plan with another target root, owns it, and its containers were left alone. Point the target's root back at that directory, or uninstall the app there first", a.Name, a.dir())
+	}
+	return nil
+}
+
 // writeCompose writes compose.yaml and its override in the app's private directory, whose
 // bind directories it creates private first: Docker would create a missing one as root.
 // The input hash goes first, so a write that dies halfway is a mismatch next run and deploy
 // never reaches docker compose ps on a half-written compose.yaml.
 func (a App) writeCompose(ctx context.Context, override []byte) error {
 	dir := a.dir()
-	// Compose project kyq-<app> is one per Docker host, whatever the root: its containers from
-	// another directory belong to another plan, or to this one before its root moved.
-	all, err := a.containers(ctx, "")
-	if err != nil {
+	if err := a.owned(ctx); err != nil {
 		return err
-	}
-	if all != "" {
-		here, err := a.containers(ctx, "com.docker.compose.project.working_dir="+dir)
-		if err != nil {
-			return err
-		}
-		if len(strings.Fields(here)) < len(strings.Fields(all)) {
-			return fmt.Errorf("this Docker host runs Compose project kyq-%s from another directory than %s: another installation, or this plan with another target root, owns it, and its containers were left alone. Point the target's root back at that directory, or uninstall the app there first", a.Name, dir)
-		}
 	}
 	for _, p := range append([]string{dir}, a.binds()...) {
 		if err := trustedDir(ctx, a.Runner, p); err != nil {
@@ -214,17 +224,31 @@ func (a App) writeCompose(ctx context.Context, override []byte) error {
 }
 
 // RunInit runs the app's one-shot Compose service svc (a profile service) with env and stdin,
-// removing its container afterwards. It writes the app's Compose files first, keeping the
-// deployed version's labels: deploy records the new version once its images are pulled.
-func RunInit(ctx context.Context, a App, svc string, env []string, stdin []byte) ([]byte, error) {
+// removing its container afterwards. It writes this release's Compose files for the run, then
+// puts the deployed pair back: deploy keeps what is on disk as what runs, and restores it
+// when its pull fails, so a later compose up cannot start the new images unrecorded.
+func RunInit(ctx context.Context, a App, svc string, env []string, stdin []byte) (out []byte, err error) {
 	if !slices.Contains(a.Catalog.Init, svc) {
 		return nil, fmt.Errorf("%s is not a one-shot service of %s", svc, a.Name)
 	}
 	l := labels(a.ReleaseSet, a.Catalog.Version)
-	if d, err := Deployed(ctx, a); err != nil {
+	d, err := Deployed(ctx, a) // err is the result, which the put-back below joins
+	if err != nil {
 		return nil, err
-	} else if d.Found {
+	}
+	if d.Found {
 		l = labels(d.ReleaseSet, d.Version)
+		dir := remote.Quote(a.dir())
+		if _, err := a.Runner.Run(ctx, "cd "+dir+" || exit 1; for f in compose.yaml compose.kyq.yaml; do rm -f .$f.init || exit 1; if [ -e $f ]; then cp -p $f .$f.init || exit 1; fi; done", nil); err != nil {
+			return nil, fmt.Errorf("keep the deployed Compose files: %w", err)
+		}
+		defer func() {
+			rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			defer cancel()
+			if _, rerr := a.Runner.Run(rctx, "cd "+dir+" && if [ -e .compose.yaml.init ] && [ -e .compose.kyq.yaml.init ]; then mv -f .compose.yaml.init compose.yaml && mv -f .compose.kyq.yaml.init compose.kyq.yaml; fi", nil); rerr != nil {
+				err = errors.Join(err, fmt.Errorf("put the deployed Compose files back: %w", rerr))
+			}
+		}()
 	}
 	if err := a.writeCompose(ctx, a.override(l)); err != nil {
 		return nil, err
@@ -233,7 +257,7 @@ func RunInit(ctx context.Context, a App, svc string, env []string, stdin []byte)
 	for _, e := range env {
 		args += " -e " + remote.Quote(e)
 	}
-	out, err := a.Runner.Run(ctx, a.compose(args+" "+remote.Quote(svc)), stdin)
+	out, err = a.Runner.Run(ctx, a.compose(args+" "+remote.Quote(svc)), stdin)
 	if err != nil {
 		return out, fmt.Errorf("docker compose run %s: %w", svc, err)
 	}
