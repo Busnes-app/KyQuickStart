@@ -178,7 +178,7 @@ func (a App) writeCompose(ctx context.Context, override []byte) error {
 			return err
 		}
 		if len(strings.Fields(here)) < len(strings.Fields(all)) {
-			return fmt.Errorf("this Docker host runs Compose project kyq-%s from another directory than %s: another installation, or this plan with another target root, owns it. Nothing was changed; point the target's root back at that directory, or uninstall the app there first", a.Name, dir)
+			return fmt.Errorf("this Docker host runs Compose project kyq-%s from another directory than %s: another installation, or this plan with another target root, owns it, and its containers were left alone. Point the target's root back at that directory, or uninstall the app there first", a.Name, dir)
 		}
 	}
 	for _, p := range append([]string{dir}, a.binds()...) {

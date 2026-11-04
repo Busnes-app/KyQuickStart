@@ -268,6 +268,7 @@ func (t trustFlag) Set(v string) error {
 type session struct {
 	changesPlan  bool          // install, uninstall or unmanage; refused on a runner-owned target
 	restores     bool          // restore: refused on a runner-owned target, which cannot restore
+	restored     bool          // a restore finished in this run, which ends a stop
 	deploys      bool          // apply or upgrade: redeploys every app in order
 	owner        *stack.Marker // set by a published handoff: the owner markers now record
 	integrations []stack.Integration

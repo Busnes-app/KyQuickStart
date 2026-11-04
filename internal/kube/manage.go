@@ -12,6 +12,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 )
 
 // Deployed reads the app namespace's labels, which uninstall keeps.
@@ -96,7 +97,11 @@ func (s removeStep) Apply(ctx context.Context) error {
 		return metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}
 	}
 	if dep != nil {
-		if err := s.a.Client.cs.AppsV1().Deployments(ns).Delete(ctx, appName, byUID(dep)); err != nil && !apierrors.IsNotFound(err) {
+		// Foreground: the Deployment stays until its ReplicaSet and pods are gone, so no
+		// ReplicaSet outlives it to start another pod.
+		opts := byUID(dep)
+		opts.PropagationPolicy = ptr.To(metav1.DeletePropagationForeground)
+		if err := s.a.Client.cs.AppsV1().Deployments(ns).Delete(ctx, appName, opts); err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("delete deployment: %w", err)
 		}
 	}

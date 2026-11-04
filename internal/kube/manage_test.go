@@ -83,6 +83,13 @@ func TestRemoveWaitsForPods(t *testing.T) {
 	if err := s.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
+	for _, act := range a.Client.cs.(*fake.Clientset).Actions() {
+		if d, ok := act.(k8stesting.DeleteAction); ok && d.GetResource().Resource == "deployments" {
+			if p := d.GetDeleteOptions().PropagationPolicy; p == nil || *p != metav1.DeletePropagationForeground {
+				t.Errorf("deployment deleted with propagation %v, want Foreground", p)
+			}
+		}
+	}
 	// Deployment and Services gone, a pod still draining (the fake has no garbage collector).
 	pods := a.Client.cs.CoreV1().Pods("kyq-hello")
 	pod, err := pods.Create(ctx, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "draining", Namespace: "kyq-hello", Labels: selector("hello")}}, metav1.CreateOptions{})

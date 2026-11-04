@@ -393,7 +393,7 @@ func (s identitySetupStep) relayPassword(ctx context.Context, mode string) error
 	if s.runner {
 		// The password file is on the workstation: the copy KyIdentity's first setup took stands.
 		if s.place(ctx, []string{"exists", s.mail.TargetFile}, nil) != nil {
-			return fmt.Errorf("KyIdentity's copy of the SMTP password, %s, is missing or unsafe, and the suite runner has no %s to copy it from; run kyquickstart handoff --revoke and apply from the workstation, then hand off again", s.mail.TargetFile, s.mail.PasswordFile)
+			return fmt.Errorf("KyIdentity's copy of the SMTP password, %s, is missing or unsafe, and the suite runner has no %s to copy it from; run kyquickstart handoff --revoke and apply from the workstation, then kyquickstart handoff --kyyard-target <target> again", s.mail.TargetFile, s.mail.PasswordFile)
 		}
 		return nil
 	}
