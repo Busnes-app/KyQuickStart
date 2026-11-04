@@ -162,7 +162,7 @@ func waitGone(ctx context.Context, a App, done func(context.Context) error) erro
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("still there after %s (a pod stuck terminating: check its node and finalizers): %w", timeout, err)
+			return fmt.Errorf("not done after %s: %w", timeout, err)
 		}
 		select {
 		case <-ctx.Done():

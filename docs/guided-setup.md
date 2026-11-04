@@ -152,6 +152,7 @@ the plan is saved only after every step passed.
 ```sh
 ./kyquickstart install hello --target nas --state ./morning-test
 # with KyIdentity and its setup already in the plan; <uuid> is a new one, from uuidgen
+# (KyCalendar, KyPulse and KyRecovery keep theirs under /app/data/installer/)
 ./kyquickstart install kydrive --target nas --hostname drive.example.com \
   --forward-host 192.168.1.20 --forward-port 18443 --certificate-id 3 \
   --bundle /data/installer/<uuid>/setup.json --state ./morning-test

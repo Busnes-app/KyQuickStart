@@ -116,7 +116,7 @@ func (s removeStep) Apply(ctx context.Context) error {
 func (s removeStep) Verify(ctx context.Context) error {
 	done, err := s.Inspect(ctx)
 	if err == nil && !done {
-		err = errors.New("deployment, service or pod remains")
+		err = errors.New("deployment, service or pod remains (a pod stuck terminating: check its node and finalizers)")
 	}
 	return err
 }
