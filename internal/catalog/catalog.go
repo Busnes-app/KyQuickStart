@@ -131,7 +131,10 @@ type Backup struct {
 	Skip           []string `yaml:"skip"`
 	// CapsuleSecrets travel in the restic snapshot, encrypted by restic; a subset of secrets.
 	CapsuleSecrets []string `yaml:"capsule_secrets"`
-	RestoreOrder   []string `yaml:"restore_order"` // Compose services, service first
+	// OptionalSecrets are capsule secrets an older snapshot may lack (KyDrive's editor_secret,
+	// added with euro-office): restore leaves them to be generated again instead of refusing.
+	OptionalSecrets []string `yaml:"-"`
+	RestoreOrder    []string `yaml:"restore_order"` // Compose services, service first
 	// ReplayAfter is the restore_order service after which a restore replays KyIdentity's
 	// removals; the services after it start only once the replay is delivered.
 	ReplayAfter string `yaml:"replay_after"`

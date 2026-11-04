@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
@@ -179,7 +180,8 @@ func guided(ctx context.Context, args []string, o Options) error {
 		return errors.New("another plan editor may be active; if it exited unexpectedly, remove plan.lock and retry")
 	}
 	f.Close()
-	defer os.Remove(lock)
+	unlock := sync.OnceFunc(func() { os.Remove(lock) })
+	defer unlock()
 	p := &prompts{ctx: ctx, in: bufio.NewReader(io.LimitReader(o.In, 1<<20)), out: o.Out, answers: map[string]string{}, draft: filepath.Join(*state, "plan-answers.json")}
 	b, err := os.ReadFile(p.draft)
 	if err == nil {
@@ -485,6 +487,7 @@ func guided(ctx context.Context, args []string, o Options) error {
 	if action == "deploy" {
 		command = "apply"
 	}
+	unlock() // the plan is saved; apply publishes its own changes under the same lock
 	return Run(ctx, []string{command, "--state", *state}, o)
 }
 

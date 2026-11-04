@@ -4,6 +4,9 @@
 # `kyquickstart handoff --kyyard-target <this cluster's target> --runner-pod kyq-runner/app=runner`.
 # The catalog KyYard runs the runner in its own pod instead (docs/guided-setup.md, "Catalog
 # KyYard on Kubernetes"); this manifest is for a KyYard the installer does not deploy.
+# The socket is in a pod-local volume: KyYard reaches it only as a container in this pod, as
+# uid 10001, mounting the socket volume and its KY_SUITE_RUNNER_SOCKET naming
+# /run/kyquickstart/sock/runner.sock. Add that container before applying.
 #
 # Edit before applying: the image digest, the claim's storage class, and the NetworkPolicy's
 # API server and SSH target addresses. The placeholders are documentation addresses, so an
@@ -71,6 +74,9 @@ spec:
         runAsNonRoot: true
         runAsUser: 10001
         runAsGroup: 10001
+        # A block storage class gives the claim a root-owned root; this lets uid 10001 write it.
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -78,8 +84,8 @@ spec:
           # Pin a digest after verifying its attestation:
           #   gh attestation verify oci://ghcr.io/busnes-app/kyquickstart-runner:<version> --repo Busnes-app/KyQuickStart
           image: ghcr.io/busnes-app/kyquickstart-runner:stable
-          # Volume roots are the kubelet's, world-writable: the runner works in private
-          # subdirectories it creates (--pod-volumes).
+          # Volume roots may be group- or world-writable (fsGroup, hostPath provisioners): the
+          # runner works in private subdirectories it creates (--pod-volumes).
           command: [kyquickstart, serve, --state, /state/runner, --socket, /run/kyquickstart/sock/runner.sock, --pod-volumes]
           securityContext:
             allowPrivilegeEscalation: false

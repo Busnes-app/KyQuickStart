@@ -72,7 +72,7 @@ func (s fromVolumesStep) Apply(ctx context.Context) error {
 	if _, err := s.a.Runner.Run(ctx, stop, nil); err != nil {
 		return fmt.Errorf("stop %s before copying its volumes: %w", s.a.Name, err)
 	}
-	if out, err := s.a.Runner.Run(ctx, "docker ps -q --filter "+remote.Quote("label=com.docker.compose.project=kyq-"+s.a.Name)+" --filter status=running", nil); err != nil || strings.TrimSpace(string(out)) != "" {
+	if out, err := s.a.Runner.Run(ctx, "docker ps -q --filter "+remote.Quote("label=com.docker.compose.project=kyq-"+s.a.Name)+" --filter status=running --filter status=restarting", nil); err != nil || strings.TrimSpace(string(out)) != "" {
 		return fmt.Errorf("a container of %s still runs, so its volumes are not copied: %w", s.a.Name, errors.Join(err, errors.New("stop it and rerun apply")))
 	}
 	for _, v := range names {

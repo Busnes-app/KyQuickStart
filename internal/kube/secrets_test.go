@@ -76,7 +76,7 @@ func TestSecretsCreatedOnce(t *testing.T) {
 func TestSecretsAddOnlyMissing(t *testing.T) {
 	ctx := context.Background()
 	a, cs := testApp(t, "token", "db_password")
-	if err := a.ensureNamespace(ctx); err != nil {
+	if err := a.ensureNamespace(ctx, true); err != nil {
 		t.Fatal(err)
 	}
 	keep := strings.Repeat("k", 43)
@@ -147,7 +147,7 @@ func TestSecretsConflictIsTransient(t *testing.T) {
 	})
 	t.Run("update", func(t *testing.T) {
 		a, cs := testApp(t, "token")
-		if err := a.ensureNamespace(ctx); err != nil {
+		if err := a.ensureNamespace(ctx, true); err != nil {
 			t.Fatal(err)
 		}
 		cs.CoreV1().Secrets("kyq-hello").Create(ctx, &corev1.Secret{
@@ -163,7 +163,7 @@ func TestSecretsConflictIsTransient(t *testing.T) {
 func TestSecretsRefusesForeignSecret(t *testing.T) {
 	ctx := context.Background()
 	a, cs := testApp(t, "token")
-	if err := a.ensureNamespace(ctx); err != nil {
+	if err := a.ensureNamespace(ctx, true); err != nil {
 		t.Fatal(err)
 	}
 	cs.CoreV1().Secrets("kyq-hello").Create(ctx, &corev1.Secret{

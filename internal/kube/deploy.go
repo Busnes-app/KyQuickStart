@@ -122,7 +122,7 @@ func (d deployStep) Inspect(ctx context.Context) (bool, error) {
 // Apply writes the policy, claims and service, then the Deployment carrying the input hash, so
 // a run that dies early redeploys next time.
 func (d deployStep) Apply(ctx context.Context) error {
-	if err := d.a.ensureNamespace(ctx); err != nil {
+	if err := d.a.ensureNamespace(ctx, false); err != nil {
 		return err
 	}
 	ns := namespaceOf(d.a.Name)
@@ -166,7 +166,10 @@ func (d deployStep) Apply(ctx context.Context) error {
 		}
 	}
 	o.Deployment.Annotations = map[string]string{hashAnnotation: d.hash}
-	return upsert(ctx, cs.AppsV1().Deployments(ns), "deployment", o.Deployment, nil)
+	if err := upsert(ctx, cs.AppsV1().Deployments(ns), "deployment", o.Deployment, nil); err != nil {
+		return err
+	}
+	return d.a.ensureNamespace(ctx, true)
 }
 
 func (d deployStep) Verify(ctx context.Context) error {

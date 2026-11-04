@@ -91,7 +91,7 @@ func TestDeployInspectSeesDrift(t *testing.T) {
 func TestDeployRefusesForeignObject(t *testing.T) {
 	ctx := context.Background()
 	a, cs := testApp(t, "token")
-	if err := a.ensureNamespace(ctx); err != nil {
+	if err := a.ensureNamespace(ctx, true); err != nil {
 		t.Fatal(err)
 	}
 	foreign := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: appName, Namespace: "kyq-hello", Labels: map[string]string{"team": "other"}}}
@@ -109,7 +109,7 @@ func TestDeployRefusesForeignObject(t *testing.T) {
 func TestDeployKeepsExistingClaim(t *testing.T) {
 	ctx := context.Background()
 	a, cs := testApp(t, "token")
-	if err := a.ensureNamespace(ctx); err != nil {
+	if err := a.ensureNamespace(ctx, true); err != nil {
 		t.Fatal(err)
 	}
 	claim := renderHello(a.Catalog, "rs-0", "").Claims[0]
@@ -190,7 +190,7 @@ func TestDeployRefusesClaimStorageClassChange(t *testing.T) {
 	for name, have := range map[string]*string{"other class": ptr.To("standard"), "no class": nil} {
 		t.Run(name, func(t *testing.T) {
 			a, cs := testApp(t, "token")
-			if err := a.ensureNamespace(ctx); err != nil {
+			if err := a.ensureNamespace(ctx, true); err != nil {
 				t.Fatal(err)
 			}
 			claim := renderHello(a.Catalog, "rs-0", "").Claims[0]

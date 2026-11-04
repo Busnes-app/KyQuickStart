@@ -784,8 +784,17 @@ func TestGuidedKyMessageRoutes(t *testing.T) {
 	if n := strings.Count(out.String(), "Please enter a valid value"); n != 2 {
 		t.Errorf("%d refusals of the wildcard and loopback addresses, want 2", n)
 	}
-	if _, err := withRoute(st, "kymessage", st.Targets[0], cat["kymessage"]); err != nil {
+	// KyMessages trusts forwarded headers from exactly its edge's address, which plan does not ask.
+	if _, err := withRoute(st, "kymessage", st.Targets[0], cat["kymessage"]); err == nil || !strings.Contains(err.Error(), "set egress_address on edge nas") {
+		t.Fatalf("routes without the edge's egress_address: %v", err)
+	}
+	st.Edges[0].EgressAddress = "192.0.2.50"
+	app, err := withRoute(st, "kymessage", st.Targets[0], cat["kymessage"])
+	if err != nil {
 		t.Fatalf("guided routes refused: %v", err)
+	}
+	if !strings.Contains(string(app.Compose), `KY_TRUSTED_PROXIES: "192.0.2.50"`) {
+		t.Error("the console does not trust the edge's address")
 	}
 }
 

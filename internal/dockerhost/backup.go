@@ -201,7 +201,13 @@ func (s Store) Backup(ctx context.Context) (id string, created bool, err error) 
 			err = fmt.Errorf("docker compose stop: %w", err)
 			return "", created, errors.Join(err, s.restart(ctx, svcs))
 		}
-		defer func() { err = errors.Join(err, s.restart(ctx, svcs)) }()
+		defer func() {
+			if rerr := s.restart(ctx, svcs); rerr != nil && err == nil {
+				err = &NotRestartedError{Err: rerr}
+			} else {
+				err = errors.Join(err, rerr)
+			}
+		}()
 	}
 	if len(b.Command) > 0 {
 		// The dump is plaintext: it never outlives this run, whatever fails.
@@ -248,6 +254,15 @@ func (s Store) Backup(ctx context.Context) (id string, created bool, err error) 
 	}
 	return id, created, nil
 }
+
+// NotRestartedError is a backup whose snapshot passed restic check but whose app did not come
+// back healthy after it.
+type NotRestartedError struct{ Err error }
+
+func (e *NotRestartedError) Error() string {
+	return "the snapshot passed restic check, but the app did not come back healthy: " + e.Err.Error()
+}
+func (e *NotRestartedError) Unwrap() error { return e.Err }
 
 // restart starts the stopped project, or only the quoted services svcs, and waits for its
 // health, even after ctx is cancelled.
@@ -320,9 +335,10 @@ func (s Store) Snapshots(ctx context.Context, password, id string) ([]Snapshot, 
 	return list, nil
 }
 
-// Running reports whether any container of the app's project is running.
+// Running reports whether any container of the app's project is running, or restarting: a
+// crash-looping one starts again, and Docker recreates a missing bind directory as root.
 func (s Store) Running(ctx context.Context) (bool, error) {
-	out, err := s.App.Runner.Run(ctx, "docker ps -q --filter "+remote.Quote("label=com.docker.compose.project=kyq-"+s.App.Name)+" --filter status=running", nil)
+	out, err := s.App.Runner.Run(ctx, "docker ps -q --filter "+remote.Quote("label=com.docker.compose.project=kyq-"+s.App.Name)+" --filter status=running --filter status=restarting", nil)
 	return strings.TrimSpace(string(out)) != "", err
 }
 
@@ -457,13 +473,16 @@ for v in ` + quoteAll(b.Volumes) + `; do
   [ ! -L "$f/volumes/$v" ] && [ -n "$(find "$f/volumes/$v" -prune -type d)" ] || { echo "the snapshot has no volume directory $v" >&2; exit 1; }
 done
 for n in ` + quoteAll(b.CapsuleSecrets) + `; do
-  [ ! -L "$f/secrets/$n" ] && [ -n "$(find "$f/secrets/$n" -prune -type f)" ] || { echo "the snapshot has no secret file $n" >&2; exit 1; }
+  [ ! -L "$f/secrets/$n" ] && [ -n "$(find "$f/secrets/$n" -prune -type f)" ] && continue
+  case " ` + strings.Join(b.OptionalSecrets, " ") + ` " in *" $n "*) [ -e "$f/secrets/$n" ] || [ -L "$f/secrets/$n" ] || continue ;; esac
+  echo "the snapshot has no secret file $n" >&2; exit 1
 done
 ` + keepPassword + `for v in ` + quoteAll(b.Volumes) + `; do
   if [ -d "$v" ]; then rmdir "$v" || exit 1; fi
   mv "$f/volumes/$v" "$v" || exit 1
 done
 for n in ` + quoteAll(b.CapsuleSecrets) + `; do
+  [ -e "$f/secrets/$n" ] || continue # optional, from an older snapshot: generated again
   chmod 600 "$f/secrets/$n" && ln "$f/secrets/$n" secrets/"$n" || exit 1
 done`
 	if _, err := s.App.Runner.Run(ctx, cmd, nil); err != nil {

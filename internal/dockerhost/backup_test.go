@@ -500,3 +500,60 @@ func TestBackupKeepsNoPasswordForAnExistingRepository(t *testing.T) {
 		t.Fatalf("a generated password stayed: %v %v", has, err)
 	}
 }
+
+// A crash-looping container is restarting between attempts, not running: restore still
+// refuses it, or Docker would restart it on half-moved bind directories.
+func TestRunningCountsRestarting(t *testing.T) {
+	f := &fakeRunner{reply: func(cmd string) ([]byte, error) {
+		if strings.Contains(cmd, "--filter status=running --filter status=restarting") {
+			return []byte("c0ffee\n"), nil
+		}
+		return nil, nil
+	}}
+	if up, err := (Store{App: App{Name: "fixture", Runner: f}}).Running(context.Background()); err != nil || !up {
+		t.Fatalf("running = %v, %v", up, err)
+	}
+}
+
+// A capsule secret added later (KyDrive's editor_secret with euro-office) travels in new
+// snapshots, and an older snapshot without it still restores, leaving it to be generated.
+func TestRestoreOptionalCapsuleSecret(t *testing.T) {
+	st, _ := backupFixture(t, false)
+	ctx := context.Background()
+	dir := st.App.dir()
+	old, _, err := st.Backup(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := *st.App.Catalog.Backup
+	b.CapsuleSecrets, b.OptionalSecrets = []string{"db_password", "other"}, []string{"other"}
+	st.App.Catalog.Backup = &b
+	os.WriteFile(filepath.Join(dir, "secrets", "other"), []byte("editor-key"), 0o600)
+	current, _, err := st.Backup(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pw, _ := os.ReadFile(st.PasswordFile())
+	for id, want := range map[string]string{old: "", current: "editor-key"} {
+		os.RemoveAll(dir)
+		received, err := st.ReceivePassword(ctx, pw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := st.RestoreFiles(ctx, received, id[:8]); err != nil {
+			t.Fatalf("snapshot %s: %v", id[:8], err)
+		}
+		if got, _ := os.ReadFile(filepath.Join(dir, "secrets", "other")); string(got) != want {
+			t.Errorf("snapshot %s: other = %q, want %q", id[:8], got, want)
+		}
+		if got, _ := os.ReadFile(filepath.Join(dir, "secrets", "db_password")); string(got) != dbSecret {
+			t.Errorf("snapshot %s: db_password = %q", id[:8], got)
+		}
+	}
+	b.OptionalSecrets = nil
+	os.RemoveAll(dir)
+	received, _ := st.ReceivePassword(ctx, pw)
+	if err := st.RestoreFiles(ctx, received, old[:8]); err == nil || !strings.Contains(err.Error(), "the snapshot has no secret file other") {
+		t.Fatalf("a required secret missing: %v", err)
+	}
+}

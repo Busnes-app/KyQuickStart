@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -703,5 +704,59 @@ func TestPruneCopies(t *testing.T) {
 	}
 	if err := f.run("prune-copies", "web", "--yes"); code(err) != suite.InvalidRequest || !strings.Contains(err.Error(), "runs on Docker") {
 		t.Errorf("Docker app: %v", err)
+	}
+}
+
+// Restore deploys this release's version on the snapshot's data, so it refuses a snapshot from
+// a newer version, or one this version's upgrade rules do not start on, before changing anything.
+func TestRestoreRefusesSnapshotVersions(t *testing.T) {
+	f, fake, _ := backupFixture(t)
+	if err := f.run("backup", "dumpdemo"); err != nil {
+		t.Fatal(err, f.out.String())
+	}
+	id := snapshotID(t, f, "")
+	os.WriteFile(filepath.Join(fake, "compose.json"), []byte(`{"db":false,"web":false}`), 0o600)
+	metas, _ := filepath.Glob(filepath.Join(fake, "repo", "*", "snapshots", "*.json"))
+	b, _ := os.ReadFile(metas[0])
+	for version, want := range map[string]string{
+		"1.1.0": "holds dumpdemo 1.1.0, newer than this release's 1.0.0",
+		"0.9.0": "holds dumpdemo 0.9.0, which this release's 1.0.0 cannot start on",
+	} {
+		os.WriteFile(metas[0], bytes.Replace(b, []byte(`"version=1.0.0"`), []byte(`"version=`+version+`"`), 1), 0o600)
+		f.o.Catalog = dumpCatalog
+		if version == "0.9.0" {
+			gated := maps.Clone(dumpCatalog)
+			gated["dumpdemo/manifest.yaml"] = &fstest.MapFile{Data: append(slices.Clone(dumpCatalog["dumpdemo/manifest.yaml"].Data), []byte("upgrade:\n  min_from: 0.9.5\n")...)}
+			f.o.Catalog = gated
+		}
+		if err := f.runIn("", "restore", "dumpdemo", "--snapshot", id, "--replace", "--yes"); code(err) != suite.RestoreRefused || !strings.Contains(err.Error(), want) {
+			t.Fatalf("%s: %v", version, err)
+		}
+	}
+	if b, _ := os.ReadFile(filepath.Join(f.h.root, "dumpdemo", "files", "docs", "a.txt")); string(b) != "kept" {
+		t.Error("a refused restore changed the app")
+	}
+}
+
+// An app that does not come back healthy after a verified pre-upgrade snapshot (often why it
+// is upgraded) is still upgraded, the record saying so; a failed snapshot still stops it.
+func TestUpgradeOverAnAppThatDidNotRestart(t *testing.T) {
+	f, _, k := backupFixture(t)
+	dir := filepath.Join(f.h.root, "dumpdemo")
+	next := fstest.MapFS{"dumpdemo/compose.yaml.tmpl": dumpCatalog["dumpdemo/compose.yaml.tmpl"]}
+	next["dumpdemo/manifest.yaml"] = &fstest.MapFile{Data: []byte(strings.Replace(string(dumpCatalog["dumpdemo/manifest.yaml"].Data), "version: 1.0.0\n", "version: 1.1.0\nupgrade:\n  migrates_data: true\n", 1))}
+	f.o.Catalog = next
+	k.match = " start 'web'"
+	err := f.run("upgrade", "dumpdemo")
+	k.match = ""
+	if err != nil {
+		t.Fatal(err, f.out.String())
+	}
+	rec, _ := engine.Read(filepath.Join(f.state, "results"), "dumpdemo.pre-upgrade-backup")
+	if rec.Status != "ok" || !strings.Contains(rec.Diagnostics, "(restic check passed)") || !strings.Contains(rec.Diagnostics, "dumpdemo did not come back healthy after it") {
+		t.Fatalf("backup record = %+v", rec)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "compose.kyq.yaml")); !strings.Contains(string(b), managed.VersionLabel+": 1.1.0") {
+		t.Fatalf("not upgraded:\n%s", b)
 	}
 }

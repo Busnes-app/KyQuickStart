@@ -61,6 +61,11 @@ func withEditor(drive catalog.App, host string) (catalog.App, error) {
 	}
 	drive.Compose = []byte(compose)
 	drive.Secrets = append(slices.Clone(drive.Secrets), editorSecret)
+	// A restore needs the editor's key back, or euro-office no longer opens KyDrive's documents.
+	b := *drive.Backup
+	b.CapsuleSecrets = append(slices.Clone(b.CapsuleSecrets), editorSecret)
+	b.OptionalSecrets = []string{editorSecret}
+	drive.Backup = &b
 	return drive, nil
 }
 

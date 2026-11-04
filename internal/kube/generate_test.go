@@ -79,7 +79,7 @@ func TestClusterGenerationFailureIsNonmutatingAndPrivate(t *testing.T) {
 
 func TestClusterRetainsEmptyExistingCredentialForInspection(t *testing.T) {
 	a, cs := testApp(t, "token")
-	if err := a.ensureNamespace(context.Background()); err != nil {
+	if err := a.ensureNamespace(context.Background(), true); err != nil {
 		t.Fatal(err)
 	}
 	_, err := cs.CoreV1().Secrets("kyq-hello").Create(context.Background(), &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: "kyq-hello", Labels: workloadLabels("rs")}, Data: map[string][]byte{"token": {}}}, metav1.CreateOptions{})

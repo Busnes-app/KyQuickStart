@@ -4,7 +4,12 @@ Plain terminal planning and command orchestration for the operator-run installer
 
 ## Ownership
 
-- Guided questions, resume answers, plan review and publishing: `guided.go`. `showPlan` names an
+- Guided questions, resume answers, plan review and publishing: `guided.go`. Re-running `plan`
+  keeps what it never asks (`keepUnasked`: an app's `stopped`, `node_ports`, LoadBalancer
+  addresses and `recovery_key_id` on the same target; an edge's `egress_address` and `lan_dns`
+  for the same provider), accepts the catalog NPM's `kube://` `npm_url`, refuses plans whose
+  routes name certificates, asks an installed app's setup for no workload, and releases
+  `plan.lock` before running `preflight` or `apply`. `showPlan` names an
   edge whose NPM is the plan's catalog `npm` as installed, lists its certificates and prints
   each route's URL host (`Edge.URLHost`, with an internal route's `client_port`).
 - CLI dispatch, target connections and locked deployment: `cli.go` and `driver.go`. `apply`
@@ -16,7 +21,8 @@ Plain terminal planning and command orchestration for the operator-run installer
   `version` prints the release set; `version --runner-image` prints `Options.RunnerImage` or
   fails "this build pins no suite runner image (source build); use a release binary".
 - `suite.go` owns `install`, `uninstall`, `unmanage`, `upgrade` and `status`, the upgrade gate
-  and plan publication. The exported `Install`, `Uninstall`, `Unmanage`, `Upgrade` and `Status`
+  and plan publication. `withSetupSources` also connects KyDrive's target for `euro-office`
+  (its `jwt_secret`); removing `npm` is refused while its target's edge routes other apps. The exported `Install`, `Uninstall`, `Unmanage`, `Upgrade` and `Status`
   take a context, state directory and `Options` (with `Progress`) so the suite runner calls
   them without flag parsing; they return `internal/suite` errors and status.
 - `lifecycle.go` owns `stop`, `start`, `restart` and `logs` (Docker and Kubernetes, one app
@@ -73,8 +79,9 @@ Plain terminal planning and command orchestration for the operator-run installer
   `oidc` block unless the plan's KyIdentity deployment record is `replayVersion` (0.4.4) or
   later (an `existing` KyIdentity is refused); `replayRemovals` runs `resync-system --client
   <identity_client> --wait 10m` through the target driver in KyIdentity's container (`kube.ExecReport` on Kubernetes, managed-service `docker exec` on Docker) and accepts only `delivered`, else `restore_incomplete`. `restoreLocked` refuses a
-  running app and existing data without `--replace` before contacting the repository, then a
-  foreign snapshot; `--replace`/`--yes` without `--snapshot` are refused; it wants the typed name
+  running (or restarting) app and existing data without `--replace` before contacting the
+  repository, then a foreign snapshot and one whose `version=` tag is newer than the catalog's
+  or outside its `upgrade` rules; `--replace`/`--yes` without `--snapshot` are refused; it wants the typed name
   or `--yes`, reads a lost password from `Options.Stdin` (no echo on a terminal) and records
   its stage in `.restore-pending`, so a rerun resumes; while that file exists every other
   Docker operation on the app refuses: deploy (`apply`, `install`, `upgrade`; `App.Restoring`
