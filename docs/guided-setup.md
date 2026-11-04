@@ -170,8 +170,8 @@ the plan is saved only after every step passed.
   no lock and redacts only the secrets the app's catalog entry generates. `status` reads each app's live
   state (`running`, `stopped`, `missing`, `unknown`).
 - `uninstall` refuses while another installed app depends on it, and `uninstall`/`unmanage`
-  refuse the catalog `npm` while its target's edge routes other apps (remove those routes
-  first). It drops the app, its routes
+  refuse the catalog `npm` while its target's edge routes other apps through it (`kube://`
+  `npm_url`; remove those routes first). It drops the app, its routes
   and its `integrations` entry from the plan, disables the app's NPM routes, removes its containers (`docker compose down`, never `-v`) or its Deployment and
   Service, and keeps the app directory, data volumes, claims and secrets on the target.
 - `unmanage` removes `ky.managed-by` and `ky.release-set` and records the hand-over in
@@ -338,7 +338,8 @@ refused without `--snapshot`:
    repository. It then refuses a snapshot not tagged for this app and installation, and one
    whose `version=` tag is newer than the catalog's version or one the catalog's `upgrade`
    rules do not start on (`min_from`, `no_skip`): restore deploys the catalog's version on the
-   snapshot's data, so use the kyquickstart release that matches. If
+   snapshot's data, so use the kyquickstart release that matches (a snapshot of an app deployed
+   before versions were recorded has none and is not checked). If
    `restic_password` is gone, it reads the recorded one from stdin (without echo on a
    terminal; piped, on its own line, followed by the app name, or alone with `--yes`) and saves
    it only once the files are restored.
@@ -425,7 +426,8 @@ private Unix socket. The runner holds its own SSH key and kubeconfigs; KyYard ho
    On a Kubernetes target the catalog KyYard runs the runner in its own pod ("Catalog KyYard
    on Kubernetes"); for a KyYard the installer does not deploy, use
    [`kyyard-runner.k8s.yaml`](kyyard-runner.k8s.yaml) after editing its image digest, storage
-   class and NetworkPolicy addresses, and adding KyYard as a container in the same pod: the
+   class and NetworkPolicy addresses (on a block storage class, a new claim also needs the
+   `fsGroup` its comment describes), and adding KyYard as a container in the same pod: the
    socket is in a pod-local volume.
 2. KyYard's target must be in `stack.yaml`. On a Docker target its SSH user must be able to run
    `docker exec`; on a Kubernetes target the workstation's kubeconfig must allow list pods and

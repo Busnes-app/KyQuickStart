@@ -529,8 +529,9 @@ func (s *session) restoreLocked(ctx context.Context, st dockerhost.Store, r rest
 	// Restore starts this release's version on the snapshot's data: the upgrade rules apply.
 	app := st.App.Catalog
 	for _, tag := range snap.Tags {
+		// A snapshot of an app deployed before versions were recorded has an empty one.
 		v, ok := strings.CutPrefix(tag, "version=")
-		if !ok || v == app.Version {
+		if !ok || v == "" || v == app.Version {
 			continue
 		}
 		if catalog.VersionAtLeast(v, app.Version) {

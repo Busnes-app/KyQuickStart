@@ -341,9 +341,9 @@ func remove(ctx context.Context, state string, r Request, trust trustFlag, o Opt
 			return suite.Errorf(suite.Dependency, "%s depends on %s", other, name)
 		}
 	}
-	// The plan's catalog NPM is the NPM of every edge on its target but a direct one.
+	// The catalog NPM is the one a kube:// npm_url on its target names.
 	for _, e := range s.plan.Edges {
-		if name == "npm" && e.Target == t.Name && !e.Direct() && slices.ContainsFunc(e.Routes, func(r stack.Route) bool { return r.App != name }) {
+		if _, _, _, kube := stack.KubeService(e.NPMURL); name == "npm" && kube && e.Target == t.Name && slices.ContainsFunc(e.Routes, func(r stack.Route) bool { return r.App != name }) {
 			return suite.Errorf(suite.Dependency, "edge %s routes its apps through npm; remove those routes from stack.yaml first", e.Target)
 		}
 	}

@@ -451,13 +451,15 @@ func (s Store) RestoreFiles(ctx context.Context, password, id string) error {
 	if len(b.CapsuleSecrets) > 0 {
 		parents = append(parents, "secrets")
 	}
-	// A secrets volume (kyPulse's) takes the target's restic_password along; an older
-	// snapshot's copy of it is dropped.
-	keepPassword := ""
+	// A secrets volume (kyPulse's) keeps the target's restic_password: it waits beside the app
+	// (where MoveAside also puts it back from) while the volume moves, and an older snapshot's
+	// copy of it is dropped.
+	keepPassword, keptPassword := "", ""
 	if slices.Contains(b.Volumes, "secrets") {
 		keepPassword = `rm -rf "$f/volumes/secrets/` + catalog.ResticPassword + `" || exit 1
-if [ -e secrets/` + catalog.ResticPassword + ` ]; then mv secrets/` + catalog.ResticPassword + ` "$f/volumes/secrets/` + catalog.ResticPassword + `" || exit 1; fi
+if [ -e secrets/` + catalog.ResticPassword + ` ]; then mv secrets/` + catalog.ResticPassword + ` .kept-` + catalog.ResticPassword + ` || exit 1; fi
 `
+		keptPassword = "\nif [ -e .kept-" + catalog.ResticPassword + " ]; then mv .kept-" + catalog.ResticPassword + " secrets/" + catalog.ResticPassword + " || exit 1; fi"
 	}
 	dumpCheck := ""
 	if len(b.Command) > 0 {
@@ -484,7 +486,7 @@ done
 for n in ` + quoteAll(b.CapsuleSecrets) + `; do
   [ -e "$f/secrets/$n" ] || continue # optional, from an older snapshot: generated again
   chmod 600 "$f/secrets/$n" && ln "$f/secrets/$n" secrets/"$n" || exit 1
-done`
+done` + keptPassword
 	if _, err := s.App.Runner.Run(ctx, cmd, nil); err != nil {
 		return fmt.Errorf("move the restored files into place: %w", err)
 	}

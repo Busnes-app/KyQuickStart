@@ -138,7 +138,12 @@ func (s lifecycleStep) patch(ctx context.Context, change map[string]any) error {
 }
 
 func (s lifecycleStep) waitStopped(ctx context.Context) error {
-	timeout := time.Duration(s.a.Catalog.Health.TimeoutSeconds) * time.Second
+	// Its pods drain for up to their grace period (Kubernetes' default is 30 s) before they go.
+	grace := int64(30)
+	if k := s.a.Catalog.Kubernetes; k != nil && k.TerminationGraceSeconds > 0 {
+		grace = k.TerminationGraceSeconds
+	}
+	timeout := time.Duration(s.a.Catalog.Health.TimeoutSeconds+int(grace)) * time.Second
 	deadline := time.Now().Add(timeout)
 	for {
 		err := s.Verify(ctx)

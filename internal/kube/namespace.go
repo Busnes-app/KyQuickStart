@@ -29,7 +29,14 @@ func (a App) namespaceLabels() map[string]string {
 func (a App) ensureNamespace(ctx context.Context, version bool) error {
 	l := a.namespaceLabels()
 	if !version {
-		delete(l, managed.VersionLabel)
+		// A new namespace, or one that records no version, gets this one at once.
+		d, err := a.Client.Deployed(ctx, a.Name)
+		if err != nil {
+			return err
+		}
+		if d.Version != "" {
+			delete(l, managed.VersionLabel)
+		}
 	}
 	return a.Client.ensureNamespace(ctx, namespaceOf(a.Name), l)
 }

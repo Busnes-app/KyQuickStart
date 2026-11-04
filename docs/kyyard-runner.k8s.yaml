@@ -74,9 +74,10 @@ spec:
         runAsNonRoot: true
         runAsUser: 10001
         runAsGroup: 10001
-        # A block storage class gives the claim a root-owned root; this lets uid 10001 write it.
-        fsGroup: 10001
-        fsGroupChangePolicy: OnRootMismatch
+        # A block storage class (Longhorn, Ceph RBD, EBS) gives a new claim a root-owned 0755
+        # root that uid 10001 cannot write: for such a class, on a new claim only, add
+        # fsGroup: 10001 here. On a claim the runner already uses, it would loosen the runner's
+        # private files, which it then refuses.
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -84,8 +85,8 @@ spec:
           # Pin a digest after verifying its attestation:
           #   gh attestation verify oci://ghcr.io/busnes-app/kyquickstart-runner:<version> --repo Busnes-app/KyQuickStart
           image: ghcr.io/busnes-app/kyquickstart-runner:stable
-          # Volume roots may be group- or world-writable (fsGroup, hostPath provisioners): the
-          # runner works in private subdirectories it creates (--pod-volumes).
+          # Volume roots are the kubelet's, world-writable: the runner works in private
+          # subdirectories it creates (--pod-volumes).
           command: [kyquickstart, serve, --state, /state/runner, --socket, /run/kyquickstart/sock/runner.sock, --pod-volumes]
           securityContext:
             allowPrivilegeEscalation: false

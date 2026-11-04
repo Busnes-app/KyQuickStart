@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/kube"
+	"github.com/Busnes-app/kyquickstart/internal/remote"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
 	"go.yaml.in/yaml/v3"
 )
@@ -342,15 +344,37 @@ func TestGuidedKeepsUnaskedFields(t *testing.T) {
 		t.Fatalf("re-planned: %+v, %v", st, err)
 	}
 
+	// check and deploy run with plan.lock released: apply publishes under the same lock.
+	saved := dialTarget
+	t.Cleanup(func() { dialTarget = saved })
+	locked := true
+	dialTarget = func(context.Context, stack.Target, remote.SSHConfig, bool) (driver, error) {
+		_, err := os.Stat(filepath.Join(dir, "plan.lock"))
+		locked = err == nil
+		return nil, errors.New("not connected")
+	}
+	o.In = strings.NewReader(strings.Repeat("\n", 13) + "check\n")
+	out.Reset()
+	err := Run(context.Background(), []string{"plan", "--state", dir}, o)
+	if locked {
+		t.Errorf("preflight ran with plan.lock held (%v):\n%s", err, out.String())
+	}
+
 	previous := &stack.Stack{
-		Apps:  []stack.App{{Name: "npm", Target: "k1", NodePorts: map[int]int{443: 31443}, LoadBalancerAddress: "192.0.2.9", Stopped: true}, {Name: "kyrecovery", Target: "k1", RecoveryKeyID: strings.Repeat("ab", 32)}},
-		Edges: []stack.Edge{{Target: "k1", Provider: "lan", EgressAddress: "192.0.2.9", LANDNS: &stack.LANDNS{Provider: "kydns"}}},
+		Apps:         []stack.App{{Name: "npm", Target: "k1", NodePorts: map[int]int{443: 31443}, LoadBalancerAddress: "192.0.2.9", Stopped: true}, {Name: "kyrecovery", Target: "k1", RecoveryKeyID: strings.Repeat("ab", 32)}},
+		Edges:        []stack.Edge{{Target: "k1", Provider: "lan", EgressAddress: "192.0.2.9", LANDNS: &stack.LANDNS{Provider: "kydns"}}},
+		Domains:      &stack.Domains{Internal: "lan.example.com", External: "example.com"},
+		Integrations: []stack.Integration{{Product: "kypulse", Target: "k1", IdentityAmendment: "2b4c3d6e-0a1b-4c2d-8e3f-4a5b6c7d8e9f"}},
 	}
 	st := &stack.Stack{
-		Apps:  []stack.App{{Name: "npm", Target: "k1"}, {Name: "kyrecovery", Target: "k2"}},
-		Edges: []stack.Edge{{Target: "k1", Provider: "lan"}},
+		Apps:         []stack.App{{Name: "npm", Target: "k1"}, {Name: "kyrecovery", Target: "k2"}},
+		Edges:        []stack.Edge{{Target: "k1", Provider: "lan"}},
+		Integrations: []stack.Integration{{Product: "kypulse", Target: "k1"}},
 	}
 	keepUnasked(st, previous)
+	if st.Domains == nil || st.Domains.External != "example.com" || st.Integrations[0].IdentityAmendment != previous.Integrations[0].IdentityAmendment {
+		t.Errorf("domains %+v, integration %+v", st.Domains, st.Integrations[0])
+	}
 	if a := st.Apps[0]; !a.Stopped || a.NodePorts[443] != 31443 || a.LoadBalancerAddress != "192.0.2.9" {
 		t.Errorf("npm = %+v", a)
 	}

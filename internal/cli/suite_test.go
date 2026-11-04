@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -417,5 +418,11 @@ func TestRemoveRefusesNPMWithRoutes(t *testing.T) {
 		if err := f.run(cmd, "npm"); code(err) != suite.Dependency || !strings.Contains(err.Error(), "edge k1 routes its apps through npm") {
 			t.Fatalf("%s npm: %v", cmd, err)
 		}
+	}
+	// An edge on an existing NPM elsewhere does not need the catalog's.
+	b, _ := os.ReadFile(filepath.Join(f.state, "stack.yaml"))
+	os.WriteFile(filepath.Join(f.state, "stack.yaml"), bytes.Replace(b, []byte("kube://kyq-npm/app:81"), []byte("https://npm.example.com"), 1), 0o600)
+	if err := f.run("uninstall", "npm"); code(err) == suite.Dependency {
+		t.Fatalf("uninstall beside an external NPM: %v", err)
 	}
 }

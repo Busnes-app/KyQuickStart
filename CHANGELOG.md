@@ -24,7 +24,8 @@ state directory, target data and target-held credentials; do not reset them as a
   that does not come back healthy after a verified pre-upgrade snapshot is still upgraded;
   on Kubernetes an app is stopped only once its pods are gone, and a failed deploy no longer
   records the new version. `plan` keeps the fields it does not ask (`stopped`, `node_ports`,
-  LoadBalancer addresses, `recovery_key_id`, `egress_address`, `lan_dns`), accepts a `kube://`
+  LoadBalancer addresses, `recovery_key_id`, `egress_address`, `lan_dns`, `identity_amendment`,
+  `domains`), accepts a `kube://`
   `npm_url` and an installed app's setup, and its `deploy` no longer collides with its own
   `plan.lock`. Refusals: removing `npm` while its edge routes other apps, KyMessages without
   the edge's `egress_address`, and `frp` on a cluster's NPM. Upgrade impact: a KyMessages plan

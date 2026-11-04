@@ -785,10 +785,18 @@ func review(args []string, o Options) error {
 
 // keepUnasked carries over from the saved plan what the wizard never asks: an app's stop intent,
 // node ports, LoadBalancer addresses and confirmed recovery key while it stays on its target,
-// and an edge's egress_address and lan_dns while it keeps its provider.
+// an edge's egress_address and lan_dns while it keeps its provider, a setup's
+// identity_amendment, and the plan's domains.
 func keepUnasked(st, previous *stack.Stack) {
 	if previous == nil {
 		return
+	}
+	st.Domains = previous.Domains
+	for i := range st.Integrations {
+		in := &st.Integrations[i]
+		if j := slices.IndexFunc(previous.Integrations, func(p stack.Integration) bool { return p.Product == in.Product && p.Target == in.Target }); j >= 0 {
+			in.IdentityAmendment = previous.Integrations[j].IdentityAmendment
+		}
 	}
 	for i := range st.Apps {
 		a := &st.Apps[i]

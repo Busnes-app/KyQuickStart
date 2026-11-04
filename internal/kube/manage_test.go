@@ -129,4 +129,15 @@ func TestFailedDeployKeepsInstalledVersion(t *testing.T) {
 	if d, err := a.Client.Deployed(ctx, "hello"); err != nil || d.Version != "1.11.0" {
 		t.Fatalf("deployed = %+v, %v", d, err)
 	}
+	// A new install that fails records its version at once, so a later release's gate knows it.
+	fresh, _ := testApp(t)
+	fresh.Client.cs.(*fake.Clientset).PrependReactor("create", "deployments", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("refused")
+	})
+	for _, s := range Steps(fresh)[:2] {
+		s.Apply(ctx)
+	}
+	if d, err := fresh.Client.Deployed(ctx, "hello"); err != nil || d.Version != "1.11.0" {
+		t.Fatalf("failed new install = %+v, %v", d, err)
+	}
 }

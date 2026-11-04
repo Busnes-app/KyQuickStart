@@ -7,7 +7,7 @@ Plain terminal planning and command orchestration for the operator-run installer
 - Guided questions, resume answers, plan review and publishing: `guided.go`. Re-running `plan`
   keeps what it never asks (`keepUnasked`: an app's `stopped`, `node_ports`, LoadBalancer
   addresses and `recovery_key_id` on the same target; an edge's `egress_address` and `lan_dns`
-  for the same provider), accepts the catalog NPM's `kube://` `npm_url`, refuses plans whose
+  for the same provider; a setup's `identity_amendment`; `domains`), accepts the catalog NPM's `kube://` `npm_url`, refuses plans whose
   routes name certificates, asks an installed app's setup for no workload, and releases
   `plan.lock` before running `preflight` or `apply`. `showPlan` names an
   edge whose NPM is the plan's catalog `npm` as installed, lists its certificates and prints
@@ -22,7 +22,7 @@ Plain terminal planning and command orchestration for the operator-run installer
   fails "this build pins no suite runner image (source build); use a release binary".
 - `suite.go` owns `install`, `uninstall`, `unmanage`, `upgrade` and `status`, the upgrade gate
   and plan publication. `withSetupSources` also connects KyDrive's target for `euro-office`
-  (its `jwt_secret`); removing `npm` is refused while its target's edge routes other apps. The exported `Install`, `Uninstall`, `Unmanage`, `Upgrade` and `Status`
+  (its `jwt_secret`); removing `npm` is refused while an edge on its target names it (`kube://` `npm_url`) and routes other apps. The exported `Install`, `Uninstall`, `Unmanage`, `Upgrade` and `Status`
   take a context, state directory and `Options` (with `Progress`) so the suite runner calls
   them without flag parsing; they return `internal/suite` errors and status.
 - `lifecycle.go` owns `stop`, `start`, `restart` and `logs` (Docker and Kubernetes, one app

@@ -736,6 +736,15 @@ func TestRestoreRefusesSnapshotVersions(t *testing.T) {
 	if b, _ := os.ReadFile(filepath.Join(f.h.root, "dumpdemo", "files", "docs", "a.txt")); string(b) != "kept" {
 		t.Error("a refused restore changed the app")
 	}
+	// A snapshot with no version recorded (deployed before versions were) restores.
+	f.o.Catalog = dumpCatalog
+	for _, version := range []string{""} {
+		os.WriteFile(metas[0], bytes.Replace(b, []byte(`"version=1.0.0"`), []byte(`"version=`+version+`"`), 1), 0o600)
+		os.WriteFile(filepath.Join(fake, "compose.json"), []byte(`{"db":false,"web":false}`), 0o600)
+		if err := f.runIn("", "restore", "dumpdemo", "--snapshot", id, "--replace", "--yes"); err != nil {
+			t.Fatalf("version %q: %v\n%s", version, err, f.out.String())
+		}
+	}
 }
 
 // An app that does not come back healthy after a verified pre-upgrade snapshot (often why it
