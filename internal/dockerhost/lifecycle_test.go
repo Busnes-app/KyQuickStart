@@ -96,6 +96,7 @@ func TestRestartAlwaysRuns(t *testing.T) {
 	if done, err := r.Inspect(ctx); err != nil || done {
 		t.Fatalf("restart inspect: %v %v", done, err)
 	}
+	h.calls = nil
 	if err := r.Apply(ctx); err != nil || !strings.HasSuffix(h.calls[0], " restart") {
 		t.Fatalf("restart: %v %q", err, h.calls)
 	}

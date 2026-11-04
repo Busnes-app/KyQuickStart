@@ -172,6 +172,10 @@ func (s Store) Backup(ctx context.Context) (id string, created bool, err error) 
 	if err := refuseUnfinishedRestore(ctx, s.App); err != nil {
 		return "", false, err
 	}
+	// Containers from another root write elsewhere: a snapshot of this root would be stale.
+	if err := s.App.owned(ctx); err != nil {
+		return "", false, err
+	}
 	// Until apply copies them, an earlier install's data is in its volumes and the bind
 	// directories a snapshot would read are empty.
 	if len(s.App.Catalog.FromVolumes) > 0 {

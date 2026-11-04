@@ -144,6 +144,28 @@ func TestPreUpgradeCopy(t *testing.T) {
 	}
 }
 
+// Sol pass 4 R2: a stop cancelled while the pod drains has already scaled the app to zero;
+// the app is started again.
+func TestPreUpgradeCopyCancelledStop(t *testing.T) {
+	a, cs, _ := copyFixture(t, func([]string) ([]byte, error) { return nil, nil })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cs.PrependReactor("list", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		o, err := cs.Tracker().Get(appsv1.SchemeGroupVersion.WithResource("deployments"), "kyq-hello", appName)
+		if err != nil || replicas(o.(*appsv1.Deployment)) != 0 {
+			return false, nil, nil
+		}
+		cancel() // Ctrl-C while the old pod drains
+		return true, &corev1.PodList{Items: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "app-1", Namespace: "kyq-hello", Labels: podLabels("hello", "rs")}, Status: corev1.PodStatus{Phase: corev1.PodRunning}}}}, nil
+	})
+	if _, err := PreUpgradeCopy(ctx, a, "1.10.0"); err == nil || !strings.Contains(err.Error(), "stop for the pre-upgrade copy") {
+		t.Fatalf("err = %v", err)
+	}
+	if replicas(deployment(t, a)) != 1 {
+		t.Error("a cancelled stop left the app scaled to zero")
+	}
+}
+
 func TestPreUpgradeCopyFailure(t *testing.T) {
 	a, cs, calls := copyFixture(t, func([]string) ([]byte, error) {
 		return []byte("cache: copied modes, owners or times differ from the original\n"), errors.New("exit 1")

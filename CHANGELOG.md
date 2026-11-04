@@ -40,6 +40,15 @@ state directory, target data and target-held credentials; do not reset them as a
   work. A MetalLB advertisement counts only for the pools it selects. Upgrade impact: a target
   whose root moved under running apps is refused until the root is put back or the apps are
   uninstalled from the old one.
+- Hostile-review fixes (council pass 4). After handoff, `restore APP` lists snapshots (and takes
+  back a recorded repository password) on a runner-owned target; `restore --snapshot`, and a
+  listing that would resume an unfinished restore, stay refused and name the full
+  `handoff --kyyard-target` command. KyMessages' `matrix-init` puts the deployed Compose files
+  back after it runs, so a failed upgrade pull no longer leaves the new images for the next
+  `start`. A Docker project run from another root is refused by apply even when the root was
+  copied with its files, and by `backup`, `stop`, `start` and `restart`. On Kubernetes, a
+  pre-upgrade copy whose stop is cancelled or times out starts the app again. pull-plan's
+  refusal of another installation's plan now says to set that installation's id in the copy.
 - KyPost and KyCalendar from the catalog pair for calendar invitations (#100). Their 0.6 releases
   pair through KyIdentity's suite directory on their own; the installer now sets
   `KYPOST_KYCALENDAR_ALLOW_PRIVATE` and `KYCALENDAR_KYPOST_ALLOW_PRIVATE` to `true` only when the
