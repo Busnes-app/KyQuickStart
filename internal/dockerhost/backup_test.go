@@ -455,10 +455,21 @@ func TestRestoreKeepsPasswordInASecretsVolume(t *testing.T) {
 	}
 }
 
-// With a dump, every other service stops before the dump (KyMessages' console keeps SQLite in
-// a backed-up volume) and only those start again; the dump's service keeps running.
+// With a dump, the backup block's stop services (KyMessages' console, whose SQLite is in a
+// backed-up volume) stop before the dump and only they start again; the rest keep running, and
+// without stop nothing stops.
 func TestDumpBackupStopsTheOtherServices(t *testing.T) {
 	st, fake := backupFixture(t, true)
+	if _, _, err := st.Backup(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range fakedocker.Calls(t, fake) {
+		if c.Args[0] == "compose" && slices.ContainsFunc(c.Args, func(a string) bool { return a == "stop" || a == "start" }) {
+			t.Fatalf("a hot backup without stop ran %v", c.Args)
+		}
+	}
+	st, fake = backupFixture(t, true)
+	st.App.Catalog.Backup.Stop = []string{"app"}
 	if _, _, err := st.Backup(context.Background()); err != nil {
 		t.Fatal(err)
 	}

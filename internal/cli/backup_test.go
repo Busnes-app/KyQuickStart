@@ -744,7 +744,8 @@ func TestUpgradeOverAnAppThatDidNotRestart(t *testing.T) {
 	f, _, k := backupFixture(t)
 	dir := filepath.Join(f.h.root, "dumpdemo")
 	next := fstest.MapFS{"dumpdemo/compose.yaml.tmpl": dumpCatalog["dumpdemo/compose.yaml.tmpl"]}
-	next["dumpdemo/manifest.yaml"] = &fstest.MapFile{Data: []byte(strings.Replace(string(dumpCatalog["dumpdemo/manifest.yaml"].Data), "version: 1.0.0\n", "version: 1.1.0\nupgrade:\n  migrates_data: true\n", 1))}
+	m := strings.Replace(string(dumpCatalog["dumpdemo/manifest.yaml"].Data), "version: 1.0.0\n", "version: 1.1.0\nupgrade:\n  migrates_data: true\n", 1)
+	next["dumpdemo/manifest.yaml"] = &fstest.MapFile{Data: []byte(m + "  stop: [web]\n")} // the backup block is last
 	f.o.Catalog = next
 	k.match = " start 'web'"
 	err := f.run("upgrade", "dumpdemo")

@@ -15,8 +15,8 @@ state directory, target data and target-held credentials; do not reset them as a
 ## Unreleased
 
 - Hostile-review fixes (council pass 1). Backup and restore: kyPulse's `restic_password` is no
-  longer in its own snapshots and survives `restore --replace`; KyMessages stops every service
-  but Postgres for its backup so the console's SQLite is at rest; a backup on a rebuilt target
+  longer in its own snapshots and survives `restore --replace`; KyMessages stops its console
+  for the dump and snapshot so its SQLite is at rest (chat stays up); a backup on a rebuilt target
   no longer replaces the repository password it cannot open; restore refuses a crash-looping
   app and a snapshot from a newer version or outside the upgrade rules; KyDrive with
   `euro-office` backs up `editor_secret`; KyPost's volume migration no longer loops on an empty

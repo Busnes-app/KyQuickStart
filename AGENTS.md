@@ -423,8 +423,8 @@ edge compatibility: `docs/redirect.md`.
 - Bulk data goes to restic on an operator-run, append-only (`--append-only --private-repos`)
   TLS rest-server off the app's host, one repository (`<repository>/<app>`) and password per
   app. `kyquickstart backup APP` (Docker apps only, no schedule, no prune) snapshots the app's
-  dump and bind directories with every other service stopped or, without a dump command, its
-  stopped bind directories, plus its `capsule_secrets`,
+  dump and bind directories (with its `backup.stop` services stopped: KyMessages' console) or,
+  without a dump command, its stopped bind directories, plus its `capsule_secrets`,
   tagged with app and installation. The password (`restic_password`) is generated on the app's
   target, never leaves it through the installer and is never in a snapshot (excluded from
   kyPulse's `secrets` volume, and kept in place by a restore); the owner records

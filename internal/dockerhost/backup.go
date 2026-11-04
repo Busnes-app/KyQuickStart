@@ -160,9 +160,9 @@ func (s Store) ensureRepository(ctx context.Context) (bool, error) {
 	return !has, err
 }
 
-// Backup takes one snapshot of the app: its dump and volumes with every other service stopped
-// or, without a dump command, its stopped volumes; then its capsule_secrets. created reports
-// that this run generated the password.
+// Backup takes one snapshot of the app: its dump and volumes with its backup block's stop
+// services stopped or, without a dump command, its stopped volumes; then its capsule_secrets.
+// created reports that this run generated the password.
 func (s Store) Backup(ctx context.Context) (id string, created bool, err error) {
 	b := s.App.Catalog.Backup
 	if err := refuseUnfinishedRestore(ctx, s.App); err != nil {
@@ -189,12 +189,12 @@ func (s Store) Backup(ctx context.Context) (id string, created bool, err error) 
 	var binds []bind
 	var paths []string
 	add := func(src, dst string) { binds, paths = append(binds, bind{src: src, dst: dst}), append(paths, dst) }
-	// Cold: SQLite and friends are consistent only at rest. With a dump, every service but the
-	// dump's stops first (KyMessages' console keeps SQLite in data), so the dump matches the
-	// files. Started again whatever happens.
+	// Cold: SQLite and friends are consistent only at rest. With a dump, only the services the
+	// backup block names stop (KyMessages' console, whose SQLite is in data), before the dump.
+	// Started again whatever happens.
 	svcs := ""
 	if len(b.Command) > 0 {
-		svcs = quoteAll(slices.DeleteFunc(slices.Clone(s.App.Catalog.Services), func(svc string) bool { return svc == b.Service }))
+		svcs = quoteAll(b.Stop)
 	}
 	if len(b.Command) == 0 || svcs != "" {
 		if _, err := s.App.Runner.Run(ctx, s.App.compose(strings.TrimSpace("stop "+svcs)), nil); err != nil {

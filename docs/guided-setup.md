@@ -291,11 +291,11 @@ is not 0600. Each app's repository is `<repository>/<app>`.
 
 **What a snapshot holds.** The app's catalog `backup` block decides: its bind directories minus
 `skip`, its `capsule_secrets` (encrypted by restic, never sealed to KyRecovery here) and, for an
-app with a dump `command`, the dump, taken with every other service of the app stopped
-(`docker compose stop` of those, then `docker compose exec -T` into the dump's service; an
-empty or failed dump takes no snapshot), so KyMessages' console SQLite in `data` is at rest and
-matches the dump; those services start again afterwards, also when the snapshot failed. An
-app without a dump command is backed up cold:
+app with a dump `command`, the dump, taken while the app runs (`docker compose exec -T`; an
+empty or failed dump takes no snapshot). The services its `backup.stop` names are stopped
+first and started again afterwards, also when the snapshot failed: KyMessages stops its
+console, whose SQLite in `data` is consistent only at rest, for a few seconds while chat stays
+up. An app without a dump command is backed up cold:
 `docker compose stop`, restic, then `docker compose start` and a health wait, also when the
 snapshot failed. KyDrive is backed up cold (its SQLite has no dump command): `data`, `backups`,
 `session_secret`, `scim_token` and, with `euro-office`, `editor_secret` (a snapshot from before

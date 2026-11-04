@@ -854,7 +854,8 @@ func (c *messageChat) backupRestore(o messageOps) {
 		t.Fatalf("member before the backup: whoami %d, MAS %q, or a matrix.lock in the audit", code, c.chatUsers()["member"])
 	}
 
-	// AC25: hot, with the dump streamed from postgres; the same containers, healthy.
+	// AC25: hot, with the dump streamed from postgres (the console alone stops, for its SQLite);
+	// the same containers, healthy.
 	before := stackContainers(t)
 	w := watchRestic()
 	start := time.Now()
@@ -868,7 +869,7 @@ func (c *messageChat) backupRestore(o messageOps) {
 	if after := stackContainers(t); after != before || strings.Count(after, " healthy") != 6 {
 		t.Fatalf("the stack across the backup:\n%s\nwas:\n%s", after, before)
 	}
-	t.Logf("AC25: kyquickstart backup kymessage took %s, the stack running and healthy throughout", time.Since(start).Round(time.Second))
+	t.Logf("AC25: kyquickstart backup kymessage took %s, chat running throughout and the stack healthy after", time.Since(start).Round(time.Second))
 	pw := c.msg.root + "/kymessage/secrets/restic_password"
 	password := handoverPassword(t, ctx, o.state, handover, nas)
 	c.secrets["restic_password"] = password
