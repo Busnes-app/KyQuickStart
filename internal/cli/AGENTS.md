@@ -21,7 +21,12 @@ Plain terminal planning and command orchestration for the operator-run installer
   `version` prints the release set; `version --runner-image` prints `Options.RunnerImage` or
   fails "this build pins no suite runner image (source build); use a release binary".
 - `suite.go` owns `install`, `uninstall`, `unmanage`, `upgrade` and `status`, the upgrade gate
-  and plan publication. `withSetupSources` also connects KyDrive's target for `euro-office`
+  and plan publication. `installRoute` turns install's `--hostname`, `--forward-host`,
+  `--forward-port`, `--certificate-id` and `--bundle`/`--identity-client` into exactly the route
+  and `integrations` entry `plan` writes (refusing what install cannot express: no or a direct
+  edge, multi-route apps, KyIdentity's setup, an internal route without `allow_cidrs`); install
+  then deploys that target's edge with all its routes and, with a bundle beside an installed
+  KyIdentity, its setup steps first and `amendLate` over the install's change (`planChange`). `withSetupSources` also connects KyDrive's target for `euro-office`
   (its `jwt_secret`); removing `npm` is refused while an edge on its target names it (`kube://` `npm_url`) and routes other apps. The exported `Install`, `Uninstall`, `Unmanage`, `Upgrade` and `Status`
   take a context, state directory and `Options` (with `Progress`) so the suite runner calls
   them without flag parsing; they return `internal/suite` errors and status.

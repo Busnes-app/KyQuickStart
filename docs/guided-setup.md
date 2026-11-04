@@ -151,6 +151,9 @@ the plan is saved only after every step passed.
 
 ```sh
 ./kyquickstart install hello --target nas --state ./morning-test
+./kyquickstart install kydrive --target nas --hostname drive.example.com \
+  --forward-host 192.168.1.20 --forward-port 18443 --certificate-id 3 \
+  --bundle /data/installer/<setup uuid>/setup.json --state ./morning-test
 ./kyquickstart upgrade --state ./morning-test        # every installed app
 ./kyquickstart status --json --state ./morning-test
 ./kyquickstart logs hello --tail 50 --state ./morning-test
@@ -162,7 +165,15 @@ the plan is saved only after every step passed.
 ./kyquickstart uninstall hello --state ./morning-test
 ```
 
-- `install` adds the app and any missing dependencies to the plan on that target.
+- `install` adds the app and any missing dependencies to the plan on that target. An app that
+  takes its URL from its route also needs `--hostname`, `--forward-host`, `--forward-port` and
+  `--certificate-id` (an existing NPM certificate): install adds that one route to the edge on
+  the target exactly as `plan` would (`http` upstream, `/api/status`, the edge's exposure) and
+  deploys the edge with it. `--bundle` (with `--identity-client`, default the app's name) adds
+  the app's `integrations` entry, so its setup runs; an installed KyIdentity takes its client
+  in its setup or a setup amendment. A target without an edge, a `cloudflare-direct` edge, an
+  internal-only app on an edge without `allow_cidrs`, a multi-route app (KyMessages) and
+  KyIdentity itself go through `kyquickstart plan` instead.
 - `stop`, `start` and `restart` change nothing else: data, secrets and routes stay. `stop`
   records `stopped: true` in the plan, so `apply`, `upgrade`, `restart` and `backup` refuse
   (`app_stopped`) rather than start it again; `start` clears it. Stop an app this way before

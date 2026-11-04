@@ -52,7 +52,7 @@ and under each target's lock:
 
 | Command | Does |
 |---|---|
-| `install <app> --target T` | Adds the app to the plan, validates placement, applies it and missing dependencies |
+| `install <app> --target T` | Adds the app to the plan, validates placement, applies it and missing dependencies; a routed app also takes `--hostname`, `--forward-host`, `--forward-port`, `--certificate-id` and its setup `--bundle` (`--identity-client`) |
 | `uninstall <app>` | Removes workloads, keeps data and the app's secrets on the target; refuses while an installed app depends on it |
 | `unmanage <app>` | Removes `ky.managed-by`/`ky.release-set`, drops the app from the plan, records it in `handover.md` |
 | `upgrade [app…]` | Upgrade rules, then one app at a time in dependency order; stops at the first failure |
@@ -235,13 +235,28 @@ Requests are at most 64 KiB. Unknown JSON fields are refused.
   "apps": ["hello"],
   "target": "nas",
   "acknowledge_no_backup": false,
-  "actor": "kyyard user id, for lock holder and records"
+  "actor": "kyyard user id, for lock holder and records",
+  "hostname": "drive.example.com",
+  "forward_host": "192.168.1.20",
+  "forward_port": 18443,
+  "certificate_id": 3,
+  "bundle": "/data/installer/<setup uuid>/setup.json",
+  "identity_client": "kydrive"
 }
 ```
 
 - `target` only for `install`; `apps` has exactly one entry except for `upgrade`, where an
   empty list means every installed app. `acknowledge_no_backup` only for `install` and
   `upgrade`. `id` is a lowercase UUID v4; `actor` matches `[A-Za-z0-9][A-Za-z0-9_.:@-]{0,127}`.
+- `hostname`, `forward_host`, `forward_port`, `certificate_id`, `bundle` and `identity_client`
+  are optional and only for `install`; they are the CLI's `install` flags of the same names. The
+  four route fields come together and add the app's one route to the edge on `target`, as
+  `plan` writes it (`forward_scheme: http`, `status_path: /api/status`, the edge's exposure, or
+  `internal` for an internal-only app). `bundle` adds the app's `integrations` entry with
+  `identity_client` (default: the app's name); an installed KyIdentity takes the client in its
+  setup or a setup amendment. A routed app without them, a multi-route app, a target without an
+  edge or with a `cloudflare-direct` one, and KyIdentity's own setup are `invalid_request`
+  refusals in the operation (use `kyquickstart plan`). Older requests without them are unchanged.
   The lock holder is `kyquickstart runner <runner_id> for <actor>`.
 - `202 {"id": …}` when started. Repeating the same `id` with the same body returns `202` and
   starts nothing; the same `id` with a different body is `409 id_conflict`.

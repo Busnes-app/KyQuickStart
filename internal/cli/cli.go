@@ -44,6 +44,8 @@ commands:
               [--adopt-edge-hosts] once: claim this target's NPM hosts marked by builds without installation_id
               [--take-over-target T] claim target T from the plan that last changed it
   install APP --target T   add APP and its missing dependencies to the plan and deploy them
+              [--hostname H --forward-host A --forward-port P --certificate-id N] APP's route on T's edge
+              [--bundle PATH [--identity-client ID]] APP's setup (an integrations entry)
   uninstall APP            remove APP's workloads; its data and secrets stay on the target
   unmanage APP             hand APP to its owner: drop the managed labels, record it in handover.md
   upgrade [APP...]         redeploy installed apps (default all) under their upgrade rules
@@ -289,6 +291,7 @@ type session struct {
 	npms         map[string]*edge.NPM
 
 	plan          *stack.Stack        // as loaded, or with the amendments amendLate records
+	planChange    func(*stack.Stack)  // install's change to the saved plan, which amendLate keeps
 	derived       []string            // KyIdentity clients composeClients took from the catalog
 	amendments    []identityAmendment // setup amendments adding the clients of later apps
 	bootstrapNote string              // printed after apply while KyIdentity keeps its bootstrap admin
@@ -522,7 +525,7 @@ func withRoute(st *stack.Stack, name string, t stack.Target, app catalog.App) (c
 		}
 	}
 	if len(hosts) != 1 {
-		return app, fmt.Errorf("app %q takes its URL from its route hostname; give it exactly one edge route", name)
+		return app, fmt.Errorf("app %q takes its URL from its route hostname; give it exactly one edge route (install: --hostname, --forward-host, --forward-port and --certificate-id)", name)
 	}
 	if t.Kubernetes() {
 		app.Kubernetes = app.Kubernetes.WithHost(hosts[0])
