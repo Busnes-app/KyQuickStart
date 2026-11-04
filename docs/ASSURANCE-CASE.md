@@ -124,6 +124,16 @@ operator's job ([README](../README.md#targets)).
   from KyRecovery and sends it to KyPost on stdin. It is too short for the redactor, so it is
   kept out of arguments, errors and output by construction (`TestRecoveryPair`); it is single
   use and expires after 10 minutes.
+- **The suite runner's state volume is cluster-admin-equivalent.** On Kubernetes, `handoff`
+  binds the runner's ServiceAccount to a ClusterRole with the installer's whole permission set
+  (`internal/kube/runner.go` `GrantRunner`): pods, `pods/exec` and secrets in every namespace,
+  and namespace labels. Its token is a non-expiring ServiceAccount token kept in the runner's
+  state volume. Whoever reads that volume (node root on a local-path volume, a volume snapshot
+  or backup, a compromised runner) can exec into `kube-system`: protect the volume, its
+  snapshots and its node like an admin kubeconfig, and run `handoff --revoke` to invalidate the
+  token. On Docker the runner's SSH key in the same volume reaches each target as the installer's
+  user, which is root-equivalent through Docker. Per-namespace Roles and an expiring token are
+  post-launch work.
 - **The handover prints credentials by design.** Anyone who sees that output can sign in as the
   owner's administrator.
 - **macOS binaries are not signed or notarized**; the attestation is the only check

@@ -13,9 +13,9 @@ import (
 // fromVolumesStep (<app>.volumes) moves an app off the Compose named volumes an earlier
 // version kept (its manifest's from_volumes) and onto ./<name> bind directories, which
 // kyquickstart backup can read (#151). Before deploy, each volume kyq-<app>_<name> whose bind
-// directory is missing is copied into it once, with the app stopped: the copy is renamed into
-// place whole, and only deploy creates a bind directory otherwise, so an existing one (even
-// empty) is done. The volume is kept, so nothing is lost if the new layout fails; the owner
+// directory is missing is copied into it once, with the app stopped: the copies are renamed
+// into place together once all succeeded, and only deploy creates a bind directory otherwise,
+// so an existing one (even empty) is done. The volume is kept, so nothing is lost if the new layout fails; the owner
 // removes it by hand. A restore skips the step: it restores the directories it backs up, and
 // deploy creates the rest empty.
 type fromVolumesStep struct {
@@ -26,6 +26,10 @@ type fromVolumesStep struct {
 func (s fromVolumesStep) ID() string        { return s.a.Name + ".volumes" }
 func (s fromVolumesStep) InputHash() string { return strings.Join(s.a.Catalog.FromVolumes, " ") }
 func (s fromVolumesStep) Note() string      { return *s.note }
+
+// PreVolumesCompose is where the volume migration keeps the earlier compose.yaml until a
+// deploy succeeds.
+const PreVolumesCompose = ".compose.yaml.pre-volumes"
 
 func (s fromVolumesStep) volume(name string) string { return "kyq-" + s.a.Name + "_" + name }
 
@@ -75,8 +79,27 @@ func (s fromVolumesStep) Apply(ctx context.Context) error {
 	if out, err := s.a.Runner.Run(ctx, "docker ps -q --filter "+remote.Quote("label=com.docker.compose.project=kyq-"+s.a.Name)+" --filter status=running --filter status=restarting", nil); err != nil || strings.TrimSpace(string(out)) != "" {
 		return fmt.Errorf("a container of %s still runs, so its volumes are not copied: %w", s.a.Name, errors.Join(err, errors.New("stop it and rerun apply")))
 	}
+	// Every copy first, then every rename: a failed copy leaves no bind directory in place, so
+	// the app (started again on its volumes) is copied whole on the next apply, never partly
+	// from an older copy.
 	for _, v := range names {
 		if err := s.copyVolume(ctx, v); err != nil {
+			return err
+		}
+	}
+	// The earlier compose.yaml mounts the volumes: once a copy is in place it is moved to
+	// PreVolumesCompose (still the record of KyPost's mail mode), so the app cannot start on its
+	// volumes again (kyquickstart start) and leave the copies stale. Only deploy writes the new
+	// one, and a failed deploy does not bring the old one back.
+	place := "cd " + remote.Quote(s.a.dir()) + " || exit 1\nif [ -e compose.yaml ]; then mv -f compose.yaml " + PreVolumesCompose + " || exit 1; fi\nrm -f .input-hash || exit 1\nfor v in " + quoteAll(names) + `; do
+  if [ -d "$v" ]; then rmdir "$v" || exit 1; fi
+  mv ".$v.from-volume" "$v" || exit 1
+done`
+	if _, err := s.a.Runner.Run(ctx, place, nil); err != nil {
+		return fmt.Errorf("move %s's copied volumes into place: %w", s.a.Name, err)
+	}
+	for _, v := range names {
+		if err := trustedDir(ctx, s.a.Runner, path.Join(s.a.dir(), v)); err != nil {
 			return err
 		}
 	}
@@ -88,8 +111,8 @@ func (s fromVolumesStep) Apply(ctx context.Context) error {
 	return nil
 }
 
-// copyVolume copies volume v into the bind directory v through a private temporary directory,
-// renamed into place only when both ends succeeded and every entry arrived. The volume is
+// copyVolume copies volume v into the private directory .<v>.from-volume, which Apply renames
+// into place once every volume's copy succeeded and every entry arrived. The volume is
 // read as root with only CAP_DAC_READ_SEARCH (the earlier image user owns it 0700) and
 // mounted read-only; the copy is written as the target user, who then owns every file. Each
 // tar runs in its own offline container, so an archive entry can reach nothing but /to.
@@ -103,13 +126,11 @@ case $r in *src=0*dst=0*|*dst=0*src=0*) ;; *) echo "copying volume $v failed ($r
 n=$(` + src + `find ` + ResticImage + ` /from | wc -l) || exit 1
 m=$(find "$t" | wc -l) || exit 1
 [ "$n" = "$m" ] || { echo "volume $v has $n entries, its copy $m" >&2; rm -rf "$t"; exit 1; }
-chmod 700 "$t" || exit 1
-if [ -d "$v" ]; then rmdir "$v" || exit 1; fi
-mv "$t" "$v"`
+chmod 700 "$t"`
 	if _, err := s.a.Runner.Run(ctx, cmd, nil); err != nil {
 		return fmt.Errorf("copy Docker volume %s into %s: %w", s.volume(v), path.Join(s.a.dir(), v), err)
 	}
-	return trustedDir(ctx, s.a.Runner, path.Join(s.a.dir(), v))
+	return nil
 }
 
 func (s fromVolumesStep) Verify(ctx context.Context) error {

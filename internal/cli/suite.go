@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -29,6 +30,11 @@ type Request struct {
 	Target              string
 	AcknowledgeNoBackup bool
 	Holder              string // the lock holder; empty names this process
+	// Install only: a routed app's route on its target's edge, and its setup bundle
+	// (an integrations entry; IdentityClient defaults to the app's name).
+	Hostname, ForwardHost      string
+	ForwardPort, CertificateID int
+	Bundle, IdentityClient     string
 }
 
 // Install adds an app and its missing dependencies to the plan at state and deploys them.
@@ -86,6 +92,12 @@ func suiteCommand(ctx context.Context, cmd string, args []string, o Options) err
 	var r Request
 	if cmd == "install" {
 		fl.StringVar(&r.Target, "target", "", "target to install on")
+		fl.StringVar(&r.Hostname, "hostname", "", "routed app: its hostname on the target's edge")
+		fl.StringVar(&r.ForwardHost, "forward-host", "", "routed app: its address as NPM reaches it (on Docker, an IP address of the target)")
+		fl.IntVar(&r.ForwardPort, "forward-port", 0, "routed app: its port as NPM reaches it")
+		fl.IntVar(&r.CertificateID, "certificate-id", 0, "routed app: the existing NPM certificate ID for its hostname")
+		fl.StringVar(&r.Bundle, "bundle", "", "the app's setup bundle path inside its container (an integrations entry)")
+		fl.StringVar(&r.IdentityClient, "identity-client", "", "with --bundle: its KyIdentity client ID (default: the app's name)")
 	}
 	if cmd == "install" || cmd == "upgrade" {
 		fl.BoolVar(&r.AcknowledgeNoBackup, "acknowledge-no-backup", false, "upgrade data without a pre-upgrade backup")
@@ -198,11 +210,22 @@ func install(ctx context.Context, state string, r Request, trust trustFlag, o Op
 		}
 	}
 	add(name)
-	next, data, err := changePlan(state, s.revision, func(st *stack.Stack) {
+	edgeAt, route, setup, err := installRoute(s.plan, s.cat[name], name, r)
+	if err != nil {
+		return err
+	}
+	change := func(st *stack.Stack) {
 		for _, a := range slices.Sorted(maps.Keys(added)) {
 			st.Apps = append(st.Apps, stack.App{Name: a, Target: r.Target})
 		}
-	})
+		if route != nil {
+			st.Edges[edgeAt].Routes = append(st.Edges[edgeAt].Routes, *route)
+		}
+		if setup != nil {
+			st.Integrations = append(st.Integrations, *setup)
+		}
+	}
+	next, data, err := changePlan(state, s.revision, change)
 	if err != nil {
 		return err
 	}
@@ -211,8 +234,17 @@ func install(ctx context.Context, state string, r Request, trust trustFlag, o Op
 		return suite.Errorf(suite.InvalidRequest, "%w", err)
 	}
 	defer ns.close()
-	ns.revision, ns.saved, ns.ack, ns.edges, ns.changesPlan = s.revision, s.saved, r.AcknowledgeNoBackup, nil, true
-	ns.order = slices.DeleteFunc(ns.order, func(a string) bool { return !added[a] })
+	ns.revision, ns.saved, ns.ack, ns.changesPlan = s.revision, s.saved, r.AcknowledgeNoBackup, true
+	// Only the edge the new route is on, with all its routes, as apply deploys it.
+	ns.edges = slices.DeleteFunc(ns.edges, func(e stack.Edge) bool { return route == nil || e.Target != r.Target })
+	// An installed KyDrive takes the new editor's URL and secret: it is redeployed with it, under
+	// its upgrade gate like any deploy.
+	_, drive := s.placed["kydrive"]
+	drive = drive && added[euroOffice]
+	if drive && ns.stopped("kydrive") {
+		return suite.Errorf(suite.AppStopped, "installing %s redeploys kydrive with it, which would start kydrive again; run kyquickstart start kydrive first", euroOffice)
+	}
+	ns.order = slices.DeleteFunc(ns.order, func(a string) bool { return !added[a] && !(drive && a == "kydrive") })
 	ns.targets = ns.withSetupSources([]stack.Target{ns.placed[name]})
 	if err := ns.runnerImage(); err != nil {
 		return err
@@ -220,12 +252,75 @@ func install(ctx context.Context, state string, r Request, trust trustFlag, o Op
 	if err := ns.connect(ctx, trust); err != nil {
 		return err
 	}
+	publishPlan := func() error { return publish(state, s.revision, data) }
+	// A KyIdentity already installed takes the new client in its setup, or a setup amendment.
+	identity := setup != nil && !added["kyidentity"]
+	if identity {
+		ns.planChange = change
+		if publishPlan, err = ns.amendLate(ctx, state, publishPlan); err != nil {
+			return err
+		}
+	}
 	return ns.operate(ctx, r.Holder, func(ctx context.Context) ([]engine.Step, error) {
 		if err := ns.preflight(ctx); err != nil {
 			return nil, err
 		}
-		return ns.deploySteps(ctx)
-	}, func() error { return publish(state, s.revision, data) })
+		steps, err := ns.deploySteps(ctx)
+		if err != nil || !identity {
+			return steps, err
+		}
+		k := slices.IndexFunc(ns.integrations, func(i stack.Integration) bool { return i.Product == "kyidentity" && i.Identity != nil })
+		first, _, err := ns.setupSteps(ns.drivers[ns.placed["kyidentity"].Name], ns.integrations[k])
+		return append(first, steps...), err
+	}, publishPlan)
+}
+
+// installRoute returns what install adds besides apps, as plan writes it: name's route on
+// the edge of r.Target (its index in st.Edges), and its integrations entry.
+func installRoute(st *stack.Stack, app catalog.App, name string, r Request) (int, *stack.Route, *stack.Integration, error) {
+	var setup *stack.Integration
+	switch {
+	case r.Bundle == "" && r.IdentityClient != "":
+		return 0, nil, nil, suite.Errorf(suite.InvalidRequest, "--identity-client needs --bundle")
+	case r.Bundle != "" && name == "kyidentity":
+		return 0, nil, nil, suite.Errorf(suite.InvalidRequest, "KyIdentity's setup needs its identity settings; add it with kyquickstart plan")
+	case r.Bundle != "" && productAdapters[name].setup == nil:
+		return 0, nil, nil, suite.Errorf(suite.InvalidRequest, "%s has no setup that apply runs; install it without --bundle", name)
+	case r.Bundle != "" && slices.ContainsFunc(st.Apps, func(a stack.App) bool { return a.Name == "kyidentity" }) &&
+		!slices.ContainsFunc(st.Integrations, func(i stack.Integration) bool { return i.Product == "kyidentity" && i.Identity != nil }):
+		return 0, nil, nil, suite.Errorf(suite.InvalidRequest, "KyIdentity is installed without its setup in the plan, so %s's client cannot be added to it; add both with kyquickstart plan", name)
+	case r.Bundle != "":
+		setup = &stack.Integration{Product: name, Target: r.Target, Bundle: r.Bundle, IdentityClient: cmp.Or(r.IdentityClient, name)}
+	}
+	if r.Hostname == "" && r.ForwardHost == "" && r.ForwardPort == 0 && r.CertificateID == 0 {
+		return 0, nil, setup, nil
+	}
+	e := slices.IndexFunc(st.Edges, func(e stack.Edge) bool { return e.Target == r.Target })
+	switch {
+	case r.Hostname == "" || r.ForwardHost == "" || r.ForwardPort == 0 || r.CertificateID == 0:
+		return 0, nil, nil, suite.Errorf(suite.InvalidRequest, "a route needs --hostname, --forward-host, --forward-port and --certificate-id together")
+	case r.ForwardPort < 1 || r.ForwardPort > 65535 || r.ForwardPort == 81:
+		return 0, nil, nil, suite.Errorf(suite.InvalidRequest, "--forward-port must be 1-65535, and not 81 (NPM administration)")
+	case r.CertificateID < 1:
+		return 0, nil, nil, suite.Errorf(suite.InvalidRequest, "--certificate-id must be an existing NPM certificate ID")
+	case e < 0:
+		return 0, nil, nil, suite.Errorf(suite.InvalidRequest, "target %s has no edge to route %s through; add one with kyquickstart plan", r.Target, name)
+	case st.Edges[e].Direct():
+		return 0, nil, nil, suite.Errorf(suite.InvalidRequest, "%s's edge is cloudflare-direct, whose routes install does not write; route %s with kyquickstart plan", r.Target, name)
+	case len(app.Routes) > 0:
+		return 0, nil, nil, suite.Errorf(suite.InvalidRequest, "%s takes several routes under one domain; add it with kyquickstart plan", name)
+	}
+	route := &stack.Route{App: name, Hostname: r.Hostname, ForwardHost: r.ForwardHost, ForwardPort: r.ForwardPort, ForwardScheme: "http", CertificateID: r.CertificateID, StatusPath: "/api/status"}
+	if p := st.Edges[e].Provider; p == "cloudflare" || p == "frp" {
+		route.Exposure = "external"
+		if app.Exposure == "internal" {
+			route.Exposure = "internal"
+		}
+	}
+	if route.Exposure == "internal" && len(st.Edges[e].AllowCIDRs) == 0 {
+		return 0, nil, nil, suite.Errorf(suite.InvalidRequest, "%s is internal only, and %s's %s edge has no allow_cidrs for the LAN clients that reach it; add them with kyquickstart plan", name, r.Target, st.Edges[e].Provider)
+	}
+	return e, route, setup, nil
 }
 
 func upgrade(ctx context.Context, state string, r Request, trust trustFlag, o Options) error {
@@ -400,7 +495,16 @@ func remove(ctx context.Context, state string, r Request, trust trustFlag, o Opt
 			steps = append(steps, connector...)
 		}
 		if drive != nil { // KyDrive first: it never points at an editor that is gone
-			steps = append(steps, s.drivers[s.placed["kydrive"].Name].steps("kydrive", *drive, s.o.ReleaseSet, s.redact)...)
+			dd := s.drivers[s.placed["kydrive"].Name]
+			// Only as installed: an upgrade goes through its gate and backup, in kyquickstart upgrade.
+			dep, err := dd.deployed(ctx, "kydrive")
+			if err != nil {
+				return nil, err
+			}
+			if v := installedVersion(dep, *drive, s.o.ReleaseSet); dep.Found && v != drive.Version {
+				return nil, suite.Errorf(suite.UpgradeRefused, "removing %s redeploys kydrive, which is %s here and %s in this release; run kyquickstart upgrade kydrive first. Nothing was changed", euroOffice, cmp.Or(v, "of an unknown version"), drive.Version)
+			}
+			steps = append(steps, dd.steps("kydrive", *drive, s.o.ReleaseSet, s.redact)...)
 		}
 		if !unmanage {
 			return append(steps, d.removeSteps(name, s.cat[name])...), nil
@@ -410,7 +514,10 @@ func remove(ctx context.Context, state string, r Request, trust trustFlag, o Opt
 			return nil, err
 		}
 		handover = handoverSection(name, t, installedVersion(deployed, s.cat[name], s.o.ReleaseSet), hostnames)
-		return append(steps, d.unmanageSteps(name, s.cat[name])...), nil
+		// The section as a step note too: the runner's operation record carries it to KyYard's
+		// Suite page, since its handover.md stays in the runner's state volume.
+		note := strings.Join(strings.Fields(strings.TrimPrefix(strings.TrimSpace(handover), "## ")), " ")
+		return append(append(steps, d.unmanageSteps(name, s.cat[name])...), noteStep{id: name + ".handover", note: note}), nil
 	}, func() error {
 		if unmanage {
 			if err := appendHandover(state, handover); err != nil {

@@ -82,6 +82,11 @@ type BackupDestination struct {
 	Repository     string `yaml:"repository"`        // rest:https://<host>[:port]/<user>
 	CredentialFile string `yaml:"credential_file"`   // target path: the rest-server password for <user>
 	CAFile         string `yaml:"ca_file,omitempty"` // target path: the server's CA; empty uses system trust
+	// BulkRepository (rest:https://<host>[:port]/<user>) and BulkCredentialFile are KyDrive's
+	// own rest-server user for its bulk repository, <bulk_repository>/kydrive-bulk; required
+	// when KyDrive is on the target, so KyDrive never holds the target's credential.
+	BulkRepository     string `yaml:"bulk_repository,omitempty"`
+	BulkCredentialFile string `yaml:"bulk_credential_file,omitempty"`
 }
 
 // restUserRE is the one path segment naming the rest-server user.
@@ -124,6 +129,16 @@ func (b BackupDestination) validate() error {
 		return errors.New("backup.credential_file must be an absolute path on the target")
 	case b.CAFile != "" && !validRoot(b.CAFile):
 		return errors.New("backup.ca_file must be an absolute path on the target")
+	case b.BulkRepository == "" && b.BulkCredentialFile == "":
+		return nil
+	case validRepository(b.BulkRepository) != nil:
+		return errors.New("backup.bulk_repository must be rest:https://<host>[:port]/<user>, KyDrive's own rest-server user")
+	case !validRoot(b.BulkCredentialFile):
+		return errors.New("backup.bulk_credential_file must be an absolute path on the target")
+	case (BackupDestination{Repository: b.BulkRepository}).RestUser() == b.RestUser():
+		return errors.New("backup.bulk_repository must name another rest-server user than backup.repository: KyDrive gets its own")
+	case b.BulkCredentialFile == b.CredentialFile:
+		return errors.New("backup.bulk_credential_file must be KyDrive's own password file, not backup.credential_file")
 	}
 	return nil
 }

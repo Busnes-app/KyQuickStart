@@ -117,9 +117,46 @@ func TestBulkPlan(t *testing.T) {
 	if _, ok, err := bulkPlan(st, cat); ok || err != nil {
 		t.Fatalf("bulkPlan with a private CA = %v, %v; want KyDrive left as before", ok, err)
 	}
-	st.Targets[0].Backup = &bulkDest
-	if drive, ok, err := bulkPlan(st, cat); !ok || err != nil || !strings.Contains(string(drive.Compose), "/nas/kydrive-bulk") {
+	shared := bulkDest
+	st.Targets[0].Backup = &shared
+	if _, ok, err := bulkPlan(st, cat); ok || err == nil || !strings.Contains(err.Error(), "bulk_repository") {
+		t.Fatalf("bulkPlan without KyDrive's own user = %v, %v; want a refusal naming bulk_repository", ok, err)
+	}
+	// Q4: KyDrive's bulk repository is under its own rest-server user, with its own password.
+	own := bulkDest
+	own.BulkRepository, own.BulkCredentialFile = "rest:https://restic.example.com:8000/nas-kydrive", "/home/kyq/.config/kyquickstart/kydrive-rest-password"
+	st.Targets[0].Backup = &own
+	drive, ok, err := bulkPlan(st, cat)
+	if !ok || err != nil {
 		t.Fatalf("bulkPlan with a destination = %v, %v", ok, err)
+	}
+	var c bulkCompose
+	if err := yaml.Unmarshal(drive.Compose, &c); err != nil {
+		t.Fatal(err)
+	}
+	if c.Services.App.Environment["KYDRIVE_BULK_BACKUP_REPOSITORY"] != "rest:https://restic.example.com:8000/nas-kydrive/kydrive-bulk" || c.Secrets[bulkPassword].File != own.BulkCredentialFile ||
+		!strings.Contains(c.Services.App.Entrypoint[2], "'nas-kydrive'") || strings.Contains(string(drive.Compose), bulkDest.CredentialFile) {
+		t.Fatalf("KyDrive does not use its own rest-server user:\n%s", drive.Compose)
+	}
+}
+
+// Q4: the bulk user must be KyDrive's own, never the target's.
+func TestBulkDestinationValidation(t *testing.T) {
+	plan := func(bulk string) error {
+		_, err := stack.Parse([]byte("version: 1\ntargets:\n  - name: nas\n    host: 192.0.2.1\n    user: kyq\n    root: /srv/kyq\n    backup:\n      repository: rest:https://backup.lan/nas\n      credential_file: /home/kyq/rest\n" + bulk + "apps:\n  - name: hello\n    target: nas\n"))
+		return err
+	}
+	for bulk, want := range map[string]string{
+		"": "",
+		"      bulk_repository: rest:https://backup.lan/nas-drive\n      bulk_credential_file: /home/kyq/drive-rest\n": "",
+		"      bulk_repository: rest:https://backup.lan/nas\n      bulk_credential_file: /home/kyq/drive-rest\n":       "another rest-server user",
+		"      bulk_repository: rest:https://backup.lan/nas-drive\n      bulk_credential_file: /home/kyq/rest\n":       "KyDrive's own password file",
+		"      bulk_repository: rest:https://backup.lan/nas-drive\n":                                                   "bulk_credential_file",
+		"      bulk_credential_file: /home/kyq/drive-rest\n":                                                           "bulk_repository",
+	} {
+		if err := plan(bulk); want == "" && err != nil || want != "" && (err == nil || !strings.Contains(err.Error(), want)) {
+			t.Errorf("%q: %v, want %q", bulk, err, want)
+		}
 	}
 }
 
@@ -135,7 +172,9 @@ func (r *bulkInitRunner) Close() error { return nil }
 // compose exec skips the entrypoint that sets it, so the step reads it from the secret itself.
 func TestBulkInitSetsSessionSecret(t *testing.T) {
 	r := &bulkInitRunner{}
-	target := stack.Target{Name: "nas", Root: "/srv/kyq", Backup: &bulkDest}
+	dest := bulkDest
+	dest.BulkRepository, dest.BulkCredentialFile = "rest:https://restic.example.com:8000/nas-kydrive", "/home/kyq/kydrive-rest"
+	target := stack.Target{Name: "nas", Root: "/srv/kyq", Backup: &dest}
 	step := bulkInit(sshDriver{t: target, c: r}, target)
 	if step == nil {
 		t.Fatal("no bulk-init step with a backup destination")

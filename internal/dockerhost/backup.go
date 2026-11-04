@@ -149,11 +149,15 @@ func (s Store) ensureRepository(ctx context.Context) (bool, error) {
 		// The password this run generated opened nothing and protects nothing yet: it goes, so
 		// a restore asks for the recorded one. 12 is restic's wrong password: a repository
 		// from before the target was rebuilt.
-		if _, rerr := s.App.Runner.Run(ctx, "rm -f "+remote.Quote(s.PasswordFile()), nil); rerr != nil {
+		// Even when ctx was cancelled: a password left behind would be taken for the recorded one.
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		_, rerr := s.App.Runner.Run(rctx, "rm -f "+remote.Quote(s.PasswordFile()), nil)
+		cancel()
+		if rerr != nil {
 			return false, errors.Join(err, rerr)
 		}
 		if ee != nil && ee.Code == 12 {
-			err = fmt.Errorf("%s already holds a repository whose password this target does not have: restore %s first with kyquickstart restore %s and the password you recorded. Nothing was backed up: %w", s.repo(), s.App.Name, s.App.Name, err)
+			err = fmt.Errorf("%s already holds a repository whose password this target does not have: run kyquickstart restore %s and give the password you recorded, which lists its snapshots and keeps the password for backups (restore one only if you want its data back); with the password lost, give the target another backup repository. Nothing was backed up: %w", s.repo(), s.App.Name, err)
 		}
 		return false, err
 	}
@@ -382,9 +386,16 @@ func (s Store) MoveAside(ctx context.Context, stamp string) (string, error) {
 			return "", err
 		}
 	}
-	var names []string
+	var names, copies []string
 	for _, n := range s.App.Catalog.Secrets {
-		names = append(names, "secrets/"+n)
+		// An optional secret pairs the app with another one that stays (KyDrive's editor_secret,
+		// Euro-Office's jwt_secret): it stays unless the snapshot holds its own, and is copied
+		// aside, since RestoreFiles then replaces it.
+		if slices.Contains(s.App.Catalog.Backup.OptionalSecrets, n) {
+			copies = append(copies, "secrets/"+n)
+		} else {
+			names = append(names, "secrets/"+n)
+		}
 	}
 	// An app that binds its whole secrets directory (kyPulse) moves it aside, but
 	// restic_password in it stays: restore reads it next.
@@ -395,6 +406,9 @@ func (s Store) MoveAside(ctx context.Context, stamp string) (string, error) {
 	}
 	cmd := "cd " + remote.Quote(s.App.dir()) + " || exit 1\n" + keep + "for p in " + quoteAll(append(slices.Clone(s.App.Catalog.Binds), names...)) + `; do
   if [ -e "$p" ] || [ -L "$p" ]; then mv "$p" ` + remote.Quote(dest) + `/"$p" || exit 1; fi
+done
+for p in ` + quoteAll(copies) + `; do
+  if [ -f "$p" ] && [ ! -L "$p" ]; then cp -p "$p" ` + remote.Quote(dest) + `/"$p" || exit 1; fi
 done` + kept
 	if _, err := s.App.Runner.Run(ctx, cmd, nil); err != nil {
 		return "", fmt.Errorf("move the current data aside: %w", err)
@@ -492,8 +506,8 @@ done
   mv "$f/volumes/$v" "$v" || exit 1
 done
 for n in ` + quoteAll(b.CapsuleSecrets) + `; do
-  [ -e "$f/secrets/$n" ] || continue # optional, from an older snapshot: generated again
-  chmod 600 "$f/secrets/$n" && ln "$f/secrets/$n" secrets/"$n" || exit 1
+  [ -e "$f/secrets/$n" ] || continue # optional, from an older snapshot: the current one stays, or it is generated
+  chmod 600 "$f/secrets/$n" && rm -f secrets/"$n" && ln "$f/secrets/$n" secrets/"$n" || exit 1
 done` + keptPassword
 	if _, err := s.App.Runner.Run(ctx, cmd, nil); err != nil {
 		return fmt.Errorf("move the restored files into place: %w", err)

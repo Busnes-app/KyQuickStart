@@ -32,14 +32,18 @@ func Preflight(ctx context.Context, r remote.Runner, t stack.Target) []Finding {
 	return f
 }
 
-// BackupFilesCheck passes when the rest-server credential is a 0600 regular file and the CA,
-// if any, a regular file, both owned by this user. find does not follow a symlink.
+// BackupFilesCheck passes when the rest-server credentials (the target's, and KyDrive's if
+// any) are 0600 regular files and the CA, if any, a regular file, all owned by this user. find does not follow a symlink.
 func BackupFilesCheck(ctx context.Context, r remote.Runner, b stack.BackupDestination) Finding {
 	cmd := "uid=$(id -u); test -n \"$(find " + remote.Quote(b.CredentialFile) + " -prune -type f -user \"$uid\" -perm 600)\""
 	detail := b.CredentialFile + " is a mode 0600 regular file owned by this user"
 	if b.CAFile != "" {
 		cmd += " && test -n \"$(find " + remote.Quote(b.CAFile) + " -prune -type f -user \"$uid\")\""
 		detail += "; " + b.CAFile + " is a regular file owned by this user"
+	}
+	if b.BulkCredentialFile != "" {
+		cmd += " && test -n \"$(find " + remote.Quote(b.BulkCredentialFile) + " -prune -type f -user \"$uid\" -perm 600)\""
+		detail += "; KyDrive's " + b.BulkCredentialFile + " is a mode 0600 regular file owned by this user"
 	}
 	if _, err := r.Run(ctx, cmd, nil); err != nil {
 		return Finding{"backup files", false, "want: " + detail + " (not a symlink)"}

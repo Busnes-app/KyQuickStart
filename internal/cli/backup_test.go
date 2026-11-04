@@ -23,6 +23,7 @@ import (
 	"github.com/Busnes-app/kyquickstart/internal/remote"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
 	"github.com/Busnes-app/kyquickstart/internal/suite"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/remotecommand"
@@ -105,6 +106,9 @@ func snapshotID(t *testing.T, f *fixture, stdin string) string {
 		t.Fatal(err, f.out.String())
 	}
 	lines := strings.Split(strings.TrimSpace(f.out.String()), "\n")
+	if strings.HasPrefix(lines[0], "The password opened ") { // a given password, now kept
+		lines = lines[1:]
+	}
 	if len(lines) < 4 || !strings.HasPrefix(lines[0], "dumpdemo snapshots in rest:https://backup.lan/nas/dumpdemo:") || strings.Fields(lines[1])[0] != "ID" || lines[len(lines)-1] != "Restore one with: kyquickstart restore dumpdemo --snapshot <ID>" {
 		t.Fatalf("listing:\n%s", f.out.String())
 	}
@@ -184,10 +188,15 @@ func TestBackupAndRestoreCommands(t *testing.T) {
 	if got := snapshotID(t, f, string(password)+"\n"); got != id {
 		t.Fatalf("listing with the given password = %s", got)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".restore-password")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("listing left the given password on the target")
+	// It opened the repository, so the target keeps it (Opus pass 2 R3): backups work again
+	// without a restore, and the restore asks for no password.
+	if b, _ := os.ReadFile(filepath.Join(dir, "secrets", "restic_password")); string(b) != string(password) || !strings.Contains(f.out.String(), "kyquickstart backup dumpdemo works again") {
+		t.Fatalf("listing did not keep the password that opened the repository:\n%s", f.out.String())
 	}
-	if err := f.runIn(string(password)+"\ndumpdemo\n", "restore", "dumpdemo", "--snapshot", id); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, ".restore-password")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("listing left the received password file on the target")
+	}
+	if err := f.runIn("dumpdemo\n", "restore", "dumpdemo", "--snapshot", id); err != nil {
 		t.Fatal(err, f.out.String())
 	}
 	for file, want := range map[string]string{"files/docs/a.txt": "kept", "secrets/db_password": "a9f2GnkjXjNnjQmSlhOsb9XnNVDeJ5tJRTnqLCj1RZw", "secrets/restic_password": string(password)} {
@@ -680,6 +689,14 @@ func TestPruneCopies(t *testing.T) {
 		return names
 	}
 	all := claims()
+	// Until its Deployment runs, the installed version may be a failed upgrade's: nothing goes.
+	if err := f.run("prune-copies", "kweb", "--yes"); code(err) != suite.InvalidRequest || !strings.Contains(err.Error(), "kweb is missing, not running 1.2.0") || !slices.Equal(claims(), all) {
+		t.Fatalf("not running: %v, claims %v", err, claims())
+	}
+	f.cs.AppsV1().Deployments("kyq-kweb").Create(ctx, &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "app", Labels: labels},
+		Status:     appsv1.DeploymentStatus{Replicas: 1, UpdatedReplicas: 1, ReadyReplicas: 1, AvailableReplicas: 1},
+	}, metav1.CreateOptions{})
 	if err := f.runIn("nope\n", "prune-copies", "kweb"); code(err) != suite.InvalidRequest || !slices.Equal(claims(), all) {
 		t.Fatalf("unconfirmed: %v, claims %v", err, claims())
 	}
@@ -768,5 +785,72 @@ func TestUpgradeOverAnAppThatDidNotRestart(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(dir, "compose.kyq.yaml")); !strings.Contains(string(b), managed.VersionLabel+": 1.1.0") {
 		t.Fatalf("not upgraded:\n%s", b)
+	}
+}
+
+// Q3: a runner-owned target still takes backups (they change no plan and hold the target lock
+// the runner takes); restore is refused and says how to restore.
+func TestBackupOnRunnerOwnedTarget(t *testing.T) {
+	f, _, _ := backupFixture(t)
+	if err := f.run("backup", "dumpdemo"); err != nil {
+		t.Fatal(err, f.out.String())
+	}
+	runner := fmt.Sprintf(`{"revision":%d,"owner":"runner","runner_id":"9b6c1f3e-2a1d-4f6e-9c3b-5d7e8f9a0b1c","installation_id":"%s"}`, f.stack(t).Revision, installation)
+	os.WriteFile(filepath.Join(f.h.root, ".plan"), []byte(runner), 0o600)
+	if err := f.run("backup", "dumpdemo"); err != nil {
+		t.Fatalf("backup on a runner-owned target: %v\n%s", err, f.out.String())
+	}
+	if m := f.marker(t); !strings.Contains(m, `"owner":"runner"`) {
+		t.Fatalf("backup changed the owner: %s", m)
+	}
+	err := f.runIn("", "restore", "dumpdemo", "--snapshot", "0123abcd", "--replace", "--yes")
+	if code(err) != suite.OwnedByRunner || !strings.Contains(err.Error(), "handoff --revoke, then kyquickstart restore, then kyquickstart handoff again") {
+		t.Fatalf("restore on a runner-owned target: %v", err)
+	}
+}
+
+// Sol pass 2 R1: every restore fences startup before its files move, so a restore that dies
+// while publishing them leaves a record that refuses apply until restore finishes.
+func TestRestoreFencesEveryApp(t *testing.T) {
+	f, fake, k := backupFixture(t)
+	dir := filepath.Join(f.h.root, "dumpdemo")
+	if err := f.run("backup", "dumpdemo"); err != nil {
+		t.Fatal(err)
+	}
+	id := snapshotID(t, f, "")
+	os.WriteFile(filepath.Join(fake, "compose.json"), []byte(`{"db":false,"web":false}`), 0o600)
+	k.match = `ln "$f/secrets/$n"` // the publication of the restored files
+	if err := f.runIn("", "restore", "dumpdemo", "--snapshot", id, "--yes", "--replace"); err == nil || k.killed == "" {
+		t.Fatalf("restore with its publication killed: %v (killed %q)", err, k.killed)
+	}
+	k.match = ""
+	if b, _ := os.ReadFile(filepath.Join(dir, ".restore-pending")); !strings.HasSuffix(strings.TrimSpace(string(b)), " preparing") {
+		t.Fatalf(".restore-pending = %q, want the preparing fence", b)
+	}
+	if err := f.run("apply"); err == nil || !strings.Contains(err.Error(), "restore of dumpdemo is unfinished") {
+		t.Fatalf("apply over an unfinished restore: %v", err)
+	}
+}
+
+// Sol pass 2 R7: resuming a restore checks the snapshot's version as starting one does, so an
+// older release never starts on data a newer one restored.
+func TestResumedRestoreChecksVersion(t *testing.T) {
+	f, fake, _ := backupFixture(t)
+	dir := filepath.Join(f.h.root, "dumpdemo")
+	if err := f.run("backup", "dumpdemo"); err != nil {
+		t.Fatal(err)
+	}
+	id := snapshotID(t, f, "")
+	full, _ := filepath.Glob(filepath.Join(fake, "repo", "*", "snapshots", id+"*.json"))
+	if len(full) != 1 {
+		t.Fatalf("snapshot %s: %v", id, full)
+	}
+	os.WriteFile(filepath.Join(dir, ".restore-pending"), []byte(strings.TrimSuffix(filepath.Base(full[0]), ".json")+" files\n"), 0o600)
+	older := maps.Clone(dumpCatalog)
+	older["dumpdemo/manifest.yaml"] = &fstest.MapFile{Data: bytes.Replace(dumpCatalog["dumpdemo/manifest.yaml"].Data, []byte("version: 1.0.0"), []byte("version: 0.9.0"), 1)}
+	f.o.Catalog = older
+	err := f.runIn("", "restore", "dumpdemo", "--snapshot", id, "--yes")
+	if code(err) != suite.RestoreRefused || !strings.Contains(err.Error(), "newer than this release's 0.9.0") || !strings.Contains(err.Error(), "restored files stay in place") {
+		t.Fatalf("resume with an older release: %v\n%s", err, f.out.String())
 	}
 }

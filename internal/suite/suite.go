@@ -134,6 +134,13 @@ type Request struct {
 	Target              string   `json:"target,omitempty"`
 	AcknowledgeNoBackup bool     `json:"acknowledge_no_backup"`
 	Actor               string   `json:"actor"`
+	// Install only: the route and setup bundle of a routed app, as plan writes them.
+	Hostname       string `json:"hostname,omitempty"`
+	ForwardHost    string `json:"forward_host,omitempty"`
+	ForwardPort    int    `json:"forward_port,omitempty"`
+	CertificateID  int    `json:"certificate_id,omitempty"`
+	Bundle         string `json:"bundle,omitempty"`
+	IdentityClient string `json:"identity_client,omitempty"`
 }
 
 // Operation is the body of GET /v1/operations/{id}.

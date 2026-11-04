@@ -72,7 +72,7 @@ const (
 	waitStatus   = "Pair it with KyRecovery on its backup page (see KyRecovery's step): this KyRecovery cannot report its recovery key to apply, so apply does not pair it."
 	waitConfirm  = "Pair it with KyRecovery on its backup page, or confirm KyRecovery's recovery key and apply pairs it (see KyRecovery's step)."
 	waitCeremony = "Pair it with KyRecovery on its backup page after the ceremony, or rerun apply then: KyRecovery has no recovery key yet."
-	postPaired   = "Apply paired it with KyRecovery, to the recovery key you confirmed, and its first backup is there; it deposits on its own schedule."
+	postPaired   = "KyRecovery lists KyPost as paired, to the recovery key you confirmed, with a backup received. That is KyRecovery's record, not KyPost's: KyPost's backup page shows whether it still deposits there."
 )
 
 func (s recoveryPairStep) state(ctx context.Context) (pairing, error) {

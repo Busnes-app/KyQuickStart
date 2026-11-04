@@ -264,24 +264,28 @@ func TestRequestsAreChecked(t *testing.T) {
 	id := uuid.NewString()
 	ok := request(id, "install", "hello")
 	for name, body := range map[string]string{
-		"unknown field":   strings.Replace(ok, `"id"`, `"extra":1,"id"`, 1),
-		"trailing data":   ok + `{}`,
-		"not json":        `id=1`,
-		"uuid v1":         request("6ba7b810-9dad-11d1-80b4-00c04fd430c8", "upgrade"),
-		"uppercase id":    request(strings.ToUpper(id), "upgrade"),
-		"path in id":      request("../../../etc/passwd", "upgrade"),
-		"kind":            request(id, "delete", "hello"),
-		"two apps":        request(id, "uninstall", "hello", "other"),
-		"no app":          request(id, "unmanage"),
-		"missing apps":    `{"id":"` + id + `","kind":"upgrade","actor":"u"}`,
-		"duplicate app":   request(id, "upgrade", "hello", "hello"),
-		"bad app":         request(id, "upgrade", "Hello"),
-		"install target":  strings.Replace(ok, `,"target":"nas"`, ``, 1),
-		"target":          strings.Replace(request(id, "uninstall", "hello"), `"apps"`, `"target":"nas","apps"`, 1),
-		"ack on removal":  strings.Replace(request(id, "uninstall", "hello"), `false`, `true`, 1),
-		"actor":           strings.Replace(ok, `"actor":"0f9e3c8e-1d2b-4c5a-8e7f-6a5b4c3d2e1f"`, `"actor":"a b"`, 1),
-		"actor too long":  strings.Replace(ok, `"actor":"0f9e3c8e-1d2b-4c5a-8e7f-6a5b4c3d2e1f"`, `"actor":"`+strings.Repeat("a", 129)+`"`, 1),
-		"actor holder nl": strings.Replace(ok, `"actor":"0f9e3c8e-1d2b-4c5a-8e7f-6a5b4c3d2e1f"`, `"actor":"a\nb"`, 1),
+		"unknown field":     strings.Replace(ok, `"id"`, `"extra":1,"id"`, 1),
+		"trailing data":     ok + `{}`,
+		"not json":          `id=1`,
+		"uuid v1":           request("6ba7b810-9dad-11d1-80b4-00c04fd430c8", "upgrade"),
+		"uppercase id":      request(strings.ToUpper(id), "upgrade"),
+		"path in id":        request("../../../etc/passwd", "upgrade"),
+		"kind":              request(id, "delete", "hello"),
+		"two apps":          request(id, "uninstall", "hello", "other"),
+		"no app":            request(id, "unmanage"),
+		"missing apps":      `{"id":"` + id + `","kind":"upgrade","actor":"u"}`,
+		"duplicate app":     request(id, "upgrade", "hello", "hello"),
+		"bad app":           request(id, "upgrade", "Hello"),
+		"install target":    strings.Replace(ok, `,"target":"nas"`, ``, 1),
+		"target":            strings.Replace(request(id, "uninstall", "hello"), `"apps"`, `"target":"nas","apps"`, 1),
+		"ack on removal":    strings.Replace(request(id, "uninstall", "hello"), `false`, `true`, 1),
+		"actor":             strings.Replace(ok, `"actor":"0f9e3c8e-1d2b-4c5a-8e7f-6a5b4c3d2e1f"`, `"actor":"a b"`, 1),
+		"actor too long":    strings.Replace(ok, `"actor":"0f9e3c8e-1d2b-4c5a-8e7f-6a5b4c3d2e1f"`, `"actor":"`+strings.Repeat("a", 129)+`"`, 1),
+		"actor holder nl":   strings.Replace(ok, `"actor":"0f9e3c8e-1d2b-4c5a-8e7f-6a5b4c3d2e1f"`, `"actor":"a\nb"`, 1),
+		"route on removal":  strings.Replace(request(id, "uninstall", "hello"), `"actor"`, `"hostname":"hello.example.com","actor"`, 1),
+		"bundle on upgrade": strings.Replace(request(id, "upgrade"), `"actor"`, `"bundle":"/data/installer/setup.json","actor"`, 1),
+		"forward port":      strings.Replace(ok, `"actor"`, `"forward_port":65536,"actor"`, 1),
+		"certificate id":    strings.Replace(ok, `"actor"`, `"certificate_id":-1,"actor"`, 1),
 	} {
 		code, b := h.do(t, "POST", "/v1/operations", body)
 		if code != 400 || !strings.Contains(string(b), `"invalid_request"`) {
@@ -449,5 +453,19 @@ func TestSocket(t *testing.T) {
 		if _, err := listen(bad, false); err == nil {
 			t.Errorf("accepted %s", bad)
 		}
+	}
+}
+
+// An install's route and setup bundle reach the CLI as sent; the CLI checks them.
+func TestInstallRouteReachesCLI(t *testing.T) {
+	h := start(t, demoPlan)
+	got := make(chan cli.Request, 1)
+	h.s.run = func(_ context.Context, _, _ string, r cli.Request, _ cli.Options) error { got <- r; return nil }
+	body := strings.Replace(request(uuid.NewString(), "install", "hello"), `"actor"`, `"hostname":"hello.example.com","forward_host":"192.0.2.5","forward_port":8443,"certificate_id":3,"bundle":"/data/installer/setup.json","identity_client":"hello","actor"`, 1)
+	if code, b := h.do(t, "POST", "/v1/operations", body); code != 202 {
+		t.Fatalf("start %d %s", code, b)
+	}
+	if r := <-got; r.Hostname != "hello.example.com" || r.ForwardHost != "192.0.2.5" || r.ForwardPort != 8443 || r.CertificateID != 3 || r.Bundle != "/data/installer/setup.json" || r.IdentityClient != "hello" || r.Target != "nas" {
+		t.Fatalf("request = %+v", r)
 	}
 }

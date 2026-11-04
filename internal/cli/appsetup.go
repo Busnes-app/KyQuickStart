@@ -225,7 +225,8 @@ func amendmentID(parent, client string) string {
 
 // amendLate records a setup amendment for each installed app whose catalog client the
 // running KyIdentity's retained setup was prepared without, when that KyIdentity takes
-// amendments, and returns apply's publish with them in the plan. It only reads the target.
+// amendments, and returns apply's publish with them in the plan (with install's
+// planChange). It only reads the target.
 func (s *session) amendLate(ctx context.Context, state string, prior func() error) (func() error, error) {
 	t := s.placed["kyidentity"]
 	k := slices.IndexFunc(s.integrations, func(i stack.Integration) bool {
@@ -268,6 +269,9 @@ func (s *session) amendLate(ctx context.Context, state string, prior func() erro
 	}
 	installation := s.installation
 	_, data, err := changePlan(state, s.revision, func(p *stack.Stack) {
+		if s.planChange != nil { // install's, under the amendments of the plan it gives
+			s.planChange(p)
+		}
 		p.InstallationID = installation
 		for j := range p.Integrations {
 			p.Integrations[j].IdentityAmendment = next.Integrations[j].IdentityAmendment

@@ -85,6 +85,12 @@ type kyRequest struct {
 	Target              string   `json:"target,omitempty"`
 	AcknowledgeNoBackup bool     `json:"acknowledge_no_backup"`
 	Actor               string   `json:"actor"`
+	Hostname            string   `json:"hostname,omitempty"`
+	ForwardHost         string   `json:"forward_host,omitempty"`
+	ForwardPort         int      `json:"forward_port,omitempty"`
+	CertificateID       int      `json:"certificate_id,omitempty"`
+	Bundle              string   `json:"bundle,omitempty"`
+	IdentityClient      string   `json:"identity_client,omitempty"`
 }
 
 type kyStep struct {

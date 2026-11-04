@@ -172,6 +172,12 @@ func TestHandoffToARunnerPod(t *testing.T) {
 		t.Errorf("k1 marker %+v", m)
 	}
 
+	// Opus pass 2 R6: another installation's plan is never pulled over this one.
+	id := f.stack(t).InstallationID
+	r.export = strings.Replace(strings.Replace(r.imported["stack.yaml"], "revision: 3", "revision: 9", 1), id, "0b6c1f3e-2a1d-4f6e-9c3b-5d7e8f9a0b1c", 1)
+	if err := f.run("pull-plan"); code(err) != suite.OwnedByOtherPlan || f.stack(t).Revision != 3 || f.stack(t).InstallationID != id {
+		t.Fatalf("pull-plan of another installation: %v, revision %d", err, f.stack(t).Revision)
+	}
 	// pull-plan and --revoke find the runner in handoff.json.
 	r.export = strings.Replace(r.imported["stack.yaml"], "revision: 3", "revision: 4", 1)
 	if err := f.run("pull-plan"); err != nil || f.stack(t).Revision != 4 || r.ran[len(r.ran)-1] != "serve-export" {

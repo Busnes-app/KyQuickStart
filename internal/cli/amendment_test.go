@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -16,7 +17,9 @@ import (
 	"github.com/Busnes-app/kyquickstart/internal/engine"
 	"github.com/Busnes-app/kyquickstart/internal/kube"
 	"github.com/Busnes-app/kyquickstart/internal/managed"
+	"github.com/Busnes-app/kyquickstart/internal/stack"
 	"github.com/Busnes-app/kyquickstart/internal/suite"
+	"go.yaml.in/yaml/v3"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -311,5 +314,43 @@ func TestRetireBootstrap(t *testing.T) {
 	step.admin = "someone"
 	if err := step.Apply(ctx); err == nil || !strings.Contains(err.Error(), "another active administrator") {
 		t.Fatalf("guard: %v", err)
+	}
+}
+
+// install kyrecovery after KyIdentity's first setup: its flags give the route and setup plan
+// writes, and amendLate publishes them with the setup amendment that adds its client.
+func TestInstallAddsRecoveryByAmendment(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, "../catalog/testdata/apps")
+	f.o.Catalog = catalog.Embedded()
+	identity := setUpIdentity(t, f, amendmentFeatures)
+	recoveryPlan(t, f, "      clients: []\n")
+	id := amendmentID(parentSetup, "kyrecovery")
+	identity.setups["/data/installer/"+id+"/setup.json"] = &fakeIdentity{parent: identity, export: strings.Replace(recoveryExport("https://identity.example.com"), parentSetup, id, 1)}
+	s := runningSession(t, f, identity, &fakeRecovery{files: map[string]string{}})
+	full := f.stack(t)
+
+	// The saved plan before install: without KyRecovery.
+	saved := f.stack(t)
+	withoutApp(saved, "kyrecovery", "k1")
+	data, _ := yaml.Marshal(saved)
+	os.WriteFile(filepath.Join(f.state, "stack.yaml"), data, 0o600)
+	saved.Edges[0].AllowCIDRs, saved.Edges[0].ClientPort = full.Edges[0].AllowCIDRs, full.Edges[0].ClientPort // plan's allow-list
+	k, route, setup, err := installRoute(saved, s.cat["kyrecovery"], "kyrecovery", Request{Target: "k1", Hostname: "recovery.example.com",
+		ForwardHost: "app.kyq-kyrecovery.svc.cluster.local", ForwardPort: 8095, CertificateID: 1, Bundle: recoveryBundle})
+	if err != nil || !reflect.DeepEqual(*route, full.Edges[k].Routes[len(full.Edges[k].Routes)-1]) || !reflect.DeepEqual(*setup, full.Integrations[1]) {
+		t.Fatalf("install wrote %+v and %+v (%v)", route, setup, err)
+	}
+	s.planChange = func(p *stack.Stack) { p.Apps, p.Edges, p.Integrations = full.Apps, full.Edges, full.Integrations }
+	publish, err := s.amendLate(ctx, f.state, func() error { t.Fatal("published without the amendment"); return nil })
+	if err != nil || publish == nil {
+		t.Fatal(err)
+	}
+	if err := publish(); err != nil {
+		t.Fatal(err)
+	}
+	st := f.stack(t)
+	if !slices.ContainsFunc(st.Apps, func(a stack.App) bool { return a.Name == "kyrecovery" }) || st.Integrations[1].IdentityAmendment != id || st.Revision != full.Revision+1 {
+		t.Fatalf("published %+v", st)
 	}
 }
