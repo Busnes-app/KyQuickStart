@@ -1,10 +1,14 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -424,5 +428,72 @@ func TestRemoveRefusesNPMWithRoutes(t *testing.T) {
 	os.WriteFile(filepath.Join(f.state, "stack.yaml"), bytes.Replace(b, []byte("kube://kyq-npm/app:81"), []byte("https://npm.example.com"), 1), 0o600)
 	if err := f.run("uninstall", "npm"); code(err) == suite.Dependency {
 		t.Fatalf("uninstall beside an external NPM: %v", err)
+	}
+}
+
+// install takes a routed app's route and setup bundle: it refuses an incomplete route, a target
+// without an edge and a routed app without a route, and writes nothing until the deploy passed.
+func TestInstallRouteFlags(t *testing.T) {
+	f, cat := suiteFixture(t)
+	writeApp(t, cat, "site", "version: 1.0.0\n")
+	os.WriteFile(filepath.Join(cat, "site", "compose.yaml.tmpl"), []byte("services:\n  whoami:\n    image: {{ .Images.whoami }}\n    environment:\n      URL: https://{{host}}\n"), 0o600)
+	route := []string{"--hostname", "site.example.com", "--forward-host", "192.0.2.1", "--forward-port", "8443", "--certificate-id", "3"}
+	if err := f.run(append([]string{"install", "site", "--target", "nas"}, route...)...); code(err) != suite.InvalidRequest || !strings.Contains(err.Error(), "nas has no edge") {
+		t.Fatalf("no edge: %v", err)
+	}
+	f.plan(t, "apps:\n  - name: db\n    target: nas\nedges:\n  - target: nas\n    provider: lan\n    npm_url: https://npm.test\n    allow_cidrs: [192.168.1.0/24]\n    client_port: 30543\n    routes:\n"+
+		"      - app: db\n        hostname: db.example.com\n        forward_host: 192.0.2.1\n        forward_port: 8081\n        certificate_id: 1\n")
+	before, _ := os.ReadFile(filepath.Join(f.state, "stack.yaml"))
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{nil, "--hostname, --forward-host, --forward-port and --certificate-id"},
+		{route[:2], "together"},
+		{append(slices.Clone(route[:6]), "--forward-port", "81", "--certificate-id", "3"), "not 81"},
+		{[]string{"--identity-client", "site"}, "needs --bundle"},
+		{[]string{"--bundle", "/data/installer/271333e2-c221-4601-b249-563b3d828530/setup.json"}, "no setup that apply runs"},
+	} {
+		if err := f.run(append([]string{"install", "site", "--target", "nas"}, c.args...)...); code(err) != suite.InvalidRequest || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%v: %v", c.args, err)
+		}
+	}
+	// A complete route passes every check, then the deploy needs NPM's token: nothing is saved.
+	if err := f.run(append([]string{"install", "site", "--target", "nas"}, route...)...); err == nil || code(err) == suite.InvalidRequest || !strings.Contains(err.Error(), "edge nas") {
+		t.Fatalf("complete route: %v", err)
+	}
+	if after, _ := os.ReadFile(filepath.Join(f.state, "stack.yaml")); !bytes.Equal(before, after) {
+		t.Fatalf("a failed install saved the plan:\n%s", after)
+	}
+}
+
+// install's route is the one plan writes from the same answers on each kind of edge.
+func TestInstallRouteIsPlans(t *testing.T) {
+	cat, err := catalog.Load(os.DirFS("../catalog/testdata/apps"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, provider := range [][]string{
+		{"frp", "https://npm.example.test", "172.30.0.10/32", "8443", "yes", "npm-net", "npm", "frp.example.test", "7000"},
+		{"cloudflare", "https://npm.example.test", "172.30.0.10/32", "yes", "npm-net", "npm", "12345678-1234-1234-1234-123456789012"},
+		{"lan", "https://npm.example.test", "192.168.1.0/24", "30543"},
+	} {
+		st, _ := stack.Parse([]byte(stackYAML))
+		var out bytes.Buffer
+		// Every route question at its default but the four install takes; lan asks no exposure.
+		answers := append(slices.Clone(provider), "yes", "", "hello.example.test", "192.0.2.5", "8443", "", "12", "")
+		if provider[0] == "lan" {
+			answers = slices.Delete(answers, len(provider)+1, len(provider)+2)
+		}
+		p := &prompts{ctx: context.Background(), in: bufio.NewReader(strings.NewReader(strings.Join(answers, "\n") + "\n")), out: &out, answers: map[string]string{}, draft: filepath.Join(t.TempDir(), "answers.json")}
+		if err := guidedEdges(p, st, cat); err != nil || strings.Contains(out.String(), "Please enter") {
+			t.Fatal(provider[0], err, out.String())
+		}
+		want := st.Edges[0].Routes[0]
+		st.Edges[0].Routes = nil
+		k, got, setup, err := installRoute(st, cat["hello"], "hello", Request{Target: "nas", Hostname: "hello.example.test", ForwardHost: "192.0.2.5", ForwardPort: 8443, CertificateID: 12})
+		if err != nil || k != 0 || setup != nil || !reflect.DeepEqual(*got, want) {
+			t.Errorf("%s: install wrote %+v (%v), plan %+v", provider[0], got, err, want)
+		}
 	}
 }

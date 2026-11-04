@@ -362,6 +362,10 @@ func validRequest(r suite.Request) error {
 		return errors.New("target is not a valid name")
 	case r.AcknowledgeNoBackup && r.Kind != "install" && r.Kind != "upgrade":
 		return errors.New("acknowledge_no_backup is only for install and upgrade")
+	case r.Kind != "install" && (r.Hostname != "" || r.ForwardHost != "" || r.ForwardPort != 0 || r.CertificateID != 0 || r.Bundle != "" || r.IdentityClient != ""):
+		return errors.New("hostname, forward_host, forward_port, certificate_id, bundle and identity_client are only for install")
+	case r.ForwardPort < 0 || r.ForwardPort > 65535 || r.CertificateID < 0:
+		return errors.New("forward_port must be 1-65535 and certificate_id positive")
 	case !actorRE.MatchString(r.Actor):
 		return errors.New("actor must match " + actorRE.String())
 	}
@@ -448,7 +452,10 @@ func (s *server) execute(ctx context.Context, rec *record) {
 			s.log.Printf("operation %s: %v", id, err)
 		}
 	}
-	r := cli.Request{Apps: rec.Request.Apps, Target: rec.Request.Target, AcknowledgeNoBackup: rec.Request.AcknowledgeNoBackup,
+	q := rec.Request
+	r := cli.Request{Apps: q.Apps, Target: q.Target, AcknowledgeNoBackup: q.AcknowledgeNoBackup,
+		Hostname: q.Hostname, ForwardHost: q.ForwardHost, ForwardPort: q.ForwardPort, CertificateID: q.CertificateID,
+		Bundle: q.Bundle, IdentityClient: q.IdentityClient,
 		Holder: fmt.Sprintf("kyquickstart runner %s for %s", s.id, rec.Actor)}
 	err := s.run(ctx, rec.Kind, s.plan, r, o)
 	s.mu.Lock()
