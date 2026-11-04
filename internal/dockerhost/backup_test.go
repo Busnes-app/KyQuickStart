@@ -601,8 +601,11 @@ func TestReplaceKeepsLiveOptionalSecret(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := os.Stat(filepath.Join(aside, "secrets", "other")); !errors.Is(err, os.ErrNotExist) {
-			t.Fatal("the live optional secret was moved aside")
+		if b, _ := os.ReadFile(filepath.Join(aside, "secrets", "other")); string(b) != "live-key" {
+			t.Fatalf("aside copy of the live optional secret = %q", b)
+		}
+		if b, _ := os.ReadFile(filepath.Join(dir, "secrets", "other")); string(b) != "live-key" {
+			t.Fatalf("the live optional secret was moved, not copied: %q", b)
 		}
 		if err := st.RestoreFiles(ctx, st.PasswordFile(), id[:8]); err != nil {
 			t.Fatalf("snapshot %s: %v", id[:8], err)

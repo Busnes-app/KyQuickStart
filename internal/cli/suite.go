@@ -237,7 +237,14 @@ func install(ctx context.Context, state string, r Request, trust trustFlag, o Op
 	ns.revision, ns.saved, ns.ack, ns.changesPlan = s.revision, s.saved, r.AcknowledgeNoBackup, true
 	// Only the edge the new route is on, with all its routes, as apply deploys it.
 	ns.edges = slices.DeleteFunc(ns.edges, func(e stack.Edge) bool { return route == nil || e.Target != r.Target })
-	ns.order = slices.DeleteFunc(ns.order, func(a string) bool { return !added[a] })
+	// An installed KyDrive takes the new editor's URL and secret: it is redeployed with it, under
+	// its upgrade gate like any deploy.
+	_, drive := s.placed["kydrive"]
+	drive = drive && added[euroOffice]
+	if drive && ns.stopped("kydrive") {
+		return suite.Errorf(suite.AppStopped, "installing %s redeploys kydrive with it, which would start kydrive again; run kyquickstart start kydrive first", euroOffice)
+	}
+	ns.order = slices.DeleteFunc(ns.order, func(a string) bool { return !added[a] && !(drive && a == "kydrive") })
 	ns.targets = ns.withSetupSources([]stack.Target{ns.placed[name]})
 	if err := ns.runnerImage(); err != nil {
 		return err
@@ -507,7 +514,10 @@ func remove(ctx context.Context, state string, r Request, trust trustFlag, o Opt
 			return nil, err
 		}
 		handover = handoverSection(name, t, installedVersion(deployed, s.cat[name], s.o.ReleaseSet), hostnames)
-		return append(steps, d.unmanageSteps(name, s.cat[name])...), nil
+		// The section as a step note too: the runner's operation record carries it to KyYard's
+		// Suite page, since its handover.md stays in the runner's state volume.
+		note := strings.Join(strings.Fields(strings.TrimPrefix(strings.TrimSpace(handover), "## ")), " ")
+		return append(append(steps, d.unmanageSteps(name, s.cat[name])...), noteStep{id: name + ".handover", note: note}), nil
 	}, func() error {
 		if unmanage {
 			if err := appendHandover(state, handover); err != nil {

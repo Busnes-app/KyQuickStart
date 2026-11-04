@@ -54,7 +54,7 @@ and under each target's lock:
 |---|---|
 | `install <app> --target T` | Adds the app to the plan, validates placement, applies it and missing dependencies; a routed app also takes `--hostname`, `--forward-host`, `--forward-port`, `--certificate-id` and its setup `--bundle` (`--identity-client`) |
 | `uninstall <app>` | Removes workloads, keeps data and the app's secrets on the target; refuses while an installed app depends on it |
-| `unmanage <app>` | Removes `ky.managed-by`/`ky.release-set`, drops the app from the plan, records it in `handover.md` |
+| `unmanage <app>` | Removes `ky.managed-by`/`ky.release-set`, drops the app from the plan, records it in `handover.md` and as the diagnostics of its `<app>.handover` step |
 | `upgrade [app…]` | Upgrade rules, then one app at a time in dependency order; stops at the first failure |
 | `status --json` | Per app: version, release set, target, last health, last step results |
 | `handoff --kyyard-target T [--runner-container NAME \| --runner-pod NS/SELECTOR] [--revoke]` | Moves the plan into the runner on target T (below) |

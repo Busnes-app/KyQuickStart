@@ -7,6 +7,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/Busnes-app/kyquickstart/internal/engine"
 	"github.com/Busnes-app/kyquickstart/internal/managed"
@@ -107,25 +108,23 @@ func (d deployStep) Apply(ctx context.Context) error {
 		}
 	}
 	// compose.kyq.yaml records the installed version (Deployed): keep the deployed files until
-	// the new images are pulled, so a failed pull leaves the record of what still runs.
-	dir := remote.Quote(d.a.dir())
-	if _, err := d.a.Runner.Run(ctx, "cd "+dir+" 2>/dev/null || exit 0; for f in compose.yaml compose.kyq.yaml; do rm -f .$f.prev || exit 1; if [ -e $f ]; then cp -p $f .$f.prev || exit 1; fi; done", nil); err != nil {
-		return fmt.Errorf("keep the deployed Compose files: %w", err)
-	}
-	if err := d.a.writeCompose(ctx, d.override); err != nil {
+	// the new images are pulled, so a failed deploy leaves the record of what still runs.
+	if err := trustedDir(ctx, d.a.Runner, d.a.dir()); err != nil {
 		return err
 	}
-	// A missing bind source inside a bind directory would be created as root.
-	for _, n := range d.a.Catalog.Nested {
-		if _, err := d.a.Runner.Run(ctx, "test -e "+remote.Quote(path.Join(d.a.dir(), n)), nil); err != nil {
-			return fmt.Errorf("bind source %s is missing; Docker would create it as root", n)
-		}
+	dir := remote.Quote(d.a.dir())
+	if _, err := d.a.Runner.Run(ctx, "cd "+dir+" || exit 1; for f in compose.yaml compose.kyq.yaml; do rm -f .$f.prev || exit 1; if [ -e $f ]; then cp -p $f .$f.prev || exit 1; fi; done", nil); err != nil {
+		return fmt.Errorf("keep the deployed Compose files: %w", err)
 	}
-	if _, err := d.a.Runner.Run(ctx, d.a.compose("pull --quiet"), nil); err != nil {
-		if _, rerr := d.a.Runner.Run(ctx, "cd "+dir+" && for f in compose.yaml compose.kyq.yaml; do if [ -e .$f.prev ]; then mv -f .$f.prev $f || exit 1; fi; done", nil); rerr != nil {
+	if err := d.prepare(ctx); err != nil {
+		// Even when ctx was cancelled; only a whole earlier pair goes back (an app whose volume
+		// migration removed its old compose.yaml keeps the new layout).
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		if _, rerr := d.a.Runner.Run(rctx, "cd "+dir+" && if [ -e .compose.yaml.prev ] && [ -e .compose.kyq.yaml.prev ]; then mv -f .compose.yaml.prev compose.yaml && mv -f .compose.kyq.yaml.prev compose.kyq.yaml; fi", nil); rerr != nil {
 			err = errors.Join(err, fmt.Errorf("put the deployed Compose files back: %w", rerr))
 		}
-		return fmt.Errorf("docker compose pull: %w: %w", engine.ErrTransient, err)
+		return err
 	}
 	if _, err := d.a.Runner.Run(ctx, "rm -f "+dir+"/.compose.yaml.prev "+dir+"/.compose.kyq.yaml.prev", nil); err != nil {
 		return fmt.Errorf("remove the previous Compose files: %w", err)
@@ -142,6 +141,23 @@ func (d deployStep) Apply(ctx context.Context) error {
 	}
 	_, err := d.a.Runner.Run(ctx, "umask 077; printf %s "+remote.Quote(d.hash)+" > "+remote.Quote(d.a.dir()+"/.input-hash"), nil)
 	return err
+}
+
+// prepare writes the new Compose files and pulls their images.
+func (d deployStep) prepare(ctx context.Context) error {
+	if err := d.a.writeCompose(ctx, d.override); err != nil {
+		return err
+	}
+	// A missing bind source inside a bind directory would be created as root.
+	for _, n := range d.a.Catalog.Nested {
+		if _, err := d.a.Runner.Run(ctx, "test -e "+remote.Quote(path.Join(d.a.dir(), n)), nil); err != nil {
+			return fmt.Errorf("bind source %s is missing; Docker would create it as root", n)
+		}
+	}
+	if _, err := d.a.Runner.Run(ctx, d.a.compose("pull --quiet"), nil); err != nil {
+		return fmt.Errorf("docker compose pull: %w: %w", engine.ErrTransient, err)
+	}
+	return nil
 }
 
 // writeCompose writes compose.yaml and its override in the app's private directory, whose

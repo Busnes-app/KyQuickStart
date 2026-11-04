@@ -206,6 +206,11 @@ func TestUnmanageHandsOverOnce(t *testing.T) {
 	if strings.Count(string(b), "## web 1.0.0 on nas is no longer managed") != 1 || !strings.Contains(string(b), "docker compose -p kyq-web") {
 		t.Errorf("handover:\n%s", b)
 	}
+	// Q6 B: the section is also the web.handover step's note, which the runner's operation
+	// record carries to KyYard.
+	if !strings.Contains(f.out.String(), "web.handover         ok: web 1.0.0 on nas is no longer managed kyquickstart and KyYard no longer") {
+		t.Errorf("no handover note:\n%s", f.out.String())
+	}
 	if st := f.stack(t); len(st.Apps) != 1 || st.Revision != 2 {
 		t.Errorf("plan = %+v", st)
 	}

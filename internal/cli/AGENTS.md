@@ -37,7 +37,9 @@ Plain terminal planning and command orchestration for the operator-run installer
   changes (`owned_by_runner` under the runner) that publish `stopped` once the app is in that
   state (on Docker no container running, restarting or paused), and change nothing on an app
   already there. Removing `euro-office` redeploys KyDrive only at its installed version
-  (`upgrade_refused` otherwise). While an app is `stopped`, `apply`,
+  (`upgrade_refused` otherwise); installing it redeploys an installed KyDrive, gated.
+  `unmanage` also records its handover section as the `<app>.handover` step note (Q6: the
+  runner's operation record carries it to KyYard). While an app is `stopped`, `apply`,
   `upgrade`, `restart` and Docker `backup` (`dockerhost.App.Stopped`) refuse `app_stopped`
   (`refuseStopped`); a container or Deployment stopped by hand without it is still repaired by
   apply. `logs` takes no lock, reads the marker for `guard`, redacts the app's catalog

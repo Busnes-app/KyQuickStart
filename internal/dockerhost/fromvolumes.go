@@ -83,7 +83,10 @@ func (s fromVolumesStep) Apply(ctx context.Context) error {
 			return err
 		}
 	}
-	place := "cd " + remote.Quote(s.a.dir()) + " || exit 1\nfor v in " + quoteAll(names) + `; do
+	// The earlier compose.yaml mounts the volumes: once a copy is in place it goes, so the app
+	// cannot start on its volumes again (kyquickstart start) and leave the copies stale. Only
+	// deploy writes the new one, and a failed deploy does not bring the old one back.
+	place := "cd " + remote.Quote(s.a.dir()) + " || exit 1\nrm -f compose.yaml .input-hash || exit 1\nfor v in " + quoteAll(names) + `; do
   if [ -d "$v" ]; then rmdir "$v" || exit 1; fi
   mv ".$v.from-volume" "$v" || exit 1
 done`

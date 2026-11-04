@@ -186,7 +186,8 @@ the plan is saved only after every step passed.
   and its `integrations` entry from the plan, disables the app's NPM routes, removes its containers (`docker compose down`, never `-v`) or its Deployment and
   Service, and keeps the app directory, data volumes, claims and secrets on the target.
 - `unmanage` removes `ky.managed-by` and `ky.release-set` and records the hand-over in
-  `<state>/handover.md`. Docker cannot relabel a container, so existing containers are
+  `<state>/handover.md` and as the note of its `<app>.handover` step, which KyYard's Suite page
+  shows for an unmanage run by the suite runner (whose state stays in its volume). Docker cannot relabel a container, so existing containers are
   recreated once, unstarted, and only the services that were running (or restarting) are
   started again; `<root>/<app>/.unmanage-running` records both sets until then, so a rerun
   after an interruption finishes with them; on
@@ -305,7 +306,9 @@ without them. The bulk user must differ from the target's, and its password file
 0600 file. KyDrive's documents go to `<bulk_repository>/kydrive-bulk`. A plan made before this
 release kept them in `<repository>/kydrive-bulk` under the target's user: those snapshots stay
 there (append-only), so keep that repository and the target's password until no KyDrive
-capsule you might restore predates the change.
+capsule you might restore predates the change. Until the keys are added every command refuses
+the plan; for a plan handed to KyYard's runner, run `pull-plan`, `handoff --revoke`, add them
+(rerun `plan`), `apply`, then `handoff` again.
 
 `review`, `plan --noninteractive` and `apply` refuse, before connecting, any scheme but
 `rest:https`, credentials, a query or fragment in the URL, a missing user segment, relative
@@ -323,7 +326,8 @@ up. An app without a dump command is backed up cold:
 `docker compose stop`, restic, then `docker compose start` and a health wait, also when the
 snapshot failed. KyDrive is backed up cold (its SQLite has no dump command): `data`, `backups`,
 `session_secret`, `scim_token` and, with `euro-office`, `editor_secret` (a snapshot from before
-euro-office was added restores without it, and a new one is generated), a stop of seconds to
+euro-office was added restores without it and keeps the current one, which Euro-Office's
+`jwt_secret` matches; `--replace` copies it aside too, never deleting it), a stop of seconds to
 minutes. KyPost is backed up cold too:
 `config`, `private` and `state` (settings and accounts, its generated keys, mail state; not its
 logs or the re-downloadable Ollama model), with up to 36 minutes for its stop. Its data moved from
@@ -352,7 +356,8 @@ the same command for every Docker app whose target has a destination:
 ssh -p 22 kyq@nas.example.lan cat /opt/kyquickstart/kydrive/secrets/restic_password
 ```
 
-**Restore.** `restore APP` lists the app's snapshots (ID, time, host) and changes nothing.
+**Restore.** `restore APP` lists the app's snapshots (ID, time, host) and changes nothing,
+except that a recorded password given on stdin that opens the repository is kept on the target.
 `restore APP --snapshot ID` (8 or 64 lowercase hex) restores one; `--replace` and `--yes` are
 refused without `--snapshot`:
 
@@ -1502,7 +1507,7 @@ run every product as the target user with no capabilities, which this editor can
     ignores NetworkPolicy egress, such as plain flannel, is refused. An open result is retried
     for about 8 seconds while the policy settles. Behind a `cloudflare` or `frp` edge the
     policy also admits public addresses on 443, so on a cluster whose API server endpoint is a
-    public address on port 443 (GKE's or AKS's public endpoint) the check cannot tell and
+    public address on port 443 (a managed cluster's public endpoint) the check cannot tell and
     refuses; kubeadm and k3s endpoints listen on 6443 and are unaffected.
   - **Residual.** Any KyDrive user who can edit a document can make the editor GET any
     hostname this NPM routes, over HTTPS, as a client inside the cluster's pod network (which a
@@ -1543,7 +1548,10 @@ run every product as the target user with no capabilities, which this editor can
     release, so that gate is still open (`KyDrive-server/docs/EURO-PROVENANCE.md`).
 - **Uninstall.** `uninstall euro-office` (and `unmanage`) first redeploys KyDrive without
   the editor's URL and secret, so KyDrive never points at an editor that is gone. That is
-  refused with `app_stopped` while KyDrive is stopped, since the redeploy would start it.
+  refused with `app_stopped` while KyDrive is stopped, since the redeploy would start it, and
+  with `upgrade_refused` while KyDrive's installed version is not this release's (upgrade it
+  first). Installing `euro-office` beside an installed KyDrive likewise redeploys KyDrive with
+  the editor, under its upgrade rules.
   `editor_secret` stays on KyDrive's target, and the editor's Secret stays in the cluster.
 - **Upgrades.** `migrates_data: true`, so any version change needs a backup. The Kubernetes
   pre-upgrade copy covers only apps that run as a non-root uid, and the editor runs as root,
@@ -1764,8 +1772,10 @@ What apply does:
   running KyPost (with its own grace period), copies the volume with `tar` in two offline,
   read-only containers of the pinned restic image (the volume mounted read-only and read as
   root with only `CAP_DAC_READ_SEARCH`; the copy written as the target user, who then owns every
-  file, modes kept), checks both ends succeeded and the entry counts match, and only then renames
-  the copy into place. The volumes are kept: the step's note names them, and once KyPost runs on
+  file, modes kept), checks both ends succeeded and the entry counts match, and only once every
+  pending volume's copy has, removes the earlier `compose.yaml` (so `kyquickstart start` cannot
+  run KyPost on its volumes again) and renames the copies into place; `kypost.deploy` writes the
+  new one. The volumes are kept: the step's note names them, and once KyPost runs on
   the copies `docker volume rm` removes them. A rerun skips: a bind directory that exists, even
   empty (an empty volume's copy), is done, and `restore kypost` skips the step. Until this step
   has run, `kyquickstart backup kypost` refuses (its bind directories would be empty).

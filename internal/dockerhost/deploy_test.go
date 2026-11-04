@@ -87,7 +87,7 @@ func TestDeployApplyOrder(t *testing.T) {
 	if err := d.Apply(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"test -e '/opt/kyq/hello/.restore-pending'", "cp -p $f .$f.prev", "pwd -P", "rm -f '/opt/kyq/hello/.input-hash'", "cat > '/opt/kyq/hello/compose.yaml'", "cat > '/opt/kyq/hello/compose.kyq.yaml'", "pull --quiet", ".compose.kyq.yaml.prev", "up -d --remove-orphans", "> '/opt/kyq/hello/.input-hash'"}
+	want := []string{"test -e '/opt/kyq/hello/.restore-pending'", "pwd -P", "cp -p $f .$f.prev", "pwd -P", "rm -f '/opt/kyq/hello/.input-hash'", "cat > '/opt/kyq/hello/compose.yaml'", "cat > '/opt/kyq/hello/compose.kyq.yaml'", "pull --quiet", ".compose.kyq.yaml.prev", "up -d --remove-orphans", "> '/opt/kyq/hello/.input-hash'"}
 	if len(f.calls) != len(want) {
 		t.Fatalf("calls = %v", f.calls)
 	}
@@ -96,14 +96,14 @@ func TestDeployApplyOrder(t *testing.T) {
 			t.Errorf("call %d = %q, want %q", i, f.calls[i].cmd, w)
 		}
 	}
-	if f.calls[4].stdin != string(a.Catalog.Compose) || !strings.Contains(f.calls[5].stdin, managed.Value) {
-		t.Errorf("stdin: %q / %q", f.calls[4].stdin, f.calls[5].stdin)
+	if f.calls[5].stdin != string(a.Catalog.Compose) || !strings.Contains(f.calls[6].stdin, managed.Value) {
+		t.Errorf("stdin: %q / %q", f.calls[5].stdin, f.calls[6].stdin)
 	}
-	if !strings.Contains(f.calls[8].cmd, "-p 'kyq-hello'") {
-		t.Errorf("project name missing: %q", f.calls[8].cmd)
+	if !strings.Contains(f.calls[9].cmd, "-p 'kyq-hello'") {
+		t.Errorf("project name missing: %q", f.calls[9].cmd)
 	}
-	if !strings.Contains(f.calls[9].cmd, d.hash) {
-		t.Errorf("hash not written: %q", f.calls[9].cmd)
+	if !strings.Contains(f.calls[10].cmd, d.hash) {
+		t.Errorf("hash not written: %q", f.calls[10].cmd)
 	}
 }
 
@@ -289,5 +289,15 @@ func TestFailedPullKeepsDeployedVersion(t *testing.T) {
 	}
 	if left, _ := filepath.Glob(filepath.Join(a.dir(), ".compose*.prev")); len(left) != 0 {
 		t.Fatalf("left %v", left)
+	}
+	// After a volume migration removed the old compose.yaml, a failed pull keeps the new
+	// layout: the old one would start the app on its volumes again.
+	os.Remove(filepath.Join(a.dir(), "compose.yaml"))
+	a.Catalog.Compose = []byte("services:\n  web:\n    image: y\n")
+	if err := deployOf(a).Apply(ctx); err == nil {
+		t.Fatal("Apply passed")
+	}
+	if b, _ := os.ReadFile(filepath.Join(a.dir(), "compose.yaml")); string(b) != string(a.Catalog.Compose) {
+		t.Fatalf("compose.yaml = %q, want the new layout", b)
 	}
 }

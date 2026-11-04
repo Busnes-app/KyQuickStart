@@ -386,11 +386,14 @@ func (s Store) MoveAside(ctx context.Context, stamp string) (string, error) {
 			return "", err
 		}
 	}
-	var names []string
+	var names, copies []string
 	for _, n := range s.App.Catalog.Secrets {
 		// An optional secret pairs the app with another one that stays (KyDrive's editor_secret,
-		// Euro-Office's jwt_secret): it stays unless the snapshot holds its own.
-		if !slices.Contains(s.App.Catalog.Backup.OptionalSecrets, n) {
+		// Euro-Office's jwt_secret): it stays unless the snapshot holds its own, and is copied
+		// aside, since RestoreFiles then replaces it.
+		if slices.Contains(s.App.Catalog.Backup.OptionalSecrets, n) {
+			copies = append(copies, "secrets/"+n)
+		} else {
 			names = append(names, "secrets/"+n)
 		}
 	}
@@ -403,6 +406,9 @@ func (s Store) MoveAside(ctx context.Context, stamp string) (string, error) {
 	}
 	cmd := "cd " + remote.Quote(s.App.dir()) + " || exit 1\n" + keep + "for p in " + quoteAll(append(slices.Clone(s.App.Catalog.Binds), names...)) + `; do
   if [ -e "$p" ] || [ -L "$p" ]; then mv "$p" ` + remote.Quote(dest) + `/"$p" || exit 1; fi
+done
+for p in ` + quoteAll(copies) + `; do
+  if [ -f "$p" ] && [ ! -L "$p" ]; then cp -p "$p" ` + remote.Quote(dest) + `/"$p" || exit 1; fi
 done` + kept
 	if _, err := s.App.Runner.Run(ctx, cmd, nil); err != nil {
 		return "", fmt.Errorf("move the current data aside: %w", err)
