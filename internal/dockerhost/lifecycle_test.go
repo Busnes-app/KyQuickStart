@@ -50,7 +50,7 @@ func lifecycleApp(t *testing.T, state string) (App, *composeHost) {
 }
 
 func TestState(t *testing.T) {
-	for state, want := range map[string]string{"running": "running", "exited": "stopped", "": "missing", "restarting": "stopped"} {
+	for state, want := range map[string]string{"running": "running", "exited": "stopped", "": "missing", "restarting": "unknown", "paused": "unknown"} {
 		a, _ := lifecycleApp(t, state)
 		if got, err := State(context.Background(), a); err != nil || got != want {
 			t.Errorf("%q: %s, %v; want %s", state, got, err, want)
@@ -96,6 +96,7 @@ func TestRestartAlwaysRuns(t *testing.T) {
 	if done, err := r.Inspect(ctx); err != nil || done {
 		t.Fatalf("restart inspect: %v %v", done, err)
 	}
+	h.calls = nil
 	if err := r.Apply(ctx); err != nil || !strings.HasSuffix(h.calls[0], " restart") {
 		t.Fatalf("restart: %v %q", err, h.calls)
 	}

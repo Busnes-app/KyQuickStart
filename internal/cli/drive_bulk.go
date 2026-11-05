@@ -20,9 +20,9 @@ import (
 // writes them to a Restic repository (KYDRIVE_BULK_BACKUP_REPOSITORY) and the capsule binds that
 // snapshot. Without one, every backup fails with "KYDRIVE_BULK_BACKUP_REPOSITORY is required for
 // document backups", KyRecovery deposits included. With a backup destination on KyDrive's
-// target, KyDrive's bulk repository is <repository>/kydrive-bulk on that rest-server, beside
-// kyquickstart's own <repository>/kydrive; the server's --private-repos keeps both under the
-// target's user, and --append-only keeps the target from deleting either.
+// target, KyDrive's bulk repository is <bulk_repository>/kydrive-bulk, under KyDrive's own
+// rest-server user: --private-repos keeps it from the target's user (kyquickstart's own
+// <repository>/kydrive and every other app's), and --append-only keeps KyDrive from deleting it.
 const (
 	bulkRepository  = "kydrive-bulk"
 	bulkPassword    = "bulk_backup_password"
@@ -42,13 +42,16 @@ func bulkPlan(st *stack.Stack, cat catalog.Catalog) (drive catalog.App, ok bool,
 		if !found || t.Backup == nil || t.Backup.CAFile != "" {
 			return catalog.App{}, false, nil // with a private CA, see bulkUnavailable
 		}
-		drive, err = withBulkRepository(cat["kydrive"], *t.Backup)
+		if t.Backup.BulkRepository == "" {
+			return catalog.App{}, false, fmt.Errorf("kydrive on %s needs its own rest-server user for its document backups: add bulk_repository (rest:https://<host>[:port]/<kydrive user>) and bulk_credential_file to %s's backup (docs/guided-setup.md, \"The rest-server is yours\")", t.Name, t.Name)
+		}
+		drive, err = withBulkRepository(cat["kydrive"], stack.BackupDestination{Repository: t.Backup.BulkRepository, CredentialFile: t.Backup.BulkCredentialFile})
 		return drive, err == nil, err
 	}
 	return catalog.App{}, false, nil
 }
 
-// withBulkRepository points KyDrive at <repository>/kydrive-bulk. The target's rest-server
+// withBulkRepository points KyDrive at dest's <repository>/kydrive-bulk. KyDrive's rest-server
 // password file is mounted read-only as a Compose secret, and KyDrive's entrypoint writes the
 // two-line credentials file KyDrive reads (RESTIC_REST_USERNAME, RESTIC_REST_PASSWORD) into its
 // private /tmp, mode 0600: the password is never in Compose, the environment or the state.
@@ -124,7 +127,7 @@ func bulkInit(d driver, t stack.Target) engine.Step {
 	}
 	cmd := "cd " + remote.Quote(path.Join(t.Root, "kydrive")) + " && docker compose -p kyq-kydrive -f compose.yaml -f compose.kyq.yaml exec -T app /bin/sh -c " + remote.Quote(bulkInitScript)
 	return bulkInitStep{
-		hash: hex.EncodeToString(sha256Sum("kydrive.bulk-init\x00" + t.Backup.Repository)),
+		hash: hex.EncodeToString(sha256Sum("kydrive.bulk-init\x00" + t.Backup.BulkRepository)),
 		run: func(ctx context.Context) error {
 			if out, err := h.c.Run(ctx, cmd, nil); err != nil {
 				return fmt.Errorf("kydrive bulk-init on %s: %w: %s", t.Name, err, strings.TrimSpace(string(out)))

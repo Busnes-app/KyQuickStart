@@ -41,6 +41,8 @@ func FuzzStartRequest(f *testing.F) {
 		strings.Replace(ok, `"actor":"0f9e3c8e-1d2b-4c5a-8e7f-6a5b4c3d2e1f"`, `"actor":"a\nb"`, 1),
 		strings.Replace(ok, `"actor":"0f9e3c8e-1d2b-4c5a-8e7f-6a5b4c3d2e1f"`, `"actor":"`+strings.Repeat("a", 129)+`"`, 1),
 		strings.Replace(ok, `"hello"`, `"`+strings.Repeat("é", 400)+`"`, 1),
+		strings.Replace(ok, `"actor"`, `"hostname":"hello.example.com","forward_host":"192.0.2.5","forward_port":8443,"certificate_id":3,"bundle":"/data/installer/setup.json","actor"`, 1),
+		strings.Replace(request(id, "uninstall", "hello"), `"actor"`, `"forward_port":-1,"actor"`, 1),
 	} {
 		f.Add([]byte(body))
 	}

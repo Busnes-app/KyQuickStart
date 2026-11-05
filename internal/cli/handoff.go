@@ -359,6 +359,10 @@ func (s *session) pullPlan(ctx context.Context, r handoffRecord) error {
 	if st.Revision < s.revision {
 		return suite.Errorf(suite.PlanStale, "the runner holds plan revision %d, older than this plan's %d; nothing was pulled", st.Revision, s.revision)
 	}
+	// Revisions count per plan: another installation's plan is never "newer" than this one.
+	if st.InstallationID != "" && s.installation != "" && st.InstallationID != s.installation {
+		return suite.Errorf(suite.OwnedByOtherPlan, "the runner holds the plan of installation %s, not this plan's %s; nothing was pulled. To take that plan instead, copy stack.yaml into a new state directory, set its installation_id to %s, delete its revision line, and run pull-plan there with --kyyard-target and the runner", st.InstallationID, s.installation, st.InstallationID)
+	}
 	for i, t := range st.Targets {
 		if !t.Kubernetes() {
 			continue

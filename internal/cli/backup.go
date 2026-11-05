@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -99,7 +100,8 @@ func backupCommand(ctx context.Context, cmd string, args []string, o Options) er
 }
 
 // backupSession loads the plan and refuses, before connecting, an app backup cannot cover.
-func backupSession(state, name string, trust trustFlag, o Options) (*session, stack.Target, error) {
+// restore is set for a restore of a snapshot, not for listing them.
+func backupSession(state, name string, restore bool, trust trustFlag, o Options) (*session, stack.Target, error) {
 	s, err := load(state, trust, o)
 	if err != nil {
 		return nil, stack.Target{}, err
@@ -112,8 +114,9 @@ func backupSession(state, name string, trust trustFlag, o Options) (*session, st
 		s.close()
 		return nil, t, err
 	}
-	// Refused on a runner-owned target like any change.
-	s.changesPlan, s.edges = true, nil
+	// A backup or a restore listing changes no plan and holds the target lock the runner also
+	// takes; a restore is refused on a runner-owned target, which has no restore operation.
+	s.changesPlan, s.restores, s.edges = restore, restore, nil
 	return s, t, nil
 }
 
@@ -224,6 +227,11 @@ func pruneCopies(ctx context.Context, state, name string, yes bool, trust trustF
 		if installed == "" {
 			return suite.Errorf(suite.InvalidRequest, "%s: installed version unknown, so no copy can be called older; nothing was changed", name)
 		}
+		// The version is recorded when the Deployment is submitted: until it is running, a
+		// failed upgrade's copies are its way back.
+		if state, err := d.workload(ctx, name, s.cat[name]); err != nil || state != "running" {
+			return errors.Join(err, suite.Errorf(suite.InvalidRequest, "%s is %s, not running %s: its last upgrade may not have finished, and its copies may be the way back. Start it or finish the upgrade first; nothing was changed", name, cmp.Or(state, "unreadable"), installed))
+		}
 		a := d.(kubeDriver).app(name, s.cat[name], s.o.ReleaseSet, s.redact)
 		copies, err := kube.PreUpgradeCopies(ctx, a)
 		if err != nil {
@@ -302,7 +310,7 @@ func (s *session) locked(ctx context.Context, f func(context.Context) error) (er
 }
 
 func backup(ctx context.Context, state, name string, trust trustFlag, o Options) error {
-	s, t, err := backupSession(state, name, trust, o)
+	s, t, err := backupSession(state, name, false, trust, o)
 	if err != nil {
 		return err
 	}
@@ -379,7 +387,7 @@ func restore(ctx context.Context, state string, r restoreRequest, trust trustFla
 	if r.snapshot != "" && !dockerhost.ValidSnapshotID(r.snapshot) {
 		return suite.Errorf(suite.InvalidRequest, "--snapshot must be 8 or 64 lowercase hex characters")
 	}
-	s, t, err := backupSession(state, r.app, trust, o)
+	s, t, err := backupSession(state, r.app, r.snapshot != "", trust, o)
 	if err != nil {
 		return err
 	}
@@ -394,6 +402,12 @@ func restore(ctx context.Context, state string, r restoreRequest, trust trustFla
 		}
 		if identity.Name != t.Name {
 			s.targets = append(s.targets, identity)
+		}
+	}
+	// KyDNS's setup verification asks from NPM's pod, on its edge's cluster.
+	if e, _ := appRoute(s.plan, r.app); r.app == "kydns" && !slices.ContainsFunc(s.targets, func(x stack.Target) bool { return x.Name == e.Target }) {
+		if k := slices.IndexFunc(s.allTargets, func(x stack.Target) bool { return x.Name == e.Target }); k >= 0 {
+			s.targets = append(s.targets, s.allTargets[k])
 		}
 	}
 	if err := s.connect(ctx, trust); err != nil {
@@ -434,6 +448,9 @@ func restore(ctx context.Context, state string, r restoreRequest, trust trustFla
 		if err := s.restoreLocked(ctx, st, r, in); err != nil {
 			return err
 		}
+		if !s.restored { // listing the snapshots leaves a stopped app stopped
+			return nil
+		}
 		return resumed()
 	})
 }
@@ -445,6 +462,9 @@ func (s *session) restoreLocked(ctx context.Context, st dockerhost.Store, r rest
 	if err != nil {
 		return err
 	}
+	if pendingID != "" && r.snapshot == "" && s.runnerOwned && s.o.RunnerID == "" {
+		return suite.Errorf(suite.OwnedByRunner, "a restore of %s from snapshot %s is unfinished, and %s is managed by the KyYard suite runner, which cannot restore; run kyquickstart handoff --revoke, then kyquickstart restore %s, then %s", r.app, pendingID, st.Host, r.app, s.rehandoff())
+	}
 	if pendingID != "" {
 		if r.snapshot != "" && !strings.HasPrefix(pendingID, r.snapshot) {
 			return refuse("a restore of snapshot %s is in progress; rerun kyquickstart restore %s --snapshot %s to finish it", pendingID, r.app, pendingID)
@@ -454,11 +474,25 @@ func (s *session) restoreLocked(ctx context.Context, st dockerhost.Store, r rest
 				return refuse("%s's restored files were not completely published; keep the app stopped and rerun kyquickstart restore %s --snapshot %s --replace to preserve the partial files and retry extraction", r.app, r.app, pendingID)
 			}
 		} else {
+			// This release starts the restored data: the snapshot's version must suit it, as
+			// when the restore began (perhaps with another release).
+			list, err := st.Snapshots(ctx, st.PasswordFile(), pendingID)
+			if err != nil {
+				return fmt.Errorf("%s: %s", r.app, s.redact.Redact(err.Error()))
+			}
+			if len(list) != 1 {
+				return refuse("no single snapshot %s in %s/%s", pendingID, st.Dest.Repository, r.app)
+			}
+			if why := versionRefusal(list[0], r.app, st.App.Catalog); why != "" {
+				return refuse("%s. The restored files stay in place and %s stays stopped", why, r.app)
+			}
 			fmt.Fprintf(out, "Resuming the restore of %s from snapshot %s (%s restored).\n", r.app, pendingID, stage)
 			if err := s.confirm(in, r); err != nil {
 				return err
 			}
-			return s.finishRestore(ctx, st, pendingID, stage)
+			err = s.finishRestore(ctx, st, pendingID, stage)
+			s.restored = err == nil
+			return err
 		}
 	}
 	// Refusals that need no repository come first: the server is not contacted for them.
@@ -506,6 +540,14 @@ func (s *session) restoreLocked(ctx context.Context, st dockerhost.Store, r rest
 	if err != nil {
 		return fmt.Errorf("%s: %s", r.app, s.redact.Redact(err.Error()))
 	}
+	if r.snapshot == "" && !has {
+		// It opened the repository, so it is the recorded one: keep it, and backups (of the data
+		// running now, if no restore follows) go on in the same repository.
+		if err := st.PublishPassword(ctx); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "The password opened %s/%s, so %s keeps it: kyquickstart backup %s works again, with or without a restore.\n", st.Dest.Repository, r.app, st.Host, r.app)
+	}
 	if r.snapshot == "" {
 		fmt.Fprintf(out, "%s snapshots in %s/%s:\n", r.app, st.Dest.Repository, r.app)
 		if len(list) == 0 {
@@ -526,31 +568,18 @@ func (s *session) restoreLocked(ctx context.Context, st dockerhost.Store, r rest
 	if !st.Bound(snap) {
 		return refuse("snapshot %s is not tagged for %s of this installation (%s); nothing was changed", snap.Short, r.app, strings.Join(st.Tags(), ","))
 	}
-	// Restore starts this release's version on the snapshot's data: the upgrade rules apply.
-	app := st.App.Catalog
-	for _, tag := range snap.Tags {
-		// A snapshot of an app deployed before versions were recorded has an empty one.
-		v, ok := strings.CutPrefix(tag, "version=")
-		if !ok || v == "" || v == app.Version {
-			continue
-		}
-		if catalog.VersionAtLeast(v, app.Version) {
-			return refuse("snapshot %s holds %s %s, newer than this release's %s, which may not read its data; restore it with a kyquickstart whose catalog has %s %s. Nothing was changed", snap.Short, r.app, v, app.Version, r.app, v)
-		}
-		if err := app.Upgrade.Allows(v, app.Version); err != nil {
-			return refuse("snapshot %s holds %s %s, which this release's %s cannot start on: %s; restore it with an earlier kyquickstart release and upgrade from there. Nothing was changed", snap.Short, r.app, v, app.Version, err)
-		}
+	if why := versionRefusal(snap, r.app, st.App.Catalog); why != "" {
+		return refuse("%s. Nothing was changed", why)
 	}
 	fmt.Fprintf(out, "Restore %s from snapshot %s\n  taken %s on %s\n  paths %s\n", r.app, snap.ID, snap.Time.UTC().Format(time.RFC3339), snap.Host, strings.Join(snap.Paths, " "))
 	if err := s.confirm(in, r); err != nil {
 		return err
 	}
 	start := time.Now()
-	// Fence every ordinary startup before the first restored file can be published.
-	if r.app == "kydrive" {
-		if err := st.SetPending(ctx, snap.ID, "preparing"); err != nil {
-			return err
-		}
+	// Fence every ordinary startup before the current data moves or the first restored file is
+	// published: an interrupted restore must never be started by apply without its replay.
+	if err := st.SetPending(ctx, snap.ID, "preparing"); err != nil {
+		return err
 	}
 	if len(occupied) > 0 {
 		aside, err := st.MoveAside(ctx, time.Now().UTC().Format("20060102T150405Z"))
@@ -571,7 +600,28 @@ func (s *session) restoreLocked(ctx context.Context, st dockerhost.Store, r rest
 		return err
 	}
 	fmt.Fprintf(out, "%s: files restored (%s).\n", r.app, time.Since(start).Round(time.Second))
-	return s.finishRestore(ctx, st, snap.ID, "files")
+	err = s.finishRestore(ctx, st, snap.ID, "files")
+	s.restored = err == nil
+	return err
+}
+
+// versionRefusal refuses restoring snap with this release's app: restore starts this release's
+// version on the snapshot's data, so the upgrade rules apply.
+func versionRefusal(snap dockerhost.Snapshot, name string, app catalog.App) string {
+	for _, tag := range snap.Tags {
+		// A snapshot of an app deployed before versions were recorded has an empty one.
+		v, ok := strings.CutPrefix(tag, "version=")
+		if !ok || v == "" || v == app.Version {
+			continue
+		}
+		if catalog.VersionAtLeast(v, app.Version) {
+			return fmt.Sprintf("snapshot %s holds %s %s, newer than this release's %s, which may not read its data; restore it with a kyquickstart whose catalog has %s %s", snap.Short, name, v, app.Version, name, v)
+		}
+		if err := app.Upgrade.Allows(v, app.Version); err != nil {
+			return fmt.Sprintf("snapshot %s holds %s %s, which this release's %s cannot start on: %s; restore it with an earlier kyquickstart release and upgrade from there", snap.Short, name, v, app.Version, err)
+		}
+	}
+	return ""
 }
 
 // confirm requires the app name typed back, or --yes.

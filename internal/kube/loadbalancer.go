@@ -12,6 +12,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
@@ -54,6 +56,30 @@ var loadBalancerRead = func() []authorizationv1.ResourceAttributes {
 	return out
 }()
 
+// announces reports whether adv announces pool. A MetalLB advertisement selects pools by name
+// or label, every pool when it names none; Cilium's select Services, so any one counts.
+func announces(group string, adv, pool unstructured.Unstructured) bool {
+	if group != metalLBGroup {
+		return true
+	}
+	names, _, _ := unstructured.NestedStringSlice(adv.Object, "spec", "ipAddressPools")
+	selectors, _, _ := unstructured.NestedSlice(adv.Object, "spec", "ipAddressPoolSelectors")
+	if len(names) == 0 && len(selectors) == 0 || slices.Contains(names, pool.GetName()) {
+		return true
+	}
+	for _, raw := range selectors {
+		m, _ := raw.(map[string]any)
+		var ls metav1.LabelSelector
+		if runtime.DefaultUnstructuredConverter.FromUnstructured(m, &ls) != nil {
+			continue
+		}
+		if sel, err := metav1.LabelSelectorAsSelector(&ls); err == nil && sel.Matches(labels.Set(pool.GetLabels())) {
+			return true
+		}
+	}
+	return false
+}
+
 // LoadBalancerCheck refuses a load_balancer_address (address -> app) the cluster cannot
 // assign: no Cilium LB IPAM or MetalLB, no enabled pool holding it, nothing announcing it, or
 // another Service already holding or requesting it. It changes nothing.
@@ -83,7 +109,7 @@ func (c *Client) LoadBalancerCheck(ctx context.Context, want map[string]string) 
 		if err != nil {
 			return fail("%s: %v", l.name, err)
 		}
-		announced := false
+		var advs []unstructured.Unstructured
 		for _, r := range l.announce {
 			agv, err := c.groupVersion(l.group, r)
 			if err != nil {
@@ -96,14 +122,17 @@ func (c *Client) LoadBalancerCheck(ctx context.Context, want map[string]string) 
 			if err != nil {
 				return fail("%s: %v", l.name, err)
 			}
-			announced = announced || len(items) > 0
+			advs = append(advs, items...)
 		}
 		for addr := range want {
-			if !slices.ContainsFunc(pools, func(p unstructured.Unstructured) bool { return poolHolds(p, addr) }) {
+			holds := slices.DeleteFunc(slices.Clone(pools), func(p unstructured.Unstructured) bool { return !poolHolds(p, addr) })
+			if len(holds) == 0 {
 				continue
 			}
 			pooled[addr] = true
-			if !announced {
+			if !slices.ContainsFunc(holds, func(p unstructured.Unstructured) bool {
+				return slices.ContainsFunc(advs, func(a unstructured.Unstructured) bool { return announces(l.group, a, p) })
+			}) {
 				missing = append(missing, fmt.Sprintf("%s's pool holds %s but nothing announces it (%s)", l.name, addr, strings.Join(l.announce, ", ")))
 				continue
 			}

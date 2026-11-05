@@ -124,11 +124,12 @@ func guidedIntegration(p *prompts, st *stack.Stack, e stack.Existing) error {
 	}
 	i := stack.Integration{Product: e.Product, Target: e.Target}
 	t, _ := st.Target(e.Target)
-	if err := validateProductTarget(e.Product, t); err != nil {
+	// apply finds an installed app's own container or pod; only an existing product names one,
+	// and only its setup cannot choose the runtime user on Kubernetes (integrationOrder's rule).
+	installed := i.Installed(st)
+	if err := validateProductTarget(e.Product, t); err != nil && !installed {
 		return err
 	}
-	// apply finds an installed app's own container or pod; only an existing product names one.
-	installed := i.Installed(st)
 	validContainer := workloadName.MatchString
 	if t.Kubernetes() {
 		validContainer = func(s string) bool {

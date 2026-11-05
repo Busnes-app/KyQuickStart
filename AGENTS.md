@@ -493,8 +493,11 @@ edge compatibility: `docs/redirect.md`.
   typed confirmation, never the app's `vol-<name>` claims. It is
   `backup_required` where neither can run (no destination, named volumes, a root app on
   Kubernetes); any other upgrade needs an explicit, recorded acknowledgement. The manifest's `upgrade.note` is printed and recorded with it.
-  Uninstall keeps data and secrets; unmanage drops the managed labels and the installer then
-  refuses to install over the app. Error codes are `internal/suite` codes.
+  Uninstall keeps data and secrets, and on Kubernetes ends only once the app's pods are gone;
+  Docker deploys, backups and lifecycle steps refuse a Compose project `kyq-<app>` whose
+  containers another root's directory made (another plan, or this one before its root moved),
+  even when that root's files carry the current input hash (`App.owned`). Unmanage drops the managed labels
+  and the installer then refuses to install over the app. Error codes are `internal/suite` codes.
 - `stop`, `start` and `restart APP` act on one installed app under the target lock (Docker:
   Compose stop/up -d/restart; Kubernetes: replicas 0/1 and a pod-template restart annotation),
   waiting for health. `stop` records `stopped: true` on the app in stack.yaml; while it is set,

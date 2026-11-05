@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
+	"github.com/Busnes-app/kyquickstart/internal/dockerhost"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
 	"go.yaml.in/yaml/v3"
 )
@@ -393,5 +394,18 @@ func TestAskMailbox(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// Between KyPost's volume migration and its deploy, the earlier compose.yaml waits aside and
+// still says which mail mode KyPost ran, so a rerun of apply is not refused as unknown data.
+func TestDeployedMailReadsTheMigrationsCompose(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "kypost"), 0o700)
+	os.WriteFile(filepath.Join(root, "kypost", dockerhost.PreVolumesCompose), []byte("services:\n  app:\n    environment:\n      KYPOST_NATIVE_MAIL: \"true\"\n"), 0o600)
+	host := sshDriver{t: stack.Target{Name: "nas", Root: root}, c: &killRunner{}}
+	native, _, found, err := deployedMail(context.Background(), host, "kypost")
+	if err != nil || !found || !native {
+		t.Fatalf("deployedMail = native %v, found %v, %v", native, found, err)
 	}
 }

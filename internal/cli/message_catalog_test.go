@@ -737,6 +737,28 @@ func TestKyIdentityMailBundle(t *testing.T) {
 			t.Fatal("relay password in argv")
 		}
 	}
+	// The suite runner has no workstation file: KyIdentity's copy stands, and without one it
+	// refuses, saying where to set it up.
+	messageStackPlan(t, f, withMail("smtp.example.test"))
+	os.Remove(pw)
+	s, _ = messageSession(t, f, identity)
+	s.o.RunnerID = "r1"
+	s.drivers["k1"] = kubeDriver{c: kube.Fake(f.cs, "https://k1.test", func(ctx context.Context, ns, pod, c string, args []string, o remotecommand.StreamOptions) error {
+		if args[0] == "sh" {
+			return fakePlace(files, args[4], args[5], readAll(o.Stdin))
+		}
+		return stream(ctx, ns, pod, c, args, o)
+	})}
+	s.edges = nil
+	list, _ = s.deploySteps(ctx)
+	setup = list[slices.IndexFunc(list, func(st engine.Step) bool { return st.ID() == "kyidentity.setup" })]
+	if err := setup.Verify(ctx); err != nil {
+		t.Fatalf("runner rerun: %v", err)
+	}
+	delete(files, "/data/installer/smtp.password")
+	if err := setup.Apply(ctx); err == nil || !strings.Contains(err.Error(), "suite runner has no") {
+		t.Fatalf("runner without KyIdentity's copy: %v", err)
+	}
 	// Without identity.mail the intent is byte for byte master's: TestStepInputsGolden.
 }
 
@@ -745,6 +767,9 @@ func bufioReader(s string) *bufio.Reader { return bufio.NewReader(strings.NewRea
 func strconvItoa(n int) string { return strconv.Itoa(n) }
 
 func readAll(r io.Reader) []byte {
+	if r == nil {
+		return nil
+	}
 	b, _ := io.ReadAll(r)
 	return b
 }

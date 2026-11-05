@@ -10,8 +10,8 @@ import (
 	"github.com/Busnes-app/kyquickstart/internal/remote"
 )
 
-// State reads the app's containers: running (every service), stopped (none), missing (no
-// containers) or unknown (some services running).
+// State reads the app's containers: running (every service), stopped (none running,
+// restarting or paused), missing (no containers) or unknown (anything else).
 func State(ctx context.Context, a App) (string, error) {
 	cs, err := a.ps(ctx)
 	switch {
@@ -21,7 +21,7 @@ func State(ctx context.Context, a App) (string, error) {
 		return "missing", nil
 	case notRunning(cs, a.Catalog.Services) == "":
 		return "running", nil
-	case !slices.ContainsFunc(cs, func(c container) bool { return c.State == "running" }):
+	case !slices.ContainsFunc(cs, func(c container) bool { return c.State == "running" || c.State == "restarting" || c.State == "paused" }):
 		return "stopped", nil
 	}
 	return "unknown", nil
@@ -47,6 +47,10 @@ func (s lifecycleStep) InputHash() string { return hashOf(s.op, s.run) }
 
 func (s lifecycleStep) Inspect(ctx context.Context) (bool, error) {
 	if err := refuseUnfinishedRestore(ctx, s.a); err != nil {
+		return false, err
+	}
+	// start recreates containers from another root here, on this root's (perhaps stale) files.
+	if err := s.a.owned(ctx); err != nil {
 		return false, err
 	}
 	if s.op == "restart" {

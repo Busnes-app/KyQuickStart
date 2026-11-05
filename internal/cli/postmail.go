@@ -76,8 +76,9 @@ const postSpool = "/kypost/state/receiving"
 // deployedMail reads how app's last deployment on host ran: found is false when it has no
 // Compose file there.
 func deployedMail(ctx context.Context, host sshDriver, app string) (native, receiver, found bool, err error) {
-	f := path.Join(host.t.Root, app, "compose.yaml")
-	out, err := host.c.Run(ctx, "if [ -f "+remote.Quote(f)+" ]; then head -c 65537 "+remote.Quote(f)+"; fi", nil)
+	// Between a volume migration and its deploy, the earlier compose.yaml waits aside.
+	f, aside := path.Join(host.t.Root, app, "compose.yaml"), path.Join(host.t.Root, app, dockerhost.PreVolumesCompose)
+	out, err := host.c.Run(ctx, "f="+remote.Quote(f)+"; [ -f \"$f\" ] || f="+remote.Quote(aside)+"; if [ -f \"$f\" ]; then head -c 65537 \"$f\"; fi", nil)
 	if err != nil {
 		return false, false, false, fmt.Errorf("read %s's deployment on %s: %w", app, host.t.Name, err)
 	}
