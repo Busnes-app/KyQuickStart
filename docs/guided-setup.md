@@ -1040,8 +1040,11 @@ other installation's.
   the owner's admin account, and KyIdentity refuses the everyday one for this client); no log
   sources (none of the catalog apps sends logs yet: a source needs a sender holding its token,
   such as `kypulse-send`); the alert webhook is set in its UI.
-- KyRecovery pairing is by hand after the ceremony (see KyRecovery above). CI proves it on
-  kyPulse: paired through its backup API with the handover's code and URL, its deposit reaches
+- KyRecovery pairing is by hand after the ceremony (see KyRecovery above). Mint kyPulse's
+  code with `--service kyPulse`: its case-sensitive backup service name must match the name
+  kyPulse claims and seals under. KyRecovery 0.6.0.1 refuses a different service without
+  consuming the code. CI proves it on kyPulse: paired through its backup API with the
+  handover's code and URL, its deposit reaches
   the internal KyRecovery, which lists it (#93).
 - `KYPULSE_TRUSTED_PROXIES` is unset here, so kyPulse sees the edge pod as every client
   ([forwarded headers](#forwarded-headers-trusted-proxy)).

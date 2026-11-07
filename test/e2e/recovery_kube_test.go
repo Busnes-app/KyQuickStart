@@ -308,11 +308,13 @@ func pulseBacksUpByHand(t *testing.T, ctx context.Context, c *kube.Client, jar h
 	}
 
 	// The handover's mint command: <kubectl> -n kyq-kyrecovery exec deployment/app -- /app/kyrecovery pair generate ...
+	// kyPulse claims and seals under its case-sensitive default AppName, not its catalog ID.
+	const service = "kyPulse"
 	ns, pod, container, err := c.AppPod(ctx, "kyrecovery")
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := c.Exec(ctx, ns, pod, container, []string{"/app/kyrecovery", "pair", "generate", "--service", "kypulse", "--app", "kyPulse"})
+	out, err := c.Exec(ctx, ns, pod, container, []string{"/app/kyrecovery", "pair", "generate", "--service", service, "--app", service})
 	m := regexp.MustCompile(`(?m)^Pairing Code: ([0-9]{6})\r?$`).FindSubmatch(out)
 	if err != nil || m == nil {
 		t.Fatalf("pair generate printed no code: %v", err)
@@ -352,6 +354,7 @@ func pulseBacksUpByHand(t *testing.T, ctx context.Context, c *kube.Client, jar h
 	r, b = send("GET", recovery+"/api/pairing/list", nil, "")
 	type pairing struct {
 		Status        string     `json:"status"`
+		ServiceName   string     `json:"service_name"`
 		RecoveryKeyID string     `json:"recovery_key_id"`
 		LastBackupAt  *time.Time `json:"last_backup_at"`
 	}
@@ -360,7 +363,7 @@ func pulseBacksUpByHand(t *testing.T, ctx context.Context, c *kube.Client, jar h
 		t.Fatalf("KyRecovery pairings: %d %s", r.StatusCode, b)
 	}
 	if !slices.ContainsFunc(list, func(p pairing) bool {
-		return p.Status == "paired" && p.RecoveryKeyID == pub.ID() && p.LastBackupAt != nil
+		return p.Status == "paired" && p.ServiceName == service && p.RecoveryKeyID == pub.ID() && p.LastBackupAt != nil
 	}) {
 		t.Fatalf("KyRecovery lists no backup from kyPulse:\n%s", b)
 	}
