@@ -1,11 +1,11 @@
 name: kyrecovery
 description: KyRecovery, the suite's blind backup store; keeps sealed capsules only k custodians can open
 category: ky
-version: 0.6.0
+version: 0.6.0.1
 # Release image of v0.4.2, attested by release-image.yml@refs/tags/v0.4.2 (gh attestation verify).
-# catalog-follow: v0.6.0 attested by Busnes-app/KyRecovery-server release-image.yml@refs/tags/v0.6.0
+# catalog-follow: v0.6.0.1 attested by Busnes-app/KyRecovery-server release-image.yml@refs/tags/v0.6.0.1
 images:
-  kyrecovery: ghcr.io/busnes-app/kyrecovery-server:0.6.0@sha256:6cf90d0842188d9b9816a66f32849939bf99313528337e1616c93eaf88505fa0
+  kyrecovery: ghcr.io/busnes-app/kyrecovery-server:0.6.0.1@sha256:5c26cfbedd43765c1577fb75755662bea285269da7450170fa7d61828660ebaf
 # verify-edge reads the suite proxy contract here (clientIp, proxyHeadersTrusted, scheme).
 status_path: /api/installer/network
 # The suite's backup store and its ceremony: administrators and the suite's own apps only.
@@ -31,7 +31,7 @@ upgrade:
   # 0.6.0 changes no migration (db.go is unchanged since 0.5.0).
   min_from: 0.4.2
   migrates_data: true
-  data_since: 0.5.0
+  data_since: 0.6.0.1
   note: >-
     From 0.4.x: signs out single sign-on sessions once, at first start; people sign in again. Rolling back to 0.4.x needs the backup taken before this upgrade.
 kubernetes:
