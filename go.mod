@@ -7,7 +7,7 @@ toolchain go1.26.10
 require (
 	github.com/Busnes-app/ky-primitives v0.10.1
 	github.com/google/uuid v1.6.0
-	go.yaml.in/yaml/v3 v3.0.5
+	go.yaml.in/yaml/v3 v3.0.6
 	golang.org/x/term v0.47.0
 	k8s.io/api v0.37.2
 	k8s.io/apimachinery v0.37.2
