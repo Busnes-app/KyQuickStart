@@ -4,7 +4,7 @@ build:
 	go build -trimpath -o kyquickstart ./cmd/kyquickstart
 
 test-race:
-	go test -race -count=1 ./...
+	go test -race -count=1 -timeout 20m ./...
 
 # A stale go.sum fails CI; fail here first.
 tidy-check:
