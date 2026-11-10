@@ -1,7 +1,7 @@
 name: kyidentity
 description: KyIdentity, the suite's identity provider (OIDC, MFA, SCIM); every other app signs in through it
 category: ky
-version: 0.6.0
+version: 0.6.0.1
 # No status_path yet: 0.4.7 serves the suite proxy contract at /api/installer/network
 # (KyIdentity-server#141), but reports proxyHeadersTrusted only for a peer in TRUSTED_PROXY_CIDRS,
 # which only its Compose file sets (to the edge's address), so verify-edge would fail its
@@ -11,9 +11,9 @@ version: 0.6.0
 # resync-system (its resync replays removals, which kyquickstart restore requires),
 # installer-verified-email (MAS's chat sign-in needs it) and mail-relay. 0.4.6 sends a removal
 # made before the person's first delivery instead of dropping it; 0.4.7 never gives up on one.
-# catalog-follow: v0.6.0 attested by Busnes-app/KyIdentity-server release-image.yml@refs/tags/v0.6.0
+# catalog-follow: v0.6.0.1 attested by Busnes-app/KyIdentity-server release-image.yml@refs/tags/v0.6.0.1
 images:
-  kyidentity: ghcr.io/busnes-app/kyidentity-server:0.6.0@sha256:ed03709d477901863fad51eff6cd26f2ea434bcb2a2fb5b06d8eeddd00e11396
+  kyidentity: ghcr.io/busnes-app/kyidentity-server:0.6.0.1@sha256:096da2158984cdb1c195841a9f7d1c9b26b50ecd06753e9f4382054250876cb6
 health:
   timeout_seconds: 300
 # Its signing, session and encryption keys are generated in the data directory on first start.
