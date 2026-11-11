@@ -14,6 +14,12 @@ state directory, target data and target-held credentials; do not reset them as a
 
 ## Unreleased
 
+- Node-failure recovery on Kubernetes (owner amendment, 2026-11-11). Every app's pod now leaves
+  a node 30 seconds after it is marked unreachable instead of five minutes, prefers a node with
+  fewer of the suite's pods, and has TCP startup and liveness probes. **Upgrade impact:** the
+  next `apply` or `upgrade` restarts every Kubernetes app once, and pods may move to other
+  nodes. Apps remain one replica; storage must release a dead node's volumes for the move to
+  finish ([guided setup](docs/guided-setup.md#node-failure-on-kubernetes)).
 - Hostile-review fixes (council pass 1). Backup and restore: kyPulse's `restic_password` is no
   longer in its own snapshots and survives `restore --replace`; KyMessages stops its console
   for the dump and snapshot so its SQLite is at rest (chat stays up); a backup on a rebuilt target

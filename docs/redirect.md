@@ -26,6 +26,10 @@ this one wins.
   app: native mailboxes and domains, KyIdentity's directory, and KyPost's bundled Maddy receiver
   with Rspamd on TCP 25 (Docker only). Not the Cloudflare Email Routing profile; the outgoing
   relay stays manual in KyPost's UI ([guided setup](guided-setup.md#kypost-native-mail)).
+- Amendment (owner, 2026-11-11): node-failure recovery on Kubernetes for the one-replica apps:
+  liveness and startup probes, spreading over nodes and a 30-second eviction from a dead node
+  ([guided setup](guided-setup.md#node-failure-on-kubernetes)). More than one replica stays out
+  of scope: it needs product changes first.
 
 ## What KyQuickStart does now
 

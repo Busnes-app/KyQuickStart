@@ -223,6 +223,12 @@ func render(a App) objects {
 				PeriodSeconds: 5,
 			}
 		}
+		// A process that stopped listening is restarted. TCP, not the readiness path: that one
+		// also fails with a dependency, which a restart does not repair. First starts migrate
+		// data, so startup gets 30 minutes.
+		listening := corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(int32(k.Ports[0]))}}
+		container.StartupProbe = &corev1.Probe{ProbeHandler: listening, PeriodSeconds: 10, FailureThreshold: 180}
+		container.LivenessProbe = &corev1.Probe{ProbeHandler: listening, PeriodSeconds: 10, FailureThreshold: 6}
 	}
 	containers := []corev1.Container{container}
 	if k.SuiteRunner {
@@ -260,6 +266,8 @@ func render(a App) objects {
 					AutomountServiceAccountToken:  ptr.To(false),
 					EnableServiceLinks:            ptr.To(false),
 					TerminationGracePeriodSeconds: grace,
+					Affinity:                      spread,
+					Tolerations:                   leaveDeadNode,
 					SecurityContext:               podSecurityContext(k),
 					InitContainers:                inits,
 					Containers:                    containers,
@@ -269,6 +277,26 @@ func render(a App) objects {
 		},
 	}
 	return o
+}
+
+// spread prefers a node with the fewest installer-managed pods, so one node's loss stops as few
+// apps as it can. Preferred only: a one-node cluster still schedules.
+var spread = &corev1.Affinity{PodAntiAffinity: &corev1.PodAntiAffinity{
+	PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{{
+		Weight: 100,
+		PodAffinityTerm: corev1.PodAffinityTerm{
+			LabelSelector:     &metav1.LabelSelector{MatchLabels: map[string]string{managed.Label: managed.Value}},
+			NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{managed.Label: managed.Value}},
+			TopologyKey:       corev1.LabelHostname,
+		},
+	}},
+}}
+
+// leaveDeadNode evicts the pod 30 seconds after its node stops answering, not the default five
+// minutes: with one replica, that wait is the outage.
+var leaveDeadNode = []corev1.Toleration{
+	{Key: corev1.TaintNodeNotReady, Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute, TolerationSeconds: ptr.To(int64(30))},
+	{Key: corev1.TaintNodeUnreachable, Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute, TolerationSeconds: ptr.To(int64(30))},
 }
 
 // withRunner adds the suite runner beside the app (containers[0]): restricted like it, it

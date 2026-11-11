@@ -363,6 +363,37 @@ func TestRenderWithoutPortsOrSecrets(t *testing.T) {
 	}
 }
 
+// A dead node: every app leaves it after 30 seconds, prefers a node with fewer of the suite's
+// pods, and is restarted when it stops listening, without probing its dependencies.
+func TestRenderNodeFailureRecovery(t *testing.T) {
+	c := fixture(t)
+	pod := renderHello(c, "rs-1", "").Deployment.Spec.Template.Spec
+	if len(pod.Tolerations) != 2 {
+		t.Fatalf("tolerations = %+v", pod.Tolerations)
+	}
+	for _, tol := range pod.Tolerations {
+		if tol.Effect != corev1.TaintEffectNoExecute || tol.TolerationSeconds == nil || *tol.TolerationSeconds != 30 {
+			t.Errorf("toleration %+v", tol)
+		}
+	}
+	term := pod.Affinity.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution[0].PodAffinityTerm
+	if pod.Affinity.PodAntiAffinity.RequiredDuringSchedulingIgnoredDuringExecution != nil ||
+		term.TopologyKey != corev1.LabelHostname ||
+		term.LabelSelector.MatchLabels[managed.Label] != managed.Value ||
+		term.NamespaceSelector.MatchLabels[managed.Label] != managed.Value {
+		t.Errorf("anti-affinity %+v", pod.Affinity.PodAntiAffinity)
+	}
+	app := pod.Containers[0]
+	for name, p := range map[string]*corev1.Probe{"startup": app.StartupProbe, "liveness": app.LivenessProbe} {
+		if p == nil || p.TCPSocket == nil || p.HTTPGet != nil || p.TCPSocket.Port.IntValue() != c.Kubernetes.Ports[0] {
+			t.Errorf("%s probe %+v", name, p)
+		}
+	}
+	if got := app.StartupProbe.PeriodSeconds * app.StartupProbe.FailureThreshold; got != 1800 {
+		t.Errorf("startup budget %d s, want 1800", got)
+	}
+}
+
 func TestRenderStorageClass(t *testing.T) {
 	unset := renderHello(fixture(t), "rs-1", "")
 	set := renderHello(fixture(t), "rs-1", "local-path")

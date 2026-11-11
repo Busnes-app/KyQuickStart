@@ -723,6 +723,27 @@ Edge prompts support existing NPM/certificates plus an existing Cloudflare tunne
 server. Connector credentials stay in protected target files, never in the wizard. See
 [edge setup](edge.md) for the supported paths.
 
+## Node failure on Kubernetes
+
+Every app runs as one pod with `ReadWriteOnce` claims, so a node's loss is an outage for the
+apps on it until their pods start elsewhere. The installer shortens it; it does not remove it:
+
+- A pod is evicted 30 seconds after its node is marked not ready or unreachable.
+- Pods prefer nodes with fewer of the installer's pods. The preference applies when a pod is
+  scheduled: existing pods move only when they restart (`kyquickstart restart APP`).
+- A container that stops listening on its first port is restarted. Startup has 30 minutes.
+
+Your storage decides whether the replacement pod can start. A claim attached to a dead node
+must be released first. On Longhorn, set `node-down-pod-deletion-policy` to
+`delete-both-statefulset-and-deployment-pod`; its default, `do-nothing`, leaves the volume
+attached and the new pod waiting. Keep at least three replicas of each volume, on three nodes.
+Set the class's `reclaimPolicy` to `Retain` so that deleting a claim or namespace does not
+delete the data. Node-local storage (kind's and k3s's `local-path`, `hostPath`) cannot follow
+a pod to another node at all.
+
+Not measured by the installer's tests: kind has one node. Power a node off in a maintenance
+window and time the recovery before relying on it.
+
 ## Forwarded headers (trusted proxy)
 
 A product believes `X-Forwarded-For` and `X-Forwarded-Proto` only from the peers its
