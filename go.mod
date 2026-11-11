@@ -2,7 +2,7 @@ module github.com/Busnes-app/kyquickstart
 
 go 1.26.6
 
-toolchain go1.26.10
+toolchain go1.26.11
 
 require (
 	github.com/Busnes-app/ky-primitives v0.10.1
