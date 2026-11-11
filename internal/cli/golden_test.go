@@ -20,7 +20,8 @@ var updateGolden = flag.Bool("update-golden", false, "rewrite testdata/steps.gol
 // entries and leave the others alone. #105's fsGroup fix moved the Kubernetes non-root apps'
 // deploy and health hashes, so apply redeploys them once. #100's private_peer option moved
 // KyPost's and KyCalendar's deploy and health hashes, so apply redeploys them once. Ky release pins are replaced
-// (catalogtest.Unpinned), so following a release changes no hash here.
+// (catalogtest.Unpinned), so following a release changes no hash here. Node-failure recovery
+// (owner, 2026-11-11) moved every Kubernetes deploy and health hash: apply redeploys them once.
 func TestStepInputsGolden(t *testing.T) {
 	ctx := context.Background()
 	got := map[string]map[string]string{}

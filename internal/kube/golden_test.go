@@ -14,15 +14,16 @@ import (
 // Ky release pins are replaced (catalogtest.Unpinned), so following a release changes none.
 // The non-root apps' hashes moved once, on purpose, with #105's fsGroup fix: apply redeploys
 // them, and their init container repairs the modes. KyCalendar's moved with #100's
-// KYCALENDAR_KYPOST_ALLOW_PRIVATE.
+// KYCALENDAR_KYPOST_ALLOW_PRIVATE. Every hash moved, on purpose, with node-failure recovery
+// (owner, 2026-11-11): apply restarts each app once to add its probes, spread and tolerations.
 var renderedHashes = map[string]string{
-	"euro-office": "a65a4a42bbe42da10dc46343eac3260d5dcf030b79e42f80cf270256f355e3e0",
-	"kycalendar":  "c86c0461c25c835054e03006f023479cd0a6a651c5018564e8ccfbe5dc4d3df3",
-	"kyidentity":  "84e774aa56fc0e360fcb8660367c144276224dfa878db5c130ecf4337b299f1f",
-	"kynotes":     "f73a4ae2b18c4402a84c1e3a8912568dece4b9db6f7b0b6c5cae1aa54414f39c",
-	"kypulse":     "042b82fb21ae7470f8958bc785efd69ccd861e436dfcbba50ffc0ff35894996b",
-	"kyrecovery":  "2195bf34bc103d1d443dc041c9b21371b3bc4261b56b8de35b14cd158154140f",
-	"npm":         "70adde3f158ad6e8fd04a589d963bd1cf5c16dfb0019c8545cb6e34797c999f1",
+	"euro-office": "36dc523ce8e672d14fadeda593b8ed44918ddebbd1f7939f2a7ce28efdd0375a",
+	"kycalendar":  "e0cfad44d48b4ba260a124d04d3a070cf0fbc7611003f4492cc922038744e5a0",
+	"kyidentity":  "e251f2b34c8e882f8b72e14ffa0bce26844042b0e00867252ad10b4b8fb31824",
+	"kynotes":     "bc95618c57aff9b1b45f70954c25d0a686ab542f7b219430cc27f0f5d0cb8448",
+	"kypulse":     "7790db6ec9b21a012ac7525f9445418f496b167d597ac21f0241e28d9606ec97",
+	"kyrecovery":  "cf5c4c3e7ef5ead88e94ff9ac10784d4e10305fe870e76b1a460a7873a942576",
+	"npm":         "c44905a672dc46b3f2c30d302290eb2272a40d19f54da634d5141d179e43c723",
 }
 
 func TestRenderGolden(t *testing.T) {

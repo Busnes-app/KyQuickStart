@@ -538,7 +538,14 @@ edge compatibility: `docs/redirect.md`.
   (the pinned BusyBox helper, the app's uid) creates and, on every start, strips of group and
   other access throughout (KyYard's `/state/runner` too); its pod's `fsGroup` uses
   `OnRootMismatch`, so the kubelet no longer makes 0600 keys 0660 at each mount (#105). `kubernetes.termination_grace_seconds`
-  (0-3600, 0 keeps the default) sets the pod's termination grace. A `kubernetes.env` value may contain
+  (0-3600, 0 keeps the default) sets the pod's termination grace. Every app is one replica
+  (`Recreate`) that recovers from a dead node by rescheduling (owner amendment, 2026-11-11):
+  30-second `not-ready`/`unreachable` tolerations, a preferred anti-affinity that spreads the
+  installer's pods over nodes, and TCP startup (30 minutes) and liveness probes on its first
+  port, never an HTTP path that fails with a dependency. No PodDisruptionBudget (with one
+  replica it only blocks drains) and no PriorityClass (cluster-scoped, outside the preflight
+  permission list). Recovery also needs storage that releases a dead node's volume
+  (`docs/guided-setup.md`, "Node failure on Kubernetes"). A `kubernetes.env` value may contain
   `{{host}}`, replaced by the URL host of the app's one edge route (hostname, plus `:client_port` when an internal route's is not 443); no other template syntax.
 - A Compose template may write `{{host}}`, `{{forward}}` (the route's
   `forward_host:forward_port`, an IP of the Docker target, where the app publishes its port),

@@ -436,8 +436,9 @@ You provide kube-vip, as with the cluster itself: services mode with service ele
 `egress_podcidr`/`egress_servicecidr` set to the cluster's ranges. kube-vip announces any
 address a LoadBalancer Service asks for, so admit only approved namespace and address pairs
 (a ValidatingAdmissionPolicy is enough). The address must be an unused LAN IPv4 address
-outside DHCP. A node that dies takes the address with it until Kubernetes reschedules NPM
-(about five minutes with default eviction).
+outside DHCP. A node that dies takes the address with it until Kubernetes reschedules NPM:
+its pod is evicted 30 seconds after the node is marked unreachable, then waits for its two
+claims to attach on another node ([node failure](guided-setup.md#node-failure-on-kubernetes)).
 
 ### A load-balancer address (`load_balancer_address`)
 
