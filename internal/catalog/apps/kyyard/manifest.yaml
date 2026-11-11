@@ -1,13 +1,13 @@
 name: kyyard
 description: KyYard, the suite's fleet administration; runs the suite runner beside it
 category: ky
-version: 0.6.0.2
+version: 0.6.0.3
 # Release image of v0.4.3 (commit 0bf5e1cb43dcc50ec8ecf2a80edc7b0373050050), attested by
 # Busnes-app/KyYard-server release-image.yml@refs/tags/v0.4.3 (gh attestation verify; the
 # certificate names KyYard-server, so that spelling is the one that verifies).
-# catalog-follow: v0.6.0.2 attested by Busnes-app/KyYard-server release-image.yml@refs/tags/v0.6.0.2
+# catalog-follow: v0.6.0.3 attested by Busnes-app/KyYard-server release-image.yml@refs/tags/v0.6.0.3
 images:
-  kyyard: ghcr.io/busnes-app/kyyard:0.6.0.2@sha256:22d3b2044ff16f0154a515c185bb2637c85db1bec0b38bf63bdca0c6d6b9a3ea
+  kyyard: ghcr.io/busnes-app/kyyard:0.6.0.3@sha256:c8e64559a7eb83edb50b84e762b31cc894d2ce5237afc3e8efcbcdf5533d221f
 # verify-edge reads the suite proxy contract here (clientIp, proxyHeadersTrusted, scheme).
 status_path: /api/installer/network
 # Manages the suite's installation: administrators only, never on the public connection.

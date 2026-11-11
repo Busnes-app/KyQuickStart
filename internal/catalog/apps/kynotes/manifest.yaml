@@ -1,12 +1,12 @@
 name: kynotes
 description: KyNotes, the suite's end-to-end encrypted notes; signs in through KyIdentity
 category: ky
-version: 0.6.0
+version: 0.6.0.1
 # Release image of v0.4.2 (commit f597e99703316cf53d2efac2224cb6ae66df5752), attested by
 # Busnes-app/KyNotes-server release-image.yml@refs/tags/v0.4.2 (gh attestation verify).
-# catalog-follow: v0.6.0 attested by Busnes-app/KyNotes-server release-image.yml@refs/tags/v0.6.0
+# catalog-follow: v0.6.0.1 attested by Busnes-app/KyNotes-server release-image.yml@refs/tags/v0.6.0.1
 images:
-  kynotes: ghcr.io/busnes-app/kynotes-server:0.6.0@sha256:5b18f95b3889cf2afd5f7a0b1ead15b506dad4b2961906392716b27f0b0e24ce
+  kynotes: ghcr.io/busnes-app/kynotes-server:0.6.0.1@sha256:2593acf53985f7bbde740e32c63974924579b81e626b907131d810863728a0ad
 # verify-edge reads the suite proxy contract here (clientIp, proxyHeadersTrusted, scheme).
 status_path: /api/v1/installer/network
 # Its setup needs KyIdentity's issuer, client and signed directory.
@@ -31,7 +31,7 @@ upgrade:
   # 0.6.0 changes no migration (its migrations directory is unchanged since 0.5.0).
   min_from: 0.4.2
   migrates_data: true
-  data_since: 0.5.0
+  data_since: 0.6.0.1
   note: >-
     Upgrade every KyNotes MCP bridge too: bridges from before 0.5.0 cannot open the team keys
     new clients write. A device link in progress during the upgrade must be started again.
