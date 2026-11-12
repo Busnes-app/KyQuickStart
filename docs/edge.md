@@ -656,6 +656,11 @@ no reschedule and no volume to move.
 | `load_balancer_address`, MetalLB L2 | MetalLB announces from one node that has a ready pod and moves to another when its speakers lose the node, "within a few seconds". | From MetalLB's documentation; not tested |
 | `load_balancer_address`, Cilium L2 | Cilium picks the announcing node by lease (10-20 s to move) and does not look at where pods are. Make its announcement policy select only nodes that run an edge pod, or it can announce from a node that drops the traffic. | From Cilium's documentation; not tested |
 
+Inside the cluster, a pod that reaches the edge through the Service's cluster address (a
+product calling KyIdentity by its route) can still be sent to the dead node's pod until
+Kubernetes marks the node not ready: in the kind test the Service answered every request
+again 54 to 57 seconds after a node was stopped. Every address mode has that window.
+
 **Where requests leave from (`egress_address`).** Apps on Docker targets trust exactly one
 address, and each edge pod's requests leave from its own node. Behind NPM that was one node;
 now it is whichever node took the client's connection.
