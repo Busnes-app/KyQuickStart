@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"fmt"
+	"github.com/Busnes-app/kyquickstart/internal/stack"
 	"slices"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -41,6 +42,10 @@ func (c *Client) workload(ctx context.Context, app string) (w workload, found bo
 			w.why = fmt.Sprintf("%d of 1 replicas ready", d.Status.ReadyReplicas)
 		}
 		return w, true, nil
+	}
+	// Only the nginx edge has a DaemonSet, and only its plans are granted the permission.
+	if app != stack.NginxApp {
+		return w, false, nil
 	}
 	ds, found, err := getOwned(ctx, c.cs.AppsV1().DaemonSets(ns), "daemonset", appName)
 	if err != nil || !found {

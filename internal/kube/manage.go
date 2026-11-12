@@ -173,18 +173,21 @@ func (s unmanageStep) sweep(ctx context.Context, fix bool) (string, error) {
 				return []map[string]string{d.Labels, d.Spec.Template.Labels}
 			}, fix)
 		}},
-		{"daemonset", func() (bool, error) {
-			return relabel(ctx, cs.AppsV1().DaemonSets(ns), appName, unlabelTemplate, func(d *appsv1.DaemonSet) []map[string]string {
-				return []map[string]string{d.Labels, d.Spec.Template.Labels}
-			}, fix)
-		}},
-		{"edge configuration", func() (bool, error) { return relabel(ctx, cs.CoreV1().ConfigMaps(ns), edgeConfig, unlabel, meta, fix) }},
 		{"service", func() (bool, error) { return relabel(ctx, cs.CoreV1().Services(ns), appName, unlabel, meta, fix) }},
 		{"public service", func() (bool, error) { return relabel(ctx, cs.CoreV1().Services(ns), publicName, unlabel, meta, fix) }},
 		{"network policy", func() (bool, error) {
 			return relabel(ctx, cs.NetworkingV1().NetworkPolicies(ns), policyName, unlabel, meta, fix)
 		}},
 		{"secret", func() (bool, error) { return relabel(ctx, cs.CoreV1().Secrets(ns), secretName, unlabel, meta, fix) }},
+	}
+	if o.DaemonSet != nil { // the nginx edge alone: other plans hold no permission for these
+		checks = append(checks,
+			check{"daemonset", func() (bool, error) {
+				return relabel(ctx, cs.AppsV1().DaemonSets(ns), appName, unlabelTemplate, func(d *appsv1.DaemonSet) []map[string]string {
+					return []map[string]string{d.Labels, d.Spec.Template.Labels}
+				}, fix)
+			}},
+			check{"edge configuration", func() (bool, error) { return relabel(ctx, cs.CoreV1().ConfigMaps(ns), edgeConfig, unlabel, meta, fix) }})
 	}
 	for _, c := range o.Claims {
 		checks = append(checks, check{"claim " + c.Name, func() (bool, error) {

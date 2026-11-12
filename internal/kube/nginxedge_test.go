@@ -91,14 +91,13 @@ func TestRenderNginxEdge(t *testing.T) {
 
 // The edge's policy is NPM's without HTTP(S) to anywhere, which only NPM's ACME client needs.
 func TestNginxEdgePolicy(t *testing.T) {
-	c := nginxApp(t)
 	for mode, set := range map[string]func(*catalog.Kubernetes){
 		"nodeport": func(*catalog.Kubernetes) {},
 		"kube-vip": func(k *catalog.Kubernetes) { k.KubeVIPAddress = "192.168.1.50" },
 		"lb":       func(k *catalog.Kubernetes) { k.LoadBalancerAddress = "192.168.1.51" },
 	} {
-		k, n := *c.Kubernetes, npmApp(t)
-		nk := *n.Kubernetes
+		c, n := nginxApp(t), npmApp(t)
+		k, nk := *c.Kubernetes, *n.Kubernetes
 		set(&k)
 		set(&nk)
 		c.Kubernetes, n.Kubernetes = &k, &nk
@@ -543,5 +542,35 @@ func TestNeeds(t *testing.T) {
 	}
 	if !rule(withEdge, "apps", "daemonsets") || !rule(withEdge, "", "configmaps") || !rule(withEdge, "", "nodes") || !rule(withEdge, certManagerGroup, "certificates") {
 		t.Fatalf("runner rules with the edge = %v", withEdge)
+	}
+}
+
+// A plan without the nginx edge holds no DaemonSet or ConfigMap permission, so no step of
+// another app may ask for either: uninstall, unmanage, state and logs read Deployments only.
+func TestOtherAppsNeverReadDaemonSets(t *testing.T) {
+	ctx := context.Background()
+	a, cs := testApp(t, "token")
+	if err := deployOf(a).Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := UnmanageSteps(a)[0].Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	a2, cs2 := testApp(t, "token")
+	if err := deployOf(a2).Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveSteps(a2)[0].(removeStep).Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a2.Client.State(ctx, a2.Name); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []*fake.Clientset{cs, cs2} {
+		for _, act := range c.Actions() {
+			if r := act.GetResource().Resource; r == "daemonsets" || r == "configmaps" || r == "nodes" {
+				t.Fatalf("an app that is not the nginx edge asked for %s %s", act.GetVerb(), r)
+			}
+		}
 	}
 }
