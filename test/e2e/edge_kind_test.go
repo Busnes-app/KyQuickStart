@@ -311,7 +311,7 @@ func testNginxEdge(t *testing.T, ctx context.Context, cs kubernetes.Interface, k
 	if _, err := cs.CoreV1().ConfigMaps("kyq-nginx").Update(ctx, cm, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := try("apply"); err == nil || !strings.Contains(err.Error(), "hello.example.test is claimed by zz-foreign.server") {
+	if out, err := try("apply"); err == nil || !strings.Contains(out, "hello.example.test is claimed by zz-foreign.server") {
 		t.Fatalf("foreign file: %v\n%s", err, out)
 	}
 	cm, _ = cs.CoreV1().ConfigMaps("kyq-nginx").Get(ctx, "kyq-edge-config", metav1.GetOptions{})
@@ -348,7 +348,8 @@ func testNginxEdge(t *testing.T, ctx context.Context, cs kubernetes.Interface, k
 	if out, err := try("preflight"); err == nil || !strings.Contains(out, "does not serve cert-manager.io/v1 issuers") {
 		t.Fatalf("preflight without cert-manager: %v\n%s", err, out)
 	}
-	if out, err := try("apply"); err == nil || status(out, "k8s.edge.cert.wild") != "failed" || code("managed.example.test") != "000" {
+	// apply runs the same preflight first, so it changes nothing either.
+	if out, err := try("apply"); err == nil || !strings.Contains(out, "does not serve cert-manager.io/v1 issuers") || status(out, "k8s.edge.removed") != "" || code("managed.example.test") != "000" {
 		t.Fatalf("apply without cert-manager: %v\n%s", err, out)
 	}
 
