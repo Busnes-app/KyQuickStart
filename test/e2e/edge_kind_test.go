@@ -342,7 +342,7 @@ func testNginxEdge(t *testing.T, ctx context.Context, cs kubernetes.Interface, k
 	}
 	st.Edges[0].Certificates = []stack.Certificate{{Name: "wild", Domains: []string{"*.example.test"}, Email: "ops@example.test", DNSProvider: "cloudflare", Credentials: stack.SecretRef{Secret: "dns", Key: "token"}}}
 	managedRoute := hello
-	managedRoute.Hostname, managedRoute.CertificateID, managedRoute.Certificate = "managed.example.test", 0, "wild"
+	managedRoute.Hostname, managedRoute.CertificateID, managedRoute.CertificateSecret, managedRoute.Certificate = "managed.example.test", 0, "", "wild"
 	st.Edges[0].Routes = append(st.Edges[0].Routes, managedRoute)
 	save(st)
 	if out, err := try("preflight"); err == nil || !strings.Contains(out, "does not serve cert-manager.io/v1 issuers") {
