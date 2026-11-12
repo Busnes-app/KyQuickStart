@@ -5,16 +5,10 @@ package e2e
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"io/fs"
-	"math/big"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -28,7 +22,6 @@ import (
 	"github.com/Busnes-app/kyquickstart/internal/cli"
 	"github.com/Busnes-app/kyquickstart/internal/edge"
 	"github.com/Busnes-app/kyquickstart/internal/kube"
-	"github.com/Busnes-app/kyquickstart/internal/managed"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
 	"github.com/Busnes-app/kyquickstart/internal/suite"
 	"go.yaml.in/yaml/v3"
@@ -45,8 +38,12 @@ import (
 // its client_port, which may not change once KyIdentity's setup ran. KyDrive joins from a
 // Docker target, routed through the same edge, with its client in the same first setup.
 // TestKubernetesNPMEdgeJoins covers the apps that join later by setup amendment.
-func TestKubernetesNPMEdge(t *testing.T) {
+func TestKubernetesNPMEdge(t *testing.T) { testKubernetesEdge(t, "npm") }
+
+// testKubernetesEdge is the edge suite behind proxy: the catalog npm, or nginx.
+func testKubernetesEdge(t *testing.T, proxy string) {
 	ctx := context.Background()
+	nginx := proxy == "nginx"
 	work := t.TempDir()
 	state := filepath.Join(work, "state")
 	os.MkdirAll(state, 0o700)
@@ -58,14 +55,14 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	}
 	cs := kubernetes.NewForConfigOrDie(cfg)
 	catalogDir := filepath.Join(work, "catalog")
-	for _, src := range []string{"../../internal/catalog/testdata/apps/hello", "../../internal/catalog/apps/npm", "../../internal/catalog/apps/kyidentity", "../../internal/catalog/apps/kyrecovery", "../../internal/catalog/apps/kypulse", "../../internal/catalog/apps/kynotes", "../../internal/catalog/apps/kycalendar"} {
+	for _, src := range []string{"../../internal/catalog/testdata/apps/hello", "../../internal/catalog/apps/" + proxy, "../../internal/catalog/apps/kyidentity", "../../internal/catalog/apps/kyrecovery", "../../internal/catalog/apps/kypulse", "../../internal/catalog/apps/kynotes", "../../internal/catalog/apps/kycalendar"} {
 		if err := os.CopyFS(filepath.Join(catalogDir, filepath.Base(src)), os.DirFS(src)); err != nil {
 			t.Fatal(err)
 		}
 		relaysOff(t, filepath.Join(catalogDir, filepath.Base(src)))
 	}
 	plan := filepath.Join(state, "stack.yaml")
-	os.WriteFile(plan, []byte("version: 1\ntargets:\n  - name: k8s\n    kubeconfig: "+kc+"\n    storage_class: standard\napps:\n  - name: npm\n    target: k8s\n  - name: hello\n    target: k8s\n"), 0o600)
+	os.WriteFile(plan, []byte("version: 1\ntargets:\n  - name: k8s\n    kubeconfig: "+kc+"\n    storage_class: standard\napps:\n  - name: "+proxy+"\n    target: k8s\n  - name: hello\n    target: k8s\n"), 0o600)
 	var outputs, trust []string
 	apply := func(want string) string {
 		t.Helper()
@@ -80,71 +77,28 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	}
 
 	out := apply("install")
-	if status(out, "npm.bootstrap") != "ok" {
-		t.Fatal("npm was not bootstrapped")
-	}
-	ns, err := cs.CoreV1().Namespaces().Get(ctx, "kyq-npm", metav1.GetOptions{})
-	if err != nil || ns.Labels["pod-security.kubernetes.io/enforce"] != "baseline" || ns.Labels[managed.Label] != managed.Value {
-		t.Fatalf("npm namespace = %v, %v", ns.Labels, err)
-	}
-	admin, _ := cs.CoreV1().Services("kyq-npm").Get(ctx, "app", metav1.GetOptions{})
-	public, _ := cs.CoreV1().Services("kyq-npm").Get(ctx, "app-public", metav1.GetOptions{})
-	if admin.Spec.Type != corev1.ServiceTypeClusterIP || len(admin.Spec.Ports) != 1 || admin.Spec.Ports[0].Port != 81 {
-		t.Fatalf("admin service = %+v", admin.Spec)
-	}
-	if public.Spec.Type != corev1.ServiceTypeNodePort || len(public.Spec.Ports) != 2 || public.Spec.Ports[0].NodePort != 30080 || public.Spec.Ports[1].NodePort != 30443 {
-		t.Fatalf("public service = %+v", public.Spec)
-	}
-
-	// Bootstrap: the stored token works, NPM is set up, the default login and none other works.
 	connected, err := kube.Connect(kc, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	tunnel := connected.ServiceDialer("kyq-npm", "app", 81)
-	npm, err := edge.NewAdmin("kube://kyq-npm/app:81", tunnel)
-	if err != nil {
-		t.Fatal(err)
+	var k kindEdge
+	var npm *npmBootstrap
+	if nginx {
+		k = checkNginxInstall(t, ctx, cs, out)
+	} else {
+		k, npm = checkNPMInstall(t, ctx, cs, connected, out)
 	}
-	defer npm.Close()
-	secrets, _ := cs.CoreV1().Secrets("kyq-npm").Get(ctx, "kyq-secrets", metav1.GetOptions{})
-	password := string(secrets.Data["admin_password"])
-	stored := func() string {
-		sec, err := cs.CoreV1().Secrets("kyq-edge").Get(ctx, "kyq-credentials", metav1.GetOptions{})
-		if err != nil || sec.Labels[managed.Label] != managed.Value {
-			t.Fatalf("edge credential: %v", err)
+	certID, certPEM := k.certID, k.certPEM
+	// save writes the plan, each route on the proxy's certificate.
+	save := func(st *stack.Stack) {
+		t.Helper()
+		k.certify(st)
+		b, err := yaml.Marshal(st)
+		if err != nil {
+			t.Fatal(err)
 		}
-		return string(sec.Data["npm_token"])
+		os.WriteFile(plan, b, 0o600)
 	}
-	token := stored()
-	if setup, err := npm.Setup(ctx); err != nil || !setup {
-		t.Fatalf("NPM setup = %v, %v", setup, err)
-	}
-	if ok, err := npm.Verify(ctx, token); !ok || err != nil {
-		t.Fatalf("stored token rejected: %v", err)
-	}
-	if def, err := npm.Login(ctx, edge.DefaultEmail, edge.DefaultPassword); def != "" || err != nil {
-		t.Fatalf("default login accepted: %v", err)
-	}
-	if mine, err := npm.Login(ctx, "admin@kyquickstart.invalid", password); mine == "" || err != nil {
-		t.Fatalf("installer login rejected: %v", err)
-	}
-	if err := npm.CreateAdmin(ctx, "intruder@example.test", "intruder-password"); err == nil {
-		t.Fatal("NPM still accepts an unauthenticated administrator")
-	}
-
-	// The policy: ports 80/443 answer any pod, the admin API answers none.
-	for url, want := range map[string]string{
-		"http://app-public.kyq-npm.svc.cluster.local/": "200",
-		"http://app.kyq-npm.svc.cluster.local:81/api/": "000",
-	} {
-		if got := probe(t, ctx, cs, url); got != want {
-			t.Errorf("pod to %s: HTTP %s, want %s", url, got, want)
-		}
-	}
-
-	// A throwaway certificate, uploaded through the tunnel.
-	certID, certPEM := uploadCertificate(t, ctx, tunnel, token)
 	ip := func(container string) string {
 		return docker(t, "inspect", container, "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}")
 	}
@@ -161,8 +115,7 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	st.Edges = []stack.Edge{{Target: "k8s", Provider: "cloudflare", NPMURL: "kube://kyq-npm/app:81", ConnectorCIDR: ip(client) + "/32", Routes: []stack.Route{{
 		App: "hello", Hostname: "hello.example.test", ForwardHost: "app.kyq-hello.svc.cluster.local", ForwardPort: 8080, CertificateID: certID,
 	}}}}
-	b, _ := yaml.Marshal(st)
-	os.WriteFile(plan, b, 0o600)
+	save(st)
 	apply("route")
 	if st, err = stack.Load(plan); err != nil || st.InstallationID == "" || st.Revision != 1 {
 		t.Fatalf("installation id not published: %+v %v", st, err)
@@ -178,7 +131,8 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	if page := get(node); !strings.Contains(page, "403 Forbidden") {
 		t.Fatalf("a source other than connector_cidr was served:\n%s", page)
 	}
-	if code := docker(t, "exec", node, "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-m", "10", "http://"+nodeIP+":30080/"); code != "200" {
+	// NPM answers its default page on port 80; nginx only redirects to HTTPS.
+	if code := docker(t, "exec", node, "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-m", "10", "http://"+nodeIP+":30080/"); code != map[bool]string{false: "200", true: "301"}[nginx] {
 		t.Fatalf("NodePort 30080 answered %s", code)
 	}
 
@@ -191,7 +145,7 @@ func TestKubernetesNPMEdge(t *testing.T) {
 				t.Errorf("%s step not skipped: %s", name, line)
 			}
 		}
-		if status(out, "npm.bootstrap") != "skipped" || status(out, "k8s.edge.removed") != "skipped" {
+		if !nginx && status(out, "npm.bootstrap") != "skipped" || status(out, "k8s.edge.removed") != "skipped" {
 			t.Fatalf("%s did not report the bootstrap and edge steps", name)
 		}
 	}
@@ -202,8 +156,7 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	allowed := ip(client)
 	st.Edges[0].Provider, st.Edges[0].ConnectorCIDR = "lan", ""
 	st.Edges[0].AllowCIDRs, st.Edges[0].ClientPort = []string{allowed + "/32"}, 30443
-	b, _ = yaml.Marshal(st)
-	os.WriteFile(plan, b, 0o600)
+	save(st)
 	apply("lan")
 	lan := func(from string, headers ...string) string {
 		args := []string{"exec", from, "curl", "-sk", "-m", "10", "--resolve", "hello.example.test:30443:" + nodeIP}
@@ -231,19 +184,23 @@ func TestKubernetesNPMEdge(t *testing.T) {
 		}
 	}
 
-	// A rejected token (expired or revoked): connect mints one in memory, bootstrap stores a fresh one.
-	sec, _ := cs.CoreV1().Secrets("kyq-edge").Get(ctx, "kyq-credentials", metav1.GetOptions{})
-	sec.Data["npm_token"] = []byte("rejected-npm-token")
-	cs.CoreV1().Secrets("kyq-edge").Update(ctx, sec, metav1.UpdateOptions{})
-	out = apply("refresh")
-	if status(out, "npm.bootstrap") != "ok" || status(out, "hello.deploy") != "skipped" {
-		t.Fatal("rejected token not refreshed by bootstrap alone")
-	}
-	if ok, err := npm.Verify(ctx, stored()); !ok || err != nil || stored() == token {
-		t.Fatalf("refreshed token = %v %v", ok, err)
-	}
-	if status(apply("after refresh"), "npm.bootstrap") != "skipped" {
-		t.Fatal("bootstrap not idempotent after refresh")
+	if nginx {
+		testNginxEdge(t, ctx, cs, kc, state, catalogDir, nodeIP, client, st, save, apply)
+	} else {
+		// A rejected token (expired or revoked): connect mints one in memory, bootstrap stores a fresh one.
+		sec, _ := cs.CoreV1().Secrets("kyq-edge").Get(ctx, "kyq-credentials", metav1.GetOptions{})
+		sec.Data["npm_token"] = []byte("rejected-npm-token")
+		cs.CoreV1().Secrets("kyq-edge").Update(ctx, sec, metav1.UpdateOptions{})
+		out = apply("refresh")
+		if status(out, "npm.bootstrap") != "ok" || status(out, "hello.deploy") != "skipped" {
+			t.Fatal("rejected token not refreshed by bootstrap alone")
+		}
+		if ok, err := npm.admin.Verify(ctx, npm.stored()); !ok || err != nil || npm.stored() == npm.token {
+			t.Fatalf("refreshed token = %v %v", ok, err)
+		}
+		if status(apply("after refresh"), "npm.bootstrap") != "skipped" {
+			t.Fatal("bootstrap not idempotent after refresh")
+		}
 	}
 
 	// The catalog KyIdentity takes its issuer from its route, client_port included, so it
@@ -264,8 +221,7 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	testClusterDNS(t, ctx, cs, nodeIP)
 	podCIDR := mustNode(t, ctx, cs, node).Spec.PodCIDR
 	st.Edges[0].AllowCIDRs = append(st.Edges[0].AllowCIDRs, podCIDR)
-	b, _ = yaml.Marshal(st)
-	os.WriteFile(plan, b, 0o600)
+	save(st)
 	out = apply("identity")
 	viaEdge := func(host, path string) string {
 		return docker(t, "exec", client, "curl", "-sk", "-m", "10", "--resolve", host+":30443:"+nodeIP, "https://"+host+":30443"+path)
@@ -285,7 +241,7 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	saved, _ := os.ReadFile(plan)
 	changed, _ := stack.Load(plan)
 	changed.Integrations[0].Identity.Clients[0].Name = "Changed intent"
-	b, _ = yaml.Marshal(changed)
+	b, _ := yaml.Marshal(changed)
 	os.WriteFile(plan, b, 0o600)
 	var refused bytes.Buffer
 	err = cli.Run(ctx, []string{"apply", "--state", state}, cli.Options{Catalog: os.DirFS(catalogDir), ReleaseSet: "e2e", Out: &refused})
@@ -342,8 +298,7 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	}
 	// KyDrive, on the Docker target, reaches KyIdentity through the edge from its relay.
 	st.Edges[0].AllowCIDRs = append(st.Edges[0].AllowCIDRs, drive.relayIP(t)+"/32")
-	b, _ = yaml.Marshal(st)
-	os.WriteFile(plan, b, 0o600)
+	save(st)
 	if out := apply("sign-on edge"); status(out, "kyrecovery.setup") != "skipped" || status(out, "kypulse.setup") != "skipped" || status(out, "kydrive.setup") != "skipped" || status(out, "kyidentity.scim.kydrive") != "skipped" {
 		t.Fatal("edge change re-ran an app's setup")
 	}
@@ -352,7 +307,11 @@ func TestKubernetesNPMEdge(t *testing.T) {
 	backupOutputs, backupSecrets := testDriveBackupGate(t, ctx, work, state, catalogDir, plan, drive, trust, apply)
 	outputs = append(outputs, backupOutputs...)
 
-	noCredentialLeak(t, state, outputs, slices.Concat([]string{password, token, stored()}, backupSecrets, recoverySecrets, pulseSecrets, driveSecrets))
+	edgeSecrets := []string{nginxTestToken}
+	if npm != nil {
+		edgeSecrets = []string{npm.password, npm.token, npm.stored()}
+	}
+	noCredentialLeak(t, state, outputs, slices.Concat(edgeSecrets, backupSecrets, recoverySecrets, pulseSecrets, driveSecrets))
 }
 
 // noCredentialLeak checks that no secret reached apply output or workstation state.
@@ -379,22 +338,32 @@ func noCredentialLeak(t *testing.T, state string, outputs, secrets []string) {
 }
 
 // probe returns the HTTP status a pod in an unmanaged namespace gets from url ("000": no answer).
-func probe(t *testing.T, ctx context.Context, cs kubernetes.Interface, url string) string {
+func probe(t *testing.T, ctx context.Context, cs kubernetes.Interface, proxy, url string) string {
 	t.Helper()
 	ns := "e2e-probe"
 	if _, err := cs.CoreV1().Namespaces().Get(ctx, ns, metav1.GetOptions{}); err != nil {
 		cs.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}, metav1.CreateOptions{})
 	}
-	dep, err := cs.AppsV1().Deployments("kyq-npm").Get(ctx, "app", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
+	// The proxy's image is already on the node and carries curl.
+	var from corev1.Container
+	if proxy == stack.NginxApp {
+		ds, err := cs.AppsV1().DaemonSets("kyq-nginx").Get(ctx, "app", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		from = ds.Spec.Template.Spec.Containers[0]
+	} else {
+		dep, err := cs.AppsV1().Deployments("kyq-npm").Get(ctx, "app", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		from = dep.Spec.Template.Spec.Containers[0]
 	}
-	limits := corev1.ResourceList{corev1.ResourceCPU: dep.Spec.Template.Spec.Containers[0].Resources.Limits[corev1.ResourceCPU], corev1.ResourceMemory: dep.Spec.Template.Spec.Containers[0].Resources.Limits[corev1.ResourceMemory]}
+	limits := corev1.ResourceList{corev1.ResourceCPU: from.Resources.Limits[corev1.ResourceCPU], corev1.ResourceMemory: from.Resources.Limits[corev1.ResourceMemory]}
 	pod, err := cs.CoreV1().Pods(ns).Create(ctx, &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{GenerateName: "probe-"},
 		Spec: corev1.PodSpec{RestartPolicy: corev1.RestartPolicyNever, AutomountServiceAccountToken: ptr.To(false), Containers: []corev1.Container{{
-			// The NPM image is already on the node and carries curl.
-			Name: "probe", Image: dep.Spec.Template.Spec.Containers[0].Image, Command: []string{"curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-m", "5", url},
+			Name: "probe", Image: from.Image, Command: []string{"curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-m", "5", url},
 			Resources: corev1.ResourceRequirements{Limits: limits, Requests: limits},
 		}}},
 	}, metav1.CreateOptions{})
@@ -443,14 +412,7 @@ func uploadCertificate(t *testing.T, ctx context.Context, tunnel edge.Dial, toke
 			json.NewDecoder(res.Body).Decode(result)
 		}
 	}
-	key, _ := rsa.GenerateKey(rand.Reader, 2048)
-	cert := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "*.example.test"}, DNSNames: []string{"*.example.test"},
-		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
-	der, err := x509.CreateCertificate(rand.Reader, cert, cert, &key.PublicKey, key)
-	if err != nil {
-		t.Fatal(err)
-	}
+	certPEM, keyPEM := testCertificate(t)
 	var created struct {
 		ID int `json:"id"`
 	}
@@ -458,15 +420,15 @@ func uploadCertificate(t *testing.T, ctx context.Context, tunnel edge.Dial, toke
 	var upload bytes.Buffer
 	form := multipart.NewWriter(&upload)
 	for field, data := range map[string][]byte{
-		"certificate":     pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
-		"certificate_key": pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}),
+		"certificate":     certPEM,
+		"certificate_key": keyPEM,
 	} {
 		part, _ := form.CreateFormFile(field, field+".pem")
 		part.Write(data)
 	}
 	form.Close()
 	request("POST", fmt.Sprintf("/api/nginx/certificates/%d/upload", created.ID), form.FormDataContentType(), &upload, nil)
-	return created.ID, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	return created.ID, certPEM
 }
 
 func mustNode(t *testing.T, ctx context.Context, cs kubernetes.Interface, name string) *corev1.Node {

@@ -645,6 +645,31 @@ kyyard:
         node_ports: {}
         termination_grace_seconds: 1200
         suite_runner: true
+nginx:
+    compose: ""
+    kubernetes: |
+        image: nginx
+        args: []
+        env: {}
+        ports:
+            - 80
+            - 443
+        readiness_path: /kyq-ready
+        run_as: 101
+        resources:
+            cpu: 500m
+            cpu_request: 100m
+            memory: 256Mi
+        volumes: []
+        capabilities: []
+        writable_root: false
+        low_ports: true
+        node_ports:
+            80: 30080
+            443: 30443
+        edge_proxy: true
+        termination_grace_seconds: 0
+        suite_runner: false
 npm:
     compose: ""
     kubernetes: |

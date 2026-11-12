@@ -14,6 +14,23 @@ state directory, target data and target-held credentials; do not reset them as a
 
 ## Unreleased
 
+- The nginx edge on Kubernetes (owner amendment, 2026-11-11): a new `nginx` edge component and
+  `proxy: nginx` on an edge, in place of `npm_url`. nginx runs on every node, unprivileged at
+  Pod Security `restricted`, with no database, admin API or volume, and serves configuration
+  the installer renders from the generator NPM's hosts use: same forwarding-header, allow-list,
+  connector and path rules. Route changes and certificate renewals reload nginx in place; a
+  route is reported only once every ready pod serves it. Certificates come from the cluster's
+  cert-manager (`certificates`, Let's Encrypt DNS-01 through Cloudflare, the same token Secret)
+  or from a TLS Secret you provide (`certificate_secret`). One node's loss leaves the other
+  nodes serving. **Upgrade impact:** none for existing plans: an edge without `proxy` is an
+  NPM edge, the catalog `npm` and existing NPMs are unchanged, and no existing app's rendered
+  objects change (no restart). Using the new edge needs cert-manager on the cluster for
+  `certificates`, and more permissions (`daemonsets`, `configmaps`, `patch pods`, `list nodes`,
+  cert-manager `issuers` and `certificates`), asked only of plans that have it. Moving from
+  `npm` is a manual sequence with a short outage when the address moves; the installer never
+  deletes NPM's volumes ([edge setup](docs/edge.md#moving-from-the-catalog-npm)). Behind the
+  nginx edge, `kydns.edge` passes only when KyDNS trusts every edge pod: on several nodes that
+  needs kube-vip's egress ([edge setup](docs/edge.md#addresses-and-node-loss)).
 - Node-failure recovery on Kubernetes (owner amendment, 2026-11-11). Every app's pod now leaves
   a node 30 seconds after it is marked unreachable instead of five minutes, prefers a node with
   fewer of the suite's pods, and has TCP startup and liveness probes. **Upgrade impact:** the

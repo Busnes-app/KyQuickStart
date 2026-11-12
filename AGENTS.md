@@ -389,13 +389,16 @@ edge compatibility: `docs/redirect.md`.
   `euro-office`, KyDrive's optional editor on Kubernetes, and the `cloudflare-direct` edge. The catalog spec's admission rules
   stay for KyQuickStart-AI's labelled third-party test installs; record each rejection there.
 - Third-party apps run on Docker hosts only. Kubernetes hosts Ky products and the edge
-  components (cloudflared, Nginx Proxy Manager, frp client), deployed with `client-go` typed
-  objects (no Helm); cloudflared and the frp client also deploy to Docker hosts, NPM does not. An app leaving the catalog stops taking new installs after
+  components (cloudflared, Nginx Proxy Manager, the nginx edge, frp client), deployed with
+  `client-go` typed objects (no Helm; cert-manager's Issuer and Certificate through the dynamic
+  client, cert-manager itself never installed); cloudflared and the frp client also deploy to
+  Docker hosts, NPM and the nginx edge do not. An app leaving the catalog stops taking new installs after
   notice, and existing installs are handed to their owner with `unmanage`.
 - Every installed app signs in through KyIdentity with native OIDC, uses *Assigned users only*,
   and offboards through KyIdentity's SCIM or signed directory webhook into the product's own
   handling. The installer builds no auth-proxy gate and never adopts a foreign account.
-- Reverse proxy is Nginx Proxy Manager, except a `cloudflare-direct` edge (Docker only): cloudflared
+- Reverse proxy is Nginx Proxy Manager, except the nginx edge on a cluster (below) and a
+  `cloudflare-direct` edge (Docker only): cloudflared
   routes each listed hostname straight to its app on a dedicated Docker network. Only KyIdentity,
   KyCalendar, KyPost and KyDrive are eligible; Kubernetes is refused (`docs/edge.md`). On an existing NPM, touch only installer-created hosts,
   certificates and certificate users, through its API, never its database. LAN DNS records in
@@ -405,14 +408,33 @@ edge compatibility: `docs/redirect.md`.
   Kubernetes the catalog's `npm` app keeps its admin API on a ClusterIP Service reached through
   the driver's port-forward (`kube://`); bootstrap replaces NPM's first or default administrator
   with a cluster-generated one (`docs/edge.md`).
-- One edge (NPM and a tunnel or frp client, or a `cloudflare-direct` cloudflared) per target and one owner per hostname. A route's
+- The nginx edge (owner amendment, 2026-11-11; `docs/edge.md`): the catalog `nginx` app
+  (`kubernetes.edge_proxy`) behind an edge's `proxy: nginx`, Kubernetes only, cloudflare or lan.
+  A DaemonSet (a pod on every node, since the Service's `Local` policy answers only from a
+  node's own pod; `maxSurge` 1; no PodDisruptionBudget, drain never evicts a DaemonSet), Pod
+  Security `restricted`, no volume, admin API or Secret of its own; nothing listens beyond 80,
+  443 and a loopback status port. Its routes are files in ConfigMap `kyq-edge-config`, rendered
+  by `edge.serverConfig`, the one generator NPM's `advanced_config` comes from: never fork it.
+  A route is this installation's only with its marker as the file's first line; a removed one is
+  renamed `.disabled`, never deleted; a hostname another file answers for is refused. Pods load
+  changes by reload, never restart, and a route's step passes only when every ready pod reports
+  the configuration just written; a pod on a node that is down is not waited for. Certificates
+  are an edge `certificate` (an Issuer and Certificate per entry through the cluster owner's
+  cert-manager, the Cloudflare token copied Secret-to-Secret beside the Issuer and nowhere
+  else) or a labelled TLS Secret (`certificate_secret`, never a `kyq-` name). Its permissions
+  and the cert-manager check are asked only of a plan that has it (`kube.Needs`). The `npm` app
+  and the nginx edge share a cluster only while one replaces the other, each with its own
+  NodePorts and address; apps admit both edges' pods. Retiring NPM's claims is the operator's.
+- One edge (NPM or the nginx edge and a tunnel or frp client, or a `cloudflare-direct` cloudflared) per target and one owner per hostname. A route's
   app is on the edge's target or on a Docker target, never in another cluster; a cluster edge's
   egress admits such an upstream's `forward_host` (an IP) and port alone. A product's
   trusted-proxy value is unset or loopback only (forwarded headers ignored), or exactly where its edge
   connects from (`{{edge_address}}` or `{{edge_prefix}}`: `egress_address`, or a `cloudflare-direct` edge's
   `connector_cidr`), never a range, `0.0.0.0/0` or a Docker gateway; `verify-edge` checks
   the client address the product reports. On Docker every Ky product trusts its edge's address;
-  on Kubernetes none does (no stable address only NPM connects from). Per-product status:
+  on Kubernetes none does (no stable address only the edge connects from). The nginx edge's pods
+  each leave from their own node, so an app on a Docker target trusts it across a node's loss
+  only with kube-vip's egress; `kydns.edge` asks from every edge pod and needs each trusted. Per-product status:
   `docs/guided-setup.md` ("Forwarded headers") and `docs/redirect.md`.
 - Each route is internal (`allow_cidrs` clients only) or external (the public connection);
   unmarked takes its edge's (`lan` internal, tunnel external). A tunnel edge may carry both, never
@@ -525,7 +547,7 @@ edge compatibility: `docs/redirect.md`.
   ingress) and the run lock is Lease `kyquickstart/kyquickstart-lock`. A manifest's
   `pod_security: baseline` is the only exception (NPM, whose root init it needs, and
   `euro-office`, whose entrypoint starts its bundled services as root; `docs/edge.md` and
-  `docs/guided-setup.md` record their measured capabilities). `kubernetes.egress: edge` limits an
+  `docs/guided-setup.md` record their measured capabilities; the nginx edge is `restricted`). `kubernetes.egress: edge` limits an
   app's egress to cluster DNS and the edge's pods; `euro-office` relies on it for
   `ALLOW_PRIVATE_IP_ADDRESS`. Only edge components publish NodePorts,
   never NPM's port 81, and preflight refuses one held by any Service but that app's own; with an edge on the cluster, apps admit ingress from its pods alone. The installer never adopts
@@ -539,7 +561,7 @@ edge compatibility: `docs/redirect.md`.
   other access throughout (KyYard's `/state/runner` too); its pod's `fsGroup` uses
   `OnRootMismatch`, so the kubelet no longer makes 0600 keys 0660 at each mount (#105). `kubernetes.termination_grace_seconds`
   (0-3600, 0 keeps the default) sets the pod's termination grace. Every app is one replica
-  (`Recreate`) that recovers from a dead node by rescheduling (owner amendment, 2026-11-11):
+  (`Recreate`; the nginx edge's DaemonSet is the one exception) that recovers from a dead node by rescheduling (owner amendment, 2026-11-11):
   30-second `not-ready`/`unreachable` tolerations, a preferred anti-affinity that spreads the
   installer's pods over nodes, and TCP startup (30 minutes) and liveness probes on its first
   port, never an HTTP path that fails with a dependency. No PodDisruptionBudget (with one
@@ -626,10 +648,17 @@ calls and kind nodes must carry their own explicit bounds.
   (200/401), egress through the edge only, a skipped rerun and a restart. Not part of `make e2e`.
 - `make e2e`: needs Docker (in CI split by `E2E_RUN`/`E2E_SKIP` over five `e2e (<shard>)` jobs, summarised by the `e2e` job that `release-image.yml` requires; a new slow kind test should get a shard or join one); runs `apply` against an sshd container on the local Docker socket and
   against a kind cluster (`go run sigs.k8s.io/kind@v0.33.0`), including drift and stale-lock cases.
-  Also runs disposable NPM, frpc/frps and cloudflared container tests in `internal/edge`, and
+  Also runs disposable NPM, nginx edge (`TestNginxContainer`, the catalog's pinned image), frpc/frps and cloudflared container tests in `internal/edge`, and
   `TestKubernetesNPMEdge`: catalog NPM on kind with claims, bootstrap, policy probes, a routed
   request through the NodePort as a cloudflare and then a lan edge, skipped reruns and token
-  refresh. It then installs the catalog KyIdentity from its attested image behind the lan edge
+  refresh. `TestKubernetesNginxEdge` and `TestKubernetesNginxEdgeJoins` run the same two suites
+  behind the nginx edge (`testKubernetesEdge`, `testKubernetesEdgeJoins`; `kindEdge.certify`
+  turns the suites' NPM-shaped routes into the nginx edge's), with what only it has
+  (`testNginxEdge`: no admin surface, reload in the same pods, disabled and foreign files, a
+  managed certificate against cert-manager's CRDs with the test as issuer), and
+  `TestKubernetesNginxEdgeFailover` (three kind nodes: requests through the Service while a pod
+  is replaced and while a node is stopped, apply with the node down). CI shards
+  `kube-nginx-edge` and `kube-nginx-joins`. It then installs the catalog KyIdentity from its attested image behind the lan edge
   (`client_port` 30443): restricted uid-100 pod on a private data directory, staged
   `apply-setup`, OIDC discovery through the edge naming the `:30443` issuer, changed-intent
   refusal, and a later `client_port` change refused (`issuer_changed`) before
@@ -738,5 +767,5 @@ calls and kind nodes must carry their own explicit bounds.
   including `backup` and `restore`.
 - `internal/runner/AGENTS.md`: `kyquickstart serve` and the serve-* commands inside the runner
   container; the root owns the ownership rule and the CLI owns handoff.
-- `internal/edge/AGENTS.md`: NPM reconciliation, connector deployment and public forwarded-header verification.
+- `internal/edge/AGENTS.md`: NPM and nginx edge reconciliation, connector deployment and public forwarded-header verification.
   The root owns stack schema, CLI orchestration and target drivers.

@@ -168,7 +168,8 @@ the plan is saved only after every step passed.
 
 - `install` adds the app and any missing dependencies to the plan on that target. An app that
   takes its URL from its route also needs `--hostname`, `--forward-host`, `--forward-port` and
-  `--certificate-id` (an existing NPM certificate): install adds that one route to the edge on
+  `--certificate-id` (an existing NPM certificate; behind the nginx edge `--certificate`, one of
+  the edge's certificates or a TLS Secret): install adds that one route to the edge on
   the target exactly as `plan` would (`http` upstream, `/api/status`, the edge's exposure) and
   deploys the edge with it. `--bundle` (with `--identity-client`, default the app's name) adds
   the app's `integrations` entry, so its setup runs; an installed KyIdentity takes its client
@@ -721,7 +722,10 @@ status response and cannot pass `verify-edge` as a suite product.
 
 Edge prompts support existing NPM/certificates plus an existing Cloudflare tunnel or frp
 server. Connector credentials stay in protected target files, never in the wizard. See
-[edge setup](edge.md) for the supported paths.
+[edge setup](edge.md) for the supported paths. The nginx edge on a cluster (`nginx` app,
+`proxy: nginx`) is not asked for: write it in `stack.yaml`
+([edge setup](edge.md#nginx-on-every-node-proxy-nginx)); `plan` refuses to rewrite a plan that
+has it, and `install APP --certificate NAME` names a route's certificate there.
 
 ## Node failure on Kubernetes
 
@@ -741,8 +745,17 @@ Set the class's `reclaimPolicy` to `Retain` so that deleting a claim or namespac
 delete the data. Node-local storage (kind's and k3s's `local-path`, `hostPath`) cannot follow
 a pod to another node at all.
 
-Not measured by the installer's tests: kind has one node. Power a node off in a maintenance
-window and time the recovery before relying on it.
+Not measured by the installer's tests for the apps: power a node off in a maintenance window
+and time the recovery before relying on it.
+
+**The edge.** The catalog `npm` is one such pod, so a node's loss also takes every route down
+until NPM is back. The `nginx` edge is the exception to "one pod": it runs on every node and
+has no volume, so the other nodes keep serving, and with a kube-vip or load-balancer address
+the address moves to a node whose pod is already running
+([edge setup](edge.md#addresses-and-node-loss), which also says what each address mode does
+for apps on Docker targets). It needs cert-manager on the cluster for the certificates it
+issues, and a few more permissions ([edge setup](edge.md#permissions)). Its own failover is
+tested on three kind nodes.
 
 ## Forwarded headers (trusted proxy)
 
@@ -767,7 +780,9 @@ client. The catalog never trusts a range, only the one address the edge connects
 The edge address is the route's edge's `egress_address`, or a `cloudflare-direct` edge's
 cloudflared (`connector_cidr`). Guided `plan` does not ask for `egress_address`: set it in
 `stack.yaml` ([edge setup](edge.md)). For NPM on a cluster it is the IP of the node running
-NPM, since pods leave the cluster through their node's address. That `/32` is exact but not
+NPM, since pods leave the cluster through their node's address. The nginx edge has a pod on
+every node, each leaving from its own node: only kube-vip's egress gives it one address
+([edge setup](edge.md#addresses-and-node-loss)). That `/32` is exact but not
 NPM's alone: every pod on that node, and the node itself, leaves from it and could forge
 headers to a product that trusts it. If NPM moves node, set it again and rerun `apply`; until
 then the products ignore the edge's headers. Never set it to a Docker network gateway: a Docker

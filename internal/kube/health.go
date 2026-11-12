@@ -25,20 +25,16 @@ func (h healthStep) InputHash() string { return h.hash }
 
 // state returns why the app is not ready ("" when it is) and whether the controller gave up.
 func (h healthStep) state(ctx context.Context) (string, bool, error) {
-	d, found, err := getOwned(ctx, h.a.Client.cs.AppsV1().Deployments(namespaceOf(h.a.Name)), "deployment", appName)
+	w, found, err := h.a.Client.workload(ctx, h.a.Name)
 	switch {
 	case err != nil:
 		return "", false, err
 	case !found:
 		return "deployment missing", false, nil
-	case d.Spec.Replicas == nil || *d.Spec.Replicas != 1:
+	case w.replicas != 1:
 		return "deployment is not at one replica", false, nil
-	case ready(d):
-		return "", false, nil
-	case failed(d):
-		return "rollout failed: " + reasons(d), true, nil
 	}
-	return fmt.Sprintf("%d of 1 replicas ready", d.Status.ReadyReplicas), false, nil
+	return w.why, w.gaveUp, nil
 }
 
 func (h healthStep) Inspect(ctx context.Context) (bool, error) {

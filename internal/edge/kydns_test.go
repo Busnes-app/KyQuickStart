@@ -115,7 +115,7 @@ func TestLANDNSCreateSkipRemoveAndReaddress(t *testing.T) {
 	// An entry for another KyDNS server whose ID happens to match a record here.
 	other := ledgerEntry{Server: "https://old-kydns.example.com", ID: 100, Name: "nas.example.com.", Value: "192.168.1.5"}
 	secrets.ledger, _ = json.Marshal([]ledgerEntry{other})
-	s := dnsStep{n: n, e: e}
+	s := dnsStep{n: n.dns(), e: e}
 	if err := n.Preflight(ctx, stack.Edge{Target: e.Target, LANDNS: e.LANDNS, Routes: nil}); err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestLANDNSCreateSkipRemoveAndReaddress(t *testing.T) {
 
 	// A removed route deletes only its own record; the foreign one stays.
 	e.Routes = e.Routes[:1]
-	s = dnsStep{n: n, e: e}
+	s = dnsStep{n: n.dns(), e: e}
 	if done, _ := s.Inspect(ctx); done {
 		t.Fatal("removed route not noticed")
 	}
@@ -162,7 +162,7 @@ func TestLANDNSCreateSkipRemoveAndReaddress(t *testing.T) {
 
 	// A new address replaces its own record.
 	e.LANDNS.Address = "192.168.1.82"
-	if err := (dnsStep{n: n, e: e}).Apply(ctx); err != nil {
+	if err := (dnsStep{n: n.dns(), e: e}).Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if got := f.names(); got["hello.k80.example.com."] != "192.168.1.82" || len(got) != 2 {
@@ -179,7 +179,7 @@ func TestLANDNSRefusesForeignNames(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			n, secrets, e := f.serve(t)
-			s := dnsStep{n: n, e: e}
+			s := dnsStep{n: n.dns(), e: e}
 			if _, err := s.Inspect(ctx); err == nil || !strings.Contains(err.Error(), "did not create") {
 				t.Fatalf("inspect: %v", err)
 			}
@@ -200,7 +200,7 @@ func TestLANDNSRefusesForeignNames(t *testing.T) {
 	n, secrets, e := f.serve(t)
 	secrets.ledger, _ = json.Marshal([]ledgerEntry{{Server: strings.TrimSuffix(e.LANDNS.URL, "/"), ID: 9, Name: "hello.k80.example.com.", Value: "192.168.1.81"}})
 	e.Routes = e.Routes[:1]
-	if err := (dnsStep{n: n, e: e}).Apply(ctx); err != nil {
+	if err := (dnsStep{n: n.dns(), e: e}).Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if got := f.names(); got["other.k80.example.com."] == "" || got["hello.k80.example.com."] == "" || strings.Contains(string(secrets.ledger), `"id":9,`) {
@@ -211,7 +211,7 @@ func TestLANDNSRefusesForeignNames(t *testing.T) {
 	f = &fakeKyDNS{zone: "example.com", records: []dnsRecord{{ID: 9, Name: "hello.k80.example.com.", Type: "A", Value: "192.168.1.81"}}}
 	n, secrets, e = f.serve(t)
 	secrets.ledger, _ = json.Marshal([]ledgerEntry{{Server: strings.TrimSuffix(e.LANDNS.URL, "/"), ID: 3, Name: "hello.k80.example.com.", Value: "192.168.1.81"}})
-	if err := (dnsStep{n: n, e: e}).Apply(ctx); err == nil || len(f.mutations) != 0 {
+	if err := (dnsStep{n: n.dns(), e: e}).Apply(ctx); err == nil || len(f.mutations) != 0 {
 		t.Fatalf("trusted a stale ledger entry: %v %q", err, f.mutations)
 	}
 }
@@ -220,7 +220,7 @@ func TestLANDNSZoneRefusalAndSecrets(t *testing.T) {
 	ctx := context.Background()
 	f := &fakeKyDNS{zone: "lan.example.net"}
 	n, _, e := f.serve(t)
-	s := dnsStep{n: n, e: e}
+	s := dnsStep{n: n.dns(), e: e}
 	_, err := s.Inspect(ctx)
 	if err == nil || !strings.Contains(err.Error(), "outside KyDNS's private zone lan.example.net.") || len(f.mutations) != 0 {
 		t.Fatalf("zone precheck: %v", err)
@@ -235,7 +235,7 @@ func TestLANDNSZoneRefusalAndSecrets(t *testing.T) {
 		f := &fakeKyDNS{zone: "example.com"}
 		n, secrets, e := f.serve(t)
 		secrets.values["kydns-api/token"] = tok
-		if _, err := (dnsStep{n: n, e: e}).Inspect(ctx); err == nil || strings.Contains(err.Error(), tok) || !strings.Contains(err.Error(), want) {
+		if _, err := (dnsStep{n: n.dns(), e: e}).Inspect(ctx); err == nil || strings.Contains(err.Error(), tok) || !strings.Contains(err.Error(), want) {
 			t.Fatalf("%q: %v", tok, err)
 		}
 	}
@@ -245,7 +245,7 @@ func TestLANDNSApplySurfacesZoneRefusal(t *testing.T) {
 	ctx := context.Background()
 	f := &fakeKyDNS{zone: "example.com", refuse: true}
 	n, secrets, e := f.serve(t)
-	err := dnsStep{n: n, e: e}.Apply(ctx)
+	err := dnsStep{n: n.dns(), e: e}.Apply(ctx)
 	if err == nil || !strings.Contains(err.Error(), "KyDNS refuses hello.k80.example.com (name_out_of_zone)") || strings.Contains(err.Error(), kydnsTok) {
 		t.Fatalf("zone refusal: %v", err)
 	}
@@ -253,7 +253,7 @@ func TestLANDNSApplySurfacesZoneRefusal(t *testing.T) {
 		t.Fatal("ledger recorded a refused record")
 	}
 	// The refusal body echoes the token; the client's error carries only the code.
-	k, _ := dnsStep{n: n, e: e}.client(ctx)
+	k, _ := dnsStep{n: n.dns(), e: e}.client(ctx)
 	_, code, err := k.do(ctx, http.MethodPost, "/api/v1/records", dnsRecord{Name: "x.example.com", Type: "A", Value: "192.168.1.81"}, nil)
 	if code != "name_out_of_zone" || err == nil || strings.Contains(err.Error(), kydnsTok) {
 		t.Fatalf("refusal %q %v", code, err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -92,8 +93,8 @@ func TestNodePortsAndEdgePlacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if np := s.cat["npm"].Kubernetes.NodePorts; np[443] != 31443 || np[80] != 30080 || s.edgeApp("k1") != "npm" || s.edgeApp("nas") != "" {
-		t.Fatalf("node ports %v, edge %q", np, s.edgeApp("k1"))
+	if np := s.cat["npm"].Kubernetes.NodePorts; np[443] != 31443 || np[80] != 30080 || !slices.Equal(s.edgeApps("k1"), []string{"npm"}) || s.edgeApps("nas") != nil {
+		t.Fatalf("node ports %v, edge %q", np, s.edgeApps("k1"))
 	}
 	if np := s.nodePorts("k1"); len(np) != 2 || np[31443] != "npm" || np[30080] != "npm" || len(s.nodePorts("nas")) != 0 {
 		t.Fatalf("preflight node ports %v", np)

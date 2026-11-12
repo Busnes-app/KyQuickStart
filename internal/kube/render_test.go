@@ -224,7 +224,7 @@ func TestRenderNPMKeepsAdminInCluster(t *testing.T) {
 }
 
 func TestRenderAdmitsEdgeOnly(t *testing.T) {
-	o := render(App{Name: "hello", Catalog: fixture(t), ReleaseSet: "rs-1", Edge: "npm"})
+	o := render(App{Name: "hello", Catalog: fixture(t), ReleaseSet: "rs-1", Edges: []string{"npm"}})
 	in := o.Policy.Spec.Ingress
 	if len(in) != 1 || len(in[0].From) != 1 || in[0].From[0].NamespaceSelector.MatchLabels[nsNameLabel] != "kyq-npm" ||
 		in[0].From[0].PodSelector.MatchLabels[nameLabel] != "npm" || in[0].Ports[0].Port.IntValue() != 8080 {
@@ -441,7 +441,7 @@ func TestRenderKyYard(t *testing.T) {
 	}
 	c := cat["kyyard"]
 	c.Kubernetes = c.Kubernetes.WithHost("yard.example.com")
-	a := App{Name: "kyyard", Catalog: c, RunnerImage: testRunnerImage, Edge: "npm"}
+	a := App{Name: "kyyard", Catalog: c, RunnerImage: testRunnerImage, Edges: []string{"npm"}}
 	o := render(a)
 	pod := o.Deployment.Spec.Template.Spec
 	if len(pod.Containers) != 2 || pod.Containers[0].Name != "app" || pod.Containers[1].Name != "runner" {
@@ -530,7 +530,7 @@ func TestRenderEuroOffice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	o := render(App{Name: "euro-office", Catalog: cat["euro-office"], ReleaseSet: "rs-1", Edge: "npm"})
+	o := render(App{Name: "euro-office", Catalog: cat["euro-office"], ReleaseSet: "rs-1", Edges: []string{"npm"}})
 	if (App{Catalog: cat["euro-office"]}).namespaceLabels()[podSecurity] != "baseline" {
 		t.Fatal("euro-office namespace is not baseline")
 	}
@@ -581,7 +581,7 @@ func TestRenderEuroOffice(t *testing.T) {
 	}
 	// Behind a tunnel edge, NPM answers KyDrive's external route only to the connector, so the
 	// editor reaches it over the internet: 443 to public addresses, never the site's own ranges.
-	p = render(App{Name: "euro-office", Catalog: cat["euro-office"], ReleaseSet: "rs-1", Edge: "npm", PublicEgress: true}).Policy.Spec
+	p = render(App{Name: "euro-office", Catalog: cat["euro-office"], ReleaseSet: "rs-1", Edges: []string{"npm"}, PublicEgress: true}).Policy.Spec
 	if len(p.Egress) != 3 || len(p.Egress[2].Ports) != 1 || p.Egress[2].Ports[0].Port.IntValue() != 443 || len(p.Egress[2].To) != 2 {
 		t.Fatalf("tunnel policy = %+v", p.Egress)
 	}
@@ -608,7 +608,7 @@ func TestRenderEuroOffice(t *testing.T) {
 		}
 	}
 	// An app without egress "edge" is unaffected: PublicEgress only widens a closed policy.
-	if p := render(App{Name: "kynotes", Catalog: cat["kynotes"], ReleaseSet: "rs-1", Edge: "npm", PublicEgress: true}).Policy.Spec; len(p.Egress) != 0 {
+	if p := render(App{Name: "kynotes", Catalog: cat["kynotes"], ReleaseSet: "rs-1", Edges: []string{"npm"}, PublicEgress: true}).Policy.Spec; len(p.Egress) != 0 {
 		t.Fatalf("kynotes gained egress rules: %+v", p.Egress)
 	}
 }

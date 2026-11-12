@@ -656,7 +656,10 @@ func TestKyDNSEdgeTrust(t *testing.T) {
 		{"not json", nil, false},
 	} {
 		e := edgeTrustStep{url: "http://192.0.2.1:18053/api/v1/installer/network", edge: "k1", egress: "192.168.1.20",
-			curl: func(_ context.Context, a []string) ([]byte, error) { args = a; return []byte(c.out), c.err }}
+			curl: func(_ context.Context, a []string) (map[string][]byte, error) {
+				args = a
+				return map[string][]byte{"npm": []byte(c.out)}, c.err
+			}}
 		err := e.Verify(ctx)
 		if c.pass != (err == nil) || err != nil && !strings.Contains(err.Error(), "KyDNS does not trust edge k1 at egress_address 192.168.1.20") {
 			t.Errorf("%q: %v", c.out, err)

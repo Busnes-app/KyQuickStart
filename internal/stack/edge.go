@@ -16,9 +16,12 @@ import (
 
 // Edge references infrastructure and target-held credentials, never credential values.
 type Edge struct {
-	Target        string     `yaml:"target"`
-	Provider      string     `yaml:"provider"` // cloudflare, cloudflare-direct, frp or lan
-	NPMURL        string     `yaml:"npm_url,omitempty"`
+	Target   string `yaml:"target"`
+	Provider string `yaml:"provider"` // cloudflare, cloudflare-direct, frp or lan
+	NPMURL   string `yaml:"npm_url,omitempty"`
+	// Proxy "nginx" routes through the catalog nginx app on this Kubernetes target, which
+	// serves configuration the installer renders; empty is the NPM at npm_url.
+	Proxy         string     `yaml:"proxy,omitempty" json:",omitempty"`
 	ConnectorCIDR string     `yaml:"connector_cidr,omitempty"`
 	ProxyPort     int        `yaml:"proxy_port,omitempty"` // separate PROXY-protocol TLS listener for frp
 	Routes        []Route    `yaml:"routes"`
@@ -76,7 +79,10 @@ type Route struct {
 	ForwardScheme string `yaml:"forward_scheme"`
 	CertificateID int    `yaml:"certificate_id,omitempty"`
 	Certificate   string `yaml:"certificate,omitempty"` // an edge certificate's name, instead of an ID
-	StatusPath    string `yaml:"status_path,omitempty"`
+	// CertificateSecret names an operator's kubernetes.io/tls Secret in the nginx edge's
+	// namespace, instead of one of the edge's certificates.
+	CertificateSecret string `yaml:"certificate_secret,omitempty" json:",omitempty"`
+	StatusPath        string `yaml:"status_path,omitempty"`
 	// Exposure is internal (only allow_cidrs clients reach the route) or external (the edge's
 	// public connection serves it). Empty is the edge's own: internal on lan, else external.
 	Exposure string `yaml:"exposure,omitempty"`
@@ -100,10 +106,26 @@ func (e Edge) TrustedAddress() string {
 	return e.EgressAddress
 }
 
-// kubeVIPAddress is the kube_vip_address of the in-cluster NPM app behind e's kube:// npm_url.
+// NginxApp is the catalog app a proxy: nginx edge routes through.
+const NginxApp = "nginx"
+
+// Nginx reports an edge served by the catalog nginx app, not an NPM.
+func (e Edge) Nginx() bool { return e.Proxy == NginxApp }
+
+// ClusterApp names the catalog app on e's cluster that serves its routes: nginx, or the NPM
+// behind a kube:// npm_url; "" for an NPM the operator runs.
+func (e Edge) ClusterApp() string {
+	if e.Nginx() {
+		return NginxApp
+	}
+	ns, _, _, _ := KubeService(e.NPMURL)
+	return strings.TrimPrefix(ns, "kyq-")
+}
+
+// kubeVIPAddress is the kube_vip_address of the in-cluster edge app that serves e.
 func (s *Stack) kubeVIPAddress(e Edge) string {
-	ns, _, _, ok := KubeService(e.NPMURL)
-	if !ok {
+	ns := "kyq-" + e.ClusterApp()
+	if ns == "kyq-" {
 		return ""
 	}
 	for _, a := range s.Apps {
@@ -178,6 +200,10 @@ func (s *Stack) validateEdges() error {
 			if err := validateDirect(e, target); err != nil {
 				return err
 			}
+		} else if e.Proxy != "" {
+			if err := s.validateNginx(*e, target); err != nil {
+				return err
+			}
 		} else if ns, svc, port, ok := KubeService(e.NPMURL); ok {
 			if !target.Kubernetes() {
 				return fmt.Errorf("edge %s: a kube:// npm_url needs a Kubernetes target", e.Target)
@@ -199,7 +225,7 @@ func (s *Stack) validateEdges() error {
 		if apis[e.NPMURL] {
 			return fmt.Errorf("edge %s: npm_url is already owned by another target", e.Target)
 		}
-		if !e.Direct() {
+		if e.NPMURL != "" {
 			apis[e.NPMURL] = true
 		}
 		err := validateExposure(*e, s.Domains)
@@ -231,7 +257,7 @@ func (s *Stack) validateEdges() error {
 			}
 		}
 		if vip := s.kubeVIPAddress(*e); vip != "" && e.EgressAddress != vip {
-			return fmt.Errorf("edge %s: its NPM's egress leaves from kube_vip_address %s: set egress_address to %s", e.Target, vip, vip)
+			return fmt.Errorf("edge %s: its egress leaves from kube_vip_address %s: set egress_address to %s", e.Target, vip, vip)
 		}
 		for j := range e.Routes {
 			r := &e.Routes[j]
@@ -267,7 +293,13 @@ func (s *Stack) validateEdges() error {
 			if r.ForwardScheme != "http" && r.ForwardScheme != "https" {
 				return fmt.Errorf("edge %s: forward_scheme must be http or https", e.Target)
 			}
-			if !e.Direct() && (r.CertificateID == 0) == (r.Certificate == "") || r.CertificateID < 0 {
+			if e.Nginx() {
+				if err := nginxCertificate(*r); err != nil {
+					return fmt.Errorf("edge %s: route %s: %w", e.Target, r.Hostname, err)
+				}
+			} else if r.CertificateSecret != "" {
+				return fmt.Errorf("edge %s: route %s: certificate_secret needs proxy: nginx", e.Target, r.Hostname)
+			} else if !e.Direct() && (r.CertificateID == 0) == (r.Certificate == "") || r.CertificateID < 0 {
 				return fmt.Errorf("edge %s: route %s needs exactly one of certificate_id (an existing NPM certificate) or certificate (one of the edge's certificates)", e.Target, r.Hostname)
 			}
 			if c, ok := certs[r.Certificate]; r.Certificate != "" && (!ok || !slices.ContainsFunc(c.Domains, func(d string) bool { return Covers(d, r.Hostname) })) {
@@ -281,6 +313,38 @@ func (s *Stack) validateEdges() error {
 				return fmt.Errorf("edge %s: status_path must be an absolute request path without a query or fragment", e.Target)
 			}
 		}
+	}
+	return nil
+}
+
+// validateNginx checks a proxy: nginx edge: the catalog nginx app on its own cluster, with no
+// NPM. frp is refused as for the catalog NPM: its PROXY-protocol listener is not published.
+func (s *Stack) validateNginx(e Edge, target Target) error {
+	switch {
+	case !e.Nginx():
+		return fmt.Errorf("edge %s: proxy must be nginx, or absent for an NPM", e.Target)
+	case !target.Kubernetes():
+		return fmt.Errorf("edge %s: proxy nginx needs a Kubernetes target", e.Target)
+	case e.NPMURL != "":
+		return fmt.Errorf("edge %s: proxy nginx has no NPM; remove npm_url", e.Target)
+	case e.Provider != "cloudflare" && e.Provider != "lan":
+		return fmt.Errorf("edge %s: proxy nginx serves a cloudflare or lan edge", e.Target)
+	case !slices.ContainsFunc(s.Apps, func(a App) bool { return a.Name == NginxApp && a.Target == e.Target }):
+		return fmt.Errorf("edge %s: proxy nginx needs the %s app on this target", e.Target, NginxApp)
+	}
+	return nil
+}
+
+// nginxCertificate accepts one of the edge's certificates or an operator's TLS Secret. The
+// kyq- prefix is the installer's: its own Secrets are never mounted into the edge by name.
+func nginxCertificate(r Route) error {
+	switch {
+	case r.CertificateID != 0:
+		return errors.New("certificate_id is an NPM certificate; use certificate (one of the edge's certificates) or certificate_secret (a TLS Secret)")
+	case (r.Certificate == "") == (r.CertificateSecret == ""):
+		return errors.New("needs exactly one of certificate (one of the edge's certificates) or certificate_secret (a TLS Secret in kyq-" + NginxApp + ")")
+	case r.CertificateSecret != "" && (len(validation.IsDNS1123Subdomain(r.CertificateSecret)) > 0 || strings.HasPrefix(r.CertificateSecret, "kyq-")):
+		return errors.New("certificate_secret must be a Secret name that does not start with kyq-")
 	}
 	return nil
 }

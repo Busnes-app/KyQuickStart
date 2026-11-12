@@ -8,7 +8,7 @@ Plain terminal planning and command orchestration for the operator-run installer
   keeps what it never asks (`keepUnasked`: an app's `stopped`, `node_ports`, LoadBalancer
   addresses and `recovery_key_id` on the same target; an edge's `egress_address` and `lan_dns`
   for the same provider; a setup's `identity_amendment`; `domains`), accepts the catalog NPM's `kube://` `npm_url`, refuses plans whose
-  routes name certificates, asks an installed app's setup for no workload, and releases
+  routes name certificates or that installs the nginx edge (never offered: it is written in `stack.yaml`), asks an installed app's setup for no workload, and releases
   `plan.lock` before running `preflight` or `apply`. `showPlan` names an
   edge whose NPM is the plan's catalog `npm` as installed, lists its certificates and prints
   each route's URL host (`Edge.URLHost`, with an internal route's `client_port`).
@@ -16,7 +16,10 @@ Plain terminal planning and command orchestration for the operator-run installer
   and every plan change give a plan its `installation_id`, published after the steps pass;
   markers record it only once published. `--adopt-edge-hosts` and `--take-over-target` are
   apply-only. A `kube://` edge gets its token and tunnel from the
-  Kubernetes driver; an app's `node_ports`, `kube_vip_address` and `load_balancer_address` override the catalog's in the session only;
+  Kubernetes driver; a `proxy: nginx` edge connects no NPM (`session.nginx`, beside `npms`;
+  `session.proxy` picks one), and its target's driver gets `needs` (`kube.Needs`: preflight,
+  `GrantRunner`) and the edge's `tlsSecrets`; two apps publishing one NodePort or address on a
+  cluster are refused; an app's `node_ports`, `kube_vip_address` and `load_balancer_address` override the catalog's in the session only;
   `loadBalancers` gives a target's addresses to `kube.LoadBalancerCheck` in preflight and to `GrantRunner`.
   `version` prints the release set; `version --runner-image` prints `Options.RunnerImage` or
   fails "this build pins no suite runner image (source build); use a release binary".
@@ -28,7 +31,7 @@ Plain terminal planning and command orchestration for the operator-run installer
   dependency with a route of its own); install
   then deploys that target's edge with all its routes and, with a bundle beside an installed
   KyIdentity, its setup steps first and `amendLate` over the install's change (`planChange`). `withSetupSources` also connects KyDrive's target for `euro-office`
-  (its `jwt_secret`); removing `npm` is refused while an edge on its target names it (`kube://` `npm_url`) and routes other apps. The exported `Install`, `Uninstall`, `Unmanage`, `Upgrade` and `Status`
+  (its `jwt_secret`); removing `npm` or `nginx` is refused while an edge on its target names it (`kube://` `npm_url`, `proxy: nginx`) and routes other apps; `--certificate` names an nginx edge route's certificate or TLS Secret in place of `--certificate-id`. The exported `Install`, `Uninstall`, `Unmanage`, `Upgrade` and `Status`
   take a context, state directory and `Options` (with `Progress`) so the suite runner calls
   them without flag parsing; they return `internal/suite` errors and status.
 - `lifecycle.go` owns `stop`, `start`, `restart` and `logs` (Docker and Kubernetes, one app
@@ -244,8 +247,9 @@ Plain terminal planning and command orchestration for the operator-run installer
   workstation's direct request with `X-Forwarded-Proto: https` to its admin port and passes only
   on 403, so an `egress_address` other peers share (a Docker gateway hiding clients) fails apply.
   `edgeTrustStep` (`kydns.edge`, setupSteps' second return, so it runs after the edges) curls
-  the same URL from the catalog NPM's pod and passes only when KyDNS reports the edge's headers
-  trusted over https; KyDNS's route on any other edge is refused.
+  the same URL from the catalog NPM's pod, or from every ready pod of the nginx edge
+  (`kube.EdgeCurl`: with kube-vip egress, the one pod kube-vip rewrites), and passes only when
+  KyDNS reports the edge's headers trusted over https to each; KyDNS's route on any other edge is refused.
   `withRoute` fills a Compose template's route references for both `newSession`
   and `validateSelection`, so `{{edge_address}}` without the edge's `egress_address` is refused
   by `plan` and `review` too.

@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Busnes-app/kyquickstart/internal/edge"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -41,16 +42,27 @@ func (d deployStep) check(ctx context.Context) (string, error) {
 			return "namespace label " + k + " differs", nil
 		}
 	}
-	dep, found, err := getOwned(ctx, cs.AppsV1().Deployments(ns), "deployment", appName)
+	w, found, err := d.a.Client.workload(ctx, d.a.Name)
 	switch {
 	case err != nil:
 		return "", err
 	case !found:
 		return "deployment missing", nil
-	case dep.Annotations[hashAnnotation] != d.hash:
+	case w.object.GetAnnotations()[hashAnnotation] != d.hash:
 		return "deployed objects differ from this release", nil
-	case dep.Spec.Replicas == nil || *dep.Spec.Replicas != 1:
+	case w.daemon != (want.DaemonSet != nil):
+		return "the workload is a " + w.kind(), nil
+	case !w.daemon && w.replicas != 1:
 		return "deployment is not at one replica", nil
+	}
+	if want.Config != nil {
+		have, found, err := getOwned(ctx, cs.CoreV1().ConfigMaps(ns), "config map", edgeConfig)
+		if err != nil || !found || have.Data[edge.NginxMainFile] != edge.NginxMain {
+			return "edge configuration missing or differs", err
+		}
+		if _, err := d.a.Client.credentials(ctx); err != nil {
+			return "edge credential Secret missing", nil
+		}
 	}
 	for _, svc := range want.services() {
 		have, found, err := getOwned(ctx, cs.CoreV1().Services(ns), "service", svc.Name)
@@ -164,6 +176,16 @@ func (d deployStep) Apply(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+	}
+	if o.DaemonSet != nil {
+		if err := d.a.Client.ensureEdge(ctx, d.a.ReleaseSet, o.Config); err != nil {
+			return err
+		}
+		o.DaemonSet.Annotations = map[string]string{hashAnnotation: d.hash}
+		if err := upsert(ctx, cs.AppsV1().DaemonSets(ns), "daemonset", o.DaemonSet, nil); err != nil {
+			return err
+		}
+		return d.a.ensureNamespace(ctx, true)
 	}
 	o.Deployment.Annotations = map[string]string{hashAnnotation: d.hash}
 	if err := upsert(ctx, cs.AppsV1().Deployments(ns), "deployment", o.Deployment, nil); err != nil {
