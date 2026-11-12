@@ -25,7 +25,10 @@ import (
 // CI shard. On the stack TestKubernetesNPMEdge has when they join (KyIdentity, KyRecovery,
 // kyPulse and KyDrive behind the lan edge, KyDrive backed up), KyNotes, KyCalendar, KyPost and
 // KyDNS join by setup amendment, and no credential of any of them leaks.
-func TestKubernetesNPMEdgeJoins(t *testing.T) {
+func TestKubernetesNPMEdgeJoins(t *testing.T) { testKubernetesEdgeJoins(t, "npm") }
+
+// testKubernetesEdgeJoins is the joins suite behind proxy: the catalog npm, or nginx.
+func testKubernetesEdgeJoins(t *testing.T, proxy string) {
 	ctx := context.Background()
 	work := t.TempDir()
 	state := filepath.Join(work, "state")
@@ -38,14 +41,14 @@ func TestKubernetesNPMEdgeJoins(t *testing.T) {
 	}
 	cs := kubernetes.NewForConfigOrDie(cfg)
 	catalogDir := filepath.Join(work, "catalog")
-	for _, src := range []string{"../../internal/catalog/testdata/apps/hello", "../../internal/catalog/apps/npm", "../../internal/catalog/apps/kyidentity", "../../internal/catalog/apps/kyrecovery", "../../internal/catalog/apps/kypulse", "../../internal/catalog/apps/kynotes", "../../internal/catalog/apps/kycalendar"} {
+	for _, src := range []string{"../../internal/catalog/testdata/apps/hello", "../../internal/catalog/apps/" + proxy, "../../internal/catalog/apps/kyidentity", "../../internal/catalog/apps/kyrecovery", "../../internal/catalog/apps/kypulse", "../../internal/catalog/apps/kynotes", "../../internal/catalog/apps/kycalendar"} {
 		if err := os.CopyFS(filepath.Join(catalogDir, filepath.Base(src)), os.DirFS(src)); err != nil {
 			t.Fatal(err)
 		}
 		relaysOff(t, filepath.Join(catalogDir, filepath.Base(src)))
 	}
 	plan := filepath.Join(state, "stack.yaml")
-	os.WriteFile(plan, []byte("version: 1\ntargets:\n  - name: k8s\n    kubeconfig: "+kc+"\n    storage_class: standard\napps:\n  - name: npm\n    target: k8s\n  - name: hello\n    target: k8s\n"), 0o600)
+	os.WriteFile(plan, []byte("version: 1\ntargets:\n  - name: k8s\n    kubeconfig: "+kc+"\n    storage_class: standard\napps:\n  - name: "+proxy+"\n    target: k8s\n  - name: hello\n    target: k8s\n"), 0o600)
 	var outputs, trust []string
 	apply := func(want string) string {
 		t.Helper()
@@ -58,24 +61,29 @@ func TestKubernetesNPMEdgeJoins(t *testing.T) {
 		outputs = append(outputs, out.String())
 		return out.String()
 	}
-	if out := apply("install"); status(out, "npm.bootstrap") != "ok" {
-		t.Fatal("npm was not bootstrapped")
-	}
+	out := apply("install")
 	connected, err := kube.Connect(kc, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	secrets, _ := cs.CoreV1().Secrets("kyq-npm").Get(ctx, "kyq-secrets", metav1.GetOptions{})
-	password := string(secrets.Data["admin_password"])
-	stored := func() string {
-		sec, err := cs.CoreV1().Secrets("kyq-edge").Get(ctx, "kyq-credentials", metav1.GetOptions{})
-		if err != nil {
-			t.Fatalf("edge credential: %v", err)
-		}
-		return string(sec.Data["npm_token"])
+	var k kindEdge
+	var npm *npmBootstrap
+	if proxy == stack.NginxApp {
+		k = checkNginxInstall(t, ctx, cs, out)
+	} else {
+		k, npm = checkNPMInstall(t, ctx, cs, connected, out)
 	}
-	token := stored()
-	certID, certPEM := uploadCertificate(t, ctx, connected.ServiceDialer("kyq-npm", "app", 81), token)
+	certID, certPEM := k.certID, k.certPEM
+	// save writes the plan, each route on the proxy's certificate.
+	save := func(st *stack.Stack) {
+		t.Helper()
+		k.certify(st)
+		b, err := yaml.Marshal(st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		os.WriteFile(plan, b, 0o600)
+	}
 	ip := func(container string) string {
 		return docker(t, "inspect", container, "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}")
 	}
@@ -110,9 +118,8 @@ func TestKubernetesNPMEdgeJoins(t *testing.T) {
 	addCatalogPulse(st, certID)
 	addCatalogDrive(st, certID, drive)
 	trust = []string{"--trust-host-key", "nas=" + drive.fp}
-	b, _ := yaml.Marshal(st)
-	os.WriteFile(plan, b, 0o600)
-	out := apply("identity")
+	save(st)
+	out = apply("identity")
 	viaEdge := func(host, path string) string {
 		return docker(t, "exec", client, "curl", "-sk", "-m", "10", "--resolve", host+":30443:"+nodeIP, "https://"+host+":30443"+path)
 	}
@@ -130,8 +137,7 @@ func TestKubernetesNPMEdgeJoins(t *testing.T) {
 	loadCatalogApp(t, name, cs, "kynotes")
 	st, _ = stack.Load(plan)
 	addCatalogNotes(st, certID)
-	b, _ = yaml.Marshal(st)
-	os.WriteFile(plan, b, 0o600)
+	save(st)
 	var first bytes.Buffer
 	err = cli.Run(ctx, []string{"apply", "--state", state}, cli.Options{Catalog: os.DirFS(catalogDir), ReleaseSet: "e2e", Out: &first})
 	t.Logf("apply (notes):\n%s", first.String())
@@ -178,8 +184,7 @@ func TestKubernetesNPMEdgeJoins(t *testing.T) {
 	loadCatalogApp(t, name, cs, "kycalendar")
 	st, _ = stack.Load(plan)
 	addCatalogCalendar(st, certID)
-	b, _ = yaml.Marshal(st)
-	os.WriteFile(plan, b, 0o600)
+	save(st)
 	out = apply("calendar")
 	calendarSecrets := checkCatalogCalendar(t, ctx, cs, connected, kc, out, code)
 	// Test-only: KyCalendar's discovery and token exchange at sign-in go through the edge
@@ -201,8 +206,7 @@ func TestKubernetesNPMEdgeJoins(t *testing.T) {
 	seedPostVolume(t)
 	st, _ = stack.Load(plan)
 	addCatalogPost(st, certID, drive, postPort)
-	b, _ = yaml.Marshal(st)
-	os.WriteFile(plan, b, 0o600)
+	save(st)
 	out = apply("post")
 	checkPostVolumes(t, out, drive)
 	postSecrets := checkCatalogPost(t, out, drive, postPort, viaEdge, code)
@@ -221,14 +225,13 @@ func TestKubernetesNPMEdgeJoins(t *testing.T) {
 	// KyDNS joins on the Docker target by setup amendment too, its admin UI behind the edge and
 	// DNS on the target's forward address. Its edge's egress_address is the kind node's address,
 	// where pods leave kind. kydns.gate proves this host, not the edge, gets 403 with a forged
-	// X-Forwarded-Proto; kydns.edge proves NPM's pod gets KyDNS's trust, or fails apply.
+	// X-Forwarded-Proto; kydns.edge proves the proxy's pod gets KyDNS's trust, or fails apply.
 	dnsPort := freePort(t, drive.forward)
 	copyCatalogDNS(t, catalogDir, filepath.Join(work, "drive-ca.pem"), drive)
 	st, _ = stack.Load(plan)
 	addCatalogDNS(st, certID, drive, dnsPort)
 	st.Edges[0].EgressAddress = nodeIP
-	b, _ = yaml.Marshal(st)
-	os.WriteFile(plan, b, 0o600)
+	save(st)
 	try := func(label string) (string, error) {
 		t.Helper()
 		var out bytes.Buffer
@@ -261,16 +264,14 @@ func TestKubernetesNPMEdgeJoins(t *testing.T) {
 		t.Logf("UNPROVEN on this host: KyDNS sees the edge as %s, not %s; kydns.edge fails apply, edge-trusted checks and sign-in skipped", gw, nodeIP)
 		st, _ = stack.Load(plan)
 		st.Edges[0].EgressAddress = gw
-		b, _ = yaml.Marshal(st)
-		os.WriteFile(plan, b, 0o600)
+		save(st)
 		refused, err := try("dns gateway egress_address")
 		if err == nil || status(refused, "kydns.gate") != "failed" || !strings.Contains(err.Error(), "egress_address "+gw+" on edge k8s is not the edge's alone") || status(refused, "kydns.edge") != "" {
 			t.Fatalf("gateway egress_address: %v", err)
 		}
 		st, _ = stack.Load(plan)
 		st.Edges[0].EgressAddress = nodeIP
-		b, _ = yaml.Marshal(st)
-		os.WriteFile(plan, b, 0o600)
+		save(st)
 		if out, err := try("dns egress_address restored"); err == nil || status(out, "kydns.deploy") != "ok" || status(out, "kydns.gate") != "ok" || status(out, "kydns.edge") != "failed" {
 			t.Fatalf("restored egress_address: %v", err)
 		}
@@ -286,5 +287,9 @@ func TestKubernetesNPMEdgeJoins(t *testing.T) {
 		t.Errorf("rerun: kydns.edge = %q, %v", status(out, "kydns.edge"), err)
 	}
 
-	noCredentialLeak(t, state, outputs, slices.Concat([]string{password, token, stored()}, backupSecrets, recoverySecrets, pulseSecrets, driveSecrets, notesSecrets, calendarSecrets, postSecrets, dnsSecrets))
+	var edgeSecrets []string
+	if npm != nil {
+		edgeSecrets = []string{npm.password, npm.token, npm.stored()}
+	}
+	noCredentialLeak(t, state, outputs, slices.Concat(edgeSecrets, backupSecrets, recoverySecrets, pulseSecrets, driveSecrets, notesSecrets, calendarSecrets, postSecrets, dnsSecrets))
 }

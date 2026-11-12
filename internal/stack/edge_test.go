@@ -595,3 +595,86 @@ func TestLoadBalancerAddress(t *testing.T) {
 		}
 	}
 }
+
+const nginxEdgeStack = `version: 1
+targets:
+  - name: k1
+    kubeconfig: /home/kyq/.kube/config
+apps:
+  - name: nginx
+    target: k1
+  - name: npm
+    target: k1
+    node_ports: {80: 31080, 443: 31443}
+  - name: hello
+    target: k1
+edges:
+  - target: k1
+    provider: lan
+    proxy: nginx
+    allow_cidrs: [192.168.1.0/24]
+    client_port: 443
+    certificates:
+      - name: wild
+        domains: ["*.example.com"]
+        email: ops@example.com
+        dns_provider: cloudflare
+        credentials: {secret: dns, key: token}
+    routes:
+      - app: hello
+        hostname: hello.example.com
+        forward_host: app.kyq-hello.svc.cluster.local
+        forward_port: 8080
+        certificate: wild
+`
+
+// proxy: nginx routes through the catalog nginx app on its own cluster, beside an NPM it may
+// be replacing; a plan without the field is an NPM edge, as before.
+func TestNginxEdge(t *testing.T) {
+	s, err := Parse([]byte(nginxEdgeStack))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := s.Edges[0]
+	if !e.Nginx() || e.ClusterApp() != "nginx" || e.NPMURL != "" {
+		t.Fatalf("edge = %+v", e)
+	}
+	b, _ := yaml.Marshal(s)
+	if again, err := Parse(b); err != nil || !again.Edges[0].Nginx() {
+		t.Fatalf("a marshalled plan does not parse back: %v\n%s", err, b)
+	}
+	if old, err := Parse([]byte(kubeEdgeStack)); err != nil || old.Edges[0].Nginx() || old.Edges[0].ClusterApp() != "npm" {
+		t.Fatalf("an NPM edge from an earlier build: %v", err)
+	}
+	secret := strings.Replace(nginxEdgeStack, "certificate: wild", "certificate_secret: operator-tls", 1)
+	if s, err := Parse([]byte(secret)); err != nil || s.Edges[0].Routes[0].CertificateSecret != "operator-tls" {
+		t.Fatalf("certificate_secret: %v", err)
+	}
+	for name, pair := range map[string][2]string{
+		"unknown proxy":          {"proxy: nginx", "proxy: caddy"},
+		"with an NPM":            {"proxy: nginx", "proxy: nginx\n    npm_url: kube://kyq-npm/app:81"},
+		"frp":                    {"provider: lan\n    proxy: nginx\n    allow_cidrs: [192.168.1.0/24]\n    client_port: 443", "provider: frp\n    proxy: nginx\n    connector_cidr: 10.0.0.7/32"},
+		"no nginx app":           {"  - name: nginx\n    target: k1\n", ""},
+		"NPM certificate":        {"certificate: wild", "certificate_id: 3"},
+		"no certificate":         {"        certificate: wild\n", ""},
+		"both certificates":      {"certificate: wild", "certificate: wild\n        certificate_secret: operator-tls"},
+		"the installer's Secret": {"certificate: wild", "certificate_secret: kyq-wild-dns"},
+		"not a Secret name":      {"certificate: wild", "certificate_secret: Not_A_Name"},
+	} {
+		if _, err := Parse([]byte(strings.Replace(nginxEdgeStack, pair[0], pair[1], 1))); err == nil {
+			t.Errorf("accepted %s", name)
+		}
+	}
+	// certificate_secret is the nginx edge's alone.
+	if _, err := Parse([]byte(strings.Replace(kubeEdgeStack, "certificate_id: 1", "certificate_secret: operator-tls", 1))); err == nil || !strings.Contains(err.Error(), "needs proxy: nginx") {
+		t.Fatalf("certificate_secret on an NPM edge: %v", err)
+	}
+	// With kube-vip the nginx edge's egress contract is NPM's: egress_address is the address.
+	vip := strings.Replace(nginxEdgeStack, "  - name: nginx\n    target: k1\n", "  - name: nginx\n    target: k1\n    kube_vip_address: 192.168.1.50\n", 1)
+	if _, err := Parse([]byte(vip)); err == nil || !strings.Contains(err.Error(), "set egress_address to 192.168.1.50") {
+		t.Fatalf("kube-vip without egress_address: %v", err)
+	}
+	if _, err := Parse([]byte(strings.Replace(vip, "proxy: nginx", "proxy: nginx\n    egress_address: 192.168.1.50", 1))); err != nil {
+		t.Fatal(err)
+	}
+}

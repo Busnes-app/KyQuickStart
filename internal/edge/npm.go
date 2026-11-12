@@ -263,12 +263,25 @@ func (n *NPM) refuse(h host, e stack.Edge, rest, why string) error {
 
 // config is r's host; cert is its resolved certificate ID.
 func (n *NPM) config(e stack.Edge, r stack.Route, cert int) hostConfig {
+	// NPM's template sets these variables from the host's forward fields.
+	advanced := n.marker(e, r) + serverConfig(e, r, "$forward_scheme://$server:$port")
+	return hostConfig{
+		Domains: []string{r.Hostname}, Scheme: r.ForwardScheme, Host: r.ForwardHost,
+		Port: r.ForwardPort, Certificate: cert, SSLForced: true,
+		Websocket: true, HTTP2: true, Advanced: advanced, Locations: []any{},
+		Meta: map[string]any{"ky.managed-by": "kyquickstart", "ky.target": e.Target, "ky.installation": n.installation},
+	}
+}
+
+// serverConfig is everything inside r's server block but its listeners, names and certificate,
+// for NPM's advanced_config and the nginx edge alike. upstream is what proxy_pass sends to.
+func serverConfig(e stack.Edge, r stack.Route, upstream string) string {
 	sni := fmt.Sprintf("if ($ssl_server_name != %s) { return 421; }\n", r.Hostname)
-	advanced, port := n.marker(e, r), 443
+	advanced, port := "", 443
 	if e.Internal(r) {
 		// An internal route serves only allow_cidrs clients; validation keeps the connector out
 		// of them. NPM's http block trusts X-Real-IP from every private range. Trust only unix
-		// sockets, which NPM never listens on, so $remote_addr stays the TCP peer.
+		// sockets, which neither proxy listens on, so $remote_addr stays the TCP peer.
 		advanced += "set_real_ip_from unix:;\n" + sni
 		for _, c := range e.AllowCIDRs {
 			advanced += "allow " + c + ";\n"
@@ -307,9 +320,9 @@ func (n *NPM) config(e stack.Edge, r stack.Route, cert int) hostConfig {
   proxy_set_header Upgrade $http_upgrade;
   proxy_set_header Connection $http_connection;
   proxy_http_version 1.1;
-  proxy_pass $forward_scheme://$server:$port$request_uri;
+  proxy_pass %[3]s$request_uri;
 }
-`, port, hostHeader)
+`, port, hostHeader, upstream)
 	const closed = " {\n  return 404;\n}\n"
 	// The catalog's paths alone, or everything but its denied paths.
 	for _, p := range r.Paths {
@@ -323,12 +336,7 @@ func (n *NPM) config(e stack.Edge, r stack.Route, cert int) hostConfig {
 	} else {
 		advanced += "location /" + proxy
 	}
-	return hostConfig{
-		Domains: []string{r.Hostname}, Scheme: r.ForwardScheme, Host: r.ForwardHost,
-		Port: r.ForwardPort, Certificate: cert, SSLForced: true,
-		Websocket: true, HTTP2: true, Advanced: advanced, Locations: []any{},
-		Meta: map[string]any{"ky.managed-by": "kyquickstart", "ky.target": e.Target, "ky.installation": n.installation},
-	}
+	return advanced
 }
 
 // overlaps detects foreign wildcard hosts as well as an exact hostname collision.
@@ -413,7 +421,10 @@ type hostStep struct {
 
 // RouteApp names the app whose route step st is, "" for any other step.
 func RouteApp(st engine.Step) string {
-	if h, ok := st.(hostStep); ok {
+	switch h := st.(type) {
+	case hostStep:
+		return h.r.App
+	case nginxRoute:
 		return h.r.App
 	}
 	return ""
@@ -595,7 +606,7 @@ func (n *NPM) Steps(e stack.Edge) []engine.Step {
 		out = append(out, hostStep{n: n, e: e, r: r})
 	}
 	if e.LANDNS != nil {
-		out = append(out, dnsStep{n: n, e: e})
+		out = append(out, dnsStep{n: n.dns(), e: e})
 	}
 	return out
 }
@@ -631,7 +642,7 @@ func (n *NPM) Preflight(ctx context.Context, e stack.Edge) error {
 		}
 	}
 	if e.LANDNS != nil {
-		s := dnsStep{n: n, e: e}
+		s := dnsStep{n: n.dns(), e: e}
 		k, err := s.client(ctx)
 		if err != nil {
 			return err

@@ -13,7 +13,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 )
 
 const restartedAnnotation = "kyquickstart/restarted-at"
@@ -21,7 +20,7 @@ const restartedAnnotation = "kyquickstart/restarted-at"
 // State reads the app's Deployment: running (its one replica ready), stopped (scaled to zero,
 // no pods left), missing, or unknown (rolling out, failing, or not managed by kyquickstart).
 func (c *Client) State(ctx context.Context, app string) (string, error) {
-	dep, found, err := getOwned(ctx, c.cs.AppsV1().Deployments(namespaceOf(app)), "deployment", appName)
+	w, found, err := c.workload(ctx, app)
 	switch {
 	case errors.Is(err, errNotOwned):
 		return "unknown", nil
@@ -29,15 +28,15 @@ func (c *Client) State(ctx context.Context, app string) (string, error) {
 		return "", err
 	case !found:
 		return "missing", nil
-	case replicas(dep) == 0 && dep.Status.Replicas == 0:
+	case w.replicas == 0 && w.pods == 0:
 		// status.replicas leaves out terminating pods, which may still write for their whole
 		// grace period: stopped only once no pod of the app is left.
-		left, err := c.podsLeft(ctx, app, dep.Spec.Selector)
+		left, err := c.podsLeft(ctx, app, w.selector)
 		if err != nil || left {
 			return "unknown", err
 		}
 		return "stopped", nil
-	case replicas(dep) == 1 && ready(dep):
+	case w.replicas == 1 && w.why == "":
 		return "running", nil
 	}
 	return "unknown", nil
@@ -126,21 +125,23 @@ func (s lifecycleStep) Verify(ctx context.Context) error {
 	return fmt.Errorf("%s is %s", s.a.Name, state)
 }
 
-// patch merges change into the app's Deployment, only the managed one it read: the read's
-// resourceVersion makes the API server refuse a Deployment replaced in between.
+// patch merges change into the app's workload, only the managed one it read: the read's
+// resourceVersion makes the API server refuse one replaced in between.
 func (s lifecycleStep) patch(ctx context.Context, change map[string]any) error {
-	deps := s.a.Client.cs.AppsV1().Deployments(namespaceOf(s.a.Name))
-	dep, found, err := getOwned(ctx, deps, "deployment", appName)
+	w, found, err := s.a.Client.workload(ctx, s.a.Name)
 	if err != nil || !found {
 		return err
 	}
-	change["metadata"] = map[string]any{"resourceVersion": dep.ResourceVersion}
+	if w.daemon && s.op != "restart" {
+		return fmt.Errorf("%s runs on every node and has no stopped state; uninstall it to stop it", s.a.Name)
+	}
+	change["metadata"] = map[string]any{"resourceVersion": w.object.GetResourceVersion()}
 	b, err := json.Marshal(change)
 	if err != nil {
 		return err
 	}
-	if _, err := deps.Patch(ctx, appName, types.MergePatchType, b, metav1.PatchOptions{}); err != nil {
-		return fmt.Errorf("deployment %s: %w", s.op, err)
+	if err := s.a.Client.patchWorkload(ctx, w, b); err != nil {
+		return fmt.Errorf("%s %s: %w", w.kind(), s.op, err)
 	}
 	return nil
 }
@@ -176,14 +177,14 @@ func waitGone(ctx context.Context, a App, done func(context.Context) error) erro
 // managed pods. Reading them needs get on pods/log, which install does not.
 func (c *Client) Logs(ctx context.Context, app, container string, tail int64) ([]byte, error) {
 	ns := namespaceOf(app)
-	dep, found, err := getOwned(ctx, c.cs.AppsV1().Deployments(ns), "deployment", appName)
+	w, found, err := c.workload(ctx, app)
 	if err != nil {
 		return nil, err
 	}
 	if !found {
 		return nil, fmt.Errorf("%s has no deployment in %s", app, ns)
 	}
-	pods, err := c.cs.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: metav1.FormatLabelSelector(dep.Spec.Selector)})
+	pods, err := c.cs.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: metav1.FormatLabelSelector(w.selector)})
 	if err != nil {
 		return nil, fmt.Errorf("list pods: %w", err)
 	}

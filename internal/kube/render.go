@@ -11,6 +11,7 @@ import (
 	"slices"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
+	"github.com/Busnes-app/kyquickstart/internal/edge"
 	"github.com/Busnes-app/kyquickstart/internal/managed"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -51,6 +52,10 @@ type objects struct {
 	Policy     *networkingv1.NetworkPolicy
 	// Public is the NodePort Service for an edge's node_ports. omitempty keeps other apps' hashes.
 	Public *corev1.Service `json:",omitempty"`
+	// The nginx edge (edge_proxy) has a DaemonSet in place of the Deployment, and the ConfigMap
+	// its pods read, of which deploy owns only the main file.
+	DaemonSet *appsv1.DaemonSet `json:",omitempty"`
+	Config    *corev1.ConfigMap `json:",omitempty"`
 }
 
 // services are the app's Services that exist, ClusterIP first.
@@ -253,6 +258,24 @@ func render(a App) objects {
 	if k.TerminationGraceSeconds > 0 {
 		grace = &k.TerminationGraceSeconds
 	}
+	template := corev1.PodTemplateSpec{
+		ObjectMeta: metav1.ObjectMeta{Labels: podLabels(app, a.ReleaseSet)},
+		Spec: corev1.PodSpec{
+			AutomountServiceAccountToken:  ptr.To(false),
+			EnableServiceLinks:            ptr.To(false),
+			TerminationGracePeriodSeconds: grace,
+			Affinity:                      spread,
+			Tolerations:                   leaveDeadNode,
+			SecurityContext:               podSecurityContext(k),
+			InitContainers:                inits,
+			Containers:                    containers,
+			Volumes:                       volumes,
+		},
+	}
+	if k.EdgeProxy {
+		edgeProxy(&o, a, meta, template)
+		return o
+	}
 	o.Deployment = &appsv1.Deployment{
 		ObjectMeta: meta(appName),
 		Spec: appsv1.DeploymentSpec{
@@ -260,23 +283,49 @@ func render(a App) objects {
 			Selector: &metav1.LabelSelector{MatchLabels: selector(app)},
 			// Recreate: a ReadWriteOnce claim cannot attach to two pods at once.
 			Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: podLabels(app, a.ReleaseSet)},
-				Spec: corev1.PodSpec{
-					AutomountServiceAccountToken:  ptr.To(false),
-					EnableServiceLinks:            ptr.To(false),
-					TerminationGracePeriodSeconds: grace,
-					Affinity:                      spread,
-					Tolerations:                   leaveDeadNode,
-					SecurityContext:               podSecurityContext(k),
-					InitContainers:                inits,
-					Containers:                    containers,
-					Volumes:                       volumes,
-				},
-			},
+			Template: template,
 		},
 	}
 	return o
+}
+
+// edgeConfig is the ConfigMap the nginx edge's pods read.
+const edgeConfig = "kyq-edge-config"
+
+// edgeProxy makes the app the nginx edge: a pod on every node that can host one, so a node's
+// loss leaves the others serving and a NodePort or load-balancer address finds a pod wherever
+// it lands (the Service's Local policy only delivers to a pod on the node the client reached).
+// Each pod runs the installer's reload loop over the mounted configuration and certificates.
+// A template change replaces pods one node at a time, the new one ready before the old one
+// stops. No PodDisruptionBudget: kubectl drain never evicts a DaemonSet's pods.
+func edgeProxy(o *objects, a App, meta func(string) metav1.ObjectMeta, template corev1.PodTemplateSpec) {
+	spec := &template.Spec
+	spec.Affinity, spec.Tolerations = nil, nil // one pod per node, which stays with its node
+	c := &spec.Containers[0]
+	c.Command = edge.NginxCommand
+	spec.Volumes = append(spec.Volumes, corev1.Volume{Name: "config", VolumeSource: corev1.VolumeSource{
+		ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: edgeConfig}},
+	}})
+	c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{Name: "config", MountPath: edge.NginxConfDir, ReadOnly: true})
+	for _, name := range a.TLSSecrets {
+		// Optional: a certificate is issued after the pods start, and appears in them then.
+		vol := "tls-" + hashOf(name)[:16]
+		spec.Volumes = append(spec.Volumes, corev1.Volume{Name: vol, VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{SecretName: name, DefaultMode: ptr.To(int32(0o440)), Optional: ptr.To(true)},
+		}})
+		c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{Name: vol, MountPath: edge.NginxTLSDir + "/" + name, ReadOnly: true})
+	}
+	o.Config = &corev1.ConfigMap{ObjectMeta: meta(edgeConfig), Data: map[string]string{edge.NginxMainFile: edge.NginxMain}}
+	o.DaemonSet = &appsv1.DaemonSet{
+		ObjectMeta: meta(appName),
+		Spec: appsv1.DaemonSetSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: selector(a.Name)},
+			UpdateStrategy: appsv1.DaemonSetUpdateStrategy{Type: appsv1.RollingUpdateDaemonSetStrategyType, RollingUpdate: &appsv1.RollingUpdateDaemonSet{
+				MaxSurge: ptr.To(intstr.FromInt32(1)), MaxUnavailable: ptr.To(intstr.FromInt32(0)),
+			}},
+			Template: template,
+		},
+	}
 }
 
 // spread prefers a node with the fewest installer-managed pods, so one node's loss stops as few
@@ -351,9 +400,9 @@ func podSecurityContext(k *catalog.Kubernetes) *corev1.PodSecurityContext {
 }
 
 // policy denies all ingress except, for an edge, to its published ports and, for an app on a
-// cluster with an edge, from the edge's pods. An edge's egress is limited to DNS, HTTP(S)
-// anywhere (ACME and upstreams), its upstreams off the cluster and pods in installer-managed
-// namespaces, whose own policies decide what it reaches there. An app with egress "edge"
+// cluster with an edge, from the edges' pods. An edge's egress is limited to DNS, HTTP(S)
+// anywhere (NPM's ACME; not the nginx edge), its upstreams off the cluster and pods in
+// installer-managed namespaces, whose own policies decide what it reaches there. An app with egress "edge"
 // reaches only cluster DNS and the edge's HTTPS listener.
 func policy(a App) networkingv1.NetworkPolicySpec {
 	k := a.Catalog.Kubernetes
@@ -375,23 +424,30 @@ func policy(a App) networkingv1.NetworkPolicySpec {
 			{Ports: tcp(80, 443)},
 			{To: []networkingv1.NetworkPolicyPeer{{NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{managed.Label: managed.Value}}}}},
 		}
+		if k.EdgeProxy {
+			// cert-manager, not these pods, speaks ACME: no HTTP(S) to anywhere.
+			spec.Egress = []networkingv1.NetworkPolicyEgressRule{spec.Egress[0], spec.Egress[2]}
+		}
 		for _, u := range a.Upstreams {
 			spec.Egress = append(spec.Egress, networkingv1.NetworkPolicyEgressRule{Ports: tcp(int(u.Port())),
 				To: []networkingv1.NetworkPolicyPeer{{IPBlock: &networkingv1.IPBlock{CIDR: netip.PrefixFrom(u.Addr(), u.Addr().BitLen()).String()}}}})
 		}
 		return spec
 	}
-	edgePods := []networkingv1.NetworkPolicyPeer{{
-		NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{nsNameLabel: namespaceOf(a.Edge)}},
-		PodSelector:       &metav1.LabelSelector{MatchLabels: selector(a.Edge)},
-	}}
-	if a.Edge != "" && len(k.Ports) > 0 {
+	var edgePods []networkingv1.NetworkPolicyPeer
+	for _, e := range a.Edges {
+		edgePods = append(edgePods, networkingv1.NetworkPolicyPeer{
+			NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{nsNameLabel: namespaceOf(e)}},
+			PodSelector:       &metav1.LabelSelector{MatchLabels: selector(e)},
+		})
+	}
+	if len(edgePods) > 0 && len(k.Ports) > 0 {
 		spec.Ingress = []networkingv1.NetworkPolicyIngressRule{{Ports: tcp(k.Ports...), From: edgePods}}
 	}
 	if k.Egress == "edge" {
 		spec.PolicyTypes = append(spec.PolicyTypes, networkingv1.PolicyTypeEgress)
 		spec.Egress = []networkingv1.NetworkPolicyEgressRule{{Ports: dnsPorts(), To: clusterDNS()}}
-		if a.Edge != "" {
+		if len(edgePods) > 0 {
 			spec.Egress = append(spec.Egress, networkingv1.NetworkPolicyEgressRule{Ports: tcp(edgeHTTPS), To: edgePods})
 		}
 		if a.PublicEgress {

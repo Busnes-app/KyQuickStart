@@ -39,7 +39,7 @@ const ledgerKey = "kydns_records"
 func (c *Client) credentials(ctx context.Context) (*corev1.Secret, error) {
 	s, found, err := getOwned(ctx, c.cs.CoreV1().Secrets(edgeNamespace), "secret", edgeSecret)
 	if err == nil && !found {
-		err = fmt.Errorf("secret %s/%s is absent; apply the npm app first", edgeNamespace, edgeSecret)
+		err = fmt.Errorf("secret %s/%s is absent; apply the edge app (npm or nginx) first", edgeNamespace, edgeSecret)
 	}
 	return s, err
 }

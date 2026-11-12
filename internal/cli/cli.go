@@ -3,6 +3,7 @@ package cli
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -45,6 +46,7 @@ commands:
               [--take-over-target T] claim target T from the plan that last changed it
   install APP --target T   add APP and its missing dependencies to the plan and deploy them
               [--hostname H --forward-host A --forward-port P --certificate-id N] APP's route on T's edge
+              (behind the nginx edge, --certificate NAME in place of --certificate-id)
               [--bundle PATH [--identity-client ID]] APP's setup (an integrations entry)
   uninstall APP            remove APP's workloads; its data and secrets stay on the target
   unmanage APP             hand APP to its owner: drop the managed labels, record it in handover.md
@@ -199,7 +201,7 @@ func Run(ctx context.Context, args []string, o Options) error {
 		}
 		for _, e := range s.edges {
 			var steps []engine.Step
-			what := "NPM"
+			what := "edge"
 			if e.Direct() {
 				// cloudflared's configuration, credential copy, container and health.
 				if steps, err = s.drivers[e.Target].connectorSteps(ctx, e, s.o.ReleaseSet, s.redact); err != nil {
@@ -207,7 +209,7 @@ func Run(ctx context.Context, args []string, o Options) error {
 				}
 				what = "cloudflared"
 			} else {
-				steps = s.npms[e.Target].Steps(e)
+				steps = s.proxy(e).Steps(e)
 			}
 			for _, step := range steps {
 				if err := step.Verify(ctx); err != nil {
@@ -292,6 +294,7 @@ type session struct {
 	drivers      map[string]driver       // target name -> driver
 	edges        []stack.Edge
 	npms         map[string]*edge.NPM
+	nginx        map[string]*edge.Nginx // the nginx edges, by target
 
 	plan          *stack.Stack        // as loaded, or with the amendments amendLate records
 	planChange    func(*stack.Stack)  // install's change to the saved plan, which amendLate keeps
@@ -364,7 +367,7 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 	if redact == nil {
 		redact = &engine.Redactor{}
 	}
-	s := &session{plan: st, revision: st.Revision, installation: st.InstallationID, saved: st.InstallationID, trust: trust, redact: redact, allTargets: st.Targets, integrations: st.Integrations, o: o, state: state, demo: st.Demo, cat: cat, placed: map[string]stack.Target{}, drivers: map[string]driver{}, edges: st.Edges, npms: map[string]*edge.NPM{}}
+	s := &session{plan: st, revision: st.Revision, installation: st.InstallationID, saved: st.InstallationID, trust: trust, redact: redact, allTargets: st.Targets, integrations: st.Integrations, o: o, state: state, demo: st.Demo, cat: cat, placed: map[string]stack.Target{}, drivers: map[string]driver{}, edges: st.Edges, npms: map[string]*edge.NPM{}, nginx: map[string]*edge.Nginx{}}
 	var names []string
 	used := map[string]bool{}
 	for _, a := range st.Apps {
@@ -421,6 +424,26 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 		k.KubeVIPAddress, k.LoadBalancerAddress = a.KubeVIPAddress, a.LoadBalancerAddress
 		app.Kubernetes = &k
 		cat[a.Name] = app
+	}
+	// Two edge components share a cluster only while one replaces the other: each needs its
+	// own NodePorts and address.
+	published := map[string]string{}
+	for _, name := range slices.Sorted(maps.Keys(s.placed)) {
+		k := cat[name].Kubernetes
+		if k == nil || !s.placed[name].Kubernetes() {
+			continue
+		}
+		claims := []string{k.KubeVIPAddress, k.LoadBalancerAddress}
+		for _, node := range k.NodePorts {
+			claims = append(claims, strconv.Itoa(node))
+		}
+		for _, c := range claims {
+			key := s.placed[name].Name + " " + c
+			if other, taken := published[key]; taken && c != "" {
+				return nil, fmt.Errorf("apps %s and %s on %s both publish %s: give one of them other node_ports, and the address to one only", other, name, s.placed[name].Name, c)
+			}
+			published[key] = name
+		}
 	}
 	for name, t := range s.placed {
 		if cat[name], err = withRoute(st, name, t, cat[name]); err != nil {
@@ -560,8 +583,19 @@ func (s *session) connect(ctx context.Context, trust trustFlag) error {
 			return err
 		}
 		if k, ok := d.(kubeDriver); ok {
-			k.edge, k.nodePorts, k.upstreams, k.runnerImage = s.edgeApp(t.Name), s.nodePorts(t.Name), s.upstreams(t.Name), s.o.RunnerImage
+			k.edges = s.edgeApps(t.Name)
+			k.nodePorts, k.upstreams, k.runnerImage = s.nodePorts(t.Name), s.upstreams(t.Name), s.o.RunnerImage
 			k.loadBalancers = s.loadBalancers(t.Name)
+			k.needs = s.needs(t.Name)
+			for _, e := range s.plan.Edges {
+				if e.Nginx() && e.Target == t.Name {
+					files, _, err := k.c.EdgeFiles(ctx)
+					if err != nil {
+						return fmt.Errorf("edge %s: %w", e.Target, err)
+					}
+					k.tlsSecrets = edge.MountedTLSSecrets(e, files)
+				}
+			}
 			k.tunnel = tunnelEdge(s.plan, t.Name)
 			d = k
 		}
@@ -573,6 +607,15 @@ func (s *session) connect(ctx context.Context, trust trustFlag) error {
 	}
 	for _, e := range s.edges {
 		if e.Direct() { // no NPM
+			continue
+		}
+		if e.Nginx() {
+			// stack validation placed it on a Kubernetes target.
+			n, err := edge.NewNginx(s.drivers[e.Target].(kubeDriver).c, s.installation, s.redact)
+			if err != nil {
+				return fmt.Errorf("edge %s: %w", e.Target, err)
+			}
+			s.nginx[e.Target] = n
 			continue
 		}
 		token, tunnel, err := s.drivers[e.Target].edgeAccess(ctx, e)
@@ -608,14 +651,17 @@ var dialTarget = func(ctx context.Context, t stack.Target, c remote.SSHConfig, n
 	return sshDriver{t: t, c: sc}, nil
 }
 
-// edgeApp names the edge component placed on target, "" if none.
-func (s *session) edgeApp(target string) string {
+// edgeApps names the edge components placed on target, sorted: one, or an NPM and the nginx
+// edge that replaces it.
+func (s *session) edgeApps(target string) []string {
+	var out []string
 	for name, t := range s.placed {
 		if t.Name == target && s.cat[name].Category == "edge" {
-			return name
+			out = append(out, name)
 		}
 	}
-	return ""
+	slices.Sort(out)
+	return out
 }
 
 // upstreams are the addresses the edge on target forwards to on other targets, sorted.
@@ -631,6 +677,37 @@ func (s *session) upstreams(target string) []netip.AddrPort {
 	}
 	slices.SortFunc(out, func(a, b netip.AddrPort) int { return a.Compare(b) })
 	return slices.Compact(out)
+}
+
+// proxy reconciles one edge's routes: an NPM through its API, or the nginx edge's rendered
+// configuration.
+type proxy interface {
+	Steps(stack.Edge) []engine.Step
+	Preflight(context.Context, stack.Edge) error
+}
+
+// proxy is e's NPM or nginx edge, as connect made it.
+func (s *session) proxy(e stack.Edge) proxy {
+	if e.Nginx() {
+		return s.nginx[e.Target]
+	}
+	return s.npms[e.Target]
+}
+
+// needs is what the plan uses on target's cluster beyond the base permission list.
+func (s *session) needs(target string) kube.Needs {
+	n := kube.Needs{LoadBalancer: len(s.loadBalancers(target)) > 0}
+	for name, t := range s.placed {
+		if k := s.cat[name].Kubernetes; t.Name == target && k != nil && k.EdgeProxy {
+			n.EdgeProxy = true
+		}
+	}
+	for _, e := range s.plan.Edges {
+		if e.Nginx() && e.Target == target && len(e.Certificates) > 0 {
+			n.Certificates = true
+		}
+	}
+	return n
 }
 
 // loadBalancers maps each load_balancer_address of an app on target to the app.
@@ -686,6 +763,9 @@ func (s *session) close() {
 	for _, n := range s.npms {
 		n.Close()
 	}
+	for _, n := range s.nginx {
+		n.Close()
+	}
 }
 
 func (s *session) preflight(ctx context.Context) error {
@@ -729,11 +809,11 @@ func (s *session) preflight(ctx context.Context) error {
 		if e.Direct() {
 			continue
 		}
-		if err := s.npms[e.Target].Preflight(ctx, e); err != nil {
+		if err := s.proxy(e).Preflight(ctx, e); err != nil {
 			failed++
 			fmt.Fprintf(s.o.Out, "FAIL  %-12s edge             %s\n", e.Target, err)
 		} else {
-			fmt.Fprintf(s.o.Out, "ok    %-12s edge             NPM reachable, hostname ownership checked\n", e.Target)
+			fmt.Fprintf(s.o.Out, "ok    %-12s edge             %s reachable, hostname ownership checked\n", e.Target, cmp.Or(e.Proxy, "NPM"))
 		}
 	}
 	if failed > 0 {
@@ -888,7 +968,7 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 	for _, e := range s.edges {
 		var npm []engine.Step
 		if !e.Direct() {
-			npm = s.npms[e.Target].Steps(e)
+			npm = s.proxy(e).Steps(e)
 		}
 		for _, st := range npm {
 			if slices.Contains(routedFirst, edge.RouteApp(st)) {

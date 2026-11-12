@@ -30,6 +30,12 @@ this one wins.
   liveness and startup probes, spreading over nodes and a 30-second eviction from a dead node
   ([guided setup](guided-setup.md#node-failure-on-kubernetes)). More than one replica stays out
   of scope: it needs product changes first.
+- Amendment (owner, 2026-11-11): "replace Nginx Proxy Manager on Kubernetes so one box does not
+  take down the network; nginx plus cert-manager approved". The `nginx` edge component
+  (`proxy: nginx`): plain nginx on every node, serving configuration the installer renders from
+  the routes NPM's hosts are rendered from, with certificates issued by the cluster's own
+  cert-manager or supplied as TLS Secrets. No database, admin API or volume. The catalog `npm`
+  and existing NPMs keep working ([edge](edge.md#nginx-on-every-node-proxy-nginx)).
 
 ## What KyQuickStart does now
 

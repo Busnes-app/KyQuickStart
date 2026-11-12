@@ -97,8 +97,14 @@ jobs:
           - shard: kube-restore-yard # 8.1 min
             run: ^(TestKubernetesRestore|TestKubernetesKyYard)$
             pkgs: ./test/e2e/
+          - shard: kube-nginx-edge # the NPM edge suite behind the nginx edge, and its failover test
+            run: ^(TestKubernetesNginxEdge|TestKubernetesNginxEdgeFailover)$
+            pkgs: ./test/e2e/
+          - shard: kube-nginx-joins # the NPM joins suite behind the nginx edge
+            run: ^TestKubernetesNginxEdgeJoins$
+            pkgs: ./test/e2e/
           - shard: rest # 3.5 min
-            skip: ^(TestKubernetesNPMEdge|TestKubernetesNPMEdgeJoins|TestKubernetesKyMessage|TestKubernetesApply|TestKubernetesRestore|TestKubernetesKyYard)$
+            skip: ^(TestKubernetesNPMEdge|TestKubernetesNPMEdgeJoins|TestKubernetesNginxEdge|TestKubernetesNginxEdgeJoins|TestKubernetesNginxEdgeFailover|TestKubernetesKyMessage|TestKubernetesApply|TestKubernetesRestore|TestKubernetesKyYard)$
             pkgs: ./test/e2e/ ./internal/edge/
     runs-on: ubuntu-latest
     steps:

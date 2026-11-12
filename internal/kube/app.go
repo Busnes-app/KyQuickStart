@@ -19,11 +19,14 @@ type App struct {
 	Redact     *engine.Redactor
 	// StorageClass is the target's storage_class; empty leaves claims to the cluster default.
 	StorageClass string
-	// Edge names the edge app on this cluster, whose pods may reach this app's ports; empty for none.
-	Edge string
+	// Edges names the edge apps on this cluster, whose pods may reach this app's ports. More
+	// than one only while an NPM is being replaced by the nginx edge.
+	Edges []string
 	// Upstreams are the addresses off the cluster the edge app's routes forward to, which its
 	// egress admits; edge app only.
 	Upstreams []netip.AddrPort
+	// TLSSecrets are the Secrets the nginx edge's pods mount certificates from; edge_proxy only.
+	TLSSecrets []string
 	// PublicEgress lets an app with egress "edge" also reach public addresses on 443: behind a
 	// tunnel edge, NPM answers external routes only to the connector, so the app reaches them
 	// the way a browser does. Private, shared, link-local and loopback ranges stay refused.

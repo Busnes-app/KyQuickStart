@@ -1,0 +1,21 @@
+name: nginx
+description: nginx on every node, the reverse proxy at the edge; it serves configuration the installer renders and has no admin API
+category: edge
+version: 1.30.6
+images:
+  # nginx's own unprivileged build (uid 101); its Alpine variant carries the curl kydns.edge uses.
+  nginx: nginxinc/nginx-unprivileged:1.30.6-alpine@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03
+health:
+  timeout_seconds: 300
+kubernetes:
+  image: nginx
+  edge_proxy: true
+  ports: [80, 443]
+  readiness_path: /kyq-ready
+  run_as: 101
+  low_ports: true
+  node_ports: {80: 30080, 443: 30443}
+  resources:
+    cpu: 500m
+    cpu_request: 100m
+    memory: 256Mi

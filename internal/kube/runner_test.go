@@ -43,7 +43,7 @@ func tokenController(cs *fake.Clientset) *int {
 }
 
 func TestRunnerRulesAreTheInstallersOwn(t *testing.T) {
-	cluster, lock := RunnerRules(false)
+	cluster, lock := RunnerRules(Needs{})
 	n := 0
 	for _, r := range append(slices.Clone(cluster), lock...) {
 		for _, v := range r.Verbs {
@@ -69,7 +69,7 @@ func TestRunnerRulesAreTheInstallersOwn(t *testing.T) {
 		t.Errorf("lock namespace rules = %+v", lock)
 	}
 	// A plan with a load_balancer_address adds only list on the pools and announcements.
-	withLB, _ := RunnerRules(true)
+	withLB, _ := RunnerRules(Needs{LoadBalancer: true})
 	extra := slices.DeleteFunc(slices.Clone(withLB), func(r rbacv1.PolicyRule) bool {
 		return slices.ContainsFunc(cluster, func(c rbacv1.PolicyRule) bool {
 			return c.APIGroups[0] == r.APIGroups[0] && c.Resources[0] == r.Resources[0]
@@ -92,7 +92,7 @@ func TestGrantAndRevokeRunner(t *testing.T) {
 	c := New(cs)
 	c.config = &rest.Config{Host: "https://cluster.lan:6443"}
 
-	kc, err := c.GrantRunner(ctx, runnerA, false, false)
+	kc, err := c.GrantRunner(ctx, runnerA, false, Needs{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,10 +114,10 @@ func TestGrantAndRevokeRunner(t *testing.T) {
 	}
 
 	// A rerun keeps the token; another runner gets a new one.
-	if _, err := c.GrantRunner(ctx, runnerA, false, false); err != nil || *issued != 1 {
+	if _, err := c.GrantRunner(ctx, runnerA, false, Needs{}); err != nil || *issued != 1 {
 		t.Fatalf("rerun: %v, %d tokens", err, *issued)
 	}
-	kc, err = c.GrantRunner(ctx, runnerB, false, false)
+	kc, err = c.GrantRunner(ctx, runnerB, false, Needs{})
 	if err != nil || *issued != 2 || !strings.Contains(string(kc), "token-2") {
 		t.Fatalf("new runner: %v, %d tokens\n%s", err, *issued, kc)
 	}
@@ -140,14 +140,14 @@ func TestGrantRunnerRefusesForeignObjectsAndInsecureClusters(t *testing.T) {
 	cs := fake.NewClientset(&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: runnerName, Namespace: lockNamespace}})
 	c := New(cs)
 	c.config = &rest.Config{Host: "https://cluster.lan:6443"}
-	if _, err := c.GrantRunner(ctx, runnerA, false, false); err == nil || !strings.Contains(err.Error(), "not managed") {
+	if _, err := c.GrantRunner(ctx, runnerA, false, Needs{}); err == nil || !strings.Contains(err.Error(), "not managed") {
 		t.Fatalf("foreign service account: %v", err)
 	}
 	if err := c.RevokeRunner(ctx); err == nil {
 		t.Fatal("revoke removed a foreign service account")
 	}
 	c.config.Insecure = true
-	if _, err := c.GrantRunner(ctx, runnerA, false, false); err == nil {
+	if _, err := c.GrantRunner(ctx, runnerA, false, Needs{}); err == nil {
 		t.Fatal("granted over an unverified connection")
 	}
 }
@@ -158,7 +158,7 @@ func TestGrantRunnerInCluster(t *testing.T) {
 	c := New(cs)
 	c.config = &rest.Config{Host: "https://cluster.lan:6443"}
 	for inCluster, want := range map[bool]string{true: "https://kubernetes.default.svc", false: "https://cluster.lan:6443"} {
-		kc, err := c.GrantRunner(context.Background(), runnerA, inCluster, false)
+		kc, err := c.GrantRunner(context.Background(), runnerA, inCluster, Needs{})
 		if err != nil {
 			t.Fatal(err)
 		}

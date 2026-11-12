@@ -12,7 +12,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/ptr"
 )
 
 // Deployed reads the app namespace's labels, which uninstall keeps.
@@ -45,8 +44,9 @@ func (c *Client) AppEnv(ctx context.Context, app, name string) (value string, fo
 	return "", false, nil
 }
 
-// RemoveSteps deletes the app's Deployment and Services and waits for its pods to go. The
-// namespace, its claims, Secret and default-deny policy stay, so a later install finds the data.
+// RemoveSteps deletes the app's Deployment (the nginx edge's DaemonSet) and Services and waits
+// for its pods to go. The namespace, its claims, Secret, default-deny policy and the edge's
+// configuration and certificates stay, so a later install finds the data.
 func RemoveSteps(a App) []engine.Step { return []engine.Step{removeStep{a}} }
 
 type removeStep struct{ a App }
@@ -54,31 +54,31 @@ type removeStep struct{ a App }
 func (s removeStep) ID() string        { return s.a.Name + ".uninstall" }
 func (s removeStep) InputHash() string { return hashOf("uninstall") }
 
-// objects returns the app's Deployment (nil where absent) and its present Services.
-func (s removeStep) objects(ctx context.Context) (*appsv1.Deployment, []*corev1.Service, error) {
+// objects returns the app's workload (found false where absent) and its present Services.
+func (s removeStep) objects(ctx context.Context) (workload, bool, []*corev1.Service, error) {
 	ns := namespaceOf(s.a.Name)
-	dep, _, err := getOwned(ctx, s.a.Client.cs.AppsV1().Deployments(ns), "deployment", appName)
+	w, found, err := s.a.Client.workload(ctx, s.a.Name)
 	if err != nil {
-		return nil, nil, err
+		return w, false, nil, err
 	}
 	var svcs []*corev1.Service
 	for _, name := range []string{appName, publicName} {
 		svc, found, err := getOwned(ctx, s.a.Client.cs.CoreV1().Services(ns), "service", name)
 		if err != nil {
-			return nil, nil, err
+			return w, false, nil, err
 		}
 		if found {
 			svcs = append(svcs, svc)
 		}
 	}
-	return dep, svcs, nil
+	return w, found, svcs, nil
 }
 
 // Inspect is done once no pod of the app is left either: a terminating one may still write
 // to the claims a reinstall mounts.
 func (s removeStep) Inspect(ctx context.Context) (bool, error) {
-	dep, svcs, err := s.objects(ctx)
-	if err != nil || dep != nil || len(svcs) > 0 {
+	_, found, svcs, err := s.objects(ctx)
+	if err != nil || found || len(svcs) > 0 {
 		return false, err
 	}
 	left, err := s.a.Client.podsLeft(ctx, s.a.Name, &metav1.LabelSelector{MatchLabels: selector(s.a.Name)})
@@ -87,26 +87,19 @@ func (s removeStep) Inspect(ctx context.Context) (bool, error) {
 
 // Apply deletes by UID, so an object replaced in between is left alone.
 func (s removeStep) Apply(ctx context.Context) error {
-	dep, svcs, err := s.objects(ctx)
+	w, found, svcs, err := s.objects(ctx)
 	if err != nil {
 		return err
 	}
 	ns := namespaceOf(s.a.Name)
-	byUID := func(o metav1.Object) metav1.DeleteOptions {
-		uid := o.GetUID()
-		return metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}
-	}
-	if dep != nil {
-		// Foreground: the Deployment stays until its ReplicaSet and pods are gone, so no
-		// ReplicaSet outlives it to start another pod.
-		opts := byUID(dep)
-		opts.PropagationPolicy = ptr.To(metav1.DeletePropagationForeground)
-		if err := s.a.Client.cs.AppsV1().Deployments(ns).Delete(ctx, appName, opts); err != nil && !apierrors.IsNotFound(err) {
-			return fmt.Errorf("delete deployment: %w", err)
+	if found {
+		if err := s.a.Client.deleteWorkload(ctx, w); err != nil {
+			return err
 		}
 	}
 	for _, svc := range svcs {
-		if err := s.a.Client.cs.CoreV1().Services(ns).Delete(ctx, svc.Name, byUID(svc)); err != nil && !apierrors.IsNotFound(err) {
+		uid := svc.GetUID()
+		if err := s.a.Client.cs.CoreV1().Services(ns).Delete(ctx, svc.Name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}); err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("delete service %s: %w", svc.Name, err)
 		}
 	}
@@ -186,6 +179,15 @@ func (s unmanageStep) sweep(ctx context.Context, fix bool) (string, error) {
 			return relabel(ctx, cs.NetworkingV1().NetworkPolicies(ns), policyName, unlabel, meta, fix)
 		}},
 		{"secret", func() (bool, error) { return relabel(ctx, cs.CoreV1().Secrets(ns), secretName, unlabel, meta, fix) }},
+	}
+	if o.DaemonSet != nil { // the nginx edge alone: other plans hold no permission for these
+		checks = append(checks,
+			check{"daemonset", func() (bool, error) {
+				return relabel(ctx, cs.AppsV1().DaemonSets(ns), appName, unlabelTemplate, func(d *appsv1.DaemonSet) []map[string]string {
+					return []map[string]string{d.Labels, d.Spec.Template.Labels}
+				}, fix)
+			}},
+			check{"edge configuration", func() (bool, error) { return relabel(ctx, cs.CoreV1().ConfigMaps(ns), edgeConfig, unlabel, meta, fix) }})
 	}
 	for _, c := range o.Claims {
 		checks = append(checks, check{"claim " + c.Name, func() (bool, error) {

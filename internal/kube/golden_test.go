@@ -23,6 +23,7 @@ var renderedHashes = map[string]string{
 	"kynotes":     "bc95618c57aff9b1b45f70954c25d0a686ab542f7b219430cc27f0f5d0cb8448",
 	"kypulse":     "7790db6ec9b21a012ac7525f9445418f496b167d597ac21f0241e28d9606ec97",
 	"kyrecovery":  "cf5c4c3e7ef5ead88e94ff9ac10784d4e10305fe870e76b1a460a7873a942576",
+	"nginx":       "5b9d747cb46f004c7d65f4861bc313d991ee5d54c855e85dc8ceefbdc6a3a040",
 	"npm":         "c44905a672dc46b3f2c30d302290eb2272a40d19f54da634d5141d179e43c723",
 }
 
@@ -43,7 +44,7 @@ func TestRenderGolden(t *testing.T) {
 		}
 		c = c.WithPrivateRecovery(false).WithPrivatePeer(false)
 		c.Kubernetes = c.Kubernetes.WithHost(name + ".example.test")
-		a := App{Name: name, Catalog: c, ReleaseSet: "rs-1", Edge: "npm", StorageClass: "standard", RunnerImage: testRunnerImage}
+		a := App{Name: name, Catalog: c, ReleaseSet: "rs-1", Edges: []string{"npm"}, StorageClass: "standard", RunnerImage: testRunnerImage}
 		if got := render(a).hash(); got != want {
 			t.Errorf("%s renders %s, want %s", name, got, want)
 		}

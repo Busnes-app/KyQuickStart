@@ -69,7 +69,16 @@ operator's job ([README](../README.md#targets)).
    pinned hash (checked at preflight and again by KyPost at every start), and Rspamd, with no
    published port, in KyPost's network namespace. No other rendering of any app writes
    `{{smtp_address}}` (`internal/catalog/catalog.go`, `render`; `TestKyPostMailRenderings`).
-6. **KyYard → suite runner.** A Unix socket, mode 0600, in a 0700 state volume, as uid 10001
+6. **Clients → the nginx edge (opt-in).** A plan with the `nginx` app publishes 80 and 443 from a
+   pod on every node: uid 101, no capabilities, read-only root, no ServiceAccount token, Pod
+   Security `restricted`, egress to DNS, managed namespaces and its routes' upstreams only.
+   It has no admin API: the installer changes it by writing a ConfigMap and reads it over
+   `pods/exec`. Its routes come from the generator NPM's hosts use, so the header, allow-list
+   and connector rules are the same (`internal/edge/npm.go` `serverConfig`,
+   `TestNginxSharesNPMConfiguration`, `TestNginxContainer`). The DNS token for its certificates
+   stays in Secrets: the operator's in `kyq-edge` and one copy beside the cert-manager Issuer
+   that reads it (`internal/edge/nginx.go` `nginxCert`, `TestNginxCertificates`).
+7. **KyYard → suite runner.** A Unix socket, mode 0600, in a 0700 state volume, as uid 10001
    (`internal/runner/server.go`, `internal/runner/state.go`). The runner acts only on targets
    marked with its own ID and never changes its own pod (`runner_host`).
 
@@ -139,6 +148,12 @@ operator's job ([README](../README.md#targets)).
 - **macOS binaries are not signed or notarized**; the attestation is the only check
   ([README](../README.md#install-a-release)).
 - **No independent security audit** has been done.
+- **The nginx edge verifies ready pods only.** A route change is checked on every pod the Service
+  sends requests to. An edge pod on a node that is down is not waited for and loads the
+  current configuration when its node returns; until its kubelet syncs (about a minute at
+  most) it can serve the routes and allow-lists it had before. NPM, one pod, has no such
+  window. The nginx edge's permissions (`patch pods`, `daemonsets`, `configmaps`, `list nodes`,
+  cert-manager objects) also join the runner's ClusterRole for plans that have it.
 - **KyPost's opt-in receiver is internet-facing SMTP.** KyPost qualifies that profile for a
   dedicated test domain only; its parser, Maddy and Rspamd face any sender. KyQuickStart's part
   is to open it only on request, on one address, with the pinned engine.

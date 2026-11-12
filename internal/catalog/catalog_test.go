@@ -929,3 +929,37 @@ func TestWithPrivatePeer(t *testing.T) {
 		}
 	}
 }
+
+// The nginx edge: restricted, unprivileged, digest-pinned, with no secret, volume or Docker
+// deployment, publishing 80 and 443 alone.
+func TestNginxEntry(t *testing.T) {
+	cat, err := Load(Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := cat["nginx"]
+	k := a.Kubernetes
+	if a.Category != "edge" || a.PodSecurity != "restricted" || len(a.Compose) != 0 || len(a.Secrets) != 0 || a.OIDC != nil || !strings.Contains(a.Images["nginx"], ":"+a.Version+"-alpine@sha256:") {
+		t.Fatalf("manifest = %+v", a.Manifest)
+	}
+	if !k.EdgeProxy || k.RunAs != 101 || k.WritableRoot || len(k.Capabilities) != 0 || !k.LowPorts || len(k.Volumes) != 0 || len(k.Args) != 0 ||
+		!slices.Equal(k.Ports, []int{80, 443}) || k.NodePorts[80] != 30080 || k.NodePorts[443] != 30443 || len(k.NodePorts) != 2 || k.ReadinessPath != "/kyq-ready" {
+		t.Fatalf("kubernetes = %+v", k)
+	}
+	// edge_proxy is for a restricted edge component with nothing of its own to keep.
+	for name, change := range map[string]func(*Manifest){
+		"an app":      func(m *Manifest) { m.Category = "ky" },
+		"baseline":    func(m *Manifest) { m.PodSecurity = "baseline" },
+		"a volume":    func(m *Manifest) { m.Kubernetes.Volumes = []Volume{{Name: "data", Mount: "/data", Size: "1Gi"}} },
+		"arguments":   func(m *Manifest) { m.Kubernetes.Args = []string{"-g", "daemon off;"} },
+		"unpublished": func(m *Manifest) { m.Kubernetes.NodePorts = nil },
+	} {
+		m := a.Manifest
+		k := *m.Kubernetes
+		m.Kubernetes = &k
+		change(&m)
+		if err := m.validate("nginx"); err == nil {
+			t.Errorf("edge_proxy accepted on %s", name)
+		}
+	}
+}

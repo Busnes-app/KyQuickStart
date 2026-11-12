@@ -22,7 +22,7 @@ func kyidentityApp(t *testing.T) catalog.App {
 }
 
 func TestRenderKyIdentity(t *testing.T) {
-	o := render(App{Name: "kyidentity", Catalog: kyidentityApp(t), ReleaseSet: "rs-1", StorageClass: "local-path", Edge: "npm"})
+	o := render(App{Name: "kyidentity", Catalog: kyidentityApp(t), ReleaseSet: "rs-1", StorageClass: "local-path", Edges: []string{"npm"}})
 	pod := o.Deployment.Spec.Template.Spec
 	c := pod.Containers[0]
 	sc := c.SecurityContext

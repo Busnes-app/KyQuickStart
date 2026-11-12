@@ -923,15 +923,23 @@ func (s *session) setupSteps(d driver, i stack.Integration) (steps []engine.Step
 		step.setup = waitForSocket(host.c, path.Join(host.t.Root, "kydns/data/installer/setup.sock"), host.t.Name, adapter.setup)
 		e, r := appRoute(s.plan, "kydns")
 		network := "http://" + net.JoinHostPort(r.ForwardHost, strconv.Itoa(r.ForwardPort)) + "/api/v1/installer/network"
-		npm, ok := s.drivers[e.Target].(kubeDriver)
-		if !ok || s.placed["npm"].Name != e.Target {
-			return nil, nil, fmt.Errorf("KyDNS's route must be on the catalog NPM on a cluster, which apply checks KyDNS trusts; edge %s is not", e.Target)
+		cluster, ok := s.drivers[e.Target].(kubeDriver)
+		if !ok || e.ClusterApp() == "" || s.placed[e.ClusterApp()].Name != e.Target {
+			return nil, nil, fmt.Errorf("KyDNS's route must be on the catalog NPM on a cluster or the nginx edge, which apply checks KyDNS trusts; edge %s is not", e.Target)
 		}
-		curl, _, err := nativeProductExec(npm, stack.Integration{Product: "npm"}, productAdapter{binary: "curl"})
-		if err != nil {
-			return nil, nil, err
+		// The pods the edge's proxied requests leave from: NPM's one, or the nginx edge's.
+		curl := cluster.c.EdgeCurl
+		if !e.Nginx() {
+			one, _, err := nativeProductExec(cluster, stack.Integration{Product: e.ClusterApp()}, productAdapter{binary: "curl"})
+			if err != nil {
+				return nil, nil, err
+			}
+			curl = func(ctx context.Context, args []string) (map[string][]byte, error) {
+				out, err := one(ctx, args)
+				return map[string][]byte{e.ClusterApp(): out}, err
+			}
 		}
-		// kydns.edge runs after the edges, as connectors do: it asks from NPM's pod.
+		// kydns.edge runs after the edges, as connectors do: it asks from the edge's pods.
 		return []engine.Step{step, gateStep{url: network, edge: e.Target, egress: e.EgressAddress, target: host.t.Name}},
 			edgeTrustStep{url: network, edge: e.Target, egress: e.EgressAddress, curl: curl}, nil
 	}
@@ -1075,12 +1083,13 @@ func (g gateStep) Verify(ctx context.Context) error {
 	return nil
 }
 
-// edgeTrustStep (kydns.edge) proves KyDNS trusts its edge: from NPM's pod, the source its
-// proxied requests leave from, it asks KyDNS's admin port with the edge's X-Forwarded-Proto and
-// passes only on 200 with proxyHeadersTrusted and scheme https. It reads, never changes.
+// edgeTrustStep (kydns.edge) proves KyDNS trusts its edge: from every pod the edge's proxied
+// requests leave from (NPM's one; each of the nginx edge's, or with kube-vip egress the one it
+// rewrites), it asks KyDNS's admin port with the edge's X-Forwarded-Proto and passes only when
+// each gets 200 with proxyHeadersTrusted and scheme https. It reads, never changes.
 type edgeTrustStep struct {
 	url, edge, egress string
-	curl              identityExec // curl in NPM's pod
+	curl              func(context.Context, []string) (map[string][]byte, error) // curl in the edge's pods, by pod
 }
 
 func (e edgeTrustStep) ID() string                                { return "kydns.edge" }
@@ -1089,13 +1098,25 @@ func (e edgeTrustStep) Inspect(ctx context.Context) (bool, error) { return e.Ver
 func (e edgeTrustStep) Apply(ctx context.Context) error           { return e.Verify(ctx) }
 
 func (e edgeTrustStep) Verify(ctx context.Context) error {
-	out, err := e.curl(ctx, []string{"-sS", "-m", "10", "-H", "X-Forwarded-Proto: https", e.url})
-	var n struct {
-		ProxyHeadersTrusted bool   `json:"proxyHeadersTrusted"`
-		Scheme              string `json:"scheme"`
+	pods, err := e.curl(ctx, []string{"-sS", "-m", "10", "-H", "X-Forwarded-Proto: https", e.url})
+	var untrusted []string
+	for pod, out := range pods {
+		var n struct {
+			ProxyHeadersTrusted bool   `json:"proxyHeadersTrusted"`
+			Scheme              string `json:"scheme"`
+		}
+		if len(out) > 4<<10 || json.Unmarshal(out, &n) != nil || !n.ProxyHeadersTrusted || n.Scheme != "https" {
+			untrusted = append(untrusted, pod)
+		}
 	}
-	if err == nil && len(out) <= 4<<10 && json.Unmarshal(out, &n) == nil && n.ProxyHeadersTrusted && n.Scheme == "https" {
+	if err == nil && len(pods) > 0 && len(untrusted) == 0 {
 		return nil
 	}
-	return fmt.Errorf("KyDNS does not trust edge %s at egress_address %s, so its admin UI answers 403 through the route: NPM moved node, the address is wrong, or this Docker host hides client addresses and KyDNS is not supported on it. Fix egress_address and rerun apply", e.edge, e.egress)
+	slices.Sort(untrusted)
+	from := ""
+	if len(pods) > 1 {
+		// The nginx edge runs on every node, and each pod's requests leave from its own node.
+		from = fmt.Sprintf(" (from %d of the edge's %d pods: %s; KyDNS needs one address every pod's requests leave from)", len(untrusted), len(pods), strings.Join(untrusted, ", "))
+	}
+	return fmt.Errorf("KyDNS does not trust edge %s at egress_address %s%s, so its admin UI answers 403 through the route: the edge moved node, the address is wrong, or this Docker host hides client addresses and KyDNS is not supported on it. Fix egress_address and rerun apply", e.edge, e.egress, from)
 }
