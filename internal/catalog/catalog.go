@@ -177,6 +177,9 @@ type Kubernetes struct {
 	LowPorts bool `yaml:"low_ports"`
 	// NodePorts publishes container ports on every node, with their default NodePort; edge only.
 	NodePorts map[int]int `yaml:"node_ports"`
+	// EdgeProxy is the nginx edge: a DaemonSet (a pod on every node) that serves the
+	// configuration and certificates the installer mounts, with no volume of its own.
+	EdgeProxy bool `yaml:"edge_proxy,omitempty" json:",omitempty"`
 	// KubeVIPAddress makes the NodePort Service a kube-vip LoadBalancer; set from the stack.
 	KubeVIPAddress string `yaml:"-"`
 	// LoadBalancerAddress makes the NodePort Service a LoadBalancer at this address from the
@@ -788,6 +791,8 @@ func (k Kubernetes) validate(images map[string]string, baseline, edge bool) erro
 		return fmt.Errorf("suite_runner needs env KY_SUITE_RUNNER_SOCKET %s", SuiteRunnerSocket)
 	case k.SecretsDir != "" && (!mountRE.MatchString(k.SecretsDir) || k.SecretsDir == "/tmp"):
 		return fmt.Errorf("secrets_dir %q must be an absolute path other than /tmp", k.SecretsDir)
+	case k.EdgeProxy && (!edge || baseline || len(k.Volumes) > 0 || len(k.Args) > 0 || k.SuiteRunner || k.ReadinessPath == "" || len(k.NodePorts) == 0):
+		return fmt.Errorf("edge_proxy is a restricted edge component with a readiness_path and node_ports, and no volumes, args or suite_runner")
 	case k.Egress != "" && (k.Egress != "edge" || edge):
 		return fmt.Errorf("egress %q must be edge, and not on an edge component", k.Egress)
 	}

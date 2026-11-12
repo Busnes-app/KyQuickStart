@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Busnes-app/kyquickstart/internal/engine"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
 )
 
@@ -113,12 +114,16 @@ func (n *NPM) certificateID(ctx context.Context, e stack.Edge, r stack.Route) (i
 
 // dnsCredential reads c's DNS API token from the target and registers it for redaction.
 func (n *NPM) dnsCredential(ctx context.Context, c stack.Certificate) (string, error) {
-	b, err := n.Secrets.EdgeSecret(ctx, c.Credentials.Secret, c.Credentials.Key)
+	return dnsCredential(ctx, n.Secrets, n.Redact, c)
+}
+
+func dnsCredential(ctx context.Context, secrets Secrets, redact *engine.Redactor, c stack.Certificate) (string, error) {
+	b, err := secrets.EdgeSecret(ctx, c.Credentials.Secret, c.Credentials.Key)
 	if err != nil {
 		return "", err
 	}
 	token := strings.TrimSpace(string(b))
-	n.Redact.Add(token)
+	redact.Add(token)
 	if !cloudflareToken.MatchString(token) {
 		return "", fmt.Errorf("secret kyq-edge/%s key %s is not a Cloudflare API token", c.Credentials.Secret, c.Credentials.Key)
 	}

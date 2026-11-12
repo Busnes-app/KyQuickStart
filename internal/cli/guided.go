@@ -220,6 +220,9 @@ func guided(ctx context.Context, args []string, o Options) error {
 				return err
 			}
 		}
+		if slices.ContainsFunc(previous.Apps, func(a stack.App) bool { return a.Name == stack.NginxApp }) {
+			return errors.New("this saved plan installs the nginx edge, which plan cannot ask for; edit stack.yaml directly to preserve it")
+		}
 		for _, e := range previous.Edges {
 			seen := map[string]bool{}
 			for _, r := range e.Routes {
@@ -356,6 +359,9 @@ func guided(ctx context.Context, args []string, o Options) error {
 	}
 	for _, name := range names {
 		if name == euroOffice && !slices.ContainsFunc(st.Apps, func(a stack.App) bool { return a.Name == "kydrive" }) {
+			continue
+		}
+		if name == stack.NginxApp { // its edge (proxy: nginx) is written in stack.yaml, not asked
 			continue
 		}
 		app := cat[name]
@@ -733,13 +739,19 @@ func showPlan(out io.Writer, st *stack.Stack, cat catalog.Catalog) {
 	for _, e := range st.Edges {
 		if e.Direct() {
 			fmt.Fprintf(out, "Edge %s: Cloudflare tunnel %s straight to the apps, no NPM; cloudflared at %s on Docker network %s. Routes are public: no NPM path blocks or allow-list\n", e.Target, e.Connector.TunnelID, e.ConnectorCIDR, e.Connector.Network)
+		} else if e.Nginx() {
+			fmt.Fprintf(out, "Edge %s: nginx on every node, installed by this plan (catalog nginx), via %s\n", e.Target, e.Provider)
 		} else if slices.ContainsFunc(st.Apps, func(a stack.App) bool { return a.Name == "npm" && a.Target == e.Target }) {
 			fmt.Fprintf(out, "Edge %s: NPM installed by this plan (catalog npm), admin API %s, via %s\n", e.Target, e.NPMURL, e.Provider)
 		} else {
 			fmt.Fprintf(out, "Edge %s: existing NPM %s via %s\n", e.Target, e.NPMURL, e.Provider)
 		}
 		for _, c := range e.Certificates {
-			fmt.Fprintf(out, "  Certificate %s requested by NPM from Let's Encrypt (DNS-01, %s): %s\n", c.Name, c.DNSProvider, strings.Join(c.Domains, ", "))
+			by := "NPM"
+			if e.Nginx() {
+				by = "the cluster's cert-manager"
+			}
+			fmt.Fprintf(out, "  Certificate %s requested by %s from Let's Encrypt (DNS-01, %s): %s\n", c.Name, by, c.DNSProvider, strings.Join(c.Domains, ", "))
 		}
 		if e.Connector != nil && !e.Direct() {
 			fmt.Fprintln(out, "  Deploy connector on existing Docker network", e.Connector.Network)

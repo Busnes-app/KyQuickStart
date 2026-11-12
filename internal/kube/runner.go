@@ -88,14 +88,10 @@ func (c *Client) ExecRunner(ctx context.Context, namespace, selector string, arg
 }
 
 // RunnerRules is what an install needs (required), as RBAC rules: cluster-wide ones, and the
-// lock namespace's own. loadBalancer adds what preflight reads for a load_balancer_address:
-// only a plan with one gets it, so a workstation without those permissions can still grant.
-func RunnerRules(loadBalancer bool) (cluster, lock []rbacv1.PolicyRule) {
-	attrs := required
-	if loadBalancer {
-		attrs = slices.Concat(required, loadBalancerRead)
-	}
-	for _, a := range attrs {
+// lock namespace's own. needs adds what only some plans use (a load_balancer_address, the
+// nginx edge, its certificates), so a workstation without those permissions can still grant.
+func RunnerRules(needs Needs) (cluster, lock []rbacv1.PolicyRule) {
+	for _, a := range needs.access() {
 		rules := &cluster
 		if a.Namespace != "" {
 			rules = &lock
@@ -116,15 +112,15 @@ func runnerMeta(ns string) metav1.ObjectMeta {
 	return metav1.ObjectMeta{Name: runnerName, Namespace: ns, Labels: map[string]string{managed.Label: managed.Value}}
 }
 
-// GrantRunner gives runner runnerID a ServiceAccount bound to RunnerRules(loadBalancer) and returns a
+// GrantRunner gives runner runnerID a ServiceAccount bound to RunnerRules(needs) and returns a
 // kubeconfig holding its token. A token issued to another runner is replaced, so it stops
 // working. The lock namespace exists: the caller holds the lock. A runner in this cluster
 // (inCluster) reaches the API server at its in-cluster address, others at the workstation's.
-func (c *Client) GrantRunner(ctx context.Context, runnerID string, inCluster, loadBalancer bool) ([]byte, error) {
+func (c *Client) GrantRunner(ctx context.Context, runnerID string, inCluster bool, needs Needs) ([]byte, error) {
 	if c.config == nil || c.config.Insecure {
 		return nil, errors.New("the cluster connection must verify the API server's certificate")
 	}
-	cluster, lock := RunnerRules(loadBalancer)
+	cluster, lock := RunnerRules(needs)
 	subject := []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Name: runnerName, Namespace: lockNamespace}}
 	rbac := c.cs.RbacV1()
 	steps := []func() error{

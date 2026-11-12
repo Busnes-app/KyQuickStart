@@ -34,6 +34,7 @@ type Request struct {
 	// (an integrations entry; IdentityClient defaults to the app's name).
 	Hostname, ForwardHost      string
 	ForwardPort, CertificateID int
+	Certificate                string // behind the nginx edge, in place of CertificateID
 	Bundle, IdentityClient     string
 }
 
@@ -96,6 +97,7 @@ func suiteCommand(ctx context.Context, cmd string, args []string, o Options) err
 		fl.StringVar(&r.ForwardHost, "forward-host", "", "routed app: its address as NPM reaches it (on Docker, an IP address of the target)")
 		fl.IntVar(&r.ForwardPort, "forward-port", 0, "routed app: its port as NPM reaches it")
 		fl.IntVar(&r.CertificateID, "certificate-id", 0, "routed app: the existing NPM certificate ID for its hostname")
+		fl.StringVar(&r.Certificate, "certificate", "", "routed app behind the nginx edge: the edge certificate (or, with no such certificate, the TLS Secret) for its hostname")
 		fl.StringVar(&r.Bundle, "bundle", "", "the app's setup bundle path inside its container (an integrations entry)")
 		fl.StringVar(&r.IdentityClient, "identity-client", "", "with --bundle: its KyIdentity client ID (default: the app's name)")
 	}
@@ -300,25 +302,35 @@ func installRoute(st *stack.Stack, app catalog.App, name string, r Request) (int
 	case r.Bundle != "":
 		setup = &stack.Integration{Product: name, Target: r.Target, Bundle: r.Bundle, IdentityClient: cmp.Or(r.IdentityClient, name)}
 	}
-	if r.Hostname == "" && r.ForwardHost == "" && r.ForwardPort == 0 && r.CertificateID == 0 {
+	if r.Hostname == "" && r.ForwardHost == "" && r.ForwardPort == 0 && r.CertificateID == 0 && r.Certificate == "" {
 		return 0, nil, setup, nil
 	}
 	e := slices.IndexFunc(st.Edges, func(e stack.Edge) bool { return e.Target == r.Target })
+	nginx := e >= 0 && st.Edges[e].Nginx()
 	switch {
-	case r.Hostname == "" || r.ForwardHost == "" || r.ForwardPort == 0 || r.CertificateID == 0:
-		return 0, nil, nil, suite.Errorf(suite.InvalidRequest, "a route needs --hostname, --forward-host, --forward-port and --certificate-id together")
-	case r.ForwardPort < 1 || r.ForwardPort > 65535 || r.ForwardPort == 81:
-		return 0, nil, nil, suite.Errorf(suite.InvalidRequest, "--forward-port must be 1-65535, and not 81 (NPM administration)")
-	case r.CertificateID < 1:
-		return 0, nil, nil, suite.Errorf(suite.InvalidRequest, "--certificate-id must be an existing NPM certificate ID")
 	case e < 0:
 		return 0, nil, nil, suite.Errorf(suite.InvalidRequest, "target %s has no edge to route %s through; add one with kyquickstart plan", r.Target, name)
+	case nginx && (r.Certificate == "" || r.CertificateID != 0):
+		return 0, nil, nil, suite.Errorf(suite.InvalidRequest, "%s's edge is nginx: name the route's certificate with --certificate (one of the edge's certificates, or a TLS Secret)", r.Target)
+	case !nginx && r.Certificate != "":
+		return 0, nil, nil, suite.Errorf(suite.InvalidRequest, "--certificate is for the nginx edge; %s's edge takes --certificate-id", r.Target)
+	case r.Hostname == "" || r.ForwardHost == "" || r.ForwardPort == 0 || !nginx && r.CertificateID == 0:
+		return 0, nil, nil, suite.Errorf(suite.InvalidRequest, "a route needs --hostname, --forward-host, --forward-port and --certificate-id (behind the nginx edge, --certificate) together")
+	case r.ForwardPort < 1 || r.ForwardPort > 65535 || r.ForwardPort == 81:
+		return 0, nil, nil, suite.Errorf(suite.InvalidRequest, "--forward-port must be 1-65535, and not 81 (NPM administration)")
+	case r.CertificateID < 0:
+		return 0, nil, nil, suite.Errorf(suite.InvalidRequest, "--certificate-id must be an existing NPM certificate ID")
 	case st.Edges[e].Direct():
 		return 0, nil, nil, suite.Errorf(suite.InvalidRequest, "%s's edge is cloudflare-direct, whose routes install does not write; route %s with kyquickstart plan", r.Target, name)
 	case len(app.Routes) > 0:
 		return 0, nil, nil, suite.Errorf(suite.InvalidRequest, "%s takes several routes under one domain; add it with kyquickstart plan", name)
 	}
 	route := &stack.Route{App: name, Hostname: r.Hostname, ForwardHost: r.ForwardHost, ForwardPort: r.ForwardPort, ForwardScheme: "http", CertificateID: r.CertificateID, StatusPath: "/api/status"}
+	if slices.ContainsFunc(st.Edges[e].Certificates, func(c stack.Certificate) bool { return c.Name == r.Certificate }) {
+		route.Certificate = r.Certificate
+	} else {
+		route.CertificateSecret = r.Certificate // an operator's TLS Secret; empty behind an NPM
+	}
 	if p := st.Edges[e].Provider; p == "cloudflare" || p == "frp" {
 		route.Exposure = "external"
 		if app.Exposure == "internal" {
@@ -444,10 +456,10 @@ func remove(ctx context.Context, state string, r Request, trust trustFlag, o Opt
 			return suite.Errorf(suite.Dependency, "%s depends on %s", other, name)
 		}
 	}
-	// The catalog NPM is the one a kube:// npm_url on its target names.
+	// The catalog NPM is the one a kube:// npm_url on its target names; nginx, a proxy: nginx edge's.
 	for _, e := range s.plan.Edges {
-		if _, _, _, kube := stack.KubeService(e.NPMURL); name == "npm" && kube && e.Target == t.Name && slices.ContainsFunc(e.Routes, func(r stack.Route) bool { return r.App != name }) {
-			return suite.Errorf(suite.Dependency, "edge %s routes its apps through npm; remove those routes from stack.yaml first", e.Target)
+		if name == e.ClusterApp() && e.Target == t.Name && slices.ContainsFunc(e.Routes, func(r stack.Route) bool { return r.App != name }) {
+			return suite.Errorf(suite.Dependency, "edge %s routes its apps through %s; remove those routes from stack.yaml first", e.Target, name)
 		}
 	}
 	routed := func(r stack.Route) bool { return r.App == name }
@@ -492,7 +504,7 @@ func remove(ctx context.Context, state string, r Request, trust trustFlag, o Opt
 		var steps []engine.Step
 		for _, e := range edges {
 			if !e.Direct() {
-				steps = append(steps, s.npms[e.Target].Steps(e)[0]) // the removed-route step
+				steps = append(steps, s.proxy(e).Steps(e)[0]) // the removed-route step
 				continue
 			}
 			// cloudflared again without the app's routes; with none left, only its 404 rule.

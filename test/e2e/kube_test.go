@@ -42,6 +42,12 @@ func kind(t *testing.T, args ...string) {
 // returns its name and a kubeconfig outside work's state directory.
 func kindCluster(t *testing.T, work string) (string, string) {
 	t.Helper()
+	return kindClusterNodes(t, work, 0)
+}
+
+// kindClusterNodes is kindCluster with that many worker nodes beside the control plane.
+func kindClusterNodes(t *testing.T, work string, workers int) (string, string) {
+	t.Helper()
 	kc := filepath.Join(work, "kubeconfig")
 	id := make([]byte, 4)
 	rand.Read(id)
@@ -65,7 +71,11 @@ func kindCluster(t *testing.T, work string) (string, string) {
 	t.Cleanup(func() {
 		exec.Command("go", "run", "sigs.k8s.io/kind@v0.33.0", "delete", "cluster", "--name", name).Run()
 	})
-	kind(t, "create", "cluster", "--name", name, "--image", kindNode, "--kubeconfig", kc, "--wait", "180s")
+	config := filepath.Join(work, "kind.yaml")
+	if err := os.WriteFile(config, []byte("kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnodes:\n  - role: control-plane\n"+strings.Repeat("  - role: worker\n", workers)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	kind(t, "create", "cluster", "--name", name, "--image", kindNode, "--kubeconfig", kc, "--config", config, "--wait", "180s")
 	if limits := docker(t, "inspect", name+"-control-plane", "--format", "{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{.HostConfig.NanoCpus}} {{.HostConfig.PidsLimit}}"); limits != "2147483648 2147483648 2000000000 1024" {
 		t.Fatal("kind node resource limits not applied", limits)
 	}

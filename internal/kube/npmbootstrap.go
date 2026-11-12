@@ -151,13 +151,19 @@ func (s npmBootstrapStep) Apply(ctx context.Context) error {
 
 // store writes the token into kyq-edge/kyq-credentials, keeping the Secret's other keys.
 func (s npmBootstrapStep) store(ctx context.Context, token string) error {
-	labels := workloadLabels(s.a.ReleaseSet)
-	nsLabels := workloadLabels(s.a.ReleaseSet)
+	return s.a.Client.setEdgeCredential(ctx, s.a.ReleaseSet, edgeTokenKey, []byte(token))
+}
+
+// setEdgeCredential ensures namespace kyq-edge and its kyq-credentials Secret, and with a key
+// sets it, keeping the Secret's other keys.
+func (c *Client) setEdgeCredential(ctx context.Context, release, key string, value []byte) error {
+	labels := workloadLabels(release)
+	nsLabels := workloadLabels(release)
 	nsLabels[podSecurity] = "restricted"
-	if err := s.a.Client.ensureNamespace(ctx, edgeNamespace, nsLabels); err != nil {
+	if err := c.ensureNamespace(ctx, edgeNamespace, nsLabels); err != nil {
 		return err
 	}
-	api := s.a.Client.cs.CoreV1().Secrets(edgeNamespace)
+	api := c.cs.CoreV1().Secrets(edgeNamespace)
 	sec, found, err := getOwned(ctx, api, "secret", edgeSecret)
 	if err != nil {
 		return err
@@ -168,11 +174,14 @@ func (s npmBootstrapStep) store(ctx context.Context, token string) error {
 	if sec.Data == nil {
 		sec.Data = map[string][]byte{}
 	}
-	sec.Data[edgeTokenKey] = []byte(token)
-	if found {
-		_, err = api.Update(ctx, sec, metav1.UpdateOptions{})
-	} else {
+	if key != "" {
+		sec.Data[key] = value
+	}
+	switch {
+	case !found:
 		_, err = api.Create(ctx, sec, metav1.CreateOptions{})
+	case key != "":
+		_, err = api.Update(ctx, sec, metav1.UpdateOptions{})
 	}
 	switch {
 	case apierrors.IsConflict(err) || apierrors.IsAlreadyExists(err):

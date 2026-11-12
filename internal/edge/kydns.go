@@ -102,9 +102,19 @@ func (k *kydns) do(ctx context.Context, method, path string, body, result any) (
 // dnsStep keeps one A record per route hostname, pointing at the edge, and deletes the ones
 // it created for hostnames that left the routes.
 type dnsStep struct {
-	n *NPM
+	n lanDNS
 	e stack.Edge
 }
+
+// lanDNS is what a LAN DNS step takes from its edge's proxy, NPM or nginx.
+type lanDNS struct {
+	installation string
+	lan          *http.Client
+	Secrets      Secrets
+	Redact       *engine.Redactor
+}
+
+func (n *NPM) dns() lanDNS { return lanDNS{n.installation, n.lan, n.Secrets, n.Redact} }
 
 func (s dnsStep) ID() string { return s.e.Target + ".edge.lan-dns" }
 func (s dnsStep) InputHash() string {

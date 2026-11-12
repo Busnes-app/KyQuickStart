@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -43,10 +44,36 @@ var required = func() []authorizationv1.ResourceAttributes {
 	return out
 }()
 
+// Needs is what a plan uses on one cluster beyond required.
+type Needs struct {
+	LoadBalancer bool // a load_balancer_address: preflight reads the cluster's address pools
+	EdgeProxy    bool // the nginx edge
+	Certificates bool // the nginx edge's certificates, issued by the cluster's cert-manager
+}
+
+// access is every permission an install with these needs uses.
+func (n Needs) access() []authorizationv1.ResourceAttributes {
+	out := required
+	if n.LoadBalancer {
+		out = slices.Concat(out, loadBalancerRead)
+	}
+	if n.EdgeProxy {
+		out = slices.Concat(out, edgeProxyAccess)
+	}
+	if n.Certificates {
+		out = slices.Concat(out, certificateAccess)
+	}
+	return out
+}
+
 // Preflight checks a cluster and changes nothing. A named storageClass must exist; with none,
 // claims need a default class. nodePorts maps each NodePort the plan's apps publish to its app.
-func Preflight(ctx context.Context, c *Client, needsStorage bool, storageClass string, nodePorts map[int]string) []Finding {
-	out := []Finding{c.versionCheck(), c.accessCheck(ctx), c.lockCheck(ctx)}
+func Preflight(ctx context.Context, c *Client, needsStorage bool, storageClass string, nodePorts map[int]string, needs Needs) []Finding {
+	needs.LoadBalancer = false // LoadBalancerCheck reports its own
+	out := []Finding{c.versionCheck(), c.accessCheck(ctx, needs.access()), c.lockCheck(ctx)}
+	if needs.Certificates {
+		out = append(out, c.CertManagerCheck())
+	}
 	if needsStorage {
 		out = append(out, c.storageCheck(ctx, storageClass))
 	}
@@ -107,15 +134,15 @@ func (c *Client) versionCheck() Finding {
 	return Finding{"kubernetes", true, "1." + v.Minor}
 }
 
-func (c *Client) accessCheck(ctx context.Context) Finding {
-	denied, err := c.denied(ctx, required)
+func (c *Client) accessCheck(ctx context.Context, attrs []authorizationv1.ResourceAttributes) Finding {
+	denied, err := c.denied(ctx, attrs)
 	if err != nil {
 		return Finding{"permissions", false, err.Error()}
 	}
 	if len(denied) > 0 {
 		return Finding{"permissions", false, "denied: " + strings.Join(denied, ", ")}
 	}
-	return Finding{"permissions", true, fmt.Sprintf("%d checks allowed", len(required))}
+	return Finding{"permissions", true, fmt.Sprintf("%d checks allowed", len(attrs))}
 }
 
 // denied returns the attributes this client may not use, as "verb resource".

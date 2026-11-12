@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/netip"
 	"path"
+	"slices"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/dockerhost"
@@ -155,17 +156,19 @@ type kubeDriver struct {
 	c             *kube.Client
 	needsStorage  bool
 	storageClass  string
-	edge          string            // the edge app on this cluster, admitted to the other apps' ports
+	edges         []string          // the edge apps on this cluster, admitted to the other apps' ports
 	nodePorts     map[int]string    // NodePort -> the app here publishing it
 	loadBalancers map[string]string // load_balancer_address -> the app here asking for it
 	upstreams     []netip.AddrPort  // where the edge's routes forward off the cluster
 	runnerImage   string            // the suite runner beside KyYard
 	tunnel        bool              // the edge here admits only its connector on external routes
+	needs         kube.Needs        // what the plan uses here beyond the base permission list
+	tlsSecrets    []string          // the Secrets the nginx edge here serves certificates from
 }
 
 func (d kubeDriver) preflight(ctx context.Context) []finding {
 	var out []finding
-	for _, f := range kube.Preflight(ctx, d.c, d.needsStorage, d.storageClass, d.nodePorts) {
+	for _, f := range kube.Preflight(ctx, d.c, d.needsStorage, d.storageClass, d.nodePorts, d.needs) {
 		out = append(out, finding(f))
 	}
 	if len(d.loadBalancers) > 0 {
@@ -189,9 +192,9 @@ func (d kubeDriver) steps(name string, app catalog.App, releaseSet string, redac
 }
 
 func (d kubeDriver) app(name string, app catalog.App, releaseSet string, redact *engine.Redactor) kube.App {
-	a := kube.App{Name: name, Client: d.c, Catalog: app, ReleaseSet: releaseSet, Redact: redact, StorageClass: d.storageClass, Edge: d.edge, RunnerImage: d.runnerImage, PublicEgress: d.tunnel}
-	if name == d.edge {
-		a.Upstreams = d.upstreams
+	a := kube.App{Name: name, Client: d.c, Catalog: app, ReleaseSet: releaseSet, Redact: redact, StorageClass: d.storageClass, Edges: d.edges, RunnerImage: d.runnerImage, PublicEgress: d.tunnel}
+	if slices.Contains(d.edges, name) {
+		a.Upstreams, a.TLSSecrets = d.upstreams, d.tlsSecrets
 	}
 	return a
 }

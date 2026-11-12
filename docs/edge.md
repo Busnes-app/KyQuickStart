@@ -17,7 +17,7 @@ Per-product compatibility with these paths is in [the redirect record](redirect.
 | Existing frp server | Optional frpc deployment on Docker, verified server TLS and PROXY v2 |
 | LAN clients only (`lan`) | Clients connect to NPM directly, no tunnel; NPM serves only `allow_cidrs` |
 | Internal and external routes on one edge | A `cloudflare` or `frp` edge's `exposure: internal` routes serve only `allow_cidrs`, beside its external routes ([below](#internal-and-external-routes-exposure)) |
-| Kubernetes target | NPM from the catalog (`npm` app) managed through `kube://`, or an existing NPM's API; connector deployment and `cloudflare-direct` are rejected, so you run a tunnel edge's connector yourself ([below](#a-connector-for-a-kubernetes-edge)) |
+| Kubernetes target | NPM from the catalog (`npm` app) managed through `kube://`, an existing NPM's API, or nginx on every node (`nginx` app, `proxy: nginx`, [below](#nginx-on-every-node-proxy-nginx)); connector deployment and `cloudflare-direct` are rejected, so you run a tunnel edge's connector yourself ([below](#a-connector-for-a-kubernetes-edge)) |
 
 No other edge path is provided; the requirements still open are listed under Unfinished in
 [the redirect record](redirect.md#dispositions).
@@ -484,10 +484,233 @@ run: it is part of the issuer and of every added client's redirect URLs, and app
 moving it (`issuer_changed`). Choose the load-balancer address and `client_port: 443` before
 KyIdentity's setup and KyRecovery's custodian ceremony.
 
+## nginx on every node (`proxy: nginx`)
+
+The catalog NPM is one pod with a database and two single-attach claims: when its node goes,
+every route goes with it until the pod is rescheduled and its volumes attach elsewhere. The
+`nginx` app is the edge without that (owner amendment, 2026-11-11): plain nginx on every node,
+serving configuration the installer renders, with certificates in Secrets. It has no database,
+no admin API and no volume. Kubernetes only; an existing NPM, the catalog `npm` and Docker
+targets work as before.
+
+```yaml
+apps:
+  - name: nginx
+    target: k80
+    # node_ports, kube_vip_address or load_balancer_address, exactly as for npm
+edges:
+  - target: k80
+    provider: lan            # or cloudflare; frp is refused, as for the catalog npm
+    proxy: nginx             # instead of npm_url
+    allow_cidrs: [192.168.1.0/24]
+    certificates:            # optional: issued by the cluster's cert-manager (below)
+      - name: k80
+        domains: ['*.k80.example.com']
+        email: ops+acme@example.com
+        dns_provider: cloudflare
+        credentials: {secret: cloudflare-dns, key: api_token}
+    routes:
+      - app: hello
+        hostname: hello.k80.example.com
+        forward_host: app.kyq-hello.svc.cluster.local
+        forward_port: 8080
+        certificate: k80                 # one of the edge's certificates, or
+        # certificate_secret: my-tls     # a TLS Secret you provide
+```
+
+Everything else in an edge (`exposure`, `allow_cidrs`, `client_port`, `connector_cidr`,
+`egress_address`, `lan_dns`) means what it means behind NPM. Guided `plan` does not ask for
+this edge: write it in `stack.yaml`; `plan` then refuses to rewrite that file, and `install
+APP --certificate NAME` takes the place of `--certificate-id`.
+
+### What apply deploys
+
+In namespace `kyq-nginx`, Pod Security `restricted`:
+
+- A DaemonSet: one pod per node that can host one (a tainted control-plane node gets none).
+  With `externalTrafficPolicy: Local` a node answers only from a pod of its own, so a pod on
+  every node is what lets any node's NodePort answer, and lets a load-balancer address land on
+  whichever node takes it over. Two replicas of a Deployment would leave the other nodes
+  dropping traffic. The image is nginx's own unprivileged build, pinned by digest: uid 101, no
+  capabilities, read-only root, no ServiceAccount token. Ports 80 and 443 are bound through
+  the `net.ipv4.ip_unprivileged_port_start` sysctl, which `restricted` allows.
+- No PodDisruptionBudget: `kubectl drain` never evicts a DaemonSet's pods, so a budget would
+  protect nothing. A change to the pod (a new image, a new certificate Secret) replaces pods
+  one node at a time, the new pod ready before the old one stops (`maxSurge: 1`).
+- Service `app-public`, identical to NPM's in all three address modes. There is no `app`
+  Service: nothing listens but 80, 443 and a status port bound to the pod's own loopback.
+- ConfigMap `kyq-edge-config`: `nginx.conf` and one file per route.
+- The NetworkPolicy NPM has, minus its egress to TCP 80/443 anywhere: cert-manager, not these
+  pods, speaks ACME. Egress is DNS, pods in installer-managed namespaces and each route's
+  `forward_host`/32 and port off the cluster. The other apps admit ingress from these pods.
+- Namespace `kyq-edge` with the installer's `kyq-credentials` Secret (the LAN DNS ledger), as
+  the `npm` app creates them.
+
+`stop` and `start` refuse this app: it has no stopped state. `uninstall nginx` deletes the
+DaemonSet and Service and keeps the ConfigMap, Secrets and cert-manager objects.
+
+### Routes
+
+Each route is one file in the ConfigMap, `<key>.server`, rendered by the same generator that
+writes NPM's `advanced_config`, so the two cannot drift: the ownership marker as its first
+line, the `421` on another TLS name, an internal route's `allow`/`deny` list or an external
+route's one trusted connector and its `403`, the installer-owned `location` that sets every
+forwarding header from the connection and clears `Forwarded`, `CF-Connecting-IP` and
+`True-Client-IP`, catalog `paths` and `deny_paths`. Only the listeners, the certificate paths
+and the upstream differ: NPM's template variables become the route's
+`forward_scheme://forward_host:forward_port`, resolved at request time through the pod's own
+resolver, as NPM does. Body size, timeouts and TLS protocols and ciphers are NPM 2.16's. Port
+80 serves nothing: every request is redirected to the same host over HTTPS. A TLS name no
+route has gets no handshake (`ssl_reject_handshake`), where NPM answers with a default page.
+
+A change reaches the pods without restarting them. The kubelet updates the mounted ConfigMap;
+a loop in each pod notices the change within two seconds, tests it (`nginx -t`) and reloads
+nginx, whose old workers finish the requests they hold. A configuration nginx rejects is never
+loaded: the pod keeps serving the last good one and keeps the reason. Apply asks every ready
+pod, over `pods/exec`, which configuration its workers run (a hash of the files, answered by
+nginx itself on the loopback port), and a route's step passes only when every one of them
+runs the configuration just written, up to three minutes. If one rejects it, the route is
+disabled again and the step fails with nginx's reason. To avoid waiting for the kubelet's next
+sync (up to about a minute), apply changes an annotation on each pod, which makes the kubelet
+look at once; that is what `patch pods` is for.
+
+**A node that is down is not waited for.** Apply verifies the pods that are ready, which are
+the ones the Service sends requests to, and needs at least one. A pod on a node that stopped
+answering loads the current configuration when it returns: until its kubelet has synced, at
+most about a minute, it can serve the configuration it had when the node went. This differs
+from NPM, whose one pod is either changed or down. The alternative, refusing every route
+change while any node is down, would freeze the installer exactly when a node is lost.
+
+**Ownership.** A route's file is this installation's only when its first line is
+`# kyquickstart:<installation_id>:<target>:<app>:<hostname>`. Apply refuses a route whose
+hostname another file answers for, including a file written by hand, and never changes a file
+without its mark. A hostname that leaves `routes` is disabled, not deleted: its file is
+renamed `<key>.disabled`, which nginx does not include; delete it yourself when you no longer
+want it (`kubectl -n kyq-nginx edit configmap kyq-edge-config`).
+
+### Certificates
+
+A route names one of the edge's `certificates` or a `certificate_secret`. `certificate_id`
+is an NPM ID and is refused.
+
+**Issued by cert-manager.** The cluster's owner installs
+[cert-manager](https://cert-manager.io/docs/installation/) (1.5 or later; tested against
+1.21's API); the installer never installs a cluster-wide component. Preflight refuses a plan
+with `certificates` when the cluster does not serve `cert-manager.io/v1` Issuers and
+Certificates or the permissions below are missing. For each certificate apply writes, in
+`kyq-nginx`:
+
+- Secret `kyq-<name>-dns`, a copy of the Cloudflare token from the labelled Secret in
+  `kyq-edge` ([above](#managed-certificates)). cert-manager reads an Issuer's credential only
+  from the Issuer's own namespace, so the copy is needed; it is the one place the token is
+  written, and apply replaces it when the Secret in `kyq-edge` changes.
+- Issuer `kyq-<name>`: Let's Encrypt, the certificate's `email`, DNS-01 through Cloudflare.
+- Certificate `kyq-<name>` for its `domains`, into Secret `kyq-tls-<name>`.
+
+Then it waits for the Certificate to be Ready, up to 15 minutes, and fails with
+cert-manager's reason otherwise (`kubectl -n kyq-nginx describe certificate kyq-<name>`).
+cert-manager renews; each pod's loop reloads nginx when the mounted Secret changes. The
+token reaches no ConfigMap, object spec, log line or workstation file. A certificate removed
+from `stack.yaml` keeps its objects.
+
+**Your own.** Create a `kubernetes.io/tls` Secret in `kyq-nginx` and label it, then name it
+in `certificate_secret`. The namespace exists once the `nginx` app has been applied, so apply
+that first; names starting with `kyq-` are the installer's.
+
+```sh
+kubectl -n kyq-nginx create secret tls my-tls --cert=fullchain.pem --key=privkey.pem
+kubectl -n kyq-nginx label secret my-tls ky.managed-by=kyquickstart
+```
+
+Preflight and each route's step refuse a Secret that is absent, unlabelled, of another type,
+expired or does not cover the hostname. Replacing its contents is picked up by reload.
+A certificate first named by a route adds a volume to the pods, so that one apply replaces
+them, node by node; route changes do not.
+
+### Permissions
+
+A plan with the `nginx` app adds these to the installer's list, cluster-wide, and `handoff`
+grants the runner the same; a plan without it is asked for nothing new:
+
+| Resource | Verbs | Why |
+| --- | --- | --- |
+| `apps` `daemonsets` | get, create, update, patch, delete | the edge's pods |
+| `configmaps` | get, create, update, patch | the rendered configuration |
+| `pods` | patch | the annotation that makes a kubelet re-read a pod's volumes |
+| `nodes` | list | health does not wait for a node that is down |
+| `cert-manager.io` `issuers`, `certificates` | get, create, update | only with `certificates` on the edge |
+
+### Addresses and node loss
+
+`node_ports`, `kube_vip_address` and `load_balancer_address` go on the `nginx` app and make
+the same Service as for NPM. What changes is what happens when a node dies: a pod is already
+running on every other node, so the address is back as soon as it is announced elsewhere, with
+no reschedule and no volume to move.
+
+| Mode | When the node holding the address dies | Status |
+| --- | --- | --- |
+| NodePort | Every node answers on its own NodePort from its own pod, so the other nodes keep serving. Nothing moves the address: clients, a connector or a port-forward that name the dead node must name another. | Tested in kind: no failed request through the other node while a node was stopped |
+| `kube_vip_address` | kube-vip lets only nodes with a local pod hold the address, and another one takes it over by lease (kube-vip's defaults: 15 s lease, 2 s retry). | From kube-vip's documentation; not tested |
+| `load_balancer_address`, MetalLB L2 | MetalLB announces from one node that has a ready pod and moves to another when its speakers lose the node, "within a few seconds". | From MetalLB's documentation; not tested |
+| `load_balancer_address`, Cilium L2 | Cilium picks the announcing node by lease (10-20 s to move) and does not look at where pods are. Make its announcement policy select only nodes that run an edge pod, or it can announce from a node that drops the traffic. | From Cilium's documentation; not tested |
+
+**Where requests leave from (`egress_address`).** Apps on Docker targets trust exactly one
+address, and each edge pod's requests leave from its own node. Behind NPM that was one node;
+now it is whichever node took the client's connection.
+
+- With `kube_vip_address`, `egress_address` must still equal it. kube-vip rewrites the source
+  of one pod, the one on the node holding the address, which is the only pod the address's
+  clients reach. So requests that came in through the address leave from it, before and after
+  it moves. A client that reaches another node's NodePort directly is proxied from that node's
+  address, which the Docker apps do not trust: they ignore its forwarding headers. This reading
+  is from kube-vip's source (v1.3.1); with a pod on every node it is not tested, so check
+  `verify-edge` after the first failover.
+- With `load_balancer_address` or NodePorts, `egress_address` names one node. When the address
+  moves to another node, Docker apps stop believing the edge's headers until you set
+  `egress_address` to the new node and rerun `apply`. Apps on the cluster trust no proxy and
+  are unaffected. For Docker apps to ride through a node's loss untouched, use kube-vip.
+- `kydns.edge` now asks KyDNS from every ready edge pod (with kube-vip egress, from the one pod
+  kube-vip rewrites) and passes only when KyDNS trusts each. On a cluster of several nodes
+  without kube-vip egress it therefore fails, naming the pods: KyDNS would answer 403 through
+  any node but one.
+
+### Moving from the catalog npm
+
+Saved plans keep working: an edge without `proxy` is an NPM edge. To replace the `npm` app on
+a cluster, in this order:
+
+1. **Prepare.** Install cert-manager if routes use `certificates`. Add the `nginx` app beside
+   `npm`, with other `node_ports` (for example `{80: 31080, 443: 31443}`) and no address; the
+   plan is refused while both would publish the same port or address. `apply`. NPM keeps
+   serving; the other apps now admit both edges' pods.
+2. **Certificates.** For routes with `certificate_id`, create the same certificate as a TLS
+   Secret in `kyq-nginx` ([above](#certificates)). Routes with `certificate` keep their entry:
+   cert-manager issues a new certificate for it (this counts against Let's Encrypt's limits
+   like any issuance).
+3. **Switch the edge.** In `stack.yaml` replace `npm_url` with `proxy: nginx`, and each
+   `certificate_id` with `certificate_secret`. `apply`: it issues the certificates, renders
+   every route and verifies each on every pod. The installer no longer talks to NPM, whose
+   hosts stay exactly as they were and keep serving on the address.
+4. **Check** the new edge on its temporary port from an allowed client, before any client
+   depends on it: `curl --resolve hello.k80.example.com:31443:<a node> https://hello.k80.example.com:31443/`.
+5. **Move the address.** `kyquickstart uninstall npm` frees the NodePorts or address (it
+   deletes NPM's Deployment and Services, never its claims). Then give the `nginx` app `npm`'s
+   `node_ports`, `kube_vip_address` or `load_balancer_address` and `apply`. The outage is the
+   time between those two commands: have the edit ready.
+6. **Retire NPM** when you no longer want to go back. Its namespace, both claims (database,
+   certificates) and Secret are still there, and the installer never deletes them. Deleting
+   them is yours: `kubectl delete namespace kyq-npm`, and the released volumes if your storage
+   class retains them.
+
+To go back before step 6, reverse step 5 and 3: `uninstall nginx`, put `npm` and its address
+back in `stack.yaml` with `npm_url`, and `apply`.
+
 ## Managed certificates
 
 On a Kubernetes edge, NPM can request a Let's Encrypt certificate through a DNS-01 challenge, so
-the names never need to be public on port 80. A route then names the certificate instead of
+the names never need to be public on port 80. (Behind the nginx edge the same `certificates`
+entry is issued by the cluster's cert-manager instead: [above](#certificates). The token
+Secret below is the same.) A route then names the certificate instead of
 giving `certificate_id`; each route has exactly one of the two.
 
 Create the route names' DNS records before the first `apply`: product setups (KyNotes',
@@ -717,6 +940,29 @@ cannot present it, and preflight's network check refuses a foreign container and
 used. A complete public frp/Cloudflare-to-product G11 pilot is still required; for
 `cloudflare-direct` that includes the tunnel's connection, Cloudflare's headers as products see
 them and every catalog app through it.
+
+The nginx edge runs the same suites. `TestNginxContainer` runs the catalog's pinned image as
+its pods run it (uid 101, read-only, no capabilities) under the steps' rendered configuration:
+forged `X-Forwarded-For`, `X-Real-IP`, `Forwarded`, `CF-Connecting-IP` and `True-Client-IP` are
+never believed on a lan route, only the connector's `CF-Connecting-IP` on a cloudflare route,
+clients outside `allow_cidrs` or `connector_cidr` get 403 also when they forge an allowed
+address, an unknown TLS name gets no handshake, port 80 only redirects, a removed route is
+disabled and kept, a configuration nginx rejects is disabled again while the last good one
+keeps serving, and route changes and a renewed certificate load without restarting nginx.
+`TestKubernetesNginxEdge` and `TestKubernetesNginxEdgeJoins` are the two NPM kind suites
+behind the nginx edge (one test body, either proxy), with an operator TLS Secret: the same
+header, allow-list, join and sign-in checks, plus a restricted namespace with no admin
+Service or claim, the loopback status port closed to other pods, a foreign file's hostname
+refused, route changes reaching the same pods without a restart, and a managed certificate
+against cert-manager 1.21's own CRDs with strict field validation: preflight and apply
+refuse without them, then the Issuer, Certificate and token copy are written and apply waits
+for Ready. No cert-manager controller runs there: the test sets Ready and writes the Secret,
+so no issuance, ACME exchange or Cloudflare call is tested. `TestKubernetesNginxEdgeFailover`
+uses three kind nodes: a client's requests through the Service all succeed while an edge pod
+is deleted and replaced, and through the other node while a node is stopped; with that node
+down apply adds a route and verifies it, and the returning node serves it. kube-vip, MetalLB
+and Cilium are not in any test: how each address mode moves on a node's loss is from their
+documentation.
 
 Managed certificates and LAN DNS are covered by unit tests against fake NPM 2.16 and KyDNS APIs
 written from their source (NPM `v2.16.0` `backend/schema` and `backend/internal/certificate.js`;
