@@ -455,6 +455,14 @@ func testNginxEdge(t *testing.T, ctx context.Context, cs kubernetes.Interface, k
 	if got := code("managed.example.test"); got != "000" {
 		t.Fatalf("removed managed route answered %s", got)
 	}
+	// The Secret the disabled route named is unmounted one apply later, never under a file
+	// that still names it; after that a rerun changes nothing.
+	if out := apply("certificate unmounted"); status(out, "nginx.deploy") != "ok" {
+		t.Fatal("the unused TLS Secret stayed mounted")
+	}
+	if got := code("hello.example.test"); got != "200" {
+		t.Fatalf("hello after the certificate left: %s", got)
+	}
 }
 
 // fetchPinned downloads url and refuses content other than the pinned digest.

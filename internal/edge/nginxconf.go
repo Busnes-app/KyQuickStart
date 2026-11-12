@@ -177,6 +177,28 @@ func TLSSecrets(e stack.Edge) []string {
 	return slices.Compact(out)
 }
 
+// MountedTLSSecrets are the Secrets the edge's pods must mount for e: its routes', and those
+// the enabled files still name. A pod replaced before a route's file is rewritten or disabled
+// would otherwise start with a file whose certificate it cannot read, and not start at all.
+// A Secret only an old file named is dropped by the apply after the one that rewrote it.
+func MountedTLSSecrets(e stack.Edge, files map[string]string) []string {
+	out := TLSSecrets(e)
+	for name, file := range files {
+		if !strings.HasSuffix(name, enabledExt) {
+			continue
+		}
+		for _, line := range strings.Split(file, "\n") {
+			if rest, ok := strings.CutPrefix(line, "ssl_certificate "+NginxTLSDir+"/"); ok {
+				if secret, _, ok := strings.Cut(rest, "/"); ok {
+					out = append(out, secret)
+				}
+			}
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
 // routeKey names r's file without its extension. One hostname has one key, so two routes
 // cannot both serve a name.
 func routeKey(hostname string) string {

@@ -625,7 +625,9 @@ kubectl -n kyq-nginx label secret my-tls ky.managed-by=kyquickstart
 Preflight and each route's step refuse a Secret that is absent, unlabelled, of another type,
 expired or does not cover the hostname. Replacing its contents is picked up by reload.
 A certificate first named by a route adds a volume to the pods, so that one apply replaces
-them, node by node; route changes do not.
+them, node by node; route changes do not. A Secret no route names any more stays mounted for
+the apply that moves the routes off it and is dropped by the next one, which replaces the pods
+once more: a pod never starts with a route whose certificate it cannot read.
 
 ### Permissions
 

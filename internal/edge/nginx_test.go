@@ -326,6 +326,12 @@ func TestNginxCertificates(t *testing.T) {
 	if got := TLSSecrets(e); len(got) != 1 || got[0] != "kyq-tls-wild" {
 		t.Fatalf("TLS Secrets = %v", got)
 	}
+	// A Secret an enabled file still names stays mounted until that file is rewritten.
+	live := map[string]string{"a" + enabledExt: nginxServer("# m\n", e, stack.Route{Hostname: "old.example.test", CertificateSecret: "old-tls", ForwardScheme: "http", ForwardHost: "h", ForwardPort: 1}),
+		"b" + disabledExt: nginxServer("# m\n", e, stack.Route{Hostname: "off.example.test", CertificateSecret: "off-tls", ForwardScheme: "http", ForwardHost: "h", ForwardPort: 1})}
+	if got := MountedTLSSecrets(e, live); len(got) != 2 || got[0] != "kyq-tls-wild" || got[1] != "old-tls" {
+		t.Fatalf("mounted TLS Secrets = %v", got)
+	}
 	if err := n.Preflight(ctx, e); err != nil {
 		t.Fatal(err)
 	}

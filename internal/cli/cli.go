@@ -589,7 +589,11 @@ func (s *session) connect(ctx context.Context, trust trustFlag) error {
 			k.needs = s.needs(t.Name)
 			for _, e := range s.plan.Edges {
 				if e.Nginx() && e.Target == t.Name {
-					k.tlsSecrets = edge.TLSSecrets(e)
+					files, _, err := k.c.EdgeFiles(ctx)
+					if err != nil {
+						return fmt.Errorf("edge %s: %w", e.Target, err)
+					}
+					k.tlsSecrets = edge.MountedTLSSecrets(e, files)
 				}
 			}
 			k.tunnel = tunnelEdge(s.plan, t.Name)
