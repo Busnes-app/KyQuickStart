@@ -14,6 +14,9 @@ state directory, target data and target-held credentials; do not reset them as a
 
 ## Unreleased
 
+- Releases also carry `kyquickstart-<tag>.intoto.jsonl`, the Sigstore bundle of the binaries'
+  build-provenance attestation, for `gh attestation verify --bundle`. `golang.org/x/crypto` is
+  v0.59.0. **Upgrade impact:** none.
 - The nginx edge on Kubernetes (owner amendment, 2026-11-11): a new `nginx` edge component and
   `proxy: nginx` on an edge, in place of `npm_url`. nginx runs on every node, unprivileged at
   Pod Security `restricted`, with no database, admin API or volume, and serves configuration

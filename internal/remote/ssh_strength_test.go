@@ -149,7 +149,7 @@ func TestSSHAgentCertificatesAndMixedKeys(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			cert := &ssh.Certificate{Key: leaf.PublicKey(), CertType: ssh.UserCert, ValidBefore: ssh.CertTimeInfinity}
+			cert := &ssh.Certificate{Key: leaf.PublicKey(), CertType: ssh.UserCert, ValidPrincipals: []string{"fixture"}, ValidBefore: ssh.CertTimeInfinity}
 			if err := cert.SignCert(rand.Reader, ca); err != nil {
 				t.Fatal(err)
 			}

@@ -8,7 +8,7 @@ require (
 	github.com/Busnes-app/ky-primitives v0.10.1
 	github.com/google/uuid v1.6.0
 	go.yaml.in/yaml/v3 v3.0.6
-	golang.org/x/term v0.47.0
+	golang.org/x/term v0.48.0
 	k8s.io/api v0.37.2
 	k8s.io/apimachinery v0.37.2
 	k8s.io/client-go v0.37.2
@@ -58,7 +58,7 @@ require (
 	golang.org/x/exp v0.0.0-20261014143641-f0251eb4aa3e // indirect
 	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.13.0 // indirect
@@ -73,6 +73,6 @@ require (
 )
 
 require (
-	golang.org/x/crypto v0.58.0
-	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/crypto v0.59.0
+	golang.org/x/sys v0.50.0 // indirect
 )

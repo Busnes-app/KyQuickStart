@@ -24,6 +24,9 @@ published its runner image but uploaded no installer binaries.
   integration, for the image digest (`publish` job) and for each of the four binaries
   (`binaries` job). It verifies each attestation before it uploads the binaries and before it
   moves `:stable`, and checks the uploaded binaries again after downloading them.
+- The release also carries that attestation's Sigstore bundle, `kyquickstart-v<version>.intoto.jsonl`.
+  Add `--bundle kyquickstart-v<version>.intoto.jsonl` to `gh attestation verify` to check a binary
+  against it instead of fetching the attestation from GitHub's API.
 - There is no long-lived signing key to download. The signature is tied to a workflow identity,
   and that identity is what you check:
   `https://github.com/Busnes-app/KyQuickStart/.github/workflows/release-image.yml@refs/tags/v<version>`.
