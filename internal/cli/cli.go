@@ -425,6 +425,9 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 		app.Kubernetes = &k
 		cat[a.Name] = app
 	}
+	if err := withReplicas(st, s.placed, cat); err != nil {
+		return nil, err
+	}
 	// Two edge components share a cluster only while one replaces the other: each needs its
 	// own NodePorts and address.
 	published := map[string]string{}
@@ -835,7 +838,7 @@ func (s *session) apply(ctx context.Context, publish func() error) error {
 	if s.plan != nil && privateRecovery(s.plan) {
 		handover = pairingLines(handover, s.postPairing)
 	}
-	fmt.Fprint(s.o.Out, handover+s.postRecords+s.bootstrapNote)
+	fmt.Fprint(s.o.Out, handover+s.postRecords+s.bootstrapNote+replicaNote(s.cat["kyidentity"], s.placed["kyidentity"]))
 	if s.demo {
 		fmt.Fprintln(s.o.Out, "Demo deployment passed its driver checks. Suite SSO, administrator access and backups are not configured.")
 		if t, ok := s.placed["hello"]; ok {
@@ -1178,4 +1181,58 @@ func tunnelEdge(st *stack.Stack, target string) bool {
 		}
 	}
 	return false
+}
+
+// withReplicas carries the plan's replicas to the catalog's copy of the app, or refuses them.
+func withReplicas(st *stack.Stack, placed map[string]stack.Target, cat catalog.Catalog) error {
+	for _, a := range st.Apps {
+		if a.Replicas == 0 {
+			continue
+		}
+		app := cat[a.Name]
+		switch {
+		case !placed[a.Name].Kubernetes():
+			return fmt.Errorf("app %q: replicas are for a Kubernetes target", a.Name)
+		case app.Kubernetes.Replicas == nil:
+			return fmt.Errorf("app %q cannot run as replicas", a.Name)
+		case !catalog.VersionAtLeast(app.Version, app.Kubernetes.Replicas.Since):
+			return fmt.Errorf("app %q: replicas need %s %s or later, and this catalog installs %s", a.Name, a.Name, app.Kubernetes.Replicas.Since, app.Version)
+		}
+		k := *app.Kubernetes
+		k.ReplicaCount, k.DatabaseSecret = a.Replicas, a.DatabaseSecret
+		// The key every replica may seal backups to: the one the owner confirmed for
+		// KyRecovery, never one read back from KyIdentity's own database.
+		if i := slices.IndexFunc(st.Apps, func(x stack.App) bool { return x.Name == "kyrecovery" }); i >= 0 {
+			k.RecoveryKeyID = st.Apps[i].RecoveryKeyID
+		}
+		app.Kubernetes = &k
+		cat[a.Name] = app
+	}
+	return nil
+}
+
+// replicaNote is printed after every apply of a replicated KyIdentity: what backs its database
+// up is the owner's to arrange, and apply cannot see whether they have.
+func replicaNote(app catalog.App, t stack.Target) string {
+	k := app.Kubernetes
+	if !t.Kubernetes() || k == nil || k.ReplicaCount == 0 {
+		return ""
+	}
+	out := fmt.Sprintf("\nKyIdentity runs as %d replicas on ", k.ReplicaCount)
+	if k.DatabaseSecret == "" {
+		out += "a Postgres pod the installer deployed (claim vol-database in kyq-kyidentity).\n" +
+			"  That pod is the one copy of every account. Nothing in the installer backs it up, and while\n" +
+			"  its node is down nobody can sign in.\n"
+	} else {
+		out += "the database named by Secret " + k.DatabaseSecret + ".\n" +
+			"  The installer never reads or backs up that database: its replication and backups are yours.\n"
+	}
+	if k.RecoveryKeyID == "" {
+		return out + "  Outstanding human step: backups. Replicas refuse to back up until they are told which recovery\n" +
+			"  key to seal to. Set recovery_key_id on kyrecovery in stack.yaml, run apply again, then pair\n" +
+			"  KyIdentity with KyRecovery in its Backups screen. Until then KyIdentity has NO backup.\n"
+	}
+	return out + "  Outstanding human step, unless already done: pair KyIdentity with KyRecovery in its Backups\n" +
+		"  screen, and check there that a backup has been deposited. Its replicas seal only to recovery\n" +
+		"  key " + k.RecoveryKeyID + ".\n"
 }

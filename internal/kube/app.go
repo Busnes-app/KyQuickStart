@@ -49,7 +49,11 @@ func hashOf(parts ...string) string {
 // Steps returns the app's install steps: secrets, deploy, health, and for NPM its bootstrap.
 func Steps(a App) []engine.Step {
 	hash := render(a).hash()
-	steps := []engine.Step{secretsStep{a}, deployStep{a: a, hash: hash}, healthStep{a: a, hash: hash}}
+	steps := []engine.Step{secretsStep{a}}
+	if a.replicated() {
+		steps = append(steps, replicaSecretsStep{a})
+	}
+	steps = append(steps, deployStep{a: a, hash: hash}, healthStep{a: a, hash: hash})
 	if a.Name == "npm" && a.Catalog.Category == "edge" {
 		steps = append(steps, npmBootstrapStep{a})
 	}

@@ -138,7 +138,7 @@ func (c *Client) deleteWorkload(ctx context.Context, w workload) error {
 	if w.daemon {
 		err = c.cs.AppsV1().DaemonSets(ns).Delete(ctx, appName, opts)
 	} else {
-		err = c.cs.AppsV1().Deployments(ns).Delete(ctx, appName, opts)
+		err = c.cs.AppsV1().Deployments(ns).Delete(ctx, w.object.GetName(), opts)
 	}
 	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("delete %s: %w", w.kind(), err)

@@ -33,8 +33,23 @@ func (h healthStep) state(ctx context.Context) (string, bool, error) {
 		return "deployment missing", false, nil
 	case w.replicas != 1:
 		return "deployment is not at one replica", false, nil
+	case w.why != "":
+		return w.why, w.gaveUp, nil
 	}
-	return w.why, w.gaveUp, nil
+	for _, e := range render(h.a).extras() {
+		d, found, err := getOwned(ctx, h.a.Client.cs.AppsV1().Deployments(namespaceOf(h.a.Name)), "deployment", e.Name)
+		switch {
+		case err != nil:
+			return "", false, err
+		case !found:
+			return "deployment " + e.Name + " missing", false, nil
+		case failed(d):
+			return e.Name + " rollout failed: " + reasons(d), true, nil
+		case replicas(d) != *e.Spec.Replicas || !ready(d):
+			return fmt.Sprintf("%s: %d of %d replicas ready", e.Name, d.Status.ReadyReplicas, *e.Spec.Replicas), false, nil
+		}
+	}
+	return "", false, nil
 }
 
 func (h healthStep) Inspect(ctx context.Context) (bool, error) {

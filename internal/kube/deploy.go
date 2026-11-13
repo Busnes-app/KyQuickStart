@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Busnes-app/kyquickstart/internal/edge"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -42,6 +43,9 @@ func (d deployStep) check(ctx context.Context) (string, error) {
 			return "namespace label " + k + " differs", nil
 		}
 	}
+	if err := d.a.replicaChange(ctx); err != nil {
+		return "", err
+	}
 	w, found, err := d.a.Client.workload(ctx, d.a.Name)
 	switch {
 	case err != nil:
@@ -54,6 +58,23 @@ func (d deployStep) check(ctx context.Context) (string, error) {
 		return "the workload is a " + w.kind(), nil
 	case !w.daemon && w.replicas != 1:
 		return "deployment is not at one replica", nil
+	}
+	for _, e := range want.extras() {
+		have, found, err := getOwned(ctx, cs.AppsV1().Deployments(ns), "deployment", e.Name)
+		switch {
+		case err != nil || !found:
+			return "deployment " + e.Name + " missing", err
+		case have.Annotations[hashAnnotation] != d.hash:
+			return "deployment " + e.Name + " differs from this release", nil
+		case replicas(have) != *e.Spec.Replicas:
+			return fmt.Sprintf("deployment %s is not at %d replicas", e.Name, *e.Spec.Replicas), nil
+		}
+	}
+	if want.DatabasePolicy != nil {
+		have, found, err := getOwned(ctx, cs.NetworkingV1().NetworkPolicies(ns), "network policy", want.DatabasePolicy.Name)
+		if err != nil || !found || !equality.Semantic.DeepEqual(have.Spec, want.DatabasePolicy.Spec) {
+			return "database network policy missing or differs", err
+		}
 	}
 	if want.Config != nil {
 		have, found, err := getOwned(ctx, cs.CoreV1().ConfigMaps(ns), "config map", edgeConfig)
@@ -134,6 +155,9 @@ func (d deployStep) Inspect(ctx context.Context) (bool, error) {
 // Apply writes the policy, claims and service, then the Deployment carrying the input hash, so
 // a run that dies early redeploys next time.
 func (d deployStep) Apply(ctx context.Context) error {
+	if err := d.a.replicaChange(ctx); err != nil {
+		return err
+	}
 	if err := d.a.ensureNamespace(ctx, false); err != nil {
 		return err
 	}
@@ -187,11 +211,51 @@ func (d deployStep) Apply(ctx context.Context) error {
 		}
 		return d.a.ensureNamespace(ctx, true)
 	}
-	o.Deployment.Annotations = map[string]string{hashAnnotation: d.hash}
-	if err := upsert(ctx, cs.AppsV1().Deployments(ns), "deployment", o.Deployment, nil); err != nil {
+	if err := d.stopOldReplicas(ctx, o); err != nil {
 		return err
 	}
+	if o.DatabasePolicy != nil {
+		if err := upsert(ctx, cs.NetworkingV1().NetworkPolicies(ns), "network policy", o.DatabasePolicy, nil); err != nil {
+			return err
+		}
+	}
+	// The database before the pods that wait for it, and "app" before the replicas: it is
+	// the one that migrates.
+	for _, dep := range []*appsv1.Deployment{o.Database, o.Deployment, o.Replica} {
+		if dep == nil {
+			continue
+		}
+		dep.Annotations = map[string]string{hashAnnotation: d.hash}
+		if err := upsert(ctx, cs.AppsV1().Deployments(ns), "deployment", dep, nil); err != nil {
+			return err
+		}
+	}
 	return d.a.ensureNamespace(ctx, true)
+}
+
+// stopOldReplicas stops the replicas before another release's image starts: "app" migrates the
+// database as it starts, and no release promises to serve a schema newer than itself. An
+// upgrade is therefore an outage as long as a single instance's, not a rolling one.
+func (d deployStep) stopOldReplicas(ctx context.Context, o objects) error {
+	if o.Replica == nil {
+		return nil
+	}
+	api := d.a.Client.cs.AppsV1().Deployments(namespaceOf(d.a.Name))
+	have, found, err := getOwned(ctx, api, "deployment", replicaName)
+	if err != nil || !found || have.Spec.Template.Spec.Containers[0].Image == o.Replica.Spec.Template.Spec.Containers[0].Image {
+		return err
+	}
+	have.Spec.Replicas = ptr.To(int32(0))
+	if _, err := api.Update(ctx, have, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("deployment %s: stop before the upgrade: %w", replicaName, err)
+	}
+	return waitGone(ctx, d.a, func(ctx context.Context) error {
+		left, err := d.a.Client.podsLeft(ctx, d.a.Name, have.Spec.Selector)
+		if err == nil && left {
+			err = errors.New("a replica of the previous release is still running")
+		}
+		return err
+	})
 }
 
 func (d deployStep) Verify(ctx context.Context) error {

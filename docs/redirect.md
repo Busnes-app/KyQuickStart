@@ -30,6 +30,12 @@ this one wins.
   liveness and startup probes, spreading over nodes and a 30-second eviction from a dead node
   ([guided setup](guided-setup.md#node-failure-on-kubernetes)). More than one replica stays out
   of scope: it needs product changes first.
+- Amendment (owner, 2026-11-13): KyIdentity as replicas on Kubernetes, now that the product
+  can (KyIdentity-server #219-#228): the plan's `replicas` on one Postgres database, either a
+  Postgres pod the installer deploys or the operator's own, named by a Secret. New installs
+  only; moving an installed single instance stays manual
+  ([guided setup](guided-setup.md#kyidentity-as-replicas-on-kubernetes)). Every other app stays
+  one replica.
 - Amendment (owner, 2026-11-11): "replace Nginx Proxy Manager on Kubernetes so one box does not
   take down the network; nginx plus cert-manager approved". The `nginx` edge component
   (`proxy: nginx`): plain nginx on every node, serving configuration the installer renders from

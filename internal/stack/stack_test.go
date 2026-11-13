@@ -83,6 +83,30 @@ func TestRecoveryKeyID(t *testing.T) {
 	}
 }
 
+func TestParseReplicas(t *testing.T) {
+	plan := func(app string) string {
+		return "version: 1\ntargets:\n  - name: k1\n    kubeconfig: /dev/null\napps:\n" + app
+	}
+	s, err := Parse([]byte(plan("  - name: kyidentity\n    target: k1\n    replicas: 3\n    database_secret: my-postgres\n")))
+	if err != nil || s.Apps[0].Replicas != 3 || s.Apps[0].DatabaseSecret != "my-postgres" {
+		t.Fatalf("replicas: %v", err)
+	}
+	for app, want := range map[string]string{
+		"  - name: kyidentity\n    target: k1\n    replicas: 1\n":                                       "is 2 to 5",
+		"  - name: kyidentity\n    target: k1\n    replicas: 6\n":                                       "is 2 to 5",
+		"  - name: kyidentity\n    target: k1\n    replicas: -2\n":                                      "is 2 to 5",
+		"  - name: kypost\n    target: k1\n    replicas: 2\n":                                           "belongs to kyidentity only",
+		"  - name: kyidentity\n    target: k1\n    database_secret: my-postgres\n":                      "database_secret needs replicas",
+		"  - name: kyidentity\n    target: k1\n    replicas: 2\n    database_secret: kyq-database\n":    "does not start with kyq-",
+		"  - name: kyidentity\n    target: k1\n    replicas: 2\n    database_secret: My_DB\n":           "must be a Secret name",
+		"  - name: kyidentity\n    target: k1\n    replicas: 2\n    database_url: postgres://u:p@h/d\n": "field database_url not found",
+	} {
+		if _, err := Parse([]byte(plan(app))); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: err = %v, want %q", app, err, want)
+		}
+	}
+}
+
 func TestParseRejectsDuplicateApp(t *testing.T) {
 	_, err := Parse([]byte(good + "  - name: hello\n    target: k1\n"))
 	if err == nil || !strings.Contains(err.Error(), `duplicate app "hello"`) {

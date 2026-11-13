@@ -54,6 +54,9 @@ type removeStep struct{ a App }
 func (s removeStep) ID() string        { return s.a.Name + ".uninstall" }
 func (s removeStep) InputHash() string { return hashOf("uninstall") }
 
+// parts are the pod names a replicated app adds beside its own.
+func parts(app string) []string { return []string{app, replicaPart(app), databasePart(app)} }
+
 // objects returns the app's workload (found false where absent) and its present Services.
 func (s removeStep) objects(ctx context.Context) (workload, bool, []*corev1.Service, error) {
 	ns := namespaceOf(s.a.Name)
@@ -62,7 +65,7 @@ func (s removeStep) objects(ctx context.Context) (workload, bool, []*corev1.Serv
 		return w, false, nil, err
 	}
 	var svcs []*corev1.Service
-	for _, name := range []string{appName, publicName} {
+	for _, name := range []string{appName, publicName, databaseName} {
 		svc, found, err := getOwned(ctx, s.a.Client.cs.CoreV1().Services(ns), "service", name)
 		if err != nil {
 			return w, false, nil, err
@@ -81,8 +84,15 @@ func (s removeStep) Inspect(ctx context.Context) (bool, error) {
 	if err != nil || found || len(svcs) > 0 {
 		return false, err
 	}
-	left, err := s.a.Client.podsLeft(ctx, s.a.Name, &metav1.LabelSelector{MatchLabels: selector(s.a.Name)})
-	return !left, err
+	if extras, err := s.a.Client.extras(ctx, s.a.Name); err != nil || len(extras) > 0 {
+		return false, err
+	}
+	for _, part := range parts(s.a.Name) {
+		if left, err := s.a.Client.podsLeft(ctx, s.a.Name, &metav1.LabelSelector{MatchLabels: selector(part)}); err != nil || left {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 // Apply deletes by UID, so an object replaced in between is left alone.
@@ -94,6 +104,16 @@ func (s removeStep) Apply(ctx context.Context) error {
 	ns := namespaceOf(s.a.Name)
 	if found {
 		if err := s.a.Client.deleteWorkload(ctx, w); err != nil {
+			return err
+		}
+	}
+	// The replicas before the database they write to.
+	extras, err := s.a.Client.extras(ctx, s.a.Name)
+	if err != nil {
+		return err
+	}
+	for _, d := range extras {
+		if err := s.a.Client.deleteWorkload(ctx, workload{object: d}); err != nil {
 			return err
 		}
 	}
@@ -179,6 +199,26 @@ func (s unmanageStep) sweep(ctx context.Context, fix bool) (string, error) {
 			return relabel(ctx, cs.NetworkingV1().NetworkPolicies(ns), policyName, unlabel, meta, fix)
 		}},
 		{"secret", func() (bool, error) { return relabel(ctx, cs.CoreV1().Secrets(ns), secretName, unlabel, meta, fix) }},
+	}
+	if k := s.a.Catalog.Kubernetes; k != nil && k.Replicas != nil { // whatever the plan now says
+		for _, name := range []string{replicaName, databaseName} {
+			checks = append(checks, check{"deployment " + name, func() (bool, error) {
+				return relabel(ctx, cs.AppsV1().Deployments(ns), name, unlabelTemplate, func(d *appsv1.Deployment) []map[string]string {
+					return []map[string]string{d.Labels, d.Spec.Template.Labels}
+				}, fix)
+			}})
+		}
+		for _, name := range []string{keysSecret, databaseSecret} {
+			checks = append(checks, check{"secret " + name, func() (bool, error) { return relabel(ctx, cs.CoreV1().Secrets(ns), name, unlabel, meta, fix) }})
+		}
+		checks = append(checks,
+			check{"database service", func() (bool, error) { return relabel(ctx, cs.CoreV1().Services(ns), databaseName, unlabel, meta, fix) }},
+			check{"database network policy", func() (bool, error) {
+				return relabel(ctx, cs.NetworkingV1().NetworkPolicies(ns), databaseName, unlabel, meta, fix)
+			}},
+			check{"claim vol-" + databaseName, func() (bool, error) {
+				return relabel(ctx, cs.CoreV1().PersistentVolumeClaims(ns), "vol-"+databaseName, unlabel, meta, fix)
+			}})
 	}
 	if o.DaemonSet != nil { // the nginx edge alone: other plans hold no permission for these
 		checks = append(checks,

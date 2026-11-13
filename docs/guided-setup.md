@@ -729,7 +729,8 @@ has it, and `install APP --certificate NAME` names a route's certificate there.
 
 ## Node failure on Kubernetes
 
-Every app runs as one pod with `ReadWriteOnce` claims, so a node's loss is an outage for the
+Every app runs as one pod with `ReadWriteOnce` claims (KyIdentity alone can run as
+[replicas](#kyidentity-as-replicas-on-kubernetes)), so a node's loss is an outage for the
 apps on it until their pods start elsewhere. The installer shortens it; it does not remove it:
 
 - A pod is evicted 30 seconds after its node is marked not ready or unreachable.
@@ -756,6 +757,105 @@ the address moves to a node whose pod is already running
 for apps on Docker targets). It needs cert-manager on the cluster for the certificates it
 issues, and a few more permissions ([edge setup](edge.md#permissions)). Its own failover is
 tested on three kind nodes.
+
+## KyIdentity as replicas on Kubernetes
+
+Owner amendment, 2026-11-13. Every sign-in in the suite goes through KyIdentity, so it alone can
+run as several pods: a node's loss then leaves sign-in working. It needs a KyIdentity release
+later than 0.6.0.1; an older catalog pin refuses the plan. Docker targets are refused.
+
+```yaml
+apps:
+  - name: kyidentity
+    target: k80
+    replicas: 3                    # 2 to 5
+    # database_secret: my-postgres # your own Postgres; without it the installer deploys one pod
+  - name: kyrecovery
+    target: k80
+    recovery_key_id: 0f3a...       # the key its replicas may seal backups to (see Backups)
+```
+
+Guided `plan` does not ask for this: write it in `stack.yaml`.
+
+### What apply deploys
+
+In namespace `kyq-kyidentity`, Pod Security `restricted`:
+
+- Deployment `app`, one pod. It keeps the `vol-data` claim, and the installer runs KyIdentity's
+  setup in it. It is replaced by stopping it first (`Recreate`), as a single instance is.
+- Deployment `app-replica`, the other `replicas - 1` pods, with no claim: nothing a replica
+  keeps in its data directory has to outlive it. Replaced one at a time, the new pod ready first.
+- Secret `kyq-replica-keys`: KyIdentity's four keys and the first administrator's password,
+  created once and never replaced. The keys are made by KyIdentity itself: a single instance
+  of the same image starts on a memory-backed directory in the cluster, generates them as any
+  first start does, and is deleted once they are read.
+- The Service sends to all of them. More replicas add availability, not write throughput:
+  KyIdentity makes one write at a time whatever their number.
+
+### The database
+
+**The installer's (default).** Deployment `database`: one Postgres 17 pod on claim
+`vol-database` (2 GiB), created UTF8 with the C locale as KyIdentity requires. KyIdentity
+connects as a role that owns its database and is not a superuser. Only KyIdentity's pods can
+reach it, and it can reach nothing. Read this before choosing it:
+
+- **It is one pod.** While its node is down nobody can sign in, exactly as with a single
+  KyIdentity. Replicas then protect against the loss of a KyIdentity pod's node, not the
+  database's. For sign-in that survives any one node, use your own highly available Postgres.
+- **The connection is not encrypted.** It stays inside the cluster, between the pods the
+  network policy names; a cluster whose network you do not trust needs your own Postgres with
+  TLS.
+- **The installer does not back it up** and does not upgrade it. KyIdentity's own backups
+  (below) are its only backup.
+
+**Your own.** Create the database, then a Secret holding its URL, and name the Secret in
+`database_secret`:
+
+```sql
+CREATE DATABASE kyidentity ENCODING 'UTF8' LOCALE 'C' TEMPLATE template0;
+```
+
+```sh
+kubectl -n kyq-kyidentity create secret generic my-postgres --from-file=url=<a file holding the URL>
+kubectl -n kyq-kyidentity label secret my-postgres ky.managed-by=kyquickstart
+```
+
+The namespace exists once apply has run: the first apply makes it and KyIdentity's keys, then
+stops and prints these two commands. Run them and apply again. The URL never appears in
+`stack.yaml`, in the state directory or in output; names starting with `kyq-` are the
+installer's. Postgres must be 16 or later. For a primary with a standby, name both hosts in
+the URL (`postgres://user:password@db1:5432,db2:5432/kyidentity`) and keep the two rules in
+KyIdentity's `docs/RUNNING.md`: replicate synchronously, and never let a failed primary come
+back writable. The installer cannot check either.
+
+### Backups
+
+A replicated KyIdentity is backed up only by KyIdentity itself, to KyRecovery. Replicas refuse
+to back up until they are told which recovery key to seal to, so that the database cannot
+choose who can open a backup:
+
+1. Run KyRecovery's ceremony and set `recovery_key_id` on `kyrecovery` in `stack.yaml`.
+2. `apply`. Every KyIdentity pod is restarted with that key ID.
+3. Pair KyIdentity with KyRecovery in its Backups screen, and check that a deposit arrives.
+
+Apply prints this as an outstanding step after every run, and says plainly when no key is set
+that KyIdentity has no backup. Pre-upgrade copies of claims do not cover a replicated
+KyIdentity, and `kyquickstart backup` covers Docker apps only.
+
+### What it does not do
+
+- **Move an existing install.** A KyIdentity already installed as a single instance is
+  refused: its accounts are in a SQLite file, and the installer does not yet move them. Move it
+  by hand with `migrate-to-postgres` (KyIdentity's `docs/RUNNING.md`), or keep one instance.
+  Removing `replicas` from an installed plan is refused too: the way back is a capsule restore.
+- **Rolling upgrades.** A new KyIdentity release stops every replica, starts `app` (which
+  migrates the database), then the replicas. The outage is as long as a single instance's.
+- **Change the recovery key.** Follow KyIdentity's `docs/RUNNING.md`; it needs SQL by hand.
+
+`stop` and `start` act on `app` and the replicas together; `stop` stops the installer's
+database too. `restart` leaves the database running. `logs` shows `app`'s pod only.
+`uninstall` removes the three workloads and keeps the claims and Secrets, so a reinstall is the
+same identity.
 
 ## Forwarded headers (trusted proxy)
 

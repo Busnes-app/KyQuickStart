@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
+	"github.com/Busnes-app/kyquickstart/internal/catalog/catalogtest"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
 	"github.com/Busnes-app/kyquickstart/internal/suite"
 	authorizationv1 "k8s.io/api/authorization/v1"
@@ -120,6 +121,82 @@ func TestNodePortsAndEdgePlacement(t *testing.T) {
 		if _, err := load(f.state, nil, f.o); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%q: err = %v, want %q", plan, err, want)
 		}
+	}
+}
+
+func TestReplicasReachTheCatalog(t *testing.T) {
+	key := strings.Repeat("ab", 32)
+	plan := func(apps string) (*stack.Stack, map[string]stack.Target) {
+		st, err := stack.Parse([]byte("version: 1\ntargets:\n  - name: k1\n    kubeconfig: /dev/null\n  - name: nas\n    host: nas.example.lan\n    user: kyq\n    root: /srv/kyq\napps:\n" + apps))
+		if err != nil {
+			t.Fatal(err)
+		}
+		placed := map[string]stack.Target{}
+		for _, a := range st.Apps {
+			placed[a.Name], _ = st.Target(a.Target)
+		}
+		return st, placed
+	}
+	released := func() catalog.Catalog { // a pin with replica support
+		cat, err := catalog.Load(catalogtest.Unpinned(catalog.Embedded()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cat
+	}
+	st, placed := plan("  - name: kyidentity\n    target: k1\n    replicas: 3\n    database_secret: my-postgres\n  - name: kyrecovery\n    target: k1\n    recovery_key_id: " + key + "\n")
+	cat := released()
+	if err := withReplicas(st, placed, cat); err != nil {
+		t.Fatal(err)
+	}
+	if k := cat["kyidentity"].Kubernetes; k.ReplicaCount != 3 || k.DatabaseSecret != "my-postgres" || k.RecoveryKeyID != key {
+		t.Fatalf("carried %+v", k)
+	}
+	if k := released()["kyidentity"].Kubernetes; k.ReplicaCount != 0 {
+		t.Fatal("the plan leaked into the catalog")
+	}
+	note := replicaNote(cat["kyidentity"], placed["kyidentity"])
+	if !strings.Contains(note, "3 replicas on the database named by Secret my-postgres") || !strings.Contains(note, "seal only to recovery\n  key "+key) || strings.Contains(note, "NO backup") {
+		t.Fatalf("note = %s", note)
+	}
+	// Without replicas the app is untouched.
+	st, placed = plan("  - name: kyidentity\n    target: k1\n")
+	cat = released()
+	if err := withReplicas(st, placed, cat); err != nil || cat["kyidentity"].Kubernetes.ReplicaCount != 0 {
+		t.Fatalf("single instance: %v", err)
+	}
+
+	st, placed = plan("  - name: kyidentity\n    target: nas\n    replicas: 2\n")
+	if err := withReplicas(st, placed, released()); err == nil || !strings.Contains(err.Error(), "replicas are for a Kubernetes target") {
+		t.Fatalf("replicas on a Docker host: %v", err)
+	}
+	if replicaNote(cat["kyidentity"], placed["kyidentity"]) != "" {
+		t.Fatal("a single instance gets the replicas' note")
+	}
+	st, placed = plan("  - name: kyidentity\n    target: k1\n    replicas: 2\n")
+	cat = released()
+	if err := withReplicas(st, placed, cat); err != nil {
+		t.Fatal(err)
+	}
+	if note := replicaNote(cat["kyidentity"], placed["kyidentity"]); !strings.Contains(note, "2 replicas on a Postgres pod the installer deployed") || !strings.Contains(note, "Until then KyIdentity has NO backup") {
+		t.Fatalf("note without a confirmed key = %s", note)
+	}
+	// The pinned 0.6.0.1 would start every pod as its own identity on its own SQLite file.
+	embedded, err := catalog.Load(catalog.Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, placed = plan("  - name: kyidentity\n    target: k1\n    replicas: 2\n")
+	since := embedded["kyidentity"].Kubernetes.Replicas.Since
+	if err := withReplicas(st, placed, embedded); catalog.VersionAtLeast(embedded["kyidentity"].Version, since) != (err == nil) {
+		t.Fatalf("catalog %s, replicas since %s: %v", embedded["kyidentity"].Version, since, err)
+	}
+	old := released()
+	app := old["kyidentity"]
+	app.Version = "0.6.0.1"
+	old["kyidentity"] = app
+	if err := withReplicas(st, placed, old); err == nil || !strings.Contains(err.Error(), "replicas need kyidentity 0.6.0.2 or later, and this catalog installs 0.6.0.1") {
+		t.Fatalf("an older pin: %v", err)
 	}
 }
 

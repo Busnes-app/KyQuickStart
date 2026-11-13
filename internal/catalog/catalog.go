@@ -195,6 +195,22 @@ type Kubernetes struct {
 	// Egress "edge" limits outbound traffic to cluster DNS and this cluster's edge; empty
 	// leaves it open.
 	Egress string `yaml:"egress,omitempty"`
+	// Replicas is set once the pinned release can run as replicas on one Postgres database
+	// (KyIdentity); nil refuses a plan's replicas.
+	Replicas *Replicas `yaml:"replicas,omitempty" json:",omitempty"`
+	// ReplicaCount, DatabaseSecret and RecoveryKeyID are the plan's; set from the stack.
+	ReplicaCount   int    `yaml:"-" json:",omitempty"`
+	DatabaseSecret string `yaml:"-" json:",omitempty"`
+	RecoveryKeyID  string `yaml:"-" json:",omitempty"`
+}
+
+// Replicas is the Postgres the installer deploys for a replicated app whose plan names no
+// database of its own.
+type Replicas struct {
+	// Since is the first release that runs as replicas; an older pin refuses the plan's.
+	Since         string `yaml:"since"`
+	DatabaseImage string `yaml:"database_image"` // a key of Images
+	DatabaseSize  string `yaml:"database_size"`
 }
 
 // SecretsMount is where the app's secrets are mounted.
@@ -819,6 +835,18 @@ func (k Kubernetes) validate(images map[string]string, baseline, edge bool) erro
 	}
 	if !sizeRE.MatchString(k.Resources.Memory) {
 		return fmt.Errorf("resources.memory %q must look like 64Mi or 1Gi", k.Resources.Memory)
+	}
+	if r := k.Replicas; r != nil {
+		switch _, ok := images[r.DatabaseImage]; {
+		case !ok:
+			return fmt.Errorf("replicas: database_image %q is not a key of images", r.DatabaseImage)
+		case !versionRE.MatchString(r.Since):
+			return fmt.Errorf("replicas: since %q must be a release like 1.2.3 or 1.2.3.4", r.Since)
+		case !sizeRE.MatchString(r.DatabaseSize):
+			return fmt.Errorf("replicas: database_size %q must look like 2Gi", r.DatabaseSize)
+		case baseline || edge || k.SuiteRunner || k.RunAs == 0 || len(k.Ports) == 0 || k.ReadinessPath == "":
+			return fmt.Errorf("replicas need a restricted app with a port and a readiness_path, and no suite_runner")
+		}
 	}
 	mounts := map[string]bool{"/tmp": true, k.SecretsMount(): true, SuiteRunnerMount: k.SuiteRunner}
 	for _, v := range k.Volumes {

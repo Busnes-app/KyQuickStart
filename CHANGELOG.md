@@ -17,6 +17,16 @@ state directory, target data and target-held credentials; do not reset them as a
 - Releases also carry `kyquickstart-<tag>.intoto.jsonl`, the Sigstore bundle of the binaries'
   build-provenance attestation, for `gh attestation verify --bundle`. `golang.org/x/crypto` is
   v0.59.0. **Upgrade impact:** none.
+- KyIdentity as replicas on Kubernetes (owner amendment, 2026-11-13; #183). `replicas: 2` to
+  `5` on the plan's `kyidentity` app runs that many pods behind its Service on one Postgres
+  database: a Postgres pod the installer deploys, or your own, named by `database_secret`
+  (a Secret you create; the URL never enters `stack.yaml`, state or output). **Not usable
+  yet:** it needs a KyIdentity release later than 0.6.0.1, and the catalog refuses the setting
+  until it pins one. New installs only: an installed single instance is refused, not moved.
+  The installer's Postgres is one pod with no backup of its own; apply says after every run
+  what backs KyIdentity up and what is still outstanding
+  ([guided setup](docs/guided-setup.md#kyidentity-as-replicas-on-kubernetes)). **Upgrade
+  impact:** none. Without `replicas` nothing a plan deploys changes, and no app restarts.
 - The nginx edge on Kubernetes (owner amendment, 2026-11-11): a new `nginx` edge component and
   `proxy: nginx` on an edge, in place of `npm_url`. nginx runs on every node, unprivileged at
   Pod Security `restricted`, with no database, admin API or volume, and serves configuration
