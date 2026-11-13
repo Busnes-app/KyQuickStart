@@ -548,6 +548,59 @@ func TestReplicaChangeRefused(t *testing.T) {
 	if got := replicaCounts(t, cs); got[replicaName] != 1 || got[databaseName] != 1 {
 		t.Fatalf("deployments after the refusal = %v", got)
 	}
+	// Another database for the same keys: adding, renaming or dropping database_secret.
+	swap := func(from App, secret string) App {
+		k := *from.Catalog.Kubernetes
+		k.DatabaseSecret = secret
+		from.Catalog.Kubernetes = &k
+		return from
+	}
+	before, err := json.Marshal(replicaCounts(t, cs))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range Steps(swap(a, "my-postgres"))[1:3] {
+		for name, err := range map[string]error{"Apply": s.Apply(ctx), "Verify": s.Verify(ctx)} {
+			if err == nil || !strings.Contains(err.Error(), "keeps its accounts in the installer's Postgres") ||
+				!strings.Contains(err.Error(), "annotate secret kyq-replica-keys kyquickstart/database=secret/my-postgres --overwrite") {
+				t.Fatalf("%s %s onto an operator database = %v", s.ID(), name, err)
+			}
+		}
+	}
+	if after, _ := json.Marshal(replicaCounts(t, cs)); string(after) != string(before) {
+		t.Fatalf("deployments changed by a refused swap: %s, was %s", after, before)
+	}
+	theirs, tcs, _ := replicatedApp(t, 2, "my-postgres")
+	_ = (replicaSecretsStep{theirs}).Apply(ctx) // makes the keys, then asks for the Secret
+	for _, to := range []string{"", "other-postgres"} {
+		if err := (replicaSecretsStep{swap(theirs, to)}).Apply(ctx); err == nil || !strings.Contains(err.Error(), "keeps its accounts in the Postgres that database_secret my-postgres names") {
+			t.Fatalf("operator database to %q = %v", to, err)
+		}
+	}
+	if _, err := tcs.CoreV1().Secrets("kyq-kyidentity").Get(ctx, databaseSecret, metav1.GetOptions{}); err == nil {
+		t.Fatal("a refused swap created the installer's database Secret")
+	}
+	// The operator moved the data and says so: the recorded database follows.
+	keys, err := tcs.CoreV1().Secrets("kyq-kyidentity").Get(ctx, keysSecret, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys.Annotations[databaseAnnotation] = "secret/other-postgres"
+	if _, err := tcs.CoreV1().Secrets("kyq-kyidentity").Update(ctx, keys, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := (replicaSecretsStep{swap(theirs, "other-postgres")}).Apply(ctx); err == nil || !strings.Contains(err.Error(), "database_secret other-postgres does not exist") {
+		t.Fatalf("after recording the move = %v", err)
+	}
+	// A keys Secret with no record is refused too, not assumed.
+	delete(keys.Annotations, databaseAnnotation)
+	if _, err := tcs.CoreV1().Secrets("kyq-kyidentity").Update(ctx, keys, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := (replicaSecretsStep{theirs}).Apply(ctx); err == nil || !strings.Contains(err.Error(), "a database the installer has no record of") {
+		t.Fatalf("keys with no record = %v", err)
+	}
+
 	// Its keys Secret lost while its database remains: never a fresh set of keys.
 	if err := cs.CoreV1().Secrets("kyq-kyidentity").Delete(ctx, keysSecret, metav1.DeleteOptions{}); err != nil {
 		t.Fatal(err)

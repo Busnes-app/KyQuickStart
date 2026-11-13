@@ -848,6 +848,12 @@ KyIdentity, and `kyquickstart backup` covers Docker apps only.
   refused: its accounts are in a SQLite file, and the installer does not yet move them. Move it
   by hand with `migrate-to-postgres` (KyIdentity's `docs/RUNNING.md`), or keep one instance.
   Removing `replicas` from an installed plan is refused too: the way back is a capsule restore.
+- **Move to another database.** Adding, removing or renaming `database_secret` on an installed
+  KyIdentity is refused: it would start on a database with none of its accounts. The installer
+  records the database on Secret `kyq-replica-keys` (annotation `kyquickstart/database`). After
+  moving the data yourself, or to rename your Secret, set the annotation as the refusal shows
+  and apply again. The installer never deletes the database you left; remove it yourself. It
+  cannot see a different URL put into the same Secret: that change is yours to get right.
 - **Rolling upgrades.** A new KyIdentity release stops every replica, starts `app` (which
   migrates the database), then the replicas. The outage is as long as a single instance's.
 - **Change the recovery key.** Follow KyIdentity's `docs/RUNNING.md`; it needs SQL by hand.

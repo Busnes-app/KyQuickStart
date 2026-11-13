@@ -377,6 +377,9 @@ func (s replicaSecretsStep) Apply(ctx context.Context) error {
 			}
 			sec.Data[bootstrapKey] = v[0]
 		}
+		if sec.Annotations[databaseAnnotation] == "" {
+			sec.Annotations = map[string]string{databaseAnnotation: s.a.databaseRecord()}
+		}
 		if len(sec.Data[replicaKeys[0].file]) > 0 {
 			return nil
 		}
@@ -525,21 +528,47 @@ func (c *Client) generateKeys(ctx context.Context, a App) ([][]byte, error) {
 	return keys, nil
 }
 
-// replicaChange refuses the two moves the installer does not make: a single instance's data
-// into Postgres, and a replicated install back to one instance on an empty SQLite file. Either
-// would start KyIdentity with no accounts while the old ones sit unused in the namespace.
+// databaseAnnotation, on the keys Secret, records which database holds the install's accounts.
+const databaseAnnotation = "kyquickstart/database"
+
+// databaseRecord is the plan's database as databaseAnnotation writes it.
+func (a App) databaseRecord() string {
+	if a.ownDatabase() {
+		return "installer"
+	}
+	return "secret/" + a.Catalog.Kubernetes.DatabaseSecret
+}
+
+func describeDatabase(record string) string {
+	switch name, operators := strings.CutPrefix(record, "secret/"); {
+	case operators:
+		return "the Postgres that database_secret " + name + " names"
+	case record == "installer":
+		return "the installer's Postgres (Deployment " + databaseName + ")"
+	}
+	return "a database the installer has no record of"
+}
+
+// replicaChange refuses the moves the installer does not make: a single instance's data into
+// Postgres, a replicated install back to one instance on an empty SQLite file, and a replicated
+// install onto another database. Each would start KyIdentity with no accounts while the old
+// ones sit unused.
 func (a App) replicaChange(ctx context.Context) error {
 	if k := a.Catalog.Kubernetes; k == nil || k.Replicas == nil {
 		return nil
 	}
 	ns := namespaceOf(a.Name)
-	_, keys, err := getOwned(ctx, a.Client.cs.CoreV1().Secrets(ns), "secret", keysSecret)
+	sec, keys, err := getOwned(ctx, a.Client.cs.CoreV1().Secrets(ns), "secret", keysSecret)
 	if err != nil {
 		return err
 	}
 	switch {
 	case keys && !a.replicated():
 		return fmt.Errorf("%s is installed as replicas on Postgres and the plan no longer has replicas: restore its replicas, or move it back by hand with a capsule (KyIdentity's docs/RUNNING.md)", a.Name)
+	case keys && sec.Annotations[databaseAnnotation] != a.databaseRecord():
+		return fmt.Errorf("%[1]s keeps its accounts in %[2]s and the plan names %[3]s. The installer does not move a database: %[1]s would start with no accounts and the old ones would sit unused. Put database_secret back as it was. If you moved the data yourself, or only renamed the Secret, record that and run apply again (the installer deletes no database; an unused one is yours to remove):\n"+
+			"  kubectl -n %[4]s annotate secret %[5]s %[6]s=%[7]s --overwrite",
+			a.Name, describeDatabase(sec.Annotations[databaseAnnotation]), describeDatabase(a.databaseRecord()), ns, keysSecret, databaseAnnotation, a.databaseRecord())
 	case keys || !a.replicated():
 		return nil
 	}

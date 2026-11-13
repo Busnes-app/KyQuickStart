@@ -508,7 +508,11 @@ func TestKubernetesIdentityReplicas(t *testing.T) {
 	if _, err := r.run(kube.Steps(r.plan(0, ""))); err == nil || !strings.Contains(err.Error(), "installed as replicas on Postgres") {
 		t.Fatalf("back to a single instance: %v", err)
 	}
-	if len(r.pods()) != 3 {
+	// Nor onto another database, with the same keys and none of the accounts.
+	if _, err := r.run(kube.Steps(r.plan(3, "my-postgres"))); err == nil || !strings.Contains(err.Error(), "keeps its accounts in the installer's Postgres") {
+		t.Fatalf("onto another database: %v", err)
+	}
+	if pods = r.pods(); len(pods) != 3 || len(r.deployments()) != 3 || !r.signedIn(pods[2], session) {
 		t.Fatal("the refusal changed the install")
 	}
 }

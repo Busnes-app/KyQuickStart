@@ -22,7 +22,8 @@ state directory, target data and target-held credentials; do not reset them as a
   database: a Postgres pod the installer deploys, or your own, named by `database_secret`
   (a Secret you create; the URL never enters `stack.yaml`, state or output). **Not usable
   yet:** it needs a KyIdentity release later than 0.6.0.1, and the catalog refuses the setting
-  until it pins one. New installs only: an installed single instance is refused, not moved.
+  until it pins one. New installs only: an installed single instance is refused, not moved,
+  and so is a change of `database_secret` on an installed one.
   The installer's Postgres is one pod with no backup of its own; apply says after every run
   what backs KyIdentity up and what is still outstanding
   ([guided setup](docs/guided-setup.md#kyidentity-as-replicas-on-kubernetes)). **Upgrade
