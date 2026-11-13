@@ -216,7 +216,8 @@ func TestReleaseWorkflow(t *testing.T) {
 	for job, wants := range map[string][]string{
 		"publish": {"internal/appversion/VERSION", `grep -qx 'var runnerImage = ""'`, `git rev-parse "$GITHUB_SHA^{commit}"`, "check-runs?filter=latest"},
 		"binaries": {"scripts/release-binaries.sh", `git rev-parse "$GITHUB_SHA^{commit}"`, "gh attestation verify",
-			"release-image.yml@refs/tags/$TAG", "gh release upload", "gh release download", "gh release delete-asset", "version --runner-image"},
+			"release-image.yml@refs/tags/$TAG", "gh release upload", "gh release download", "gh release delete-asset", "version --runner-image",
+			`"bundle/kyquickstart-$TAG.intoto.jsonl"`, `--bundle "downloaded/kyquickstart-$TAG.intoto.jsonl"`},
 	} {
 		for _, want := range wants {
 			if !strings.Contains(runs[job], want) {

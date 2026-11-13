@@ -262,8 +262,9 @@ edge compatibility: `docs/redirect.md`.
   `docs/kyyard-runner.compose.yaml`, pod manifest `docs/kyyard-runner.k8s.yaml`; image `Dockerfile`, published by
   `.github/workflows/release-image.yml`. That workflow runs `publish` (image, attested and
   verified), `binaries` (`scripts/release-binaries.sh`, the only home of the release `-ldflags`,
-  stamps `main.runnerImage` with the verified digest; the four binaries are attested, uploaded
-  and re-verified after download) and `promote` (`:stable`), each with only the permissions it uses.
+  stamps `main.runnerImage` with the verified digest; the four binaries are attested, uploaded with
+  their attestation bundle `kyquickstart-<tag>.intoto.jsonl`, and re-verified after download, also
+  against that bundle) and `promote` (`:stable`), each with only the permissions it uses.
   The binaries are built `-trimpath -buildvcs=false`, so they rebuild to the same bytes from any
   directory or tarball; how users verify and rebuild a release: `docs/VERIFYING-RELEASES.md`.
 - Contribution process, test policy and coding standard: `CONTRIBUTING.md`. Threat model, trust
