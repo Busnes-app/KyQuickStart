@@ -23,11 +23,7 @@ import (
 	"k8s.io/utils/ptr"
 )
 
-// The CloudNativePG release the test installs, as a cluster's owner would.
-const (
-	databaseOperator       = "https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v1.30.1/cnpg-1.30.1.yaml"
-	databaseOperatorSHA256 = "37237f145d8138256ea25ae830f87759255665ff08f8d552fdd8224a5ec032fb"
-)
+const operatorNS = "kyq-cloudnative-pg"
 
 // instances are the Cluster's pods that are not being deleted.
 func (r *replicaCluster) instances() []corev1.Pod {
@@ -61,8 +57,8 @@ func (r *replicaCluster) sql(statement string) string {
 }
 
 // TestKubernetesIdentityDatabaseCluster installs KyIdentity as replicas on a highly available
-// Postgres, on a kind cluster with three workers and the CloudNativePG operator, then powers
-// off the node the primary runs on. It needs the image TestKubernetesIdentityReplicas needs.
+// Postgres, on a kind cluster with three workers and the catalog's CloudNativePG operator,
+// which it installs first, then powers off the node the primary runs on. It needs the image TestKubernetesIdentityReplicas needs.
 func TestKubernetesIdentityDatabaseCluster(t *testing.T) {
 	image := os.Getenv("KYQ_TEST_IDENTITY_REPLICA_IMAGE")
 	if image == "" {
@@ -103,6 +99,7 @@ func TestKubernetesIdentityDatabaseCluster(t *testing.T) {
 		if t.Failed() {
 			t.Logf("logs:\n%s", r.logs())
 			t.Logf("cluster:\n%s", kubectl(nil, "-n", replicaNS, "get", "cluster,pods,pvc", "-o", "wide"))
+			t.Logf("operator:\n%s", kubectl(nil, "-n", operatorNS, "get", "pods,deployments", "-o", "wide"))
 			events, _ := cs.CoreV1().Events(replicaNS).List(context.Background(), metav1.ListOptions{})
 			for _, e := range events.Items {
 				t.Logf("event: %s %s: %s", e.InvolvedObject.Name, e.Reason, e.Message)
@@ -129,13 +126,42 @@ func TestKubernetesIdentityDatabaseCluster(t *testing.T) {
 		t.Fatal("KyIdentity was deployed without a database")
 	}
 
-	kubectl(fetchPinned(t, databaseOperator, databaseOperatorSHA256), "apply", "--server-side", "-f", "-")
-	kubectl(nil, "-n", "cnpg-system", "rollout", "status", "deployment/cnpg-controller-manager", "--timeout=300s")
+	// The catalog's operator, from its project's manifest: in the installer's own namespace,
+	// under the restricted profile and a policy that admits its webhook port alone.
+	op := kube.App{Name: "cloudnative-pg", Client: connected, Catalog: cat["cloudnative-pg"], ReleaseSet: "e2e", Redact: &engine.Redactor{}}
+	if f := connected.OperatorCheck(ctx); !f.OK {
+		t.Fatalf("preflight before the operator: %+v", f)
+	}
+	started := time.Now()
+	if applied, err := r.run(kube.Steps(op)); err != nil {
+		t.Fatalf("operator: %v after %v", err, applied)
+	}
+	t.Logf("installing the operator took %s", time.Since(started).Round(time.Second))
 	if f := connected.DatabaseOperatorCheck(); !f.OK {
 		t.Fatalf("preflight with the operator: %+v", f)
 	}
+	if f := connected.OperatorCheck(ctx); !f.OK {
+		t.Fatalf("preflight over the installer's operator: %+v", f)
+	}
+	ns, err := cs.CoreV1().Namespaces().Get(ctx, operatorNS, metav1.GetOptions{})
+	if err != nil || ns.Labels["pod-security.kubernetes.io/enforce"] != "restricted" {
+		t.Fatalf("operator namespace: %v, %v", ns.Labels, err)
+	}
+	if _, err := cs.CoreV1().Namespaces().Get(ctx, "cnpg-system", metav1.GetOptions{}); err == nil {
+		t.Fatal("the manifest's own namespace was created")
+	}
+	operators, err := cs.CoreV1().Pods(operatorNS).List(ctx, metav1.ListOptions{})
+	if err != nil || len(operators.Items) != 1 || !strings.Contains(operators.Items[0].Spec.Containers[0].Image, "@sha256:") {
+		t.Fatalf("operator pods: %v, %v", operators.Items, err)
+	}
+	if state, err := connected.State(ctx, op.Name); err != nil || state != "running" {
+		t.Fatalf("operator state: %s %v", state, err)
+	}
+	if applied, err := r.run(kube.Steps(op)); err != nil || len(applied) != 0 {
+		t.Fatalf("second apply of the operator: %v, applied %v", err, applied)
+	}
 
-	started := time.Now()
+	started = time.Now()
 	applied, err := r.run(kube.Steps(a))
 	if err != nil {
 		t.Fatalf("apply: %v after %v", err, applied)
@@ -203,6 +229,16 @@ func TestKubernetesIdentityDatabaseCluster(t *testing.T) {
 		t.Fatal("the probe cannot reach the database even as the app: the check above proves nothing")
 	}
 
+	// The operator's metrics port is closed to the cluster; its webhook port, which the API
+	// server calls, is all its namespace admits.
+	operatorIP := operators.Items[0].Status.PodIP
+	if r.probePort("probe-metrics", map[string]string{}, operatorIP, 8080) {
+		t.Fatal("a stranger pod reached the operator's metrics port")
+	}
+	if !r.probePort("probe-webhook", map[string]string{}, operatorIP, 9443) {
+		t.Fatal("the probe cannot reach the webhook port either: the check above proves nothing")
+	}
+
 	// No secret in a log, nor in the Cluster or a Deployment.
 	logs := r.logs() + kubectl(nil, "-n", replicaNS, "get", "cluster", "database", "-o", "json")
 	for _, d := range r.deployments() {
@@ -219,6 +255,35 @@ func TestKubernetesIdentityDatabaseCluster(t *testing.T) {
 	if applied, err := r.run(kube.Steps(a)); err != nil || len(applied) != 0 {
 		t.Fatalf("second apply: %v, applied %v", err, applied)
 	}
+
+	// Under a database that runs, the operator is neither stopped nor uninstalled.
+	for name, steps := range map[string][]engine.Step{"stop": {kube.StopStep(op)}, "uninstall": kube.RemoveSteps(op)} {
+		if _, err := r.run(steps); err == nil || !strings.Contains(err.Error(), replicaNS+"/database") {
+			t.Fatalf("%s of the operator under a running database: %v", name, err)
+		}
+	}
+	// Another installer release rewrites every object of the operator in place, definitions
+	// included, and the API server still reaches its webhooks: the next write passes them.
+	next := op
+	next.ReleaseSet = "e2e-next"
+	if applied, err := r.run(kube.Steps(next)); err != nil || len(applied) == 0 {
+		t.Fatalf("operator under another release: %v, applied %v", err, applied)
+	}
+	for _, kind := range []string{"validatingwebhookconfiguration/cnpg-validating-webhook-configuration", "mutatingwebhookconfiguration/cnpg-mutating-webhook-configuration"} {
+		for _, ca := range strings.Fields(kubectl(nil, "get", kind, "-o", `jsonpath={range .webhooks[*]}{.clientConfig.caBundle}{"\n"}{end}`)) {
+			if len(ca) < 100 {
+				t.Fatalf("%s lost the operator's certificate authority", kind)
+			}
+		}
+		if n := len(strings.Fields(kubectl(nil, "get", kind, "-o", `jsonpath={range .webhooks[*]}{.clientConfig.caBundle}{"\n"}{end}`))); n < 4 {
+			t.Fatalf("%s: %d webhooks carry a certificate authority", kind, n)
+		}
+	}
+	kubectl(nil, "-n", replicaNS, "annotate", "cluster", "database", "kyquickstart.test/webhook=passed")
+	if len(r.instances()) != 3 {
+		t.Fatal("rewriting the operator disturbed the database")
+	}
+	op = next
 	if again := r.pods(); !slices.Equal(again, pods) {
 		t.Fatalf("pods changed: %v -> %v", pods, again)
 	}
@@ -261,6 +326,21 @@ func TestKubernetesIdentityDatabaseCluster(t *testing.T) {
 	}
 	if state, err := connected.State(ctx, "kyidentity"); err != nil || state != "stopped" {
 		t.Fatalf("state after stop: %s %v", state, err)
+	}
+	// With every database hibernated the operator may go. Its definitions stay, and with
+	// them the Cluster and its claims; a reinstall picks the database up again.
+	if _, err := r.run(kube.RemoveSteps(op)); err != nil {
+		t.Fatalf("uninstall the operator: %v", err)
+	}
+	if left, err := cs.CoreV1().Pods(operatorNS).List(ctx, metav1.ListOptions{}); err != nil || len(left.Items) != 0 {
+		t.Fatalf("operator pods after uninstall: %v, %v", left.Items, err)
+	}
+	kubectl(nil, "-n", replicaNS, "get", "cluster", "database")
+	if held, err := cs.CoreV1().PersistentVolumeClaims(replicaNS).List(ctx, metav1.ListOptions{LabelSelector: "cnpg.io/cluster=database"}); err != nil || len(held.Items) != 3 {
+		t.Fatalf("uninstalling the operator left %d of the database's claims: %v", len(held.Items), err)
+	}
+	if _, err := r.run(kube.Steps(op)); err != nil {
+		t.Fatalf("reinstall the operator: %v", err)
 	}
 	if _, err := r.run([]engine.Step{kube.StartStep(a)}); err != nil {
 		t.Fatal(err)
@@ -323,6 +403,30 @@ func TestKubernetesIdentityDatabaseCluster(t *testing.T) {
 	}
 	if lost == "" || len(survivors) == 0 {
 		t.Fatalf("primary %s on node %q; KyIdentity pods elsewhere: %v", primary, lost, survivors)
+	}
+	// The worst case: the operator, which is what fails the database over, is on that node
+	// too, and must first leave it.
+	workers, err := cs.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range workers.Items {
+		if n.Name != lost {
+			kubectl(nil, "cordon", n.Name)
+		}
+	}
+	if err := cs.CoreV1().Pods(operatorNS).DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	r.eventually("the operator runs on the primary's node", func() bool {
+		on, err := cs.CoreV1().Pods(operatorNS).List(ctx, metav1.ListOptions{})
+		state, _ := connected.State(ctx, op.Name)
+		return err == nil && len(on.Items) == 1 && on.Items[0].Spec.NodeName == lost && state == "running"
+	})
+	for _, n := range workers.Items {
+		if n.Name != lost {
+			kubectl(nil, "uncordon", n.Name)
+		}
 	}
 	docker(t, "kill", lost)
 	powerOff := time.Now()

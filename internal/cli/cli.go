@@ -390,6 +390,7 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 	if s.order, err = plan.Order(names, cat); err != nil {
 		return nil, err
 	}
+	s.order = operatorsFirst(s.order, cat)
 	if err := yardPlan(st); err != nil {
 		return nil, err
 	}
@@ -472,6 +473,9 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 	// A cluster edge's egress policy admits an upstream off the cluster by address only.
 	for _, e := range st.Edges {
 		for _, r := range e.Routes {
+			if isOperator(cat[r.App]) {
+				return nil, fmt.Errorf("edge %s: route %s names %s, a cluster operator, which serves nothing to route", e.Target, r.Hostname, r.App)
+			}
 			if t, _ := st.Target(e.Target); t.Kubernetes() && s.placed[r.App].Name != e.Target {
 				if ip, err := netip.ParseAddr(r.ForwardHost); err != nil || ip.Zone() != "" {
 					return nil, fmt.Errorf("edge %s: route %s forwards off the cluster, so its forward_host must be an IP address", e.Target, r.Hostname)
@@ -714,6 +718,10 @@ func (s *session) needs(target string) kube.Needs {
 		if a.DatabaseInstances > 0 && s.placed[a.Name].Name == target {
 			n.DatabaseCluster = true
 		}
+		// Never the runner's: it holds the install permissions, not cluster-admin.
+		if isOperator(s.cat[a.Name]) && s.placed[a.Name].Name == target && s.o.RunnerID == "" {
+			n.Operator = true
+		}
 	}
 	return n
 }
@@ -909,6 +917,10 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 		if s.o.RunnerID != "" && hostsRunner(s.cat[name]) {
 			// Neither read nor written: redeploying it would stop this runner mid-operation.
 			steps = append(steps, noteStep{id: name + ".runner", note: runnerSelfNote})
+			continue
+		}
+		if s.o.RunnerID != "" && isOperator(s.cat[name]) {
+			steps = append(steps, noteStep{id: name + ".runner", note: runnerOperatorNote})
 			continue
 		}
 		d := s.drivers[s.placed[name].Name]

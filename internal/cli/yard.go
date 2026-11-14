@@ -24,6 +24,25 @@ const runnerSelfNote = "not redeployed: the suite runner runs in this workload; 
 
 func hostsRunner(a catalog.App) bool { return a.Kubernetes != nil && a.Kubernetes.SuiteRunner }
 
+// runnerOperatorNote replaces the steps of a cluster operator, which takes cluster-admin: the
+// runner holds the install permissions and no more.
+const runnerOperatorNote = "not changed: a cluster operator is installed and upgraded with a cluster-admin kubeconfig, which the suite runner never holds; from the workstation run kyquickstart upgrade for it"
+
+func isOperator(a catalog.App) bool { return a.Category == "operator" }
+
+// operatorsFirst moves the operators in order before the apps whose objects they serve.
+func operatorsFirst(order []string, cat catalog.Catalog) []string {
+	var first, rest []string
+	for _, name := range order {
+		if isOperator(cat[name]) {
+			first = append(first, name)
+		} else {
+			rest = append(rest, name)
+		}
+	}
+	return append(first, rest...)
+}
+
 // yardPlan refuses a plan installing KyYard that its setup or its runner could not take:
 // an owner admin username KyYard's setup would refuse.
 func yardPlan(st *stack.Stack) error {
@@ -68,6 +87,9 @@ func (s *session) refuseOwnPod(apps []string) error {
 	for _, a := range apps {
 		if hostsRunner(s.cat[a]) {
 			return suite.Errorf(suite.RunnerHost, "%s runs this suite runner, which never installs, removes or upgrades its own workload; from the workstation run kyquickstart handoff --revoke, apply, then handoff", a)
+		}
+		if isOperator(s.cat[a]) {
+			return suite.Errorf(suite.RunnerHost, "%s is a cluster operator, changed only with a cluster-admin kubeconfig, which this suite runner never holds; run the command from the workstation", a)
 		}
 	}
 	return nil

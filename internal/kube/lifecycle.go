@@ -131,6 +131,11 @@ func (s lifecycleStep) Inspect(ctx context.Context) (bool, error) {
 func (s lifecycleStep) Apply(ctx context.Context) error {
 	switch s.op {
 	case "stop":
+		if s.a.operator() {
+			if err := s.a.Client.operatorIdle(ctx, s.a.Name); err != nil {
+				return err
+			}
+		}
 		if err := s.patch(ctx, map[string]any{"spec": map[string]any{"replicas": 0}}); err != nil {
 			return err
 		}

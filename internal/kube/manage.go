@@ -46,7 +46,8 @@ func (c *Client) AppEnv(ctx context.Context, app, name string) (value string, fo
 
 // RemoveSteps deletes the app's Deployment (the nginx edge's DaemonSet) and Services and waits
 // for its pods to go. The namespace, its claims, Secret, default-deny policy and the edge's
-// configuration and certificates stay, so a later install finds the data.
+// configuration and certificates stay, so a later install finds the data. So does everything
+// else of an operator: deleting its definitions would delete every database made from them.
 func RemoveSteps(a App) []engine.Step { return []engine.Step{removeStep{a}} }
 
 type removeStep struct{ a App }
@@ -108,6 +109,11 @@ func (s removeStep) Apply(ctx context.Context) error {
 	w, found, svcs, err := s.objects(ctx)
 	if err != nil {
 		return err
+	}
+	if s.a.operator() {
+		if err := s.a.Client.operatorIdle(ctx, s.a.Name); err != nil {
+			return err
+		}
 	}
 	ns := namespaceOf(s.a.Name)
 	if found {
@@ -236,6 +242,14 @@ func (s unmanageStep) sweep(ctx context.Context, fix bool) (string, error) {
 			check{"claim vol-" + databaseName, func() (bool, error) {
 				return relabel(ctx, cs.CoreV1().PersistentVolumeClaims(ns), "vol-"+databaseName, unlabel, meta, fix)
 			}})
+	}
+	if s.a.operator() {
+		var left string
+		checks = append(checks, check{"operator", func() (bool, error) {
+			var err error
+			left, err = s.a.Client.unmanageOperator(ctx, s.a, fix)
+			return left != "", err
+		}})
 	}
 	if o.DaemonSet != nil { // the nginx edge alone: other plans hold no permission for these
 		checks = append(checks,

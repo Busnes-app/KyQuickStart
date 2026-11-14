@@ -271,6 +271,11 @@ func guided(ctx context.Context, args []string, o Options) error {
 	if previous != nil && previous.Demo != st.Demo {
 		return errors.New("use a separate state directory when changing between demo and production")
 	}
+	if previous != nil {
+		if i := slices.IndexFunc(previous.Apps, func(a stack.App) bool { return isOperator(cat[a.Name]) }); i >= 0 {
+			return fmt.Errorf("this saved plan installs %s, which plan cannot ask for; edit stack.yaml directly to preserve it", previous.Apps[i].Name)
+		}
+	}
 	if st.Demo {
 		cat, err = catalog.Load(catalog.Demo())
 		if err != nil {
@@ -362,6 +367,9 @@ func guided(ctx context.Context, args []string, o Options) error {
 			continue
 		}
 		if name == stack.NginxApp { // its edge (proxy: nginx) is written in stack.yaml, not asked
+			continue
+		}
+		if isOperator(cat[name]) { // as the database_instances that needs it
 			continue
 		}
 		app := cat[name]
@@ -687,6 +695,9 @@ func showPlan(out io.Writer, st *stack.Stack, cat catalog.Catalog) {
 	}
 	for _, a := range st.Apps {
 		fmt.Fprintf(out, "Install %s on %s; required: %s\n", a.Name, a.Target, strings.Join(cat[a.Name].DependsOn, ", "))
+		if isOperator(cat[a.Name]) {
+			fmt.Fprintln(out, "  Cluster-wide: definitions, roles and admission webhooks for every namespace. Applying this plan needs a cluster-admin kubeconfig.")
+		}
 		if target, _ := st.Target(a.Target); target.Kubernetes() && len(cat[a.Name].Secrets) > 0 {
 			fmt.Fprintf(out, "  Required temporary credential generator: %s (cluster-local; removed after generation)\n", kube.CredentialGeneratorImage)
 		}

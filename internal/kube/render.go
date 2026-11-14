@@ -100,6 +100,9 @@ func (o objects) hash() string {
 // render builds the app's objects. Catalog validation guarantees every quantity parses.
 // An empty storage class leaves claims to the cluster default and out of the hash.
 func render(a App) objects {
+	if a.operator() { // its objects are its manifest's (operatorObjects)
+		return objects{}
+	}
 	app, c, k := a.Name, a.Catalog, a.Catalog.Kubernetes
 	ns := namespaceOf(app)
 	meta := func(name string) metav1.ObjectMeta {

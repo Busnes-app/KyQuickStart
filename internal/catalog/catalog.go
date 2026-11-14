@@ -3,11 +3,14 @@ package catalog
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
 	"net/netip"
 	"path"
+	"reflect"
 	"regexp"
 	"slices"
 	"sort"
@@ -22,7 +25,7 @@ import (
 type Manifest struct {
 	Description string            `yaml:"description,omitempty"`
 	Name        string            `yaml:"name"`
-	Category    string            `yaml:"category"` // ky, edge or third-party
+	Category    string            `yaml:"category"` // ky, edge, operator or third-party
 	Version     string            `yaml:"version"`  // release the images pin, MAJOR.MINOR.PATCH[.N]
 	Images      map[string]string `yaml:"images"`
 	Secrets     []string          `yaml:"secrets"`
@@ -195,6 +198,9 @@ type Kubernetes struct {
 	// Egress "edge" limits outbound traffic to cluster DNS and this cluster's edge; empty
 	// leaves it open.
 	Egress string `yaml:"egress,omitempty"`
+	// Operator makes the app a cluster operator: the release manifest its project publishes,
+	// applied whole in place of everything else here. Category operator only.
+	Operator *Operator `yaml:"operator,omitempty" json:",omitempty"`
 	// Replicas is set once the pinned release can run as replicas on one Postgres database
 	// (KyIdentity); nil refuses a plan's replicas.
 	Replicas *Replicas `yaml:"replicas,omitempty" json:",omitempty"`
@@ -204,6 +210,15 @@ type Kubernetes struct {
 	DatabaseSecret    string `yaml:"-" json:",omitempty"`
 	DatabaseInstances int    `yaml:"-" json:",omitempty"`
 	RecoveryKeyID     string `yaml:"-" json:",omitempty"`
+}
+
+// Operator names the release manifest beside manifest.yaml and the SHA-256 its project
+// published it with; a file that does not match is refused when the catalog loads.
+type Operator struct {
+	Manifest string `yaml:"manifest"`
+	SHA256   string `yaml:"sha256"`
+	// Deployment is the manifest's one Deployment, whose first container runs Image.
+	Deployment string `yaml:"deployment"`
 }
 
 // Replicas is the Postgres the installer deploys for a replicated app whose plan names no
@@ -267,6 +282,8 @@ type App struct {
 	// (rspamd/rspamd.conf). Deploy writes those its Compose file binds (Nested), readable by
 	// every uid: a sidecar running as its own user reads them through the bind.
 	Files map[string][]byte
+	// Operator is the release manifest of an app with kubernetes.operator, checksum verified.
+	Operator []byte `json:"-"`
 	// mail are the native_mail renderings, by mode.
 	mail map[string]rendering
 }
@@ -294,7 +311,9 @@ var (
 	// No segment starts with a dot, so no . or .. components.
 	urlPathRE = regexp.MustCompile(`^/([A-Za-z0-9_~-][A-Za-z0-9._~-]*/?)*$`)
 	sha256RE  = regexp.MustCompile(`^[0-9a-f]{64}$`)
-	skipRE    = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)+$`)
+	// A file beside manifest.yaml, never the manifest itself or a path.
+	operatorFileRE = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,60}\.yaml$`)
+	skipRE         = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)+$`)
 	// MAJOR.MINOR.PATCH, or MAJOR.MINOR.PATCH.N for a Ky product's automated dependency
 	// release (N from 1; X.Y.Z orders as X.Y.Z.0).
 	versionRE = regexp.MustCompile(`^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})(?:\.([1-9][0-9]{0,8}))?$`)
@@ -457,8 +476,20 @@ func loadApp(fsys fs.FS, dir string) (App, error) {
 	if err := m.validate(dir); err != nil {
 		return App{}, fmt.Errorf("manifest.yaml: %w", err)
 	}
+	var operator []byte
+	if m.Category == "operator" {
+		o := m.Kubernetes.Operator
+		if operator, err = fs.ReadFile(fsys, path.Join(dir, o.Manifest)); err != nil {
+			return App{}, fmt.Errorf("kubernetes.operator: %w", err)
+		}
+		if sum := sha256.Sum256(operator); hex.EncodeToString(sum[:]) != o.SHA256 {
+			return App{}, fmt.Errorf("kubernetes.operator: %s does not have the SHA-256 the manifest pins", o.Manifest)
+		}
+	}
 	text, err := fs.ReadFile(fsys, path.Join(dir, "compose.yaml.tmpl"))
 	switch {
+	case m.Category == "operator" && err == nil:
+		return App{}, errors.New("an operator runs on Kubernetes only: no compose.yaml.tmpl")
 	case errors.Is(err, fs.ErrNotExist):
 		if m.Category == "third-party" {
 			return App{}, fmt.Errorf("third-party apps need compose.yaml.tmpl")
@@ -475,7 +506,7 @@ func loadApp(fsys fs.FS, dir string) (App, error) {
 		if len(m.FromVolumes) > 0 {
 			return App{}, errors.New("manifest.yaml: from_volumes needs compose.yaml.tmpl")
 		}
-		return App{Manifest: m}, nil
+		return App{Manifest: m, Operator: operator}, nil
 	case err != nil:
 		return App{}, err
 	}
@@ -693,9 +724,9 @@ func (m Manifest) validate(dir string) error {
 		return fmt.Errorf("name %q must match its directory %q and be a valid app name", m.Name, dir)
 	}
 	switch m.Category {
-	case "ky", "edge", "third-party":
+	case "ky", "edge", "operator", "third-party":
 	default:
-		return fmt.Errorf("category %q must be ky, edge or third-party", m.Category)
+		return fmt.Errorf("category %q must be ky, edge, operator or third-party", m.Category)
 	}
 	if len(m.Images) == 0 {
 		return fmt.Errorf("no images")
@@ -769,12 +800,28 @@ func (m Manifest) validate(dir string) error {
 			return fmt.Errorf("kubernetes.%w", err)
 		}
 	}
+	if operator := m.Kubernetes != nil && m.Kubernetes.Operator != nil; operator != (m.Category == "operator") {
+		return fmt.Errorf("category operator is exactly an app with kubernetes.operator")
+	}
+	if m.Category == "operator" && (m.PodSecurity != "restricted" || m.OIDC != nil || len(m.Secrets) > 0 || len(m.DependsOn) > 0 || m.Upgrade.MigratesData) {
+		return fmt.Errorf("an operator is restricted and has no oidc, secrets, depends_on or migrates_data")
+	}
 	return nil
 }
 
 func (k Kubernetes) validate(images map[string]string, baseline, edge bool) error {
 	if _, ok := images[k.Image]; !ok {
 		return fmt.Errorf("image %q is not a key of images", k.Image)
+	}
+	if o := k.Operator; o != nil {
+		// Its manifest is the whole deployment: nothing else here applies.
+		if !reflect.DeepEqual(k, Kubernetes{Image: k.Image, Operator: o}) {
+			return fmt.Errorf("operator: an operator sets only image and operator")
+		}
+		if !operatorFileRE.MatchString(o.Manifest) || o.Manifest == "manifest.yaml" || !sha256RE.MatchString(o.SHA256) || !volRE.MatchString(o.Deployment) {
+			return fmt.Errorf("operator: needs manifest (a .yaml file beside manifest.yaml), its sha256 and its deployment's name")
+		}
+		return nil
 	}
 	seen := map[int]bool{}
 	for _, p := range k.Ports {

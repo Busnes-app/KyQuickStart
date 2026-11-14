@@ -314,8 +314,8 @@ func (c *Client) unmanageCluster(ctx context.Context, app string, fix bool) (boo
 }
 
 // DatabaseOperatorCheck refuses a plan with database_instances on a cluster without
-// CloudNativePG: its v1 Clusters must be served. The installer never installs the operator, a
-// cluster-wide component that is the cluster owner's.
+// CloudNativePG: its v1 Clusters must be served, by the catalog's cloudnative-pg app or the
+// cluster owner's own installation.
 func (c *Client) DatabaseOperatorCheck() Finding {
 	const check = "database operator"
 	gv, err := c.groupVersion(clusterGroup, clusterResource.Resource)
@@ -323,7 +323,7 @@ func (c *Client) DatabaseOperatorCheck() Finding {
 		return Finding{check, false, err.Error()}
 	}
 	if gv.Version != clusterResource.Version {
-		return Finding{check, false, "this cluster does not serve " + clusterGroup + "/v1 clusters: database_instances needs the CloudNativePG operator, 1.24 or later, which the cluster's owner installs (https://cloudnative-pg.io/documentation/current/installation_upgrade/); or remove database_instances for a single Postgres pod"}
+		return Finding{check, false, "this cluster does not serve " + clusterGroup + "/v1 clusters: database_instances needs the CloudNativePG operator, 1.24 or later. Add the cloudnative-pg app to the plan on this target (it needs a cluster-admin kubeconfig), have the cluster's owner install it (https://cloudnative-pg.io/documentation/current/installation_upgrade/), or remove database_instances for a single Postgres pod"}
 	}
 	return Finding{check, true, clusterGroup + "/v1 clusters served"}
 }
