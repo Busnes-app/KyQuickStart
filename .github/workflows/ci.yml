@@ -67,6 +67,7 @@ jobs:
           cache: false
       - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
       - run: make workflow-lint
+      - run: scripts/check-no-binaries.sh
 
   e2e-shard:
     # sshd in a container on the runner's Docker socket; deploys the hello fixture. Each kind

@@ -1,3 +1,7 @@
 /kyquickstart
 /coverage.out
 /morning-test/
+# Bare `go build ./internal/dockerhost/fakedocker/docker` and `go build ./scripts/catalog-follow`
+# write these to the root (tests and CI use temp dirs and `go run`).
+/docker
+/catalog-follow
