@@ -10,6 +10,7 @@ import (
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/catalog/catalogtest"
+	"github.com/Busnes-app/kyquickstart/internal/kube"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
 	"github.com/Busnes-app/kyquickstart/internal/suite"
 	authorizationv1 "k8s.io/api/authorization/v1"
@@ -185,6 +186,14 @@ func TestReplicasReachTheCatalog(t *testing.T) {
 	cat = released()
 	if err := withReplicas(st, placed, cat); err != nil || cat["kyidentity"].Kubernetes.DatabaseInstances != 3 {
 		t.Fatalf("database_instances: %v", err)
+	}
+	// Only such a plan asks for the operator and the permission on its Clusters, on that target.
+	clustered := &session{plan: st, placed: placed, cat: cat}
+	if n := clustered.needs("k1"); n != (kube.Needs{DatabaseCluster: true}) {
+		t.Fatalf("needs = %+v", n)
+	}
+	if n := clustered.needs("nas"); n != (kube.Needs{}) {
+		t.Fatalf("needs on another target = %+v", n)
 	}
 	if note := replicaNote(cat["kyidentity"], placed["kyidentity"]); !strings.Contains(note, "a Postgres of 3 instances") || !strings.Contains(note, "Nothing in the installer backs the database up") || !strings.Contains(note, "Until then KyIdentity has NO backup") {
 		t.Fatalf("note for a highly available database = %s", note)
