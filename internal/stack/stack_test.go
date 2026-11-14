@@ -91,15 +91,24 @@ func TestParseReplicas(t *testing.T) {
 	if err != nil || s.Apps[0].Replicas != 3 || s.Apps[0].DatabaseSecret != "my-postgres" {
 		t.Fatalf("replicas: %v", err)
 	}
+	s, err = Parse([]byte(plan("  - name: kyidentity\n    target: k1\n    replicas: 2\n    database_instances: 3\n")))
+	if err != nil || s.Apps[0].DatabaseInstances != 3 {
+		t.Fatalf("database_instances: %v", err)
+	}
 	for app, want := range map[string]string{
-		"  - name: kyidentity\n    target: k1\n    replicas: 1\n":                                       "is 2 to 5",
-		"  - name: kyidentity\n    target: k1\n    replicas: 6\n":                                       "is 2 to 5",
-		"  - name: kyidentity\n    target: k1\n    replicas: -2\n":                                      "is 2 to 5",
-		"  - name: kypost\n    target: k1\n    replicas: 2\n":                                           "belongs to kyidentity only",
-		"  - name: kyidentity\n    target: k1\n    database_secret: my-postgres\n":                      "database_secret needs replicas",
-		"  - name: kyidentity\n    target: k1\n    replicas: 2\n    database_secret: kyq-database\n":    "does not start with kyq-",
-		"  - name: kyidentity\n    target: k1\n    replicas: 2\n    database_secret: My_DB\n":           "must be a Secret name",
-		"  - name: kyidentity\n    target: k1\n    replicas: 2\n    database_url: postgres://u:p@h/d\n": "field database_url not found",
+		"  - name: kyidentity\n    target: k1\n    database_instances: 3\n":                                          "database_instances needs replicas",
+		"  - name: kyidentity\n    target: k1\n    replicas: 2\n    database_instances: 2\n":                         "database_instances is 3 to 5",
+		"  - name: kyidentity\n    target: k1\n    replicas: 2\n    database_instances: 6\n":                         "database_instances is 3 to 5",
+		"  - name: kyidentity\n    target: k1\n    replicas: 2\n    database_instances: -3\n":                        "database_instances is 3 to 5",
+		"  - name: kyidentity\n    target: k1\n    replicas: 2\n    database_instances: 3\n    database_secret: x\n": "no database_secret",
+		"  - name: kyidentity\n    target: k1\n    replicas: 1\n":                                                    "is 2 to 5",
+		"  - name: kyidentity\n    target: k1\n    replicas: 6\n":                                                    "is 2 to 5",
+		"  - name: kyidentity\n    target: k1\n    replicas: -2\n":                                                   "is 2 to 5",
+		"  - name: kypost\n    target: k1\n    replicas: 2\n":                                                        "belongs to kyidentity only",
+		"  - name: kyidentity\n    target: k1\n    database_secret: my-postgres\n":                                   "database_secret needs replicas",
+		"  - name: kyidentity\n    target: k1\n    replicas: 2\n    database_secret: kyq-database\n":                 "does not start with kyq-",
+		"  - name: kyidentity\n    target: k1\n    replicas: 2\n    database_secret: My_DB\n":                        "must be a Secret name",
+		"  - name: kyidentity\n    target: k1\n    replicas: 2\n    database_url: postgres://u:p@h/d\n":              "field database_url not found",
 	} {
 		if _, err := Parse([]byte(plan(app))); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%q: err = %v, want %q", app, err, want)

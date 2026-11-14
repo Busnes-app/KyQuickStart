@@ -198,10 +198,12 @@ type Kubernetes struct {
 	// Replicas is set once the pinned release can run as replicas on one Postgres database
 	// (KyIdentity); nil refuses a plan's replicas.
 	Replicas *Replicas `yaml:"replicas,omitempty" json:",omitempty"`
-	// ReplicaCount, DatabaseSecret and RecoveryKeyID are the plan's; set from the stack.
-	ReplicaCount   int    `yaml:"-" json:",omitempty"`
-	DatabaseSecret string `yaml:"-" json:",omitempty"`
-	RecoveryKeyID  string `yaml:"-" json:",omitempty"`
+	// ReplicaCount, DatabaseSecret, DatabaseInstances and RecoveryKeyID are the plan's; set
+	// from the stack.
+	ReplicaCount      int    `yaml:"-" json:",omitempty"`
+	DatabaseSecret    string `yaml:"-" json:",omitempty"`
+	DatabaseInstances int    `yaml:"-" json:",omitempty"`
+	RecoveryKeyID     string `yaml:"-" json:",omitempty"`
 }
 
 // Replicas is the Postgres the installer deploys for a replicated app whose plan names no
@@ -211,6 +213,9 @@ type Replicas struct {
 	Since         string `yaml:"since"`
 	DatabaseImage string `yaml:"database_image"` // a key of Images
 	DatabaseSize  string `yaml:"database_size"`
+	// ClusterImage is the Postgres of a plan's database_instances: a key of Images naming a
+	// CloudNativePG operand image, which the operator can run and the official image is not.
+	ClusterImage string `yaml:"cluster_image" json:",omitempty"`
 }
 
 // SecretsMount is where the app's secrets are mounted.
@@ -840,6 +845,8 @@ func (k Kubernetes) validate(images map[string]string, baseline, edge bool) erro
 		switch _, ok := images[r.DatabaseImage]; {
 		case !ok:
 			return fmt.Errorf("replicas: database_image %q is not a key of images", r.DatabaseImage)
+		case images[r.ClusterImage] == "":
+			return fmt.Errorf("replicas: cluster_image %q is not a key of images", r.ClusterImage)
 		case !versionRE.MatchString(r.Since):
 			return fmt.Errorf("replicas: since %q must be a release like 1.2.3 or 1.2.3.4", r.Since)
 		case !sizeRE.MatchString(r.DatabaseSize):

@@ -589,6 +589,24 @@ edge compatibility: `docs/redirect.md`.
   migrates; no rolling upgrade. Health, stop, start, restart, uninstall and unmanage cover all
   three workloads. The installer backs none of it up: apply prints the outstanding KyRecovery
   pairing after every run.
+- A highly available database (owner amendment, 2026-11-13; `internal/kube/dbcluster.go`):
+  `database_instances: 3-5` beside `replicas`, never with `database_secret`, replaces
+  Deployment `database` with a CloudNativePG `Cluster` of that name (`postgresql.cnpg.io/v1`,
+  written through the dynamic client with strict field validation): the catalog's
+  `replicas.cluster_image` (a CloudNativePG operand image), required anti-affinity by node,
+  synchronous replication `ANY 1`, the same UTF8/C database and non-superuser owner, taken
+  from `kyq-database` (basic-auth here: `username`, `password`, `url`). The operator is the
+  cluster owner's, never installed: `DatabaseOperatorCheck` (preflight, and apply's own
+  error) refuses without it, and `Needs.DatabaseCluster` adds the `clusters` permission only
+  to such a plan. KyIdentity connects to `database-rw` with `sslmode=verify-full` against the
+  authority in `kyq-database-tls`, which the installer makes once with a ten-year server
+  certificate and whose key it discards; never the operator's own authority, which rotates
+  under a running KyIdentity. Policy `database` admits KyIdentity's pods, the instances and
+  the operator's pod (any namespace); the instances' egress is open, since they need the API
+  server. Deploy waits for every instance before it starts KyIdentity (`clusterTimeout`).
+  `stop` and `uninstall` hibernate the `Cluster` (`cnpg.io/hibernation`) and never delete
+  it: it owns its claims. Between the single pod and the `Cluster` is a database move, refused
+  like any other (`kyquickstart/database` is `cluster`).
 - A Compose template may write `{{host}}`, `{{forward}}` (the route's
   `forward_host:forward_port`, an IP of the Docker target, where the app publishes its port),
   `{{forward_addr}}` (that IP alone), `{{hostname}}` (the route's hostname without a client
@@ -669,7 +687,16 @@ calls and kind nodes must carry their own explicit bounds.
   accepted by every other, the role and database Postgres reports, the database refused to a
   pod that is not the app's, no secret in a log or Deployment, an idle second apply, the loss
   of `app`'s pod and of the database pod, stop/start, uninstall/reinstall as the same
-  identity, and the refused return to one instance.
+  identity, and the refused return to one instance. With the same image,
+  `TestKubernetesIdentityDatabaseCluster` (three kind workers and the CloudNativePG operator)
+  installs `database_instances: 3`: refused without the operator, three instances on three
+  nodes with two standbys confirming commits, every KyIdentity connection encrypted, the
+  database refused to a stranger pod, no secret in a log or object, an idle second apply,
+  the primary's pod deleted and the Cluster whole again, stop/start by hibernation,
+  uninstall/reinstall as the same identity, the refused moves to the single pod and to one
+  instance, and last the primary's node powered off (`docker kill`) with sign-in back on the
+  surviving pods and no earlier session lost. Not covered: that node's return (a kind node's
+  pod network does not come back after a power cut).
 - With `KYQ_TEST_EURO_OFFICE=1`, `TestKubernetesEuroOffice` (own kind cluster, 5 GiB node) installs NPM,
   KyIdentity and `euro-office` with KyDrive on an sshd target: baseline pod and its capabilities,
   seeded claims, the copied secret, `/healthcheck` through the edge, a signed KyDrive callback

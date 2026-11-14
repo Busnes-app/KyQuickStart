@@ -138,6 +138,17 @@ operator's job ([README](../README.md#targets)).
   a NetworkPolicy names, which only a CNI that enforces policies upholds. An operator's own
   database (`database_secret`) is used exactly as its URL says; the installer never reads the
   URL beyond checking its scheme, and registers it for redaction.
+- **A highly available database's instances can call out, and its certificate is not
+  renewed.** With `database_instances`, the link to Postgres is TLS that KyIdentity verifies
+  against an authority the installer makes once (`TestServerCertificate`); the server's key
+  passes through the installer's memory into Secret `kyq-database-tls`, and the authority's key
+  is discarded. The certificate lasts ten years and nothing renews it. The instances need
+  the Kubernetes API server, which no portable NetworkPolicy names, so their egress is not
+  restricted, unlike the single pod's. Ingress admits the operator's pod by label from any
+  namespace, since the installer does not know where the cluster's owner installed it:
+  Postgres's own authentication, and the operator's pinned certificate on the status port,
+  are what stand behind that rule. The operator itself, cluster-wide and able to read the
+  database's Secrets, is the cluster owner's and outside this case.
 - **A pairing code crosses the workstation.** `kypost.recovery-pair` reads the six-digit code
   from KyRecovery and sends it to KyPost on stdin. It is too short for the redactor, so it is
   kept out of arguments, errors and output by construction (`TestRecoveryPair`); it is single

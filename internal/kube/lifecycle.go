@@ -44,6 +44,12 @@ func (c *Client) State(ctx context.Context, app string) (string, error) {
 			return "unknown", nil
 		}
 	}
+	// A hibernated Cluster's pods, which no Deployment owns, must be gone too.
+	if state == "stopped" {
+		if left, err := c.podsLeft(ctx, app, clusterPods); err != nil || left {
+			return "unknown", err
+		}
+	}
 	return state, nil
 }
 
@@ -131,8 +137,21 @@ func (s lifecycleStep) Apply(ctx context.Context) error {
 		if err := s.patchExtras(ctx, func(*appsv1.Deployment) map[string]any { return map[string]any{"replicas": 0} }); err != nil {
 			return err
 		}
+		if s.a.clustered() {
+			if err := s.a.Client.hibernate(ctx, s.a.Name, true); err != nil {
+				return err
+			}
+		}
 		return s.waitStopped(ctx)
 	case "start":
+		if s.a.clustered() {
+			if err := s.a.Client.hibernate(ctx, s.a.Name, false); err != nil {
+				return err
+			}
+			if err := s.a.Client.waitCluster(ctx, s.a.Name); err != nil {
+				return err
+			}
+		}
 		want := map[string]int32{}
 		for _, e := range render(s.a).extras() {
 			want[e.Name] = *e.Spec.Replicas

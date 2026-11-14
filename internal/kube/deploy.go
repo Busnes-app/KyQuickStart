@@ -76,6 +76,17 @@ func (d deployStep) check(ctx context.Context) (string, error) {
 			return "database network policy missing or differs", err
 		}
 	}
+	if want.Cluster != nil {
+		have, err := d.a.Client.clusterObject(ctx, d.a.Name)
+		switch {
+		case err != nil:
+			return "", err
+		case have == nil || have.GetAnnotations()[hashAnnotation] != d.hash:
+			return "cluster " + databaseName + " missing or differs from this release", nil
+		case have.GetAnnotations()[hibernation] == "on":
+			return "cluster " + databaseName + " is hibernated", nil
+		}
+	}
 	if want.Config != nil {
 		have, found, err := getOwned(ctx, cs.CoreV1().ConfigMaps(ns), "config map", edgeConfig)
 		if err != nil || !found || have.Data[edge.NginxMainFile] != edge.NginxMain {
@@ -216,6 +227,16 @@ func (d deployStep) Apply(ctx context.Context) error {
 	}
 	if o.DatabasePolicy != nil {
 		if err := upsert(ctx, cs.NetworkingV1().NetworkPolicies(ns), "network policy", o.DatabasePolicy, nil); err != nil {
+			return err
+		}
+	}
+	if o.Cluster != nil {
+		if err := d.a.Client.applyCluster(ctx, d.a, o.Cluster, d.hash); err != nil {
+			return err
+		}
+		// Its instances start one after another, each copying the one before: the app's
+		// pods, which would only fail until then, start once it serves.
+		if err := d.a.Client.waitCluster(ctx, d.a.Name); err != nil {
 			return err
 		}
 	}

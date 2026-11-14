@@ -61,6 +61,9 @@ type objects struct {
 	Database        *appsv1.Deployment          `json:",omitempty"`
 	DatabaseService *corev1.Service             `json:",omitempty"`
 	DatabasePolicy  *networkingv1.NetworkPolicy `json:",omitempty"`
+	// Cluster is the spec of the CloudNativePG Cluster a plan's database_instances asks for,
+	// in place of Database and DatabaseService.
+	Cluster map[string]any `json:",omitempty"`
 }
 
 // extras are the Deployments beside "app", the database first: the app waits for it.

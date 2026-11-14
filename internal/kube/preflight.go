@@ -49,6 +49,8 @@ type Needs struct {
 	LoadBalancer bool // a load_balancer_address: preflight reads the cluster's address pools
 	EdgeProxy    bool // the nginx edge
 	Certificates bool // the nginx edge's certificates, issued by the cluster's cert-manager
+	// DatabaseCluster is a database_instances: a Cluster the cluster's CloudNativePG keeps.
+	DatabaseCluster bool
 }
 
 // access is every permission an install with these needs uses.
@@ -63,6 +65,9 @@ func (n Needs) access() []authorizationv1.ResourceAttributes {
 	if n.Certificates {
 		out = slices.Concat(out, certificateAccess)
 	}
+	if n.DatabaseCluster {
+		out = slices.Concat(out, clusterAccess)
+	}
 	return out
 }
 
@@ -73,6 +78,9 @@ func Preflight(ctx context.Context, c *Client, needsStorage bool, storageClass s
 	out := []Finding{c.versionCheck(), c.accessCheck(ctx, needs.access()), c.lockCheck(ctx)}
 	if needs.Certificates {
 		out = append(out, c.CertManagerCheck())
+	}
+	if needs.DatabaseCluster {
+		out = append(out, c.DatabaseOperatorCheck())
 	}
 	if needsStorage {
 		out = append(out, c.storageCheck(ctx, storageClass))

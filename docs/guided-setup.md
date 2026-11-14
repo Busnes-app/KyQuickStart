@@ -769,7 +769,8 @@ apps:
   - name: kyidentity
     target: k80
     replicas: 3                    # 2 to 5
-    # database_secret: my-postgres # your own Postgres; without it the installer deploys one pod
+    # database_instances: 3        # the installer's Postgres on 3 to 5 nodes (needs CloudNativePG)
+    # database_secret: my-postgres # or your own Postgres; with neither the installer deploys one pod
   - name: kyrecovery
     target: k80
     recovery_key_id: 0f3a...       # the key its replicas may seal backups to (see Backups)
@@ -801,12 +802,54 @@ reach it, and it can reach nothing. Read this before choosing it:
 
 - **It is one pod.** While its node is down nobody can sign in, exactly as with a single
   KyIdentity. Replicas then protect against the loss of a KyIdentity pod's node, not the
-  database's. For sign-in that survives any one node, use your own highly available Postgres.
+  database's. For sign-in that survives any one node, set `database_instances` (next) or use
+  your own highly available Postgres.
 - **The connection is not encrypted.** It stays inside the cluster, between the pods the
   network policy names; a cluster whose network you do not trust needs your own Postgres with
   TLS.
 - **The installer does not back it up** and does not upgrade it. KyIdentity's own backups
   (below) are its only backup.
+
+**The installer's, highly available (`database_instances`).** Owner amendment, 2026-11-13.
+`database_instances: 3` (3 to 5) replaces that one pod with a
+[CloudNativePG](https://cloudnative-pg.io/) `Cluster` named `database`: that many Postgres 17
+instances, each on its own claim (2 GiB) and never two on one node. One is the primary. A
+write is acknowledged once a second instance has it, so a failover loses nothing KyIdentity
+was told is saved, and the operator promotes a standby when the primary's node is lost. With
+three instances, sign-in survives the loss of any one node. It needs:
+
+- **The CloudNativePG operator, installed by the cluster's owner** (1.24 or later; tested
+  against 1.30.1). The installer never installs it: it is cluster-wide, like cert-manager.
+  Preflight and apply refuse the plan on a cluster that does not serve
+  `postgresql.cnpg.io/v1` Clusters.
+- **As many schedulable nodes as instances.** An instance with no node of its own stays
+  pending, and apply reports how many are ready.
+- **Permission on Clusters**: get, create, update and patch on `postgresql.cnpg.io`
+  `clusters`, asked only of a plan with `database_instances`.
+
+What differs from the single pod:
+
+- **The connection is encrypted and the server is checked.** The installer makes a
+  certificate authority and a server certificate once, in Secret `kyq-database-tls`, and
+  discards the authority's key. KyIdentity's pods mount the authority alone and refuse any
+  other server. The certificate lasts ten years and nothing renews it; the operator's own
+  authority is not used because it is replaced every 90 days, and KyIdentity reads the one it
+  trusts only when it starts.
+- **Its pods can call out.** Each instance must reach the Kubernetes API server, which no
+  portable network policy can name, so the policy limits who reaches the database (KyIdentity's
+  pods, the other instances and the operator's pod, in any namespace) and not what the
+  instances reach.
+- **With fewer than two instances up, writes wait** rather than be acknowledged on one copy:
+  sign-in stops until a second instance is back.
+- **`stop` and `uninstall` hibernate it**: the instances stop and the `Cluster` stays, since
+  deleting it would delete its claims. `start` and a reinstall wake it. **Deleting the
+  `Cluster` yourself deletes the database.**
+
+The first apply takes several minutes: the instances start one after another, each copying
+the one before, and KyIdentity's pods start once all are ready (15 minutes at most, then
+apply stops and names the `kubectl describe` to read). The installer still does not back the
+database up: KyIdentity's own backups (below) are its only backup. It does not upgrade
+Postgres across major versions.
 
 **Your own.** Create the database, then a Secret holding its URL, and name the Secret in
 `database_secret`:
@@ -848,8 +891,10 @@ KyIdentity, and `kyquickstart backup` covers Docker apps only.
   refused: its accounts are in a SQLite file, and the installer does not yet move them. Move it
   by hand with `migrate-to-postgres` (KyIdentity's `docs/RUNNING.md`), or keep one instance.
   Removing `replicas` from an installed plan is refused too: the way back is a capsule restore.
-- **Move to another database.** Adding, removing or renaming `database_secret` on an installed
-  KyIdentity is refused: it would start on a database with none of its accounts. The installer
+- **Move to another database.** Adding, removing or renaming `database_secret`, and adding or
+  removing `database_instances`, on an installed KyIdentity is refused: it would start on a
+  database with none of its accounts. (Changing the number of instances, 3 to 5, is not a
+  move: the operator adds or removes standbys.) The installer
   records the database on Secret `kyq-replica-keys` (annotation `kyquickstart/database`). After
   moving the data yourself, or to rename your Secret, set the annotation as the refusal shows
   and apply again. The installer never deletes the database you left; remove it yourself. It
@@ -860,8 +905,8 @@ KyIdentity, and `kyquickstart backup` covers Docker apps only.
 
 `stop` and `start` act on `app` and the replicas together; `stop` stops the installer's
 database too. `restart` leaves the database running. `logs` shows `app`'s pod only.
-`uninstall` removes the three workloads and keeps the claims and Secrets, so a reinstall is the
-same identity.
+`uninstall` removes the three workloads (a `Cluster` is hibernated, not removed) and keeps the
+claims and Secrets, so a reinstall is the same identity.
 
 ## Forwarded headers (trusted proxy)
 

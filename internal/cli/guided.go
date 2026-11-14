@@ -821,7 +821,7 @@ func keepUnasked(st, previous *stack.Stack) {
 		if j := slices.IndexFunc(previous.Apps, func(p stack.App) bool { return p.Name == a.Name && p.Target == a.Target }); j >= 0 {
 			p := previous.Apps[j]
 			a.Stopped, a.NodePorts, a.KubeVIPAddress, a.LoadBalancerAddress, a.RecoveryKeyID = p.Stopped, p.NodePorts, p.KubeVIPAddress, p.LoadBalancerAddress, p.RecoveryKeyID
-			a.Replicas, a.DatabaseSecret = p.Replicas, p.DatabaseSecret
+			a.Replicas, a.DatabaseSecret, a.DatabaseInstances = p.Replicas, p.DatabaseSecret, p.DatabaseInstances
 		}
 	}
 	for i := range st.Edges {
