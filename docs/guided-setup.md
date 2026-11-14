@@ -886,7 +886,9 @@ Apply installs it before every other app. Read this before adding it:
   and are not the installer's, preflight and apply refuse and write nothing: remove the app
   from the plan, and `database_instances` uses the operator that is there.
 - **It is one pod.** While it is down, databases keep serving but nothing fails a lost primary
-  over. It restarts on another node about a minute after its node is lost, then fails over.
+  over. When its node is lost it restarts on another node and then fails over: with the
+  operator and the primary on the same node, sign-in was back 1 minute 48 seconds after the
+  power cut in the test, against 70 seconds when only the primary's node was lost.
 - **`stop` and `uninstall` are refused while a database runs** (any `Cluster` on the cluster
   that is not hibernated, the installer's or not). Stop or uninstall the apps that use them
   first. `uninstall` then removes the Deployment alone: the definitions, roles and webhooks
