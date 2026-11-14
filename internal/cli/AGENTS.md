@@ -6,7 +6,7 @@ Plain terminal planning and command orchestration for the operator-run installer
 
 - Guided questions, resume answers, plan review and publishing: `guided.go`. Re-running `plan`
   keeps what it never asks (`keepUnasked`: an app's `stopped`, `node_ports`, LoadBalancer
-  addresses and `recovery_key_id` on the same target; an edge's `egress_address` and `lan_dns`
+  addresses, `recovery_key_id`, `replicas`, `database_secret` and `database_instances` on the same target; an edge's `egress_address` and `lan_dns`
   for the same provider; a setup's `identity_amendment`; `domains`), accepts the catalog NPM's `kube://` `npm_url`, refuses plans whose
   routes name certificates or that installs the nginx edge (never offered: it is written in `stack.yaml`), asks an installed app's setup for no workload, and releases
   `plan.lock` before running `preflight` or `apply`. `showPlan` names an
