@@ -323,6 +323,19 @@ func TestDatabaseClusterLifecycle(t *testing.T) {
 	if clusterOf(t, dyn).GetAnnotations()[hibernation] != "on" {
 		t.Fatal("uninstall left the database running, or deleted it")
 	}
+	if done, err := RemoveSteps(a)[0].Inspect(ctx); err != nil || !done {
+		t.Fatalf("uninstall not done: %v", err)
+	}
+	// Woken behind the installer's back, it is not uninstalled, whatever pods exist yet.
+	if err := a.Client.hibernate(ctx, a.Name, false); err != nil {
+		t.Fatal(err)
+	}
+	if done, _ := RemoveSteps(a)[0].Inspect(ctx); done {
+		t.Fatal("uninstall is done while the database would start again")
+	}
+	if err := RemoveSteps(a)[0].Apply(ctx); err != nil || clusterOf(t, dyn).GetAnnotations()[hibernation] != "on" {
+		t.Fatalf("second uninstall: %v", err)
+	}
 	// A reinstall wakes it.
 	if err := steps[2].Apply(ctx); err != nil {
 		t.Fatal(err)

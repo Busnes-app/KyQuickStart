@@ -95,6 +95,11 @@ func (s removeStep) Inspect(ctx context.Context) (bool, error) {
 	if left, err := s.a.Client.podsLeft(ctx, s.a.Name, clusterPods); err != nil || left {
 		return false, err
 	}
+	if s.a.clustered() {
+		// Not hibernated, the operator would start its instances again.
+		o, err := s.a.Client.clusterObject(ctx, s.a.Name)
+		return o == nil || o.GetAnnotations()[hibernation] == "on", err
+	}
 	return true, nil
 }
 
