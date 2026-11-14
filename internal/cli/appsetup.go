@@ -131,7 +131,7 @@ func (s *session) composeClients(st *stack.Stack) error {
 			s.handover += text
 		case "kydrive":
 			t := s.placed["kydrive"]
-			s.handover += fmt.Sprintf(driveHandover, host, n.Admin.Username, path.Join(t.Root, "kydrive"), t.Name, n.Everyday.Username)
+			s.handover += fmt.Sprintf(driveHandover, host, n.Admin.Username, path.Join(t.Root, "kydrive"), t.Name, n.Everyday.Username) + suitePairing(st, "kydrive")
 			switch {
 			case t.Backup == nil:
 				s.handover += bulkMissing
@@ -146,7 +146,7 @@ func (s *session) composeClients(st *stack.Stack) error {
 		case "kyyard":
 			s.handover += yardHandover(s.state, host, n.Admin.Username, s.placed["kyyard"])
 		case "kycalendar":
-			s.handover += strings.Replace(calendarRuntimeHandover(s.state, host, n.Admin.Username, n.Everyday.Username, s.placed["kycalendar"]), noCalendarPairing, calendarPairing(st, "kycalendar"), 1)
+			s.handover += strings.Replace(calendarRuntimeHandover(s.state, host, n.Admin.Username, n.Everyday.Username, s.placed["kycalendar"]), noCalendarPairing, calendarPairing(st, "kycalendar"), 1) + suitePairing(st, "kycalendar")
 		case "kypost":
 			text := fmt.Sprintf(postHandover, host, n.Admin.Username, n.Everyday.Username, postContainer, s.placed["kypost"].Name)
 			if m := mailOf(st, "kypost"); m != nil {
@@ -155,9 +155,9 @@ func (s *session) composeClients(st *stack.Stack) error {
 			if _, ok := s.placed["kyrecovery"]; ok && privateRecovery(st) {
 				text = strings.Replace(text, noPairing, pairByApply, 1)
 			}
-			s.handover += strings.Replace(text, noCalendarPairing, calendarPairing(st, "kypost"), 1)
+			s.handover += strings.Replace(text, noCalendarPairing, calendarPairing(st, "kypost"), 1) + suitePairing(st, "kypost")
 		case "kymessage":
-			s.handover += messageHandover(st, i.Product, s.placed[i.Product], n.Admin.Username, n.Everyday.Username)
+			s.handover += messageHandover(st, i.Product, s.placed[i.Product], n.Admin.Username, n.Everyday.Username) + suitePairing(st, "kymessage")
 		case "kypulse":
 			var unwatched []string
 			s.pulseTargets, unwatched = pulseTargets(st, s.cat)
@@ -388,8 +388,7 @@ const noCalendarPairing = "  The KyPost-KyCalendar invitation pairing is not con
 // catalog install does, so the installer configures nothing; it sets only the private-address
 // option (privatePeer).
 func calendarPairing(st *stack.Stack, app string) string {
-	if !slices.ContainsFunc(st.Apps, func(a stack.App) bool { return a.Name == suitePeers[app] }) {
-		other := map[string]string{"kypost": "KyCalendar", "kycalendar": "KyPost"}[app]
+	if other := map[string]string{"kypost": "KyCalendar", "kycalendar": "KyPost"}[app]; !inPlan(st, strings.ToLower(other)) {
 		return "  Install " + other + " from this catalog too and the two pair for calendar invitations through\n  KyIdentity on their own.\n"
 	}
 	return `  KyPost and KyCalendar pair for calendar invitations through KyIdentity on their own; KyPost's
@@ -397,6 +396,23 @@ func calendarPairing(st *stack.Stack, app string) string {
   KyCalendar, on by default. KyCalendar turns invitation scheduling on only if it starts
   paired: if KyPost was installed after KyCalendar, run kyquickstart restart kycalendar once.
 `
+}
+
+// suitePairing is one line per other suite pair of app whose peer the plan installs
+// (KyPost and KyCalendar have calendarPairing). KyIdentity issues the pair; only app
+// releases with the feature use it, so the line says no more than that.
+func suitePairing(st *stack.Stack, app string) string {
+	names := map[string]string{"kycalendar": "KyCalendar", "kydrive": "KyDrive", "kymessage": "KyMessages", "kypost": "KyPost"}
+	use := map[[2]string]string{{"kycalendar", "kymessage"}: "video meetings", {"kydrive", "kypost"}: "mail files"}
+	out := ""
+	for _, peer := range suitePeers[app] {
+		pair := [2]string{min(app, peer), max(app, peer)}
+		if use[pair] != "" && inPlan(st, peer) {
+			out += "  KyIdentity pairs " + names[pair[0]] + " and " + names[pair[1]] + " for " + use[pair] +
+				"; releases that support it connect on\n  their own, with nothing to configure.\n"
+		}
+	}
+	return out
 }
 
 // calendarHandover is printed after every apply that installs KyCalendar; %[4]s is kubectl

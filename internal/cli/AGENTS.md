@@ -268,7 +268,10 @@ Plain terminal planning and command orchestration for the operator-run installer
   or the ceremony it passes with a pair-by-hand note. KyCalendar's and KyPost's handovers add
   `calendarPairing` (#100): with both in the plan, that they pair through KyIdentity's suite
   directory and how to check it, else that the other app would pair; `privatePeer` sets their
-  `{{private_peer}}` option (`suitePeers`); KyIdentity's names its default
+  `{{private_peer}}` option (that pair only). `suitePeers` mirrors KyIdentity-server's pairs, each
+  app to several peers (KyPost–KyCalendar, KyCalendar–KyMessages, KyDrive–KyPost), both ways
+  (`TestSuitePairingHandover`); `suitePairing` adds one two-line note to each side of the other
+  pairs when the peer is in the plan, claiming only that KyIdentity pairs them; KyIdentity's names its default
   Busnes.app push relays (#98).
   `amendLate` (apply only, read-only, before preflight) records an `identity_amendment` for each
   app whose client the running KyIdentity's retained setup lacks, all or one, when it advertises
