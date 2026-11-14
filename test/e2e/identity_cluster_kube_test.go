@@ -226,11 +226,25 @@ func TestKubernetesIdentityDatabaseCluster(t *testing.T) {
 	// The primary's pod is lost. The operator promotes a standby or restarts it, the pods find
 	// the primary again by themselves, and the Cluster is whole afterwards.
 	first := r.primary()
+	old := map[string]bool{}
+	for _, p := range r.instances() {
+		old[string(p.UID)] = p.Name == first
+	}
 	if err := cs.CoreV1().Pods(replicaNS).Delete(ctx, first, metav1.DeleteOptions{GracePeriodSeconds: ptr.To(int64(0))}); err != nil {
 		t.Fatal(err)
 	}
+	// The Cluster's status trails its pods, so wait on the pods themselves: three ready, none
+	// of them the one deleted.
 	r.eventually("three instances are ready again and every pod accepts the earlier sessions", func() bool {
-		return kube.Steps(a)[3].Verify(ctx) == nil && slices.Equal(r.pods(), pods) &&
+		ready := 0
+		for _, p := range r.instances() {
+			if !old[string(p.UID)] && slices.ContainsFunc(p.Status.Conditions, func(c corev1.PodCondition) bool {
+				return c.Type == corev1.PodReady && c.Status == corev1.ConditionTrue
+			}) {
+				ready++
+			}
+		}
+		return ready == 3 && r.primary() != "" && kube.Steps(a)[3].Verify(ctx) == nil && slices.Equal(r.pods(), pods) &&
 			!slices.ContainsFunc(pods, func(pod string) bool { return !r.signedIn(pod, sessions[pods[1]]) })
 	})
 	if got := r.sql("select count(*) from users"); got != "1" {
