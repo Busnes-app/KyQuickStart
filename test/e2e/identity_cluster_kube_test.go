@@ -20,6 +20,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/utils/ptr"
 )
 
 // The CloudNativePG release the test installs, as a cluster's owner would.
@@ -38,22 +39,21 @@ func (r *replicaCluster) instances() []corev1.Pod {
 	return slices.DeleteFunc(list.Items, func(p corev1.Pod) bool { return p.DeletionTimestamp != nil })
 }
 
-// primary is the instance the operator names as primary.
-func (r *replicaCluster) primary() corev1.Pod {
+// primary is the running instance the operator names as primary; "" during a failover.
+func (r *replicaCluster) primary() string {
 	r.t.Helper()
 	for _, p := range r.instances() {
-		if p.Labels["cnpg.io/instanceRole"] == "primary" {
-			return p
+		if p.Labels["cnpg.io/instanceRole"] == "primary" && p.Status.Phase == corev1.PodRunning {
+			return p.Name
 		}
 	}
-	r.t.Fatal("no primary instance")
-	return corev1.Pod{}
+	return ""
 }
 
 // sql runs a statement on the primary, as Postgres's own superuser over its local socket.
 func (r *replicaCluster) sql(statement string) string {
 	r.t.Helper()
-	out, err := r.c.Exec(r.ctx, replicaNS, r.primary().Name, "postgres", []string{"psql", "-U", "postgres", "-d", "kyidentity", "-Atc", statement})
+	out, err := r.c.Exec(r.ctx, replicaNS, r.primary(), "postgres", []string{"psql", "-U", "postgres", "-d", "kyidentity", "-Atc", statement})
 	if err != nil {
 		r.t.Fatalf("%s: %v", statement, err)
 	}
@@ -223,59 +223,20 @@ func TestKubernetesIdentityDatabaseCluster(t *testing.T) {
 		t.Fatalf("pods changed: %v -> %v", pods, again)
 	}
 
-	// The primary's node loses power. The KyIdentity pods on the other nodes sign people in
-	// again without anything being restarted, and no session made before is lost.
-	primary := r.primary()
-	lost := primary.Spec.NodeName
-	var survivors []string
-	list, err := cs.CoreV1().Pods(replicaNS).List(ctx, metav1.ListOptions{LabelSelector: "ky.serves=kyidentity"})
-	if err != nil {
+	// The primary's pod is lost. The operator promotes a standby or restarts it, the pods find
+	// the primary again by themselves, and the Cluster is whole afterwards.
+	first := r.primary()
+	if err := cs.CoreV1().Pods(replicaNS).Delete(ctx, first, metav1.DeleteOptions{GracePeriodSeconds: ptr.To(int64(0))}); err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range list.Items {
-		if p.Spec.NodeName != lost {
-			survivors = append(survivors, p.Name)
-		}
-	}
-	if len(survivors) < 2 {
-		t.Fatalf("KyIdentity pods off node %s: %v", lost, survivors)
-	}
-	docker(t, "kill", lost)
-	powerOff := time.Now()
-	t.Cleanup(func() { exec.Command("docker", "start", lost).Run() })
-	// signIn fails the test on a refusal, so ask each pod whether it is ready first.
-	r.eventually("a surviving pod is ready on the new primary", func() bool {
-		return strings.Contains(r.http(survivors[0], "/readyz", nil, ""), "HTTP/1.1 200") && r.primary().Name != primary.Name
+	r.eventually("three instances are ready again and every pod accepts the earlier sessions", func() bool {
+		return kube.Steps(a)[3].Verify(ctx) == nil && slices.Equal(r.pods(), pods) &&
+			!slices.ContainsFunc(pods, func(pod string) bool { return !r.signedIn(pod, sessions[pods[1]]) })
 	})
-	t.Logf("sign-in was back %s after the primary's node lost power", time.Since(powerOff).Round(time.Second))
-	after := r.signIn(survivors[0], password)
-	for _, pod := range survivors {
-		for _, session := range append(slices.Collect(func(yield func(string) bool) {
-			for _, s := range sessions {
-				if !yield(s) {
-					return
-				}
-			}
-		}), after) {
-			if !r.signedIn(pod, session) {
-				t.Fatalf("%s refuses a session after the failover", pod)
-			}
-		}
-	}
 	if got := r.sql("select count(*) from users"); got != "1" {
-		t.Fatalf("the new primary has %s administrators", got)
+		t.Fatalf("after the primary's pod was lost there are %s administrators", got)
 	}
-
-	// Power returns: the old primary rejoins as a standby, and the Cluster is whole again.
-	docker(t, "start", lost)
-	r.eventually("three instances are ready again", func() bool {
-		_, err := r.run(kube.Steps(a)[3:])
-		return err == nil && len(r.pods()) == 3
-	})
-	if r.primary().Name == primary.Name {
-		t.Fatal("the failed primary came back as the primary")
-	}
-	pods = r.pods()
+	after := r.signIn(pods[0], password)
 
 	// Stop and start: nothing runs in between, and the data is there afterwards.
 	if _, err := r.run([]engine.Step{kube.StopStep(a)}); err != nil {
@@ -323,5 +284,49 @@ func TestKubernetesIdentityDatabaseCluster(t *testing.T) {
 	}
 	if pods = r.pods(); len(pods) != 3 || len(r.instances()) != 3 || !r.signedIn(pods[2], after) {
 		t.Fatal("the refusal changed the install")
+	}
+
+	// Last, the primary's node loses power and stays off. The KyIdentity pods on the other
+	// nodes sign people in again without anything being restarted, on the two instances
+	// left, and no session made before is lost. (A kind node does not rejoin after a power
+	// cut, so the node's return is not part of this test.)
+	primary := r.primary()
+	var lost string
+	for _, p := range r.instances() {
+		if p.Name == primary {
+			lost = p.Spec.NodeName
+		}
+	}
+	var survivors []string
+	list, err := cs.CoreV1().Pods(replicaNS).List(ctx, metav1.ListOptions{LabelSelector: "ky.serves=kyidentity"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range list.Items {
+		if p.Spec.NodeName != lost {
+			survivors = append(survivors, p.Name)
+		}
+	}
+	if lost == "" || len(survivors) == 0 {
+		t.Fatalf("primary %s on node %q; KyIdentity pods elsewhere: %v", primary, lost, survivors)
+	}
+	docker(t, "kill", lost)
+	powerOff := time.Now()
+	// signIn fails the test on a refusal, so ask the pod whether it is ready first.
+	r.eventually("a surviving pod is ready on a new primary", func() bool {
+		now := r.primary()
+		return now != "" && now != primary && strings.Contains(r.http(survivors[0], "/readyz", nil, ""), "HTTP/1.1 200")
+	})
+	t.Logf("sign-in was back %s after the primary's node lost power", time.Since(powerOff).Round(time.Second))
+	fresh := r.signIn(survivors[0], password)
+	for _, pod := range survivors {
+		for _, session := range []string{after, fresh} {
+			if !r.signedIn(pod, session) {
+				t.Fatalf("%s refuses a session after the failover", pod)
+			}
+		}
+	}
+	if got := r.sql("select count(*) from users"); got != "1" {
+		t.Fatalf("the new primary has %s administrators", got)
 	}
 }

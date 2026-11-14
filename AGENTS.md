@@ -692,10 +692,11 @@ calls and kind nodes must carry their own explicit bounds.
   installs `database_instances: 3`: refused without the operator, three instances on three
   nodes with two standbys confirming commits, every KyIdentity connection encrypted, the
   database refused to a stranger pod, no secret in a log or object, an idle second apply,
-  the primary's node powered off (`docker kill`) with sign-in back on the surviving pods and
-  no earlier session lost, the node's return as a standby, stop/start by hibernation,
-  uninstall/reinstall as the same identity, and the refused moves to the single pod and to
-  one instance.
+  the primary's pod deleted and the Cluster whole again, stop/start by hibernation,
+  uninstall/reinstall as the same identity, the refused moves to the single pod and to one
+  instance, and last the primary's node powered off (`docker kill`) with sign-in back on the
+  surviving pods and no earlier session lost. Not covered: that node's return (a kind node's
+  pod network does not come back after a power cut).
 - With `KYQ_TEST_EURO_OFFICE=1`, `TestKubernetesEuroOffice` (own kind cluster, 5 GiB node) installs NPM,
   KyIdentity and `euro-office` with KyDrive on an sshd target: baseline pod and its capabilities,
   seeded claims, the copied secret, `/healthcheck` through the edge, a signed KyDrive callback
