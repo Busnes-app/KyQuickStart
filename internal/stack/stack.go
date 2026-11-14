@@ -166,7 +166,18 @@ type App struct {
 	// RecoveryKeyID is KyRecovery's recovery key as the owner confirmed it after the ceremony
 	// (64 lowercase hex). Apply pairs products only to this key.
 	RecoveryKeyID string `yaml:"recovery_key_id,omitempty" json:",omitempty"`
+	// Replicas runs KyIdentity as this many pods on one Postgres database (Kubernetes only).
+	Replicas int `yaml:"replicas,omitempty" json:",omitempty"`
+	// DatabaseSecret names the operator's Secret in the app's namespace whose key "url" holds
+	// the Postgres URL; without it the installer deploys one Postgres pod.
+	DatabaseSecret string `yaml:"database_secret,omitempty" json:",omitempty"`
 }
+
+// MaxReplicas bounds an app's replicas: every write takes one lock, so more add no throughput.
+const MaxReplicas = 5
+
+// DatabaseSecretKey is the key of a database_secret that holds the Postgres URL.
+const DatabaseSecretKey = "url"
 
 // MediaAddress accepts one unicast IPv4 address a LAN client can reach.
 func MediaAddress(s string) bool {
@@ -326,6 +337,14 @@ func (s *Stack) validate() error {
 		}
 		if a.RecoveryKeyID != "" && (a.Name != "kyrecovery" || !keyIDRE.MatchString(a.RecoveryKeyID)) {
 			return fmt.Errorf("app %q: recovery_key_id belongs to kyrecovery only and is the 64 lowercase hex characters of the key ID its ceremony page shows", a.Name)
+		}
+		switch {
+		case a.Replicas != 0 && (a.Name != "kyidentity" || a.Replicas < 2 || a.Replicas > MaxReplicas):
+			return fmt.Errorf("app %q: replicas belongs to kyidentity only and is 2 to %d", a.Name, MaxReplicas)
+		case a.DatabaseSecret != "" && a.Replicas == 0:
+			return fmt.Errorf("app %q: database_secret needs replicas", a.Name)
+		case a.DatabaseSecret != "" && (len(validation.IsDNS1123Subdomain(a.DatabaseSecret)) > 0 || strings.HasPrefix(a.DatabaseSecret, "kyq-")):
+			return fmt.Errorf("app %q: database_secret must be a Secret name that does not start with kyq-", a.Name)
 		}
 		if a.Mail != nil {
 			if err := a.Mail.validate(); err != nil {

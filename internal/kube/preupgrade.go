@@ -97,6 +97,8 @@ func PreUpgradeRefusal(a App) error {
 		return fmt.Errorf("%s keeps no volumes on Kubernetes", a.Name)
 	case k.RunAs == 0:
 		return fmt.Errorf("%s runs as root, whose volumes the pre-upgrade copy does not cover", a.Name)
+	case a.replicated():
+		return fmt.Errorf("%s runs as replicas on Postgres, which the pre-upgrade copy does not cover: take a backup in its own Backups screen first", a.Name)
 	}
 	return nil
 }

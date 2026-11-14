@@ -13,6 +13,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 const restartedAnnotation = "kyquickstart/restarted-at"
@@ -20,6 +21,33 @@ const restartedAnnotation = "kyquickstart/restarted-at"
 // State reads the app's Deployment: running (its one replica ready), stopped (scaled to zero,
 // no pods left), missing, or unknown (rolling out, failing, or not managed by kyquickstart).
 func (c *Client) State(ctx context.Context, app string) (string, error) {
+	state, err := c.appState(ctx, app)
+	if err != nil || state == "missing" || state == "unknown" {
+		return state, err
+	}
+	// A replicated app is running, or stopped, only when its replicas and database are too.
+	extras, err := c.extras(ctx, app)
+	if errors.Is(err, errNotOwned) {
+		return "unknown", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	for _, d := range extras {
+		switch {
+		case state == "running" && replicas(d) > 0 && ready(d):
+		case state == "stopped" && replicas(d) == 0 && d.Status.Replicas == 0:
+			if left, err := c.podsLeft(ctx, app, d.Spec.Selector); err != nil || left {
+				return "unknown", err
+			}
+		default:
+			return "unknown", nil
+		}
+	}
+	return state, nil
+}
+
+func (c *Client) appState(ctx context.Context, app string) (string, error) {
 	w, found, err := c.workload(ctx, app)
 	switch {
 	case errors.Is(err, errNotOwned):
@@ -100,14 +128,36 @@ func (s lifecycleStep) Apply(ctx context.Context) error {
 		if err := s.patch(ctx, map[string]any{"spec": map[string]any{"replicas": 0}}); err != nil {
 			return err
 		}
+		if err := s.patchExtras(ctx, func(*appsv1.Deployment) map[string]any { return map[string]any{"replicas": 0} }); err != nil {
+			return err
+		}
 		return s.waitStopped(ctx)
 	case "start":
+		want := map[string]int32{}
+		for _, e := range render(s.a).extras() {
+			want[e.Name] = *e.Spec.Replicas
+		}
+		if err := s.patchExtras(ctx, func(d *appsv1.Deployment) map[string]any {
+			// One pod where the plan no longer says: the app must not stay down for that.
+			return map[string]any{"replicas": max(want[d.Name], 1)}
+		}); err != nil {
+			return err
+		}
 		if err := s.patch(ctx, map[string]any{"spec": map[string]any{"replicas": 1}}); err != nil {
 			return err
 		}
 	default:
 		template := map[string]any{"metadata": map[string]any{"annotations": map[string]string{restartedAnnotation: s.run}}}
 		if err := s.patch(ctx, map[string]any{"spec": map[string]any{"template": template}}); err != nil {
+			return err
+		}
+		// The replicas restart with it; the database, whose restart is an outage, does not.
+		if err := s.patchExtras(ctx, func(d *appsv1.Deployment) map[string]any {
+			if d.Name != replicaName {
+				return nil
+			}
+			return map[string]any{"template": template}
+		}); err != nil {
 			return err
 		}
 	}
@@ -142,6 +192,28 @@ func (s lifecycleStep) patch(ctx context.Context, change map[string]any) error {
 	}
 	if err := s.a.Client.patchWorkload(ctx, w, b); err != nil {
 		return fmt.Errorf("%s %s: %w", w.kind(), s.op, err)
+	}
+	return nil
+}
+
+// patchExtras merges spec(d) into the spec of each Deployment beside "app", as patch does.
+func (s lifecycleStep) patchExtras(ctx context.Context, spec func(*appsv1.Deployment) map[string]any) error {
+	extras, err := s.a.Client.extras(ctx, s.a.Name)
+	if err != nil {
+		return err
+	}
+	for _, d := range extras {
+		change := spec(d)
+		if change == nil {
+			continue
+		}
+		b, err := json.Marshal(map[string]any{"metadata": map[string]any{"resourceVersion": d.ResourceVersion}, "spec": change})
+		if err != nil {
+			return err
+		}
+		if _, err := s.a.Client.cs.AppsV1().Deployments(d.Namespace).Patch(ctx, d.Name, types.MergePatchType, b, metav1.PatchOptions{}); err != nil {
+			return fmt.Errorf("deployment %s %s: %w", d.Name, s.op, err)
+		}
 	}
 	return nil
 }

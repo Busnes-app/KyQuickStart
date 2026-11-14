@@ -56,12 +56,28 @@ type objects struct {
 	// its pods read, of which deploy owns only the main file.
 	DaemonSet *appsv1.DaemonSet `json:",omitempty"`
 	Config    *corev1.ConfigMap `json:",omitempty"`
+	// A replicated app's other pods, and the Postgres the installer deploys for it.
+	Replica         *appsv1.Deployment          `json:",omitempty"`
+	Database        *appsv1.Deployment          `json:",omitempty"`
+	DatabaseService *corev1.Service             `json:",omitempty"`
+	DatabasePolicy  *networkingv1.NetworkPolicy `json:",omitempty"`
+}
+
+// extras are the Deployments beside "app", the database first: the app waits for it.
+func (o objects) extras() []*appsv1.Deployment {
+	var out []*appsv1.Deployment
+	for _, d := range []*appsv1.Deployment{o.Database, o.Replica} {
+		if d != nil {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 // services are the app's Services that exist, ClusterIP first.
 func (o objects) services() []*corev1.Service {
 	var out []*corev1.Service
-	for _, s := range []*corev1.Service{o.Service, o.Public} {
+	for _, s := range []*corev1.Service{o.Service, o.Public, o.DatabaseService} {
 		if s != nil {
 			out = append(out, s)
 		}
@@ -285,6 +301,9 @@ func render(a App) objects {
 			Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType},
 			Template: template,
 		},
+	}
+	if a.replicated() {
+		replicate(&o, a, meta)
 	}
 	return o
 }
