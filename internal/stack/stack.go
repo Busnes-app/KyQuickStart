@@ -171,10 +171,20 @@ type App struct {
 	// DatabaseSecret names the operator's Secret in the app's namespace whose key "url" holds
 	// the Postgres URL; without it the installer deploys one Postgres pod.
 	DatabaseSecret string `yaml:"database_secret,omitempty" json:",omitempty"`
+	// DatabaseInstances makes the installer's Postgres highly available: this many instances
+	// on different nodes, kept by the cluster's CloudNativePG operator.
+	DatabaseInstances int `yaml:"database_instances,omitempty" json:",omitempty"`
 }
 
 // MaxReplicas bounds an app's replicas: every write takes one lock, so more add no throughput.
 const MaxReplicas = 5
+
+// A highly available database is 3 to 5 instances: one may be lost while another still
+// confirms every write.
+const (
+	MinDatabaseInstances = 3
+	MaxDatabaseInstances = 5
+)
 
 // DatabaseSecretKey is the key of a database_secret that holds the Postgres URL.
 const DatabaseSecretKey = "url"
@@ -345,6 +355,10 @@ func (s *Stack) validate() error {
 			return fmt.Errorf("app %q: database_secret needs replicas", a.Name)
 		case a.DatabaseSecret != "" && (len(validation.IsDNS1123Subdomain(a.DatabaseSecret)) > 0 || strings.HasPrefix(a.DatabaseSecret, "kyq-")):
 			return fmt.Errorf("app %q: database_secret must be a Secret name that does not start with kyq-", a.Name)
+		case a.DatabaseInstances != 0 && (a.Replicas == 0 || a.DatabaseSecret != ""):
+			return fmt.Errorf("app %q: database_instances needs replicas and no database_secret: it is the installer's own Postgres made highly available", a.Name)
+		case a.DatabaseInstances != 0 && (a.DatabaseInstances < MinDatabaseInstances || a.DatabaseInstances > MaxDatabaseInstances):
+			return fmt.Errorf("app %q: database_instances is %d to %d", a.Name, MinDatabaseInstances, MaxDatabaseInstances)
 		}
 		if a.Mail != nil {
 			if err := a.Mail.validate(); err != nil {

@@ -49,6 +49,10 @@ func (h healthStep) state(ctx context.Context) (string, bool, error) {
 			return fmt.Sprintf("%s: %d of %d replicas ready", e.Name, d.Status.ReadyReplicas, *e.Spec.Replicas), false, nil
 		}
 	}
+	if h.a.clustered() {
+		o, err := h.a.Client.clusterObject(ctx, h.a.Name)
+		return clusterState(o), false, err
+	}
 	return "", false, nil
 }
 

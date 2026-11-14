@@ -621,4 +621,7 @@ func TestReplicasCatalogValidation(t *testing.T) {
 	if r := c.Kubernetes.Replicas; r == nil || c.Images[r.DatabaseImage] == "" || !catalog.Pinned(c.Images[r.DatabaseImage]) {
 		t.Fatalf("replicas = %+v", r)
 	}
+	if image := c.Images[c.Kubernetes.Replicas.ClusterImage]; !catalog.Pinned(image) || !strings.HasPrefix(image, "ghcr.io/cloudnative-pg/postgresql:") {
+		t.Fatalf("cluster image = %q", image)
+	}
 }

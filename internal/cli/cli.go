@@ -710,6 +710,11 @@ func (s *session) needs(target string) kube.Needs {
 			n.Certificates = true
 		}
 	}
+	for _, a := range s.plan.Apps {
+		if a.DatabaseInstances > 0 && s.placed[a.Name].Name == target {
+			n.DatabaseCluster = true
+		}
+	}
 	return n
 }
 
@@ -1199,7 +1204,7 @@ func withReplicas(st *stack.Stack, placed map[string]stack.Target, cat catalog.C
 			return fmt.Errorf("app %q: replicas need %s %s or later, and this catalog installs %s", a.Name, a.Name, app.Kubernetes.Replicas.Since, app.Version)
 		}
 		k := *app.Kubernetes
-		k.ReplicaCount, k.DatabaseSecret = a.Replicas, a.DatabaseSecret
+		k.ReplicaCount, k.DatabaseSecret, k.DatabaseInstances = a.Replicas, a.DatabaseSecret, a.DatabaseInstances
 		// The key every replica may seal backups to: the one the owner confirmed for
 		// KyRecovery, never one read back from KyIdentity's own database.
 		if i := slices.IndexFunc(st.Apps, func(x stack.App) bool { return x.Name == "kyrecovery" }); i >= 0 {
@@ -1219,11 +1224,16 @@ func replicaNote(app catalog.App, t stack.Target) string {
 		return ""
 	}
 	out := fmt.Sprintf("\nKyIdentity runs as %d replicas on ", k.ReplicaCount)
-	if k.DatabaseSecret == "" {
+	switch {
+	case k.DatabaseInstances > 0:
+		out += fmt.Sprintf("a Postgres of %d instances that the cluster's CloudNativePG operator keeps\n"+
+			"  (Cluster database in kyq-kyidentity). A write is confirmed by two instances, and the loss of\n"+
+			"  one node leaves sign-in working. Nothing in the installer backs the database up.\n", k.DatabaseInstances)
+	case k.DatabaseSecret == "":
 		out += "a Postgres pod the installer deployed (claim vol-database in kyq-kyidentity).\n" +
 			"  That pod is the one copy of every account. Nothing in the installer backs it up, and while\n" +
 			"  its node is down nobody can sign in.\n"
-	} else {
+	default:
 		out += "the database named by Secret " + k.DatabaseSecret + ".\n" +
 			"  The installer never reads or backs up that database: its replication and backups are yours.\n"
 	}

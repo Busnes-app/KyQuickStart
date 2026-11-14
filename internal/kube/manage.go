@@ -92,6 +92,9 @@ func (s removeStep) Inspect(ctx context.Context) (bool, error) {
 			return false, err
 		}
 	}
+	if left, err := s.a.Client.podsLeft(ctx, s.a.Name, clusterPods); err != nil || left {
+		return false, err
+	}
 	return true, nil
 }
 
@@ -114,6 +117,12 @@ func (s removeStep) Apply(ctx context.Context) error {
 	}
 	for _, d := range extras {
 		if err := s.a.Client.deleteWorkload(ctx, workload{object: d}); err != nil {
+			return err
+		}
+	}
+	// A Cluster owns its claims, so it is stopped, never deleted.
+	if s.a.clustered() {
+		if err := s.a.Client.hibernate(ctx, s.a.Name, true); err != nil {
 			return err
 		}
 	}
@@ -208,7 +217,10 @@ func (s unmanageStep) sweep(ctx context.Context, fix bool) (string, error) {
 				}, fix)
 			}})
 		}
-		for _, name := range []string{keysSecret, databaseSecret} {
+		if s.a.clustered() {
+			checks = append(checks, check{"cluster " + databaseName, func() (bool, error) { return s.a.Client.unmanageCluster(ctx, s.a.Name, fix) }})
+		}
+		for _, name := range []string{keysSecret, databaseSecret, clusterTLSSecret} {
 			checks = append(checks, check{"secret " + name, func() (bool, error) { return relabel(ctx, cs.CoreV1().Secrets(ns), name, unlabel, meta, fix) }})
 		}
 		checks = append(checks,

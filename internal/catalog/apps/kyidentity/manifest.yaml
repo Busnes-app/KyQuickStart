@@ -16,6 +16,9 @@ images:
   kyidentity: ghcr.io/busnes-app/kyidentity-server:0.6.0.1@sha256:096da2158984cdb1c195841a9f7d1c9b26b50ecd06753e9f4382054250876cb6
   # Kubernetes, with replicas and no database_secret in the plan: the Postgres they share.
   postgres: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+  # The same, with database_instances in the plan: the CloudNativePG community's Postgres 17
+  # operand image (17.12 on Debian trixie, no extras), which the cluster's operator runs.
+  postgres_cluster: ghcr.io/cloudnative-pg/postgresql:17.12-minimal-trixie@sha256:4ae89311e5031155a139a5c6d31a80f6deb135443711e61ff7df41cb549fdcaa
 health:
   timeout_seconds: 300
 # Its signing, session and encryption keys are generated in the data directory on first start.
@@ -67,3 +70,4 @@ kubernetes:
     since: 0.6.0.2
     database_image: postgres
     database_size: 2Gi
+    cluster_image: postgres_cluster

@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/Busnes-app/kyquickstart/internal/engine"
 	"github.com/Busnes-app/kyquickstart/internal/managed"
@@ -24,7 +25,8 @@ import (
 
 // A replicated app (KyIdentity with the plan's replicas) is three workloads in its namespace:
 // "app", the one pod that keeps the data claim and runs setup; "app-replica", the others, with
-// no claim; and "database", one Postgres pod, unless the plan names the operator's own.
+// no claim; and "database", one Postgres pod, unless the plan names the operator's own or asks
+// for database_instances (dbcluster.go).
 const (
 	replicaName    = "app-replica"
 	databaseName   = "database"
@@ -119,6 +121,11 @@ func replicate(o *objects, a App, meta func(string) metav1.ObjectMeta) {
 	c.VolumeMounts = append(c.VolumeMounts,
 		corev1.VolumeMount{Name: "replica-keys", MountPath: keysDir, ReadOnly: true},
 		corev1.VolumeMount{Name: "database-url", MountPath: databaseDir, ReadOnly: true})
+	if a.clustered() {
+		// The authority alone: the server's key stays with the database.
+		secret("database-ca", clusterTLSSecret, []corev1.KeyToPath{{Key: clusterCAKey, Path: clusterCAKey}})
+		c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{Name: "database-ca", MountPath: clusterCADir, ReadOnly: true})
+	}
 	o.Deployment.Spec.Template.Labels[servesLabel] = app
 	o.Service.Spec.Selector = serves
 
@@ -140,10 +147,12 @@ func replicate(o *objects, a App, meta func(string) metav1.ObjectMeta) {
 	}
 	o.Replica = r
 
-	if !a.ownDatabase() {
-		return
+	switch {
+	case a.clustered():
+		databaseCluster(o, a, meta)
+	case a.ownDatabase():
+		database(o, a, meta)
 	}
-	database(o, a, meta)
 }
 
 // database adds the installer's Postgres: one pod on its own claim, reachable only from the
@@ -258,9 +267,22 @@ func database(o *objects, a App, meta func(string) metav1.ObjectMeta) {
 	}}
 }
 
-// databaseURL is how the app's pods reach the installer's Postgres. The link is not encrypted:
-// it stays inside the cluster, between pods the policy above names.
-func databaseURL(app string, password []byte) []byte {
+// databaseKeys are the values of the installer's database Secret. A Cluster takes its owner
+// from a basic-auth Secret, and keeps Postgres's superuser without a password.
+func (a App) databaseKeys() []string {
+	if a.clustered() {
+		return []string{usernameKey, passwordKey, stack.DatabaseSecretKey}
+	}
+	return []string{passwordKey, superuserKey, stack.DatabaseSecretKey}
+}
+
+// databaseURL is how the app's pods reach the installer's Postgres. To the single pod the
+// link is not encrypted: it stays inside the cluster, between pods the policy above names.
+func (a App) databaseURL(password []byte) []byte {
+	if a.clustered() {
+		return clusterURL(a.Name, password)
+	}
+	app := a.Name
 	u := url.URL{
 		Scheme: "postgres", User: url.UserPassword(databaseUser, string(password)),
 		Host: fmt.Sprintf("%s.%s.svc:%d", databaseName, namespaceOf(app), databasePort), Path: "/" + databaseUser,
@@ -338,10 +360,27 @@ func (s replicaSecretsStep) check(ctx context.Context) (string, error) {
 	raw := bytes.TrimSpace(db.Data[stack.DatabaseSecretKey])
 	s.a.Redact.Add(string(raw))
 	if s.a.ownDatabase() {
-		s.a.Redact.Add(string(db.Data[passwordKey]))
-		s.a.Redact.Add(string(db.Data[superuserKey]))
-		if len(db.Data[passwordKey]) == 0 || len(db.Data[superuserKey]) == 0 || !bytes.Equal(raw, databaseURL(s.a.Name, db.Data[passwordKey])) {
+		for _, key := range s.a.databaseKeys() {
+			if len(db.Data[key]) == 0 {
+				return "secret " + name + " is incomplete", nil
+			}
+			s.a.Redact.Add(string(db.Data[key]))
+		}
+		if !bytes.Equal(raw, s.a.databaseURL(db.Data[passwordKey])) {
 			return "secret " + name + " is incomplete", nil
+		}
+		if !s.a.clustered() {
+			return "", nil
+		}
+		tls, found, err := getOwned(ctx, s.secrets(), "secret", clusterTLSSecret)
+		if err != nil || !found {
+			return "secret " + clusterTLSSecret + " missing", err
+		}
+		s.a.Redact.Add(string(tls.Data[corev1.TLSPrivateKeyKey]))
+		for _, key := range clusterTLSKeys {
+			if len(tls.Data[key]) == 0 {
+				return "secret " + clusterTLSSecret + " is incomplete", nil
+			}
 		}
 		return "", nil
 	}
@@ -369,7 +408,7 @@ func (s replicaSecretsStep) Apply(ctx context.Context) error {
 		return err
 	}
 	ns := namespaceOf(s.a.Name)
-	if err := s.fill(ctx, keysSecret, keyNames(), func(sec *corev1.Secret) error {
+	if err := s.fill(ctx, keysSecret, corev1.SecretTypeOpaque, keyNames(), func(sec *corev1.Secret) error {
 		if len(sec.Data[bootstrapKey]) == 0 {
 			v, err := s.a.Client.generateCredentials(ctx, ns, s.a.ReleaseSet, 1)
 			if err != nil {
@@ -404,31 +443,50 @@ func (s replicaSecretsStep) Apply(ctx context.Context) error {
 			"  kubectl -n %[2]s label secret %[1]s %[4]s=%[5]s",
 			s.a.databaseSecretName(), ns, stack.DatabaseSecretKey, managed.Label, managed.Value)
 	}
-	return s.fill(ctx, databaseSecret, []string{passwordKey, superuserKey, stack.DatabaseSecretKey}, func(sec *corev1.Secret) error {
-		for _, key := range []string{passwordKey, superuserKey} {
-			if len(sec.Data[key]) > 0 {
-				continue
+	kind := corev1.SecretTypeOpaque
+	if s.a.clustered() {
+		kind = corev1.SecretTypeBasicAuth
+	}
+	if err := s.fill(ctx, databaseSecret, kind, s.a.databaseKeys(), func(sec *corev1.Secret) error {
+		for _, key := range s.a.databaseKeys() {
+			switch {
+			case key == usernameKey:
+				sec.Data[key] = []byte(databaseUser)
+			case key != stack.DatabaseSecretKey && len(sec.Data[key]) == 0:
+				v, err := s.a.Client.generateCredentials(ctx, ns, s.a.ReleaseSet, 1)
+				if err != nil {
+					return err
+				}
+				sec.Data[key] = v[0]
 			}
-			v, err := s.a.Client.generateCredentials(ctx, ns, s.a.ReleaseSet, 1)
-			if err != nil {
-				return err
-			}
-			sec.Data[key] = v[0]
 		}
-		sec.Data[stack.DatabaseSecretKey] = databaseURL(s.a.Name, sec.Data[passwordKey])
+		sec.Data[stack.DatabaseSecretKey] = s.a.databaseURL(sec.Data[passwordKey])
+		return nil
+	}); err != nil || !s.a.clustered() {
+		return err
+	}
+	// The certificate and its authority are made together, so the Secret holds all or none.
+	return s.fill(ctx, clusterTLSSecret, corev1.SecretTypeTLS, clusterTLSKeys, func(sec *corev1.Secret) error {
+		ca, cert, key, err := serverCertificate(clusterHost(s.a.Name), time.Now())
+		if err != nil {
+			return errors.New("the database's server certificate could not be made")
+		}
+		sec.Data = map[string][]byte{clusterCAKey: ca, corev1.TLSCertKey: cert, corev1.TLSPrivateKeyKey: key}
 		return nil
 	})
 }
 
+var clusterTLSKeys = []string{clusterCAKey, corev1.TLSCertKey, corev1.TLSPrivateKeyKey}
+
 // fill writes name once every one of keys has a value, leaving a complete Secret alone. The
 // four keys are generated together, so a Secret holds all of them or none.
-func (s replicaSecretsStep) fill(ctx context.Context, name string, keys []string, generate func(*corev1.Secret) error) error {
+func (s replicaSecretsStep) fill(ctx context.Context, name string, kind corev1.SecretType, keys []string, generate func(*corev1.Secret) error) error {
 	sec, found, err := getOwned(ctx, s.secrets(), "secret", name)
 	if err != nil {
 		return err
 	}
 	if !found {
-		sec = &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespaceOf(s.a.Name)}, Type: corev1.SecretTypeOpaque}
+		sec = &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespaceOf(s.a.Name)}, Type: kind}
 	}
 	if !slices.ContainsFunc(keys, func(k string) bool { return len(sec.Data[k]) == 0 }) {
 		return nil
@@ -533,7 +591,10 @@ const databaseAnnotation = "kyquickstart/database"
 
 // databaseRecord is the plan's database as databaseAnnotation writes it.
 func (a App) databaseRecord() string {
-	if a.ownDatabase() {
+	switch {
+	case a.clustered():
+		return "cluster"
+	case a.ownDatabase():
 		return "installer"
 	}
 	return "secret/" + a.Catalog.Kubernetes.DatabaseSecret
@@ -543,6 +604,8 @@ func describeDatabase(record string) string {
 	switch name, operators := strings.CutPrefix(record, "secret/"); {
 	case operators:
 		return "the Postgres that database_secret " + name + " names"
+	case record == "cluster":
+		return "the installer's highly available Postgres (Cluster " + databaseName + ")"
 	case record == "installer":
 		return "the installer's Postgres (Deployment " + databaseName + ")"
 	}
@@ -566,7 +629,7 @@ func (a App) replicaChange(ctx context.Context) error {
 	case keys && !a.replicated():
 		return fmt.Errorf("%s is installed as replicas on Postgres and the plan no longer has replicas: restore its replicas, or move it back by hand with a capsule (KyIdentity's docs/RUNNING.md)", a.Name)
 	case keys && sec.Annotations[databaseAnnotation] != a.databaseRecord():
-		return fmt.Errorf("%[1]s keeps its accounts in %[2]s and the plan names %[3]s. The installer does not move a database: %[1]s would start with no accounts and the old ones would sit unused. Put database_secret back as it was. If you moved the data yourself, or only renamed the Secret, record that and run apply again (the installer deletes no database; an unused one is yours to remove):\n"+
+		return fmt.Errorf("%[1]s keeps its accounts in %[2]s and the plan names %[3]s. The installer does not move a database: %[1]s would start with no accounts and the old ones would sit unused. Put the plan's database back as it was. If you moved the data yourself, or only renamed the Secret, record that and run apply again (the installer deletes no database; an unused one is yours to remove):\n"+
 			"  kubectl -n %[4]s annotate secret %[5]s %[6]s=%[7]s --overwrite",
 			a.Name, describeDatabase(sec.Annotations[databaseAnnotation]), describeDatabase(a.databaseRecord()), ns, keysSecret, databaseAnnotation, a.databaseRecord())
 	case keys || !a.replicated():
@@ -582,6 +645,13 @@ func (a App) replicaChange(ctx context.Context) error {
 			return err
 		} else if found {
 			return fmt.Errorf("%[1]s already has data (claim %[2]s) and no Secret %[3]s. If it was a single instance, the installer does not yet move it into Postgres: remove replicas from the plan, or move it by hand with migrate-to-postgres (KyIdentity's docs/RUNNING.md, \"Moving an install from SQLite to Postgres\"). If it ran as replicas, restore Secret %[3]s: new keys would end every session and orphan every sealed secret", a.Name, claim, keysSecret)
+		}
+	}
+	if a.clustered() {
+		if o, err := a.Client.clusterObject(ctx, a.Name); err != nil {
+			return err
+		} else if o != nil {
+			return fmt.Errorf("%[1]s already has a database (Cluster %[2]s) and no Secret %[3]s. Restore Secret %[3]s: new keys would end every session and orphan every sealed secret", a.Name, databaseName, keysSecret)
 		}
 	}
 	return nil

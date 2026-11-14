@@ -294,6 +294,7 @@ kyidentity:
             since: 0.6.0.2
             database_image: postgres
             database_size: 2Gi
+            cluster_image: postgres_cluster
 kynotes:
     compose: |
         # Docker variant of this product's pinned manifest; bind data belongs to the SSH user.
