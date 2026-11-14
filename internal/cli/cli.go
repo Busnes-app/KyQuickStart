@@ -1168,14 +1168,26 @@ func privateRecovery(st *stack.Stack) bool {
 	return false
 }
 
-// suitePeers are the pairs KyIdentity's suite directory pairs on its own (/api/suite/peer).
-var suitePeers = map[string]string{"kypost": "kycalendar", "kycalendar": "kypost"}
+// suitePeers are the pairs KyIdentity's suite directory pairs on its own (/api/suite/peer),
+// each app to its peers. Keep it in step with KyIdentity-server's suitePeers.
+var suitePeers = map[string][]string{
+	"kypost":     {"kycalendar", "kydrive"},
+	"kycalendar": {"kypost", "kymessage"},
+	"kydrive":    {"kypost"},
+	"kymessage":  {"kycalendar"},
+}
 
-// privatePeer reports whether app's suite peer is in the plan with a URL that resolves to a
+// inPlan reports whether the plan installs app.
+func inPlan(st *stack.Stack, app string) bool {
+	return slices.ContainsFunc(st.Apps, func(a stack.App) bool { return a.Name == app })
+}
+
+// privatePeer reports whether the peer named by app's {{private_peer}} option (KyPost's
+// KyCalendar and back; no other pair has one) is in the plan with a URL that resolves to a
 // private address: an internal route, or a route an edge's lan_dns publishes on the LAN.
 func privatePeer(st *stack.Stack, app string) bool {
-	peer, ok := suitePeers[app]
-	if !ok || !slices.ContainsFunc(st.Apps, func(a stack.App) bool { return a.Name == peer }) {
+	peer, ok := map[string]string{"kypost": "kycalendar", "kycalendar": "kypost"}[app]
+	if !ok || !inPlan(st, peer) {
 		return false
 	}
 	for _, e := range st.Edges {

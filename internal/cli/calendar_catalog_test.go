@@ -560,3 +560,38 @@ func TestCalendarPairingHandover(t *testing.T) {
 		}
 	}
 }
+
+// Every pair KyIdentity's directory issues gets one handover line on each side, only when the
+// peer is in the plan; KyPost and KyCalendar keep calendarPairing instead.
+func TestSuitePairingHandover(t *testing.T) {
+	for app, peers := range suitePeers {
+		for _, peer := range peers {
+			if !slices.Contains(suitePeers[peer], app) {
+				t.Errorf("%s pairs with %s, but not back", app, peer)
+			}
+		}
+	}
+	all := &stack.Stack{Apps: []stack.App{{Name: "kypost"}, {Name: "kycalendar"}, {Name: "kydrive"}, {Name: "kymessage"}}}
+	for app, want := range map[string][]string{
+		"kypost":     {"KyIdentity pairs KyDrive and KyPost for mail files"},
+		"kydrive":    {"KyIdentity pairs KyDrive and KyPost for mail files"},
+		"kycalendar": {"KyIdentity pairs KyCalendar and KyMessages for video meetings"},
+		"kymessage":  {"KyIdentity pairs KyCalendar and KyMessages for video meetings"},
+	} {
+		got := suitePairing(all, app)
+		if lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n"); len(lines) != 2*len(want) || !strings.HasPrefix(got, "  "+want[0]) {
+			t.Errorf("%s: %q, want %q", app, got, want)
+		}
+		for _, line := range strings.Split(strings.TrimSuffix(got, "\n"), "\n") {
+			if f := strings.Fields(line); len(f) == 0 || strings.Contains(f[0], ".") || len(line) > 100 {
+				t.Errorf("%s: handover line %q", app, line)
+			}
+		}
+		if alone := suitePairing(&stack.Stack{Apps: []stack.App{{Name: app}}}, app); alone != "" {
+			t.Errorf("%s alone: %q", app, alone)
+		}
+	}
+	if got := suitePairing(all, "kynotes"); got != "" {
+		t.Errorf("kynotes: %q", got)
+	}
+}
