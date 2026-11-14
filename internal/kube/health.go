@@ -36,6 +36,10 @@ func (h healthStep) state(ctx context.Context) (string, bool, error) {
 	case w.why != "":
 		return w.why, w.gaveUp, nil
 	}
+	if h.a.operator() {
+		why, err := h.a.Client.operatorServing(ctx, h.a)
+		return why, false, err
+	}
 	for _, e := range render(h.a).extras() {
 		d, found, err := getOwned(ctx, h.a.Client.cs.AppsV1().Deployments(namespaceOf(h.a.Name)), "deployment", e.Name)
 		switch {

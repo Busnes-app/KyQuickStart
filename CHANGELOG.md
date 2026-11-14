@@ -31,12 +31,22 @@ state directory, target data and target-held credentials; do not reset them as a
 - A highly available Postgres for a replicated KyIdentity (owner amendment, 2026-11-13).
   `database_instances: 3` to `5` beside `replicas` makes the installer's Postgres a
   CloudNativePG `Cluster`: that many instances on different nodes, every write confirmed by a
-  second instance, automatic failover, and a TLS link KyIdentity verifies. The cluster's owner
-  installs the CloudNativePG operator first (1.24 or later); the installer refuses the plan
-  without it. Same limits as replicas: not usable until the catalog pins a KyIdentity release
+  second instance, automatic failover, and a TLS link KyIdentity verifies. It needs the
+  CloudNativePG operator (1.24 or later), from the catalog's `cloudnative-pg` app (next) or
+  the cluster's owner; the installer refuses the plan without it. Same limits as replicas: not usable until the catalog pins a KyIdentity release
   later than 0.6.0.1, new installs only, and no backup of the database by the installer
   ([guided setup](docs/guided-setup.md#the-database)). **Upgrade impact:** none. Without
   `database_instances` nothing a plan deploys changes, and no app restarts.
+- CloudNativePG as a catalog app (owner amendment, 2026-11-14). `cloudnative-pg` on a
+  Kubernetes target installs the operator `database_instances` needs: the project's 1.30.1
+  release manifest (checksum pinned, image pinned by digest) in namespace `kyq-cloudnative-pg`
+  under Pod Security `restricted`, before every other app. Installing it needs a cluster-admin
+  kubeconfig, checked by preflight for such a plan only; the suite runner never installs or
+  upgrades it. An operator already on the cluster is refused, never adopted, and still serves
+  `database_instances` with the app left out. `stop` and `uninstall` are refused while any
+  database runs; `uninstall` keeps the definitions, and with them every database
+  ([guided setup](docs/guided-setup.md#the-cloudnative-pg-operator)). **Upgrade impact:**
+  none. Without the app nothing a plan deploys changes, and no app restarts.
 - The nginx edge on Kubernetes (owner amendment, 2026-11-11): a new `nginx` edge component and
   `proxy: nginx` on an edge, in place of `npm_url`. nginx runs on every node, unprivileged at
   Pod Security `restricted`, with no database, admin API or volume, and serves configuration

@@ -8,6 +8,7 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -194,6 +195,12 @@ func (r *replicaCluster) eventually(what string, ok func() bool) {
 // whether it reached host:port.
 func (r *replicaCluster) probe(name string, labels map[string]string, host string) bool {
 	r.t.Helper()
+	return r.probePort(name, labels, host, 5432)
+}
+
+// probePort reports whether a pod with labels in the app's namespace reaches host on port.
+func (r *replicaCluster) probePort(name string, labels map[string]string, host string, port int) bool {
+	r.t.Helper()
 	labels[managed.Label] = managed.Value
 	security := &corev1.SecurityContext{AllowPrivilegeEscalation: ptr.To(false), ReadOnlyRootFilesystem: ptr.To(true), Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}}
 	limits := corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("32Mi"), corev1.ResourceCPU: resource.MustParse("100m")}
@@ -201,7 +208,7 @@ func (r *replicaCluster) probe(name string, labels map[string]string, host strin
 		RestartPolicy: corev1.RestartPolicyNever, AutomountServiceAccountToken: ptr.To(false), TerminationGracePeriodSeconds: ptr.To(int64(0)),
 		SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: ptr.To(true), RunAsUser: ptr.To(int64(65532)), SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}},
 		Containers: []corev1.Container{{Name: "probe", Image: kube.CredentialGeneratorImage, SecurityContext: security, Resources: corev1.ResourceRequirements{Limits: limits},
-			Command: []string{"/bin/sh", "-c", "for i in 1 2 3 4 5; do nc -z -w 3 " + host + " 5432 && exit 0; sleep 1; done; exit 1"}}},
+			Command: []string{"/bin/sh", "-c", "for i in 1 2 3 4 5; do nc -z -w 3 " + host + " " + strconv.Itoa(port) + " && exit 0; sleep 1; done; exit 1"}}},
 	}}
 	pods := r.cs.CoreV1().Pods(replicaNS)
 	if _, err := pods.Create(r.ctx, pod, metav1.CreateOptions{}); err != nil {

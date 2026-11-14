@@ -51,6 +51,9 @@ type Needs struct {
 	Certificates bool // the nginx edge's certificates, issued by the cluster's cert-manager
 	// DatabaseCluster is a database_instances: a Cluster the cluster's CloudNativePG keeps.
 	DatabaseCluster bool
+	// Operator is the database operator installed by this plan: cluster-admin, and never the
+	// suite runner's.
+	Operator bool
 }
 
 // access is every permission an install with these needs uses.
@@ -79,7 +82,10 @@ func Preflight(ctx context.Context, c *Client, needsStorage bool, storageClass s
 	if needs.Certificates {
 		out = append(out, c.CertManagerCheck())
 	}
-	if needs.DatabaseCluster {
+	switch {
+	case needs.Operator:
+		out = append(out, c.adminCheck(ctx), c.OperatorCheck(ctx))
+	case needs.DatabaseCluster:
 		out = append(out, c.DatabaseOperatorCheck())
 	}
 	if needsStorage {

@@ -34,7 +34,7 @@ func TestRenderGolden(t *testing.T) {
 	}
 	for _, name := range slices.Sorted(maps.Keys(cat)) {
 		c := cat[name]
-		if c.Kubernetes == nil || c.Kubernetes.SuiteRunner {
+		if c.Kubernetes == nil || c.Kubernetes.SuiteRunner || c.Category == "operator" { // its objects are its manifest's
 			continue
 		}
 		want, ok := renderedHashes[name]

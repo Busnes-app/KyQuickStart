@@ -387,12 +387,14 @@ edge compatibility: `docs/redirect.md`.
   qualifies native HTTP sign-on and owner/everyday Notes access; browser UI, MFA, Kubernetes
   sign-on and full lifecycle acceptance remain open.
 - The catalog takes no new apps (freeze, `docs/redirect.md`). Owner amendments, 2026-10-22:
-  `euro-office`, KyDrive's optional editor on Kubernetes, and the `cloudflare-direct` edge. The catalog spec's admission rules
+  `euro-office`, KyDrive's optional editor on Kubernetes, and the `cloudflare-direct` edge;
+  2026-11-14: `cloudnative-pg`, the database operator (below). The catalog spec's admission rules
   stay for KyQuickStart-AI's labelled third-party test installs; record each rejection there.
-- Third-party apps run on Docker hosts only. Kubernetes hosts Ky products and the edge
-  components (cloudflared, Nginx Proxy Manager, the nginx edge, frp client), deployed with
-  `client-go` typed objects (no Helm; cert-manager's Issuer and Certificate through the dynamic
-  client, cert-manager itself never installed); cloudflared and the frp client also deploy to
+- Third-party apps run on Docker hosts only. Kubernetes hosts Ky products, the edge
+  components (cloudflared, Nginx Proxy Manager, the nginx edge, frp client) and the database
+  operator, deployed with `client-go` typed objects (no Helm; cert-manager's Issuer and
+  Certificate through the dynamic client, cert-manager itself never installed; the operator's
+  manifest through the dynamic client); cloudflared and the frp client also deploy to
   Docker hosts, NPM and the nginx edge do not. An app leaving the catalog stops taking new installs after
   notice, and existing installs are handed to their owner with `unmanage`.
 - Every installed app signs in through KyIdentity with native OIDC, uses *Assigned users only*,
@@ -596,8 +598,8 @@ edge compatibility: `docs/redirect.md`.
   `replicas.cluster_image` (a CloudNativePG operand image), required anti-affinity by node,
   synchronous replication `ANY 1`, the same UTF8/C database and non-superuser owner, taken
   from `kyq-database` (basic-auth here: `username`, `password`, `url`). The operator is the
-  cluster owner's, never installed: `DatabaseOperatorCheck` (preflight, and apply's own
-  error) refuses without it, and `Needs.DatabaseCluster` adds the `clusters` permission only
+  catalog's `cloudnative-pg` (next) or the cluster owner's: `DatabaseOperatorCheck` (preflight
+  of a plan that does not install it, and apply's own error) refuses without it, and `Needs.DatabaseCluster` adds the `clusters` permission only
   to such a plan. KyIdentity connects to `database-rw` with `sslmode=verify-full` against the
   authority in `kyq-database-tls`, which the installer makes once with a ten-year server
   certificate and whose key it discards; never the operator's own authority, which rotates
@@ -607,6 +609,29 @@ edge compatibility: `docs/redirect.md`.
   `stop` and `uninstall` hibernate the `Cluster` (`cnpg.io/hibernation`) and never delete
   it: it owns its claims. Between the single pod and the `Cluster` is a database move, refused
   like any other (`kyquickstart/database` is `cluster`).
+- The database operator (owner amendment, 2026-11-14; `internal/kube/operator.go`,
+  `docs/guided-setup.md`): the catalog app `cloudnative-pg`, category `operator`, Kubernetes
+  only, written in `stack.yaml` and never asked by `plan`. `kubernetes.operator` names its
+  project's release manifest beside `manifest.yaml`, the SHA-256 it was published with (a
+  mismatch fails the catalog load) and its one Deployment; such an app sets nothing else
+  under `kubernetes`. `operatorObjects` is everything the installer changes: the manifest's
+  Namespace dropped for `kyq-<app>` (`restricted`) and every reference moved there, the
+  Deployment renamed `app` with its container, so every command finds it as any app, the
+  catalog's digest-pinned image in the container and in the env var holding the same tag,
+  the 30-second dead-node tolerations, and the managed labels and input hash on every object.
+  A kind outside `operatorKinds`, a second Deployment, another image or a namespace reference
+  it did not move is refused. Policy `default-deny-ingress` admits the manifest's Service
+  target ports from any source (the API server has no pod selector); egress is open. Apply
+  reads every object first and writes nothing beside one that is not the installer's (an
+  operator installed another way is never adopted), skips an object already at this hash, and
+  on update keeps a Service's addresses and the `caBundle` the operator wrote into its
+  webhooks. Health is the Deployment ready and every definition established. It deploys
+  before every other app (`operatorsFirst`). Installing it takes cluster-admin
+  (`Needs.Operator`: preflight's `cluster-admin` and `operator` checks), never added to the
+  runner's grant: the runner replaces its steps with a note and refuses requests naming it
+  (`runner_host`). `stop` and `uninstall` refuse while any `Cluster` on the cluster is not
+  hibernated; `uninstall` deletes the Deployment alone, since deleting the definitions would
+  delete every database; `unmanage` unlabels every object. A route to it is refused.
 - A Compose template may write `{{host}}`, `{{forward}}` (the route's
   `forward_host:forward_port`, an IP of the Docker target, where the app publishes its port),
   `{{forward_addr}}` (that IP alone), `{{hostname}}` (the route's hostname without a client
@@ -688,14 +713,20 @@ calls and kind nodes must carry their own explicit bounds.
   pod that is not the app's, no secret in a log or Deployment, an idle second apply, the loss
   of `app`'s pod and of the database pod, stop/start, uninstall/reinstall as the same
   identity, and the refused return to one instance. With the same image,
-  `TestKubernetesIdentityDatabaseCluster` (three kind workers and the CloudNativePG operator)
+  `TestKubernetesIdentityDatabaseCluster` (three kind workers)
   installs `database_instances: 3`: refused without the operator, three instances on three
   nodes with two standbys confirming commits, every KyIdentity connection encrypted, the
   database refused to a stranger pod, no secret in a log or object, an idle second apply,
   the primary's pod deleted and the Cluster whole again, stop/start by hibernation,
   uninstall/reinstall as the same identity, the refused moves to the single pod and to one
-  instance, and last the primary's node powered off (`docker kill`) with sign-in back on the
-  surviving pods and no earlier session lost. Not covered: that node's return (a kind node's
+  instance, and last the primary's node powered off (`docker kill`), with the operator moved
+  onto that node first, and sign-in back on the surviving pods with no earlier session lost.
+  The operator in that test is the catalog's `cloudnative-pg`, installed by its steps: no
+  `cnpg-system`, a restricted namespace, one digest-pinned pod, its metrics port closed to a
+  stranger pod and its webhook port open, an idle second apply, `stop` and `uninstall` refused
+  under the running database, every object rewritten under another release with the webhooks'
+  authority kept and the next Cluster write admitted, and its uninstall and reinstall around a
+  hibernated database that keeps its claims. Not covered: that node's return (a kind node's
   pod network does not come back after a power cut).
 - With `KYQ_TEST_EURO_OFFICE=1`, `TestKubernetesEuroOffice` (own kind cluster, 5 GiB node) installs NPM,
   KyIdentity and `euro-office` with KyDrive on an sshd target: baseline pod and its capabilities,

@@ -1,0 +1,24 @@
+name: cloudnative-pg
+description: CloudNativePG, the operator a highly available database (an app's database_instances) needs; cluster-wide, so installing it takes cluster-admin
+category: operator
+version: 1.30.1
+# The operator's own image, and through OPERATOR_IMAGE_NAME the init container it puts in every
+# database pod. The digest is the registry's for the 1.30.1 tag (its multi-platform index); the
+# project signs with cosign, which nothing here verifies.
+images:
+  operator: ghcr.io/cloudnative-pg/cloudnative-pg:1.30.1@sha256:923c267ec29636db3bee20f993d0ec4973fa22998e1adad37da79e4d32b5bc07
+health:
+  timeout_seconds: 300
+upgrade:
+  note: >-
+    A new operator restarts every database it runs, one instance at a time, with a switchover
+    of each primary: sign-in pauses for seconds. Check every Cluster is healthy afterwards
+    (kubectl get clusters -A).
+kubernetes:
+  image: operator
+  operator:
+    # https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v1.30.1/cnpg-1.30.1.yaml,
+    # unchanged.
+    manifest: cnpg-1.30.1.yaml
+    sha256: 37237f145d8138256ea25ae830f87759255665ff08f8d552fdd8224a5ec032fb
+    deployment: cnpg-controller-manager
