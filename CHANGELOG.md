@@ -28,6 +28,15 @@ state directory, target data and target-held credentials; do not reset them as a
   what backs KyIdentity up and what is still outstanding
   ([guided setup](docs/guided-setup.md#kyidentity-as-replicas-on-kubernetes)). **Upgrade
   impact:** none. Without `replicas` nothing a plan deploys changes, and no app restarts.
+- A highly available Postgres for a replicated KyIdentity (owner amendment, 2026-11-13).
+  `database_instances: 3` to `5` beside `replicas` makes the installer's Postgres a
+  CloudNativePG `Cluster`: that many instances on different nodes, every write confirmed by a
+  second instance, automatic failover, and a TLS link KyIdentity verifies. The cluster's owner
+  installs the CloudNativePG operator first (1.24 or later); the installer refuses the plan
+  without it. Same limits as replicas: not usable until the catalog pins a KyIdentity release
+  later than 0.6.0.1, new installs only, and no backup of the database by the installer
+  ([guided setup](docs/guided-setup.md#the-database)). **Upgrade impact:** none. Without
+  `database_instances` nothing a plan deploys changes, and no app restarts.
 - The nginx edge on Kubernetes (owner amendment, 2026-11-11): a new `nginx` edge component and
   `proxy: nginx` on an edge, in place of `npm_url`. nginx runs on every node, unprivileged at
   Pod Security `restricted`, with no database, admin API or volume, and serves configuration

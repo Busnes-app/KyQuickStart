@@ -36,6 +36,10 @@ this one wins.
   only; moving an installed single instance stays manual
   ([guided setup](guided-setup.md#kyidentity-as-replicas-on-kubernetes)). Every other app stays
   one replica.
+- Amendment (owner, 2026-11-13): "Add the highly available Postgres database. This will be
+  needed for most products in the future." The plan's `database_instances` makes the
+  installer's Postgres a CloudNativePG `Cluster`; the operator is the cluster owner's to
+  install, as cert-manager is. KyIdentity is its first and so far only user.
 - Amendment (owner, 2026-11-11): "replace Nginx Proxy Manager on Kubernetes so one box does not
   take down the network; nginx plus cert-manager approved". The `nginx` edge component
   (`proxy: nginx`): plain nginx on every node, serving configuration the installer renders from
