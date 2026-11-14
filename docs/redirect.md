@@ -38,8 +38,12 @@ this one wins.
   one replica.
 - Amendment (owner, 2026-11-13): "Add the highly available Postgres database. This will be
   needed for most products in the future." The plan's `database_instances` makes the
-  installer's Postgres a CloudNativePG `Cluster`; the operator is the cluster owner's to
-  install, as cert-manager is. KyIdentity is its first and so far only user.
+  installer's Postgres a CloudNativePG `Cluster`. KyIdentity is its first and so far only user.
+- Amendment (owner, 2026-11-14): "Add CloudNativePG as an app KyQuickStart can install. If we
+  need it, we need to offer it." The catalog app `cloudnative-pg` (category `operator`): the
+  project's release manifest, applied with a cluster-admin kubeconfig from the workstation,
+  never by the suite runner. An operator the cluster's owner installed still works and is
+  never adopted ([guided setup](guided-setup.md#the-cloudnative-pg-operator)).
 - Amendment (owner, 2026-11-11): "replace Nginx Proxy Manager on Kubernetes so one box does not
   take down the network; nginx plus cert-manager approved". The `nginx` edge component
   (`proxy: nginx`): plain nginx on every node, serving configuration the installer renders from

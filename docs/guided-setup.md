@@ -818,10 +818,10 @@ write is acknowledged once a second instance has it, so a failover loses nothing
 was told is saved, and the operator promotes a standby when the primary's node is lost. With
 three instances, sign-in survives the loss of any one node. It needs:
 
-- **The CloudNativePG operator, installed by the cluster's owner** (1.24 or later; tested
-  against 1.30.1). The installer never installs it: it is cluster-wide, like cert-manager.
-  Preflight and apply refuse the plan on a cluster that does not serve
-  `postgresql.cnpg.io/v1` Clusters.
+- **The CloudNativePG operator** (1.24 or later; tested against 1.30.1): the catalog's
+  `cloudnative-pg` app in the same plan ([below](#the-cloudnative-pg-operator)), or one the
+  cluster's owner installed. Preflight and apply refuse the plan on a cluster that does not
+  serve `postgresql.cnpg.io/v1` Clusters.
 - **As many schedulable nodes as instances.** An instance with no node of its own stays
   pending, and apply reports how many are ready.
 - **Permission on Clusters**: get, create, update and patch on `postgresql.cnpg.io`
@@ -850,6 +850,55 @@ the one before, and KyIdentity's pods start once all are ready (15 minutes at mo
 apply stops and names the `kubectl describe` to read). The installer still does not back the
 database up: KyIdentity's own backups (below) are its only backup. It does not upgrade
 Postgres across major versions.
+
+### The CloudNativePG operator
+
+Owner amendment, 2026-11-14. The catalog app `cloudnative-pg` installs the operator that
+`database_instances` needs. Add it to `stack.yaml` on the same target (the wizard does not
+ask for it, as it does not ask for `database_instances`):
+
+```yaml
+apps:
+  - name: cloudnative-pg
+    target: k8s
+```
+
+Apply installs it before every other app. Read this before adding it:
+
+- **It is cluster-wide, and installing it takes cluster-admin.** An operator is definitions
+  (CRDs), ClusterRoles and admission webhooks for every namespace. Kubernetes lets nobody
+  grant a role they do not hold, so no narrower permission list can write them: preflight
+  checks for cluster-admin, on a plan with this app only. Every `apply` and `upgrade` of that
+  plan, and `uninstall` or `unmanage` of the app, needs that kubeconfig. If yours is not
+  cluster-admin, have the cluster's owner install CloudNativePG and leave the app out.
+- **What is installed** is the project's own release manifest for 1.30.1, shipped inside the
+  installer and checked against the SHA-256 of the published file
+  (`cnpg-1.30.1.yaml`, `37237f14…032fb`). The installer changes four things in it: the
+  namespace is `kyq-cloudnative-pg` (Pod Security `restricted`), not `cnpg-system`; the
+  Deployment is named `app`; its image, and the image it copies into every database pod, are
+  pinned by digest; and its pod leaves a dead node after 30 seconds, as every app's does.
+  The digest is the registry's for the `1.30.1` tag. The project signs its images with cosign;
+  the installer does not verify that signature.
+- **Its namespace admits the webhook port alone** (TCP 9443, from any source: admission
+  requests come from the API server, which no pod selector names). Its metrics port is closed.
+  Its egress is open: it calls the API server and every database pod.
+- **An operator already on the cluster is never adopted.** If CloudNativePG's definitions exist
+  and are not the installer's, preflight and apply refuse and write nothing: remove the app
+  from the plan, and `database_instances` uses the operator that is there.
+- **It is one pod.** While it is down, databases keep serving but nothing fails a lost primary
+  over. It restarts on another node about a minute after its node is lost, then fails over.
+- **`stop` and `uninstall` are refused while a database runs** (any `Cluster` on the cluster
+  that is not hibernated, the installer's or not). Stop or uninstall the apps that use them
+  first. `uninstall` then removes the Deployment alone: the definitions, roles and webhooks
+  stay, because deleting the definitions deletes every database made from them. Until a
+  reinstall, the API server refuses changes to those databases. Removing the rest is yours:
+  CloudNativePG's own uninstall instructions, after you have moved the data.
+- **Upgrades** come with a KyQuickStart release that pins a newer operator. `apply` then asks
+  for an acknowledgement: a new operator restarts every database it runs, one instance at a
+  time, with a switchover of each primary (seconds without sign-in).
+- **The suite runner never touches it.** After `handoff`, KyYard's runner holds the install
+  permissions, not cluster-admin: it leaves the operator as it is and says so. Upgrade it from
+  the workstation with `kyquickstart upgrade cloudnative-pg`.
 
 **Your own.** Create the database, then a Secret holding its URL, and name the Secret in
 `database_secret`:

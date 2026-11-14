@@ -147,8 +147,22 @@ operator's job ([README](../README.md#targets)).
   restricted, unlike the single pod's. Ingress admits the operator's pod by label from any
   namespace, since the installer does not know where the cluster's owner installed it:
   Postgres's own authentication, and the operator's pinned certificate on the status port,
-  are what stand behind that rule. The operator itself, cluster-wide and able to read the
-  database's Secrets, is the cluster owner's and outside this case.
+  are what stand behind that rule. An operator the cluster's owner installed, cluster-wide and
+  able to read the database's Secrets, is theirs and outside this case.
+- **Installing the database operator takes cluster-admin, and trusts its project.** A plan
+  with the catalog's `cloudnative-pg` is applied with a cluster-admin kubeconfig: its manifest
+  holds ClusterRoles (secrets, pods and more in every namespace) that no narrower permission
+  could grant. Preflight asks for it of such a plan only, and the suite runner is never given
+  it: the runner skips the app (`TestOperatorPlan`, `TestOperatorPreflight`). The manifest is
+  the project's 1.30.1 release file, embedded and refused unless it has the pinned SHA-256
+  (first fetched from the project's GitHub release; nothing signs that file), and a kind it
+  does not expect is refused, not applied (`TestOperatorManifestRefused`). The image is pinned
+  by the digest the registry served for the tag; the project's cosign signature is not
+  verified. The operator's pod then holds those ClusterRoles for as long as it runs: whoever
+  controls its image or its namespace controls the cluster. Its namespace is `restricted` and
+  admits TCP 9443 from any source, since the API server that calls its webhooks has no pod
+  selector; its egress is open. An existing operator is never adopted or overwritten
+  (`TestOperatorForeign`).
 - **A pairing code crosses the workstation.** `kypost.recovery-pair` reads the six-digit code
   from KyRecovery and sends it to KyPost on stdin. It is too short for the redactor, so it is
   kept out of arguments, errors and output by construction (`TestRecoveryPair`); it is single
