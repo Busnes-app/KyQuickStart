@@ -63,6 +63,18 @@ alike (`internal/edge/AGENTS.md`). For a protected route it adds the following:
   a header it sets, so the client's copies are gone, and an empty value removes the header.
 - `underscores_in_headers off` (nginx's default) stays, so `X_WEBAUTH_USER` cannot get through.
 
+Where the secret lives:
+
+- **nginx edge:** route files are in a ConfigMap, so the secret must not be inlined there. The
+  route's file `include`s `/etc/nginx/ky-forward/<route key>.conf` (one `proxy_set_header
+  X-Ky-Edge-Secret …;` line) from an installer-owned Secret in the nginx namespace, mounted
+  like the TLS Secrets.
+- **NPM:** NPM keeps `advanced_config` in its own database, as it keeps certificate keys, so
+  the line is inline there.
+
+`serverConfig` emits either the include or the inline line. The caller says which; nothing
+else differs between the two edges.
+
 ## Registering the proxy app
 
 A step runs `kyidentity proxy-app` inside the KyIdentity container, before the route step,
