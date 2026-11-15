@@ -1171,10 +1171,10 @@ func privateRecovery(st *stack.Stack) bool {
 // suitePeers are the pairs KyIdentity's suite directory pairs on its own (/api/suite/peer),
 // each app to its peers. Keep it in step with KyIdentity-server's suitePeers.
 var suitePeers = map[string][]string{
-	"kypost":     {"kycalendar", "kydrive"},
+	"kypost":     {"kycalendar", "kydrive", "kymessage"},
 	"kycalendar": {"kypost", "kymessage"},
 	"kydrive":    {"kypost"},
-	"kymessage":  {"kycalendar"},
+	"kymessage":  {"kycalendar", "kypost"},
 }
 
 // inPlan reports whether the plan installs app.

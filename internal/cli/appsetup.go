@@ -403,7 +403,8 @@ func calendarPairing(st *stack.Stack, app string) string {
 // releases with the feature use it, so the line says no more than that.
 func suitePairing(st *stack.Stack, app string) string {
 	names := map[string]string{"kycalendar": "KyCalendar", "kydrive": "KyDrive", "kymessage": "KyMessages", "kypost": "KyPost"}
-	use := map[[2]string]string{{"kycalendar", "kymessage"}: "video meetings", {"kydrive", "kypost"}: "mail files"}
+	use := map[[2]string]string{{"kycalendar", "kymessage"}: "video meetings", {"kydrive", "kypost"}: "mail files",
+		{"kymessage", "kypost"}: "chat from mail"}
 	out := ""
 	for _, peer := range suitePeers[app] {
 		pair := [2]string{min(app, peer), max(app, peer)}

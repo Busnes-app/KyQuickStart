@@ -269,7 +269,7 @@ Plain terminal planning and command orchestration for the operator-run installer
   `calendarPairing` (#100): with both in the plan, that they pair through KyIdentity's suite
   directory and how to check it, else that the other app would pair; `privatePeer` sets their
   `{{private_peer}}` option (that pair only). `suitePeers` mirrors KyIdentity-server's pairs, each
-  app to several peers (KyPost–KyCalendar, KyCalendar–KyMessages, KyDrive–KyPost), both ways
+  app to several peers (KyPost–KyCalendar, KyCalendar–KyMessages, KyDrive–KyPost, KyMessages–KyPost), both ways
   (`TestSuitePairingHandover`); `suitePairing` adds one two-line note to each side of the other
   pairs when the peer is in the plan, claiming only that KyIdentity pairs them; KyIdentity's names its default
   Busnes.app push relays (#98).
