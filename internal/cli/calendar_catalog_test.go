@@ -573,16 +573,23 @@ func TestSuitePairingHandover(t *testing.T) {
 	}
 	all := &stack.Stack{Apps: []stack.App{{Name: "kypost"}, {Name: "kycalendar"}, {Name: "kydrive"}, {Name: "kymessage"}}}
 	for app, want := range map[string][]string{
-		"kypost":     {"KyIdentity pairs KyDrive and KyPost for mail files"},
+		"kypost":     {"KyIdentity pairs KyDrive and KyPost for mail files", "KyIdentity pairs KyMessages and KyPost for chat from mail"},
 		"kydrive":    {"KyIdentity pairs KyDrive and KyPost for mail files"},
 		"kycalendar": {"KyIdentity pairs KyCalendar and KyMessages for video meetings"},
-		"kymessage":  {"KyIdentity pairs KyCalendar and KyMessages for video meetings"},
+		"kymessage":  {"KyIdentity pairs KyCalendar and KyMessages for video meetings", "KyIdentity pairs KyMessages and KyPost for chat from mail"},
 	} {
 		got := suitePairing(all, app)
-		if lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n"); len(lines) != 2*len(want) || !strings.HasPrefix(got, "  "+want[0]) {
+		lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
+		if len(lines) != 2*len(want) {
 			t.Errorf("%s: %q, want %q", app, got, want)
+			continue
 		}
-		for _, line := range strings.Split(strings.TrimSuffix(got, "\n"), "\n") {
+		for i, w := range want {
+			if !strings.HasPrefix(lines[2*i], "  "+w) {
+				t.Errorf("%s line %d: %q, want %q", app, 2*i, lines[2*i], w)
+			}
+		}
+		for _, line := range lines {
 			if f := strings.Fields(line); len(f) == 0 || strings.Contains(f[0], ".") || len(line) > 100 {
 				t.Errorf("%s: handover line %q", app, line)
 			}
