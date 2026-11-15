@@ -218,6 +218,9 @@ func (n *NPM) marker(e stack.Edge, r stack.Route) string {
 
 // routeMark ends a host's marker: app, then a non-primary route's role, then hostname.
 func routeMark(r stack.Route) string {
+	if r.Operator() {
+		return stack.OperatorApp + ":" + r.Hostname + "\n"
+	}
 	if r.Role != "" {
 		return r.App + ":" + r.Role + ":" + r.Hostname + "\n"
 	}
@@ -323,6 +326,26 @@ func serverConfig(e stack.Edge, r stack.Route, upstream string) string {
   proxy_pass %[3]s$request_uri;
 }
 `, port, hostHeader, upstream)
+	if fa := r.ForwardAuth; fa != nil {
+		advanced += forwardAuth(r, fa)
+		// The app sees only the check's identity: nginx never forwards a client's copy of
+		// a header set here, and an empty value (a bypass path) removes it.
+		login := ""
+		if r.LoginHeader != "" && !strings.EqualFold(r.LoginHeader, "X-Ky-User") {
+			login = "  proxy_set_header " + r.LoginHeader + " $ky_user;\n"
+		}
+		proxy = strings.Replace(proxy, " {\n", ` {
+  auth_request /.ky/check;
+  auth_request_set $ky_user $upstream_http_x_ky_user;
+  auth_request_set $ky_email $upstream_http_x_ky_email;
+  auth_request_set $ky_groups $upstream_http_x_ky_groups;
+  error_page 401 = @ky_login;
+  proxy_set_header X-Ky-User $ky_user;
+  proxy_set_header X-Ky-Email $ky_email;
+  proxy_set_header X-Ky-Groups $ky_groups;
+  proxy_set_header X-Ky-Edge-Secret "";
+`+login, 1)
+	}
 	const closed = " {\n  return 404;\n}\n"
 	// The catalog's paths alone, or everything but its denied paths.
 	for _, p := range r.Paths {
@@ -337,6 +360,43 @@ func serverConfig(e stack.Edge, r stack.Route, upstream string) string {
 		advanced += "location /" + proxy
 	}
 	return advanced
+}
+
+// forwardAuth is an operator route's KyIdentity locations (KyIdentity docs/FORWARD-AUTH.md):
+// the internal check and the sign-in routes, each carrying the edge secret and a fixed
+// X-Forwarded-Host so a client's Host cannot name another proxy app.
+func forwardAuth(r stack.Route, fa *stack.ForwardAuth) string {
+	secret := fa.SecretLine
+	if fa.SecretInclude != "" {
+		secret = "include " + fa.SecretInclude + ";"
+	}
+	edge := fmt.Sprintf(`  proxy_set_header X-Forwarded-Host %s;
+  %s
+  proxy_set_header X-Forwarded-For $remote_addr;
+  proxy_set_header X-Forwarded-Proto https;
+  proxy_pass %s;
+`, r.Hostname, secret, fa.Upstream)
+	return `location = /.ky/check {
+  internal;
+  rewrite ^ /api/forward/check? break;
+  proxy_pass_request_body off;
+  proxy_set_header Content-Length "";
+  proxy_set_header X-Original-URI $request_uri;
+` + edge + `}
+location = /.ky/start {
+  rewrite ^ /forward/begin break;
+` + edge + `}
+location = /.ky/callback {
+  rewrite ^ /forward/callback break;
+` + edge + `}
+location = /.ky/logout {
+  rewrite ^ /forward/logout? break;
+` + edge + `}
+location @ky_login {
+  rewrite ^ /forward/begin? break;
+  proxy_set_header X-Original-URI $request_uri;
+` + edge + `}
+`
 }
 
 // overlaps detects foreign wildcard hosts as well as an exact hostname collision.

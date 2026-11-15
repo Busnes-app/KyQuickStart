@@ -103,9 +103,11 @@ type Route struct {
 }
 
 // ForwardAuth is what an operator route's nginx needs from KyIdentity: where the edge
-// reaches it, its issuer host, and the proxy app's edge secret (never hashed or saved).
+// reaches it (scheme://host:port) and the edge secret's header line, either inline
+// (SecretLine, NPM) or from a file the edge mounts from a Secret (SecretInclude, nginx edge).
+// Neither is hashed or saved.
 type ForwardAuth struct {
-	Upstream, Issuer, Secret string
+	Upstream, SecretLine, SecretInclude string
 }
 
 // OperatorApp is the marker's app token for an operator route; no catalog app has it.

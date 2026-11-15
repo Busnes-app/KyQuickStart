@@ -343,3 +343,41 @@ func TestKubeTunnel(t *testing.T) {
 		t.Fatal("public NPM address dialled")
 	}
 }
+
+// An operator route's nginx runs KyIdentity's check on location /, sets every Ky header
+// and the login header from the check's answer, and keeps the secret off the app's request.
+func TestOperatorRouteForwardAuth(t *testing.T) {
+	e := testEdge()
+	r := stack.Route{Hostname: "grafana.example.com", ForwardHost: "192.0.2.20", ForwardPort: 3000, ForwardScheme: "http",
+		Protect: "kyidentity", LoginHeader: "X-WEBAUTH-USER",
+		ForwardAuth: &stack.ForwardAuth{Upstream: "http://192.0.2.5:5867", SecretLine: `proxy_set_header X-Ky-Edge-Secret "s3cr3t";`}}
+	n := &NPM{installation: testID}
+	c := n.config(e, r, 1).Advanced
+	if !strings.HasPrefix(c, n.prefix(e)+"operator:grafana.example.com\n") {
+		t.Fatalf("marker: %q", c[:80])
+	}
+	root := c[strings.Index(c, "location / {"):]
+	for _, want := range []string{"auth_request /.ky/check;", "error_page 401 = @ky_login;", "proxy_set_header X-Ky-User $ky_user;",
+		"proxy_set_header X-WEBAUTH-USER $ky_user;", "proxy_set_header X-Ky-Email $ky_email;", "proxy_set_header X-Ky-Groups $ky_groups;", `proxy_set_header X-Ky-Edge-Secret "";`} {
+		if !strings.Contains(root, want) {
+			t.Errorf("location / lacks %s", want)
+		}
+	}
+	if strings.Contains(root, "s3cr3t") {
+		t.Fatal("the edge secret reaches the app")
+	}
+	check := c[strings.Index(c, "location = /.ky/check {"):strings.Index(c, "location = /.ky/start {")]
+	for _, want := range []string{"internal;", "proxy_set_header X-Forwarded-Host grafana.example.com;", `X-Ky-Edge-Secret "s3cr3t"`, "proxy_set_header X-Original-URI $request_uri;", "proxy_pass http://192.0.2.5:5867;"} {
+		if !strings.Contains(check, want) {
+			t.Errorf("check lacks %s", want)
+		}
+	}
+	r.ForwardAuth = &stack.ForwardAuth{Upstream: "http://k:5867", SecretInclude: "/etc/nginx/ky-forward/abc.conf"}
+	if c := serverConfig(e, r, "http://x"); !strings.Contains(c, "include /etc/nginx/ky-forward/abc.conf;") {
+		t.Fatal("the nginx edge does not include its secret file")
+	}
+	// A catalog route is unchanged.
+	if c := n.config(e, e.Routes[0], 1).Advanced; strings.Contains(c, "auth_request") || strings.Contains(c, ".ky/") {
+		t.Fatal("a catalog route got forward-auth")
+	}
+}
