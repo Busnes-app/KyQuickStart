@@ -1,11 +1,11 @@
 name: kypulse
 description: kyPulse, the suite's monitor; polls every app's health, alerts and keeps their logs
 category: ky
-version: 0.6.0.1
+version: 0.6.0.2
 # Release image of v0.4.2, attested by release-image.yml@refs/tags/v0.4.2 (gh attestation verify).
-# catalog-follow: v0.6.0.1 attested by Busnes-app/KyPulse-server release-image.yml@refs/tags/v0.6.0.1
+# catalog-follow: v0.6.0.2 attested by Busnes-app/KyPulse-server release-image.yml@refs/tags/v0.6.0.2
 images:
-  kypulse: ghcr.io/busnes-app/kypulse-server:0.6.0.1@sha256:6f2a0cb024e4c292c5c917233876a79046b069404c20332a1f742aed845aa311
+  kypulse: ghcr.io/busnes-app/kypulse-server:0.6.0.2@sha256:808ee7b793f5a3ce648a6d71172212de13c7b6c238fa39c7b2482f8e3f03abfb
 # verify-edge reads the suite proxy contract here (clientIp, proxyHeadersTrusted, scheme).
 status_path: /api/installer/network
 # Monitoring for administrators: never on the public connection.
