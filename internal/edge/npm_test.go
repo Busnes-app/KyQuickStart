@@ -372,6 +372,12 @@ func TestOperatorRouteForwardAuth(t *testing.T) {
 			t.Errorf("check lacks %s", want)
 		}
 	}
+	h1 := hostStep{n: n, e: e, r: r}.InputHash()
+	r2 := r
+	r2.ForwardAuth = &stack.ForwardAuth{Upstream: r.ForwardAuth.Upstream, SecretLine: `proxy_set_header X-Ky-Edge-Secret "other";`}
+	if h1 != (hostStep{n: n, e: e, r: r2}).InputHash() {
+		t.Fatal("the step hash covers the edge secret")
+	}
 	r.ForwardAuth = &stack.ForwardAuth{Upstream: "http://k:5867", SecretInclude: "/etc/nginx/ky-forward/abc.conf"}
 	if c := serverConfig(e, r, "http://x"); !strings.Contains(c, "include /etc/nginx/ky-forward/abc.conf;") {
 		t.Fatal("the nginx edge does not include its secret file")

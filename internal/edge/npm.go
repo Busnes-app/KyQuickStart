@@ -362,6 +362,16 @@ func serverConfig(e stack.Edge, r stack.Route, upstream string) string {
 	return advanced
 }
 
+// withoutSecret is r with its edge secret replaced, so a step's hash never covers it.
+func withoutSecret(r stack.Route) stack.Route {
+	if r.ForwardAuth != nil && r.ForwardAuth.SecretLine != "" {
+		fa := *r.ForwardAuth
+		fa.SecretLine = "<edge secret>"
+		r.ForwardAuth = &fa
+	}
+	return r
+}
+
 // forwardAuth is an operator route's KyIdentity locations (KyIdentity docs/FORWARD-AUTH.md):
 // the internal check and the sign-in routes, each carrying the edge secret and a fixed
 // X-Forwarded-Host so a client's Host cannot name another proxy app.
@@ -499,7 +509,7 @@ func (s hostStep) InputHash() string {
 		API         string
 		Config      hostConfig
 		Certificate string
-	}{s.n.base, s.n.config(s.e, s.r, s.r.CertificateID), s.r.Certificate})
+	}{s.n.base, s.n.config(s.e, withoutSecret(s.r), s.r.CertificateID), s.r.Certificate})
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
