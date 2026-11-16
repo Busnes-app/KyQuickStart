@@ -678,3 +678,56 @@ func TestNginxEdge(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// An operator route (no app) needs protect: kyidentity and KyIdentity installed; a catalog
+// app's route may carry none of the forward-auth fields.
+func TestOperatorRoute(t *testing.T) {
+	base := strings.Replace(edgeStack, "  - name: hello\n    target: nas\n", "  - name: hello\n    target: nas\n  - name: kyidentity\n    target: nas\n", 1)
+	base += `      - app: kyidentity
+        hostname: id.example.com
+        forward_host: 192.0.2.5
+        forward_port: 8080
+        certificate_id: 1
+`
+	operator := base + `      - hostname: grafana.example.com
+        forward_host: 192.0.2.20
+        forward_port: 3000
+        certificate_id: 1
+        protect: kyidentity
+        login_header: X-WEBAUTH-USER
+        bypass: [/api/health]
+`
+	s, err := Parse([]byte(operator))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := s.Edges[0].Routes[2]; !r.Operator() || r.StatusPath != "" || r.Protect != "kyidentity" || r.LoginHeader != "X-WEBAUTH-USER" {
+		t.Fatalf("operator route: %+v", r)
+	}
+	for name, pair := range map[string][2]string{
+		"no protect":           {"        protect: kyidentity\n", ""},
+		"other protect":        {"protect: kyidentity", "protect: authelia"},
+		"no kyidentity":        {"  - name: kyidentity\n    target: nas\n", ""},
+		"header injection":     {"login_header: X-WEBAUTH-USER", "login_header: 'X-A: b'"},
+		"host header":          {"login_header: X-WEBAUTH-USER", "login_header: Host"},
+		"ky header":            {"login_header: X-WEBAUTH-USER", "login_header: X-Ky-Edge-Secret"},
+		"forwarding header":    {"login_header: X-WEBAUTH-USER", "login_header: x-forwarded-for"},
+		"underscore header":    {"login_header: X-WEBAUTH-USER", "login_header: X_WEBAUTH_USER"},
+		"bypass root":          {"bypass: [/api/health]", "bypass: [/]"},
+		"bypass traversal":     {"bypass: [/api/health]", "bypass: [/a/../b]"},
+		"bypass encoded":       {"bypass: [/api/health]", "bypass: ['/a%2f']"},
+		"catalog app protects": {"      - hostname: grafana.example.com\n", "      - app: hello\n        hostname: grafana.example.com\n"},
+		"role":                 {"        protect: kyidentity\n", "        protect: kyidentity\n        role: admin\n"},
+		"status path":          {"        protect: kyidentity\n", "        protect: kyidentity\n        status_path: /health\n"},
+		"kyidentity elsewhere": {"      - app: kyidentity\n", "      - app: hello\n        role: other\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Parse([]byte(strings.Replace(operator, pair[0], pair[1], 1))); err == nil {
+				t.Fatal("accepted")
+			}
+		})
+	}
+	if _, err := Parse([]byte(strings.Replace(base, "        certificate_id: 1\n", "        certificate_id: 1\n        protect: kyidentity\n", 1))); err == nil {
+		t.Fatal("a catalog app's route accepted protect")
+	}
+}

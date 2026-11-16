@@ -504,7 +504,9 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 	if err := mailPlan(st); err != nil {
 		return nil, err
 	}
-	s.edges = directOrigins(routePaths(st.Edges, cat))
+	if s.edges, err = forwardAuths(directOrigins(routePaths(st.Edges, cat)), st); err != nil {
+		return nil, err
+	}
 	if err := s.composeClients(st); err != nil {
 		return nil, err
 	}
@@ -825,6 +827,7 @@ func (s *session) preflight(ctx context.Context) error {
 		if e.Direct() {
 			continue
 		}
+		failed += s.isolation(ctx, e)
 		if err := s.proxy(e).Preflight(ctx, e); err != nil {
 			failed++
 			fmt.Fprintf(s.o.Out, "FAIL  %-12s edge             %s\n", e.Target, err)
@@ -988,7 +991,11 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 	for _, e := range s.edges {
 		var npm []engine.Step
 		if !e.Direct() {
-			npm = s.proxy(e).Steps(e)
+			register, err := s.proxyAppSteps(e)
+			if err != nil {
+				return nil, err
+			}
+			npm = append(register, s.proxy(e).Steps(e)...)
 		}
 		for _, st := range npm {
 			if slices.Contains(routedFirst, edge.RouteApp(st)) {

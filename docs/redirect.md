@@ -50,6 +50,12 @@ this one wins.
   the routes NPM's hosts are rendered from, with certificates issued by the cluster's own
   cert-manager or supplied as TLS Secrets. No database, admin API or volume. The catalog `npm`
   and existing NPMs keep working ([edge](edge.md#nginx-on-every-node-proxy-nginx)).
+- Amendment (owner, 2026-11-15): "build forward-auth". This reverses "No auth-proxy gate is
+  built" in the [third-party catalog spec](superpowers/specs/2026-10-06-third-party-catalog-design.md).
+  An operator route (no catalog `app`, `protect: kyidentity`) puts the operator's own web app,
+  one KyQuickStart does not install, behind KyIdentity forward-auth on an NPM edge. Catalog apps
+  keep native OIDC, and the freeze holds: no catalog app is added
+  ([edge](edge.md#operator-routes-behind-kyidentity-protect-kyidentity)).
 
 ## What KyQuickStart does now
 

@@ -12,7 +12,9 @@ per-app integration work the installer owns. Installer architecture is a separat
 ## Decisions
 
 - One app per category. Alternatives may be added later as separate entries.
-- Every app signs in through KyIdentity with native OIDC. No auth-proxy gate is built.
+- Every catalog app signs in through KyIdentity with native OIDC. Owner amendment 2026-11-15
+  ("build forward-auth", [redirect](../../redirect.md)): KyIdentity forward-auth protects only
+  the operator's own apps outside the catalog, on operator routes ([edge](../../edge.md)).
 - Monitoring is not a catalog category: kyPulse covers health, alerts and logs. The installer
   registers every installed app as a kyPulse target instead.
 - Third-party apps run on Docker hosts only, from Compose close to what upstream publishes. An

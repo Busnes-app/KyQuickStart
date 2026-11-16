@@ -218,6 +218,9 @@ func (n *NPM) marker(e stack.Edge, r stack.Route) string {
 
 // routeMark ends a host's marker: app, then a non-primary route's role, then hostname.
 func routeMark(r stack.Route) string {
+	if r.Operator() {
+		return stack.OperatorApp + ":" + r.Hostname + "\n"
+	}
 	if r.Role != "" {
 		return r.App + ":" + r.Role + ":" + r.Hostname + "\n"
 	}
@@ -323,6 +326,26 @@ func serverConfig(e stack.Edge, r stack.Route, upstream string) string {
   proxy_pass %[3]s$request_uri;
 }
 `, port, hostHeader, upstream)
+	if fa := r.ForwardAuth; fa != nil {
+		advanced += forwardAuth(r, fa)
+		// The app sees only the check's identity: nginx never forwards a client's copy of
+		// a header set here, and an empty value (a bypass path) removes it.
+		login := ""
+		if r.LoginHeader != "" && !strings.EqualFold(r.LoginHeader, "X-Ky-User") {
+			login = "  proxy_set_header " + r.LoginHeader + " $ky_user;\n"
+		}
+		proxy = strings.Replace(proxy, " {\n", ` {
+  auth_request /.ky/check;
+  auth_request_set $ky_user $upstream_http_x_ky_user;
+  auth_request_set $ky_email $upstream_http_x_ky_email;
+  auth_request_set $ky_groups $upstream_http_x_ky_groups;
+  error_page 401 = @ky_login;
+  proxy_set_header X-Ky-User $ky_user;
+  proxy_set_header X-Ky-Email $ky_email;
+  proxy_set_header X-Ky-Groups $ky_groups;
+  proxy_set_header X-Ky-Edge-Secret "";
+`+login, 1)
+	}
 	const closed = " {\n  return 404;\n}\n"
 	// The catalog's paths alone, or everything but its denied paths.
 	for _, p := range r.Paths {
@@ -337,6 +360,65 @@ func serverConfig(e stack.Edge, r stack.Route, upstream string) string {
 		advanced += "location /" + proxy
 	}
 	return advanced
+}
+
+// withoutSecret is r with its edge secret replaced, so a step's hash never covers it.
+func withoutSecret(r stack.Route) stack.Route {
+	if r.ForwardAuth != nil {
+		fa := *r.ForwardAuth
+		fa.Secret = "<edge secret>"
+		r.ForwardAuth = &fa
+	}
+	return r
+}
+
+// edgeSecretRE finds an operator route's secret in its host's advanced_config.
+var edgeSecretRE = regexp.MustCompile(`proxy_set_header X-Ky-Edge-Secret "([0-9a-f]{64})";`)
+
+// ForwardSecret is the edge secret in r's current host, or "" when the host is absent or
+// carries none. The registration step reuses it, so a rerun never needs a second secret.
+func (n *NPM) ForwardSecret(ctx context.Context, e stack.Edge, r stack.Route) (string, error) {
+	h, err := n.find(ctx, e, r)
+	if err != nil || h == nil {
+		return "", err
+	}
+	if m := edgeSecretRE.FindStringSubmatch(h.Advanced); m != nil {
+		return m[1], nil
+	}
+	return "", nil
+}
+
+// forwardAuth is an operator route's KyIdentity locations (KyIdentity docs/FORWARD-AUTH.md):
+// the internal check and the sign-in routes, each carrying the edge secret and a fixed
+// X-Forwarded-Host so a client's Host cannot name another proxy app.
+func forwardAuth(r stack.Route, fa *stack.ForwardAuth) string {
+	edge := fmt.Sprintf(`  proxy_set_header X-Forwarded-Host %s;
+  proxy_set_header X-Ky-Edge-Secret "%s";
+  proxy_set_header X-Forwarded-For $remote_addr;
+  proxy_set_header X-Forwarded-Proto https;
+  proxy_pass %s;
+`, r.Hostname, fa.Secret, fa.Upstream)
+	return `location = /.ky/check {
+  internal;
+  rewrite ^ /api/forward/check? break;
+  proxy_pass_request_body off;
+  proxy_set_header Content-Length "";
+  proxy_set_header X-Original-URI $request_uri;
+` + edge + `}
+location = /.ky/start {
+  rewrite ^ /forward/begin break;
+` + edge + `}
+location = /.ky/callback {
+  rewrite ^ /forward/callback break;
+` + edge + `}
+location = /.ky/logout {
+  rewrite ^ /forward/logout? break;
+` + edge + `}
+location @ky_login {
+  rewrite ^ /forward/begin? break;
+  proxy_set_header X-Original-URI $request_uri;
+` + edge + `}
+`
 }
 
 // overlaps detects foreign wildcard hosts as well as an exact hostname collision.
@@ -439,13 +521,16 @@ func (s hostStep) InputHash() string {
 		API         string
 		Config      hostConfig
 		Certificate string
-	}{s.n.base, s.n.config(s.e, s.r, s.r.CertificateID), s.r.Certificate})
+	}{s.n.base, s.n.config(s.e, withoutSecret(s.r), s.r.CertificateID), s.r.Certificate})
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
 
 // want resolves the route's certificate and returns its host configuration.
 func (s hostStep) want(ctx context.Context) (hostConfig, error) {
+	if fa := s.r.ForwardAuth; fa != nil && fa.Secret == "" {
+		return hostConfig{}, fmt.Errorf("route %s: KyIdentity's edge secret was not read in this run", s.r.Hostname)
+	}
 	cert, err := s.n.certificateID(ctx, s.e, s.r)
 	return s.n.config(s.e, s.r, cert), err
 }

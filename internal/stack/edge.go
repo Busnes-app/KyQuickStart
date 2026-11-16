@@ -91,7 +91,29 @@ type Route struct {
 	DenyPaths []string `yaml:"-" json:"-"`
 	// Origin is where a cloudflare-direct edge's cloudflared reaches the app, set by the CLI.
 	Origin string `yaml:"-" json:"-"`
+	// Protect (only "kyidentity") makes a route with no App an operator route: the
+	// operator's own upstream, outside the catalog, behind KyIdentity forward-auth.
+	// LoginHeader names the header a header-login app trusts; Bypass lists path
+	// prefixes KyIdentity does not check. Catalog apps use native OIDC and refuse all three.
+	Protect     string   `yaml:"protect,omitempty" json:",omitempty"`
+	LoginHeader string   `yaml:"login_header,omitempty" json:",omitempty"`
+	Bypass      []string `yaml:"bypass,omitempty" json:",omitempty"`
+	// ForwardAuth is set by the CLI for an operator route before its nginx is rendered.
+	ForwardAuth *ForwardAuth `yaml:"-" json:"-"`
 }
+
+// ForwardAuth is what an operator route's nginx needs from KyIdentity: where the edge
+// reaches it (scheme://host:port) and the route's edge secret, filled in memory by the
+// registration step. The secret is never hashed or saved.
+type ForwardAuth struct {
+	Upstream, Secret string
+}
+
+// OperatorApp is the marker's app token for an operator route; no catalog app has it.
+const OperatorApp = "operator"
+
+// Operator reports an operator route: no catalog app, protected by KyIdentity.
+func (r Route) Operator() bool { return r.App == "" }
 
 // Direct reports a cloudflare-direct edge: cloudflared routes each hostname straight to its
 // app on a shared Docker network, with no NPM in between.
@@ -261,8 +283,11 @@ func (s *Stack) validateEdges() error {
 		}
 		for j := range e.Routes {
 			r := &e.Routes[j]
+			if err := validateProtect(*e, *r, apps); err != nil {
+				return err
+			}
 			// NPM reaches a Docker host over the LAN; nothing reaches into another cluster.
-			if at, ok := s.Target(apps[r.App]); !ok || at.Name != e.Target && at.Kubernetes() {
+			if at, ok := s.Target(apps[r.App]); !r.Operator() && (!ok || at.Name != e.Target && at.Kubernetes()) {
 				return fmt.Errorf("edge %s: route app %q must be installed on this target or on a Docker target", e.Target, r.App)
 			}
 			if r.Role != "" && !roleRE.MatchString(r.Role) {
@@ -304,6 +329,9 @@ func (s *Stack) validateEdges() error {
 			}
 			if c, ok := certs[r.Certificate]; r.Certificate != "" && (!ok || !slices.ContainsFunc(c.Domains, func(d string) bool { return Covers(d, r.Hostname) })) {
 				return fmt.Errorf("edge %s: route %s: certificate %q must be one of the edge's certificates and cover the hostname", e.Target, r.Hostname, r.Certificate)
+			}
+			if r.Operator() {
+				continue
 			}
 			if r.StatusPath == "" {
 				r.StatusPath = "/api/status"
@@ -575,6 +603,61 @@ func validateLANDNS(e Edge, target Target) error {
 	return nil
 }
 
+// validateProtect admits protect, login_header and bypass only on an operator route, which
+// needs KyIdentity installed in the stack. Catalog apps keep native OIDC.
+func validateProtect(e Edge, r Route, apps map[string]string) error {
+	if !r.Operator() {
+		if r.Protect != "" || r.LoginHeader != "" || len(r.Bypass) > 0 {
+			return fmt.Errorf("edge %s: route %s: %s signs in with native OIDC; protect, login_header and bypass are only for an operator route (no app)", e.Target, r.Hostname, r.App)
+		}
+		return nil
+	}
+	switch {
+	case r.Protect != "kyidentity":
+		return fmt.Errorf("edge %s: route %s: a route with no app is an operator route and needs protect: kyidentity", e.Target, r.Hostname)
+	case apps["kyidentity"] == "":
+		return fmt.Errorf("edge %s: route %s: protect: kyidentity needs KyIdentity installed in this stack", e.Target, r.Hostname)
+	case e.Direct():
+		return fmt.Errorf("edge %s: route %s: a cloudflare-direct edge has no nginx to run forward-auth", e.Target, r.Hostname)
+	case e.Nginx():
+		return fmt.Errorf("edge %s: route %s: operator routes need an NPM edge; the nginx edge does not run forward-auth yet", e.Target, r.Hostname)
+	case !slices.ContainsFunc(e.Routes, func(k Route) bool { return k.App == "kyidentity" && k.Role == "" }):
+		return fmt.Errorf("edge %s: route %s: protect: kyidentity needs KyIdentity's route on this edge, which the check reaches it through", e.Target, r.Hostname)
+	case e.URLHost(r) != r.Hostname:
+		return fmt.Errorf("edge %s: route %s: KyIdentity returns the browser to https://%s/ on port 443, so an internal operator route needs client_port 443", e.Target, r.Hostname, r.Hostname)
+	case r.StatusPath != "":
+		return fmt.Errorf("edge %s: route %s: an operator route has no status_path; verify-edge does not probe it", e.Target, r.Hostname)
+	case r.Role != "":
+		return fmt.Errorf("edge %s: route %s: an operator route has no role", e.Target, r.Hostname)
+	case r.LoginHeader != "" && !loginHeader(r.LoginHeader):
+		return fmt.Errorf("edge %s: route %s: login_header must be a plain header name (letters, digits, hyphens) that is not a transport, forwarding, CF-, or KyIdentity header", e.Target, r.Hostname)
+	case len(r.Bypass) > 20:
+		return fmt.Errorf("edge %s: route %s: at most 20 bypass paths", e.Target, r.Hostname)
+	}
+	for _, p := range r.Bypass {
+		if !bypassRE.MatchString(p) || strings.Contains(p, "..") || strings.Contains(p, "//") || strings.HasSuffix(p, "/") {
+			return fmt.Errorf("edge %s: route %s: bypass %q must be an absolute path prefix such as /api/health, not / or ending in /", e.Target, r.Hostname, p)
+		}
+	}
+	return nil
+}
+
+// loginHeader mirrors KyIdentity's ValidLoginHeader, plus the CF- and True-Client-IP headers
+// the edge itself clears.
+func loginHeader(name string) bool {
+	n := strings.ToLower(name)
+	if !loginHeaderRE.MatchString(name) || n == "x-ky-user" {
+		return n == "x-ky-user"
+	}
+	for _, p := range []string{"x-ky-", "x-forwarded-", "content-", "proxy-", "sec-", "cf-"} {
+		if strings.HasPrefix(n, p) {
+			return false
+		}
+	}
+	return !slices.Contains([]string{"host", "cookie", "set-cookie", "authorization", "connection", "keep-alive", "te", "trailer", "transfer-encoding",
+		"upgrade", "x-real-ip", "forwarded", "x-original-uri", "origin", "referer", "user-agent", "accept", "range", "expect", "true-client-ip"}, n)
+}
+
 // validate accepts an operator Secret in kyq-edge, never the installer's own kyq-credentials.
 func (r SecretRef) validate() error {
 	if len(validation.IsDNS1123Subdomain(r.Secret)) > 0 || r.Secret == "kyq-credentials" || len(validation.IsConfigMapKey(r.Key)) > 0 {
@@ -584,9 +667,11 @@ func (r SecretRef) validate() error {
 }
 
 var (
-	roleRE   = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
-	tunnelRE = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
-	kubeRE   = regexp.MustCompile(`^kube://([^/]+)/([^:]+):([1-9][0-9]{0,4})$`)
+	roleRE        = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+	loginHeaderRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,63}$`)
+	bypassRE      = regexp.MustCompile(`^/[A-Za-z0-9._~!$&'()*+,=:@/-]{1,127}$`)
+	tunnelRE      = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	kubeRE        = regexp.MustCompile(`^kube://([^/]+)/([^:]+):([1-9][0-9]{0,4})$`)
 )
 
 // KubeService parses npm_url kube://<namespace>/<service>:<port>: an NPM Service reached
