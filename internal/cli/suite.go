@@ -410,6 +410,10 @@ func (s *session) withSetupSources(targets []stack.Target) []stack.Target {
 			add(e.Target)
 		}
 	}
+	// An operator route's registration step runs in KyIdentity.
+	if slices.ContainsFunc(s.edges, func(e stack.Edge) bool { return slices.ContainsFunc(e.Routes, stack.Route.Operator) }) {
+		add(s.placed["kyidentity"].Name)
+	}
 	if slices.Contains(s.order, euroOffice) {
 		add(s.placed["kydrive"].Name)
 	}

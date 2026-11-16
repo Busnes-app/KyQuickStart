@@ -226,6 +226,9 @@ func guided(ctx context.Context, args []string, o Options) error {
 		for _, e := range previous.Edges {
 			seen := map[string]bool{}
 			for _, r := range e.Routes {
+				if r.Operator() {
+					return errors.New("this saved plan has operator routes (protect: kyidentity), which plan cannot ask for; edit stack.yaml directly to preserve them")
+				}
 				if seen[r.App+":"+r.Role] {
 					return errors.New("this saved plan has multiple routes per app; edit stack.yaml directly to preserve them")
 				}
@@ -594,7 +597,7 @@ func exposurePlan(st *stack.Stack, cat catalog.Catalog) error {
 			if external && cat[r.App].Exposure == "internal" {
 				return fmt.Errorf("%s is internal only: its route %s needs exposure: internal, which only allow_cidrs clients reach", r.App, r.Hostname)
 			}
-			if external && cat[r.App].OIDC != nil {
+			if external && (cat[r.App].OIDC != nil || r.Operator()) {
 				signIn = r.Hostname
 			}
 			if r.App == "kyidentity" {
