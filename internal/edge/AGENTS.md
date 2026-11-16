@@ -50,6 +50,12 @@ straight to the apps, `cloudflare-direct`), and verify product proxy behavior.
   order: change both together. The DNS token goes Secret to Secret (`SetACMEToken`), never into
   a spec, hash, file or error. Keep the main configuration's limits and TLS settings at NPM's
   unless a change is meant for both.
+- An operator route (`Route.Operator`, no app; marker `operator:<hostname>`) renders KyIdentity's
+  forward-auth locations in `serverConfig` from `Route.ForwardAuth`. Its edge secret is filled in
+  memory by the CLI's `kyidentity.proxy-app.<hostname>` step and appears only in the internal
+  check and sign-in locations; `location /` sets every Ky header and the login header from the
+  check and clears the secret. A host step's hash never covers the secret (`withoutSecret`), and
+  it refuses to render without one. `ForwardSecret` reads it back from the owned host.
 - Each route trusts exactly its connector IPv4 /32. frp uses a separate TLS listener accepting
   PROXY v2; Cloudflare uses its connecting-IP header. Sanitize forwarding headers before the product.
 - An internal route (every route of a `lan` edge, and a tunnel edge's `exposure: internal`

@@ -37,6 +37,7 @@ import (
 )
 
 const npmImage = "jc21/nginx-proxy-manager:2.16.0@sha256:57d85bffc776c01909c7b24e127a69a72b7d8c75d387e6cb26c762978fc43e4c"
+const nginxTestImage = "nginxinc/nginx-unprivileged:1.30.6-alpine@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03"
 const backendImage = "traefik/whoami:v1.11.0@sha256:200689790a0a0ea48ca45992e0450bc26ccab5307375b41c84dfc4f2475937ab"
 
 // TestNPMContainer exercises the actual upstream API and generated nginx configuration.
@@ -205,7 +206,7 @@ func TestNPMContainer(t *testing.T) {
 	if strings.Count(out.String(), "skipped") != 3 {
 		t.Fatal("second apply was not a no-op")
 	}
-	probe := func(address, sni, host string, proxy bool) (int, string) {
+	probeWith := func(address, sni, host string, proxy bool, extra string) (*http.Response, string) {
 		t.Helper()
 		var conn *tls.Conn
 		deadline := time.Now().Add(10 * time.Second)
@@ -241,7 +242,7 @@ func TestNPMContainer(t *testing.T) {
 			time.Sleep(100 * time.Millisecond)
 		}
 		defer conn.Close()
-		if _, err := fmt.Fprintf(conn, "GET / HTTP/1.1\r\nHost: %s\r\nX-Forwarded-For: 203.0.113.99\r\nX-Real-IP: 203.0.113.99\r\nX-Forwarded-Proto: http\r\nCF-Connecting-IP: 198.51.100.23\r\nForwarded: for=203.0.113.99\r\nConnection: close\r\n\r\n", host); err != nil {
+		if _, err := fmt.Fprintf(conn, "GET /dash?x=1 HTTP/1.1\r\nHost: %s\r\nX-Forwarded-For: 203.0.113.99\r\nX-Real-IP: 203.0.113.99\r\nX-Forwarded-Proto: http\r\nCF-Connecting-IP: 198.51.100.23\r\nForwarded: for=203.0.113.99\r\n%sConnection: close\r\n\r\n", host, extra); err != nil {
 			t.Fatal(err)
 		}
 		res, err := http.ReadResponse(bufio.NewReader(conn), nil)
@@ -253,7 +254,12 @@ func TestNPMContainer(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return res.StatusCode, string(b)
+		return res, string(b)
+	}
+	probe := func(address, sni, host string, proxy bool) (int, string) {
+		t.Helper()
+		res, body := probeWith(address, sni, host, proxy, "")
+		return res.StatusCode, body
 	}
 	expectedClientIP := "198.51.100.23"
 	checkRoute := func(endpoint, hostname string, proxy bool) {
@@ -325,6 +331,9 @@ func TestNPMContainer(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkRoute(address("8443"), removed.Hostname, true)
+	operatorRoute(t, ctx, docker, network, name, n, en, &e, certificate.ID, backend, func(extra string) (*http.Response, string) {
+		return probeWith(address("8443"), "op.example.test", "op.example.test", true, extra)
+	})
 	// Repeat with actual frps and the installer's generated frpc deployment. The
 	// workstation sends ordinary TLS; frpc must supply PROXY v2 to the real NPM.
 	frps := name + "-frps"
@@ -412,4 +421,76 @@ func TestNPMContainer(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// operatorRoute adds a forward-auth operator route in front of whoami, which echoes the headers
+// it receives, with a stand-in KyIdentity check (nginx): no cookie goes to sign-in with the
+// original URI, an unassigned user gets 403, and a signed-in request reaches the app with
+// only the check's identity: the client's Ky and login headers and the edge secret never do.
+func operatorRoute(t *testing.T, ctx context.Context, docker func(...string) string, network, name string, n *NPM, en *engine.Engine, e *stack.Edge, cert int, backend string, probe func(extra string) (*http.Response, string)) {
+	t.Helper()
+	secret := strings.Repeat("5e", 32)
+	conf := filepath.Join(t.TempDir(), "default.conf")
+	check := `server {
+  listen 8080;
+  location = /api/forward/check {
+    if ($http_x_ky_edge_secret != "` + secret + `") { return 401; }
+    if ($http_x_forwarded_host != "op.example.test") { return 401; }
+    if ($http_x_original_uri != "/dash?x=1") { return 401; }
+    if ($http_cookie ~ "__Host-ky_fwd=unassigned") { return 403; }
+    if ($http_cookie !~ "__Host-ky_fwd=good") { return 401; }
+    add_header X-Ky-User alice always;
+    add_header X-Ky-Email alice@example.test always;
+    add_header X-Ky-Groups staff always;
+    return 200;
+  }
+  location = /forward/begin {
+    if ($http_x_ky_edge_secret != "` + secret + `") { return 401; }
+    return 302 "https://id.example.test/forward/start?rd=$http_x_original_uri";
+  }
+}
+`
+	if err := os.WriteFile(conf, []byte(check), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	identity := name + "-identity"
+	t.Cleanup(func() { exec.Command("docker", "rm", "-f", identity).Run() })
+	docker("run", "-d", "--name", identity, "--network", network, "--memory", "128m", "--cpus", "0.5",
+		"--mount", "type=bind,source="+conf+",target=/etc/nginx/conf.d/default.conf,readonly", nginxTestImage)
+	op := stack.Route{Hostname: "op.example.test", ForwardHost: backend, ForwardPort: 8080, ForwardScheme: "http", CertificateID: cert,
+		Protect: "kyidentity", LoginHeader: "X-WEBAUTH-USER", ForwardAuth: &stack.ForwardAuth{Upstream: "http://" + identity + ":8080", Secret: secret}}
+	e.Routes = append(e.Routes, op)
+	if err := en.Run(ctx, n.Steps(*e)); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := n.ForwardSecret(ctx, *e, op); err != nil || got != secret {
+		t.Fatalf("edge secret not read back from NPM: %v", err)
+	}
+	spoof := "X-Ky-User: mallory\r\nX-WEBAUTH-USER: mallory\r\nx-webauth-user: mallory\r\nX_WEBAUTH_USER: mallory\r\nX-Ky-Email: mallory@example.test\r\nX-Ky-Groups: admins\r\nX-Ky-Edge-Secret: " + secret + "\r\n"
+	var res *http.Response
+	var body string
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(100 * time.Millisecond) {
+		if res, body = probe(spoof); res.StatusCode == http.StatusFound || time.Now().After(deadline) {
+			break
+		}
+	}
+	if res.StatusCode != http.StatusFound || res.Header.Get("Location") != "https://id.example.test/forward/start?rd=/dash?x=1" {
+		t.Fatalf("no cookie, spoofed headers: HTTP %d to %q", res.StatusCode, res.Header.Get("Location"))
+	}
+	if res, _ = probe(spoof + "Cookie: __Host-ky_fwd=unassigned\r\n"); res.StatusCode != http.StatusForbidden {
+		t.Fatalf("unassigned user: HTTP %d", res.StatusCode)
+	}
+	res, body = probe(spoof + "Cookie: __Host-ky_fwd=good\r\n")
+	if res.StatusCode != 200 {
+		t.Fatalf("signed-in user: HTTP %d", res.StatusCode)
+	}
+	for _, want := range []string{"X-Ky-User: alice", "X-Webauth-User: alice", "X-Ky-Email: alice@example.test", "X-Ky-Groups: staff"} {
+		if !strings.Contains(body, want+"\r\n") && !strings.Contains(body, want+"\n") {
+			t.Errorf("app lacks %s", want)
+		}
+	}
+	if strings.Contains(body, "mallory") || strings.Contains(body, "admins") || strings.Contains(body, secret) || strings.Contains(strings.ToLower(body), "x-ky-edge-secret") || strings.Contains(body, "X_WEBAUTH") {
+		t.Fatalf("a client header or the edge secret reached the app:\n%s", body)
+	}
+	e.Routes = e.Routes[:len(e.Routes)-1] // the later stages probe every route for whoami's 200
 }

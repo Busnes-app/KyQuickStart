@@ -8,7 +8,7 @@ Plain terminal planning and command orchestration for the operator-run installer
   keeps what it never asks (`keepUnasked`: an app's `stopped`, `node_ports`, LoadBalancer
   addresses, `recovery_key_id`, `replicas`, `database_secret` and `database_instances` on the same target; an edge's `egress_address` and `lan_dns`
   for the same provider; a setup's `identity_amendment`; `domains`), accepts the catalog NPM's `kube://` `npm_url`, refuses plans whose
-  routes name certificates or that installs the nginx edge or an operator (`cloudnative-pg`; never offered: they are written in `stack.yaml`), asks an installed app's setup for no workload, and releases
+  routes name certificates or hold operator routes (`protect: kyidentity`), or that installs the nginx edge or an operator (`cloudnative-pg`; never offered: they are written in `stack.yaml`), asks an installed app's setup for no workload, and releases
   `plan.lock` before running `preflight` or `apply`. `showPlan` names an
   edge whose NPM is the plan's catalog `npm` as installed, lists its certificates and prints
   each route's URL host (`Edge.URLHost`, with an internal route's `client_port`).
@@ -30,10 +30,14 @@ Plain terminal planning and command orchestration for the operator-run installer
   edge, multi-route apps, KyIdentity's setup, an internal route without `allow_cidrs`, a missing
   dependency with a route of its own); install
   then deploys that target's edge with all its routes and, with a bundle beside an installed
-  KyIdentity, its setup steps first and `amendLate` over the install's change (`planChange`). `withSetupSources` also connects KyDrive's target for `euro-office`
+  KyIdentity, its setup steps first and `amendLate` over the install's change (`planChange`). `withSetupSources` also connects KyDrive's target for `euro-office` and KyIdentity's when the deployed edges hold operator routes
   (its `jwt_secret`); removing `npm` or `nginx` is refused while an edge on its target names it (`kube://` `npm_url`, `proxy: nginx`) and routes other apps; `--certificate` names an nginx edge route's certificate or TLS Secret in place of `--certificate-id`. The exported `Install`, `Uninstall`, `Unmanage`, `Upgrade` and `Status`
   take a context, state directory and `Options` (with `Progress`) so the suite runner calls
   them without flag parsing; they return `internal/suite` errors and status.
+- `forward.go` owns operator routes: `forwardAuths` gives each its edge's KyIdentity upstream
+  (refusing a plan without KyIdentity's `identity` integration), `proxyAppStep`
+  (`kyidentity.proxy-app.<hostname>`, before the edge's host steps, never skipped: `Verify` needs
+  the secret read in this run) and preflight's `isolation` dial from the workstation.
 - `lifecycle.go` owns `stop`, `start`, `restart` and `logs` (Docker and Kubernetes, one app
   each) through the drivers' `lifecycleStep`, `workload` and `logs`. Stop, start and restart
   run under `operate` (lock, `guard`, marker), refuse an app its target does not hold as

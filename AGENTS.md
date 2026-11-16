@@ -217,7 +217,7 @@ and retain their own identity, sealer label and collection adapters.
 
 - KyPasswords is replaced by Vaultwarden (decided 2026-10-06). The installer offered Vaultwarden only (confirmed 2026-10-09) until the owner dropped it, with Forgejo and BookStack, from installation on 2026-10-22; existing installations stay untouched. Exclude the older KeePass-based KyVault from new installs and adapters. Existing KyVault installations and data stay untouched. KyAuth does not become a Bitwarden client and becomes authenticator-only (TOTP, Push MFA, KyIdentity sign-on and passkey); Android users use the official Bitwarden app against Vaultwarden for passwords and passkeys. See `kyauth-android/docs/superpowers/specs/2026-10-06-vaultwarden-replaces-kypasswords.md`.
 
-- Third-party apps installed with the suite must pass the admission rules in `KyQuickStart/docs/superpowers/specs/2026-10-06-third-party-catalog-design.md` (approved 2026-10-06): open source with SSO in the free edition, native OIDC against KyIdentity, admin from a claim or an unattended grant, and an offboarding path. No auth-proxy gate is built. Monitoring stays with kyPulse; forms, video calls and video streaming are out of scope.
+- Third-party apps installed with the suite must pass the admission rules in `KyQuickStart/docs/superpowers/specs/2026-10-06-third-party-catalog-design.md` (approved 2026-10-06): open source with SSO in the free edition, native OIDC against KyIdentity, admin from a claim or an unattended grant, and an offboarding path. KyIdentity forward-auth protects only the operator's own apps outside the catalog (owner, 2026-11-15). Monitoring stays with kyPulse; forms, video calls and video streaming are out of scope.
 
 - KyNotes is retained: no off-the-shelf OneNote replacement passes the admission rules. It gains OneNote-style notebooks (notebooks, sections and pages, freeform canvas pages, ink) as its own sub-project.
 
@@ -399,7 +399,14 @@ edge compatibility: `docs/redirect.md`.
   notice, and existing installs are handed to their owner with `unmanage`.
 - Every installed app signs in through KyIdentity with native OIDC, uses *Assigned users only*,
   and offboards through KyIdentity's SCIM or signed directory webhook into the product's own
-  handling. The installer builds no auth-proxy gate and never adopts a foreign account.
+  handling. The installer never adopts a foreign account. Forward-auth (owner amendment,
+  2026-11-15; `docs/edge.md`, "Operator routes"): a route with no catalog `app` and
+  `protect: kyidentity` puts the operator's own app behind KyIdentity on an NPM edge that also
+  routes KyIdentity; catalog apps refuse `protect`. `kyidentity.proxy-app.<hostname>` runs
+  `kyidentity proxy-app` before the host on every apply, reuses the edge secret read back from
+  the NPM host (replacing it only when the host is gone), and keeps it out of hashes, state,
+  errors and output. Preflight fails a `login_header` route whose upstream this workstation
+  reaches; isolation elsewhere is the operator's and unproven.
 - Reverse proxy is Nginx Proxy Manager, except the nginx edge on a cluster (below) and a
   `cloudflare-direct` edge (Docker only): cloudflared
   routes each listed hostname straight to its app on a dedicated Docker network. Only KyIdentity,

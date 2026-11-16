@@ -870,6 +870,100 @@ expressions answered with 404 before `location /`. A role's host carries the rol
 foreign host holding any of the hostnames, the server-name apex included, is refused, never
 adopted.
 
+## Operator routes behind KyIdentity (`protect: kyidentity`)
+
+An operator route puts one of your own web apps, one KyQuickStart does not install (Sonarr,
+Grafana and the like), behind the edge, and KyIdentity decides who reaches it with forward-auth
+(nginx `auth_request`). Each host gets its own host-only cookie; no cookie is shared across a
+parent domain. Catalog apps keep native OIDC and never take forward-auth. Owner amendment
+2026-11-15 ([redirect](redirect.md)); design:
+[forward-auth edge design](superpowers/specs/2026-11-15-forward-auth-edge-design.md); KyIdentity's
+side: its `docs/FORWARD-AUTH.md`.
+
+```yaml
+edges:
+  - target: nas
+    provider: lan
+    routes:
+      - {app: kyidentity, hostname: id.example.com, forward_host: 192.168.1.10, forward_port: 8080, certificate_id: 3}
+      - hostname: grafana.example.com
+        forward_host: 192.168.1.20
+        forward_port: 3000
+        certificate_id: 3
+        protect: kyidentity
+        login_header: X-WEBAUTH-USER   # optional: header login
+        bypass: [/api/health]          # optional: KyIdentity does not check these
+```
+
+The rules, checked before connecting:
+
+- A route with no `app` is an operator route and must carry `protect: kyidentity`. A route that
+  names a catalog app may not carry `protect`, `login_header` or `bypass`.
+- KyIdentity must be installed in the plan with its `identity` integration, and routed on the
+  same edge: the check reaches KyIdentity at that route's `forward_host` and `forward_port`.
+- The edge must be an NPM (`lan`, frp or Cloudflare tunnel, on Docker or Kubernetes). The nginx
+  edge (`proxy: nginx`) and `cloudflare-direct` are refused for operator routes.
+- An internal operator route needs `client_port` 443: KyIdentity sends the browser back to
+  `https://<hostname>/`. An external one needs an external KyIdentity route.
+- No `role` or `status_path`; `verify-edge` skips the route. `login_header` follows KyIdentity's
+  rules: letters, digits and hyphens, and no transport, forwarding, `CF-` or `X-Ky-` header.
+  `bypass` takes at most 20 absolute path prefixes, not `/` and not ending in `/`.
+- `plan` cannot ask for operator routes; edit `stack.yaml` and run `apply`.
+
+What apply does:
+
+- Step `kyidentity.proxy-app.<hostname>`, before the route's NPM host, runs `kyidentity
+  proxy-app` in KyIdentity's container (KyIdentity must advertise `proxy-apps`). The first run
+  creates the proxy app and receives its edge secret. Every later run reuses that app and reads
+  the secret back from the route's current NPM host, so a rerun never creates a second app or
+  secret. Only when that host is gone does it ask KyIdentity for a replacement. So a secret
+  replaced in KyIdentity's UI is not picked up: delete the route's NPM host and rerun apply.
+- The secret is held in memory and redacted. It is written only into the host's advanced
+  configuration in NPM (NPM keeps it in its own database, as it keeps certificate keys), sent to
+  KyIdentity on the internal check location, and cleared from the app's request. It is never in a
+  step hash, the state directory, `stack.yaml`, an error or the handover.
+- The host's `location /` asks `/.ky/check`, sends a browser with no valid session to
+  KyIdentity's sign-in, and sets `X-Ky-User`, `X-Ky-Email`, `X-Ky-Groups` and the login header
+  from the check's answer. nginx never forwards a client's copy of a header it sets, and nginx's
+  default drops header names with underscores, so the client's copies never reach the app.
+- A new proxy app admits only assigned users and requires MFA. Assign users and groups in
+  KyIdentity (**App connections**, **Manage access**); the step's note says so.
+- Removing the route disables its NPM host as for any route. The proxy app stays in KyIdentity
+  for you to delete.
+
+### The three ways an app takes the sign-in
+
+- **Header login** (`login_header` set): the app trusts the header the edge sets and signs the
+  user in. Only safe when nothing but the edge can reach the app (below).
+- **OIDC:** if the app supports OpenID Connect, register it as an OAuth client in KyIdentity and
+  route it without an operator route. Forward-auth adds nothing there.
+- **Gate only** (no `login_header`): KyIdentity decides who reaches the app, and the user still
+  signs in to the app itself. The edge sets `X-Ky-User`, which the app ignores.
+
+Header login, as each app's own documentation describes it (checked 2026-11-15). Where the app
+has a trusted-proxy list, set it to the edge's address so it refuses the header from anyone else:
+
+| App | `login_header` | App setting | Source |
+|---|---|---|---|
+| Grafana | `X-WEBAUTH-USER` | `[auth.proxy] enabled = true`, `header_name = X-WEBAUTH-USER`, `whitelist = <edge address>` | [Grafana: auth proxy](https://grafana.com/docs/grafana/latest/setup-grafana/configure-access/configure-authentication/auth-proxy/) |
+| Forgejo | `X-WEBAUTH-USER` | `[service] ENABLE_REVERSE_PROXY_AUTHENTICATION = true`; `[security] REVERSE_PROXY_AUTHENTICATION_USER = X-WEBAUTH-USER`, `REVERSE_PROXY_TRUSTED_PROXIES = <edge address>` | [Forgejo: configuration cheat sheet](https://forgejo.org/docs/latest/admin/config-cheat-sheet/) |
+| Paperless-ngx | `Remote-User` | `PAPERLESS_ENABLE_HTTP_REMOTE_USER=true` | [Paperless-ngx: configuration](https://docs.paperless-ngx.com/configuration/#PAPERLESS_ENABLE_HTTP_REMOTE_USER) |
+
+### Isolation: what KyQuickStart checks and what stays yours
+
+Anyone who reaches a header-login app without the edge can send the header and sign in as
+anyone. KyQuickStart does not deploy these apps, so it cannot prove isolation and does not
+enforce it.
+
+- **Checked:** `preflight` and `apply` open a TCP connection from this workstation to each
+  operator route's `forward_host:forward_port`. For a header-login route a connection that
+  succeeds fails preflight, and nothing changes. For a gate-only route it prints a warning. A
+  loopback `forward_host` is reported as unproven.
+- **Unproven:** reachability from every other machine, network, VPN or container, other
+  interfaces and ports of the app, and a firewall that admits the edge and others too.
+- **Yours:** bind the app to an address only the edge reaches, or firewall its port to the
+  edge's address, set the app's trusted-proxy list where it has one, and keep it that way.
+
 ## Host ownership
 
 `stack.yaml` holds an `installation_id`, a random UUID written once by `plan` or, for a plan

@@ -31,7 +31,9 @@ func forwardAuths(edges []stack.Edge, st *stack.Stack) ([]stack.Edge, error) {
 			if !r.Operator() {
 				continue
 			}
-			if !slices.ContainsFunc(st.Integrations, func(x stack.Integration) bool { return x.Product == "kyidentity" && x.Identity != nil && x.Installed(st) }) {
+			if !slices.ContainsFunc(st.Integrations, func(x stack.Integration) bool {
+				return x.Product == "kyidentity" && x.Identity != nil && x.Installed(st)
+			}) {
 				return nil, fmt.Errorf("route %s: protect: kyidentity needs KyIdentity's identity integration, which registers the route as a proxy app", r.Hostname)
 			}
 			id := e.Routes[k]

@@ -36,9 +36,14 @@ The rules:
 - A route that names an `app` must not carry `protect`, `login_header` or `bypass`. Catalog
   apps use native OIDC, so naming one with `protect` is refused.
 - `protect` accepts only `kyidentity`.
-- KyIdentity must be installed in the same stack with a route on an edge. That route gives the
-  issuer (its hostname) and the upstream the edge reaches it on (its `forward_host` and
-  `forward_port`).
+- KyIdentity must be installed in the same stack, with its `identity` integration, and routed
+  on the same edge. That route gives the upstream the edge reaches it on (its `forward_host`
+  and `forward_port`). Its hostname is the issuer the browser signs in at.
+- The edge must be an NPM. The nginx edge keeps route files in a ConfigMap, where the secret
+  must not go; mounting it from a Secret is not built, so `proxy: nginx` is refused (and
+  `cloudflare-direct`, which has no nginx).
+- An internal route needs `client_port` 443, because KyIdentity returns the browser to
+  `https://<host>/.ky/callback`, and an external one needs an external KyIdentity route.
 - `forward_host`, `forward_port`, `forward_scheme`, certificates, `exposure` and the
   one-owner-per-hostname rule are unchanged. On a cluster edge, an operator route's
   `forward_host` must be an IP, as for any upstream that is not on the cluster. That IP goes
@@ -63,17 +68,8 @@ alike (`internal/edge/AGENTS.md`). For a protected route it adds the following:
   a header it sets, so the client's copies are gone, and an empty value removes the header.
 - `underscores_in_headers off` (nginx's default) stays, so `X_WEBAUTH_USER` cannot get through.
 
-Where the secret lives:
-
-- **nginx edge:** route files are in a ConfigMap, so the secret must not be inlined there. The
-  route's file `include`s `/etc/nginx/ky-forward/<route key>.conf` (one `proxy_set_header
-  X-Ky-Edge-Secret …;` line) from an installer-owned Secret in the nginx namespace, mounted
-  like the TLS Secrets.
-- **NPM:** NPM keeps `advanced_config` in its own database, as it keeps certificate keys, so
-  the line is inline there.
-
-`serverConfig` emits either the include or the inline line. The caller says which; nothing
-else differs between the two edges.
+The secret is inline in the host's `advanced_config`: NPM keeps that in its own database, as it
+keeps certificate keys. It appears only in the internal check and the sign-in locations.
 
 ## Registering the proxy app
 
@@ -93,9 +89,10 @@ It first requires the `proxy-apps` capability from `apply-setup --capabilities`.
   registers the secret with the redactor and writes it only into the route's generated
   configuration.
 - **Rerun:** KyIdentity answers `unchanged` or `updated` with no secret, so the step reads the
-  secret back from the route's current configuration on the target (NPM's `advanced_config`
-  or the nginx edge file). A second app or a second secret is never created. If that
-  configuration is gone, the step asks for `--rotate-secret` and writes the new secret.
+  secret back from the route's current NPM host. A second app or a second secret is never
+  created. Only if that host is gone does the step run `--rotate-secret` and write the new one.
+- The step runs on every apply: its `Verify` passes only once it has read the secret in this
+  run, so it is never skipped, and the host step refuses to render without the secret.
 - The secret is never in a step's `InputHash`, in state, in an error, in the plan or in the
   handover output. The hash covers the configuration with the secret replaced by a fixed
   placeholder.
@@ -134,6 +131,7 @@ does not deploy these apps, so it cannot prove that.
 
 ## Not built
 
+- Operator routes on the nginx edge (`proxy: nginx`).
 - An operator route without `protect: kyidentity`.
 - Forward-auth for catalog apps.
 - Non-HTTP services, wildcard hosts, a parent-domain cookie and native-app token flows.
