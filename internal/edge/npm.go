@@ -364,28 +364,40 @@ func serverConfig(e stack.Edge, r stack.Route, upstream string) string {
 
 // withoutSecret is r with its edge secret replaced, so a step's hash never covers it.
 func withoutSecret(r stack.Route) stack.Route {
-	if r.ForwardAuth != nil && r.ForwardAuth.SecretLine != "" {
+	if r.ForwardAuth != nil {
 		fa := *r.ForwardAuth
-		fa.SecretLine = "<edge secret>"
+		fa.Secret = "<edge secret>"
 		r.ForwardAuth = &fa
 	}
 	return r
+}
+
+// edgeSecretRE finds an operator route's secret in its host's advanced_config.
+var edgeSecretRE = regexp.MustCompile(`proxy_set_header X-Ky-Edge-Secret "([0-9a-f]{64})";`)
+
+// ForwardSecret is the edge secret in r's current host, or "" when the host is absent or
+// carries none. The registration step reuses it, so a rerun never needs a second secret.
+func (n *NPM) ForwardSecret(ctx context.Context, e stack.Edge, r stack.Route) (string, error) {
+	h, err := n.find(ctx, e, r)
+	if err != nil || h == nil {
+		return "", err
+	}
+	if m := edgeSecretRE.FindStringSubmatch(h.Advanced); m != nil {
+		return m[1], nil
+	}
+	return "", nil
 }
 
 // forwardAuth is an operator route's KyIdentity locations (KyIdentity docs/FORWARD-AUTH.md):
 // the internal check and the sign-in routes, each carrying the edge secret and a fixed
 // X-Forwarded-Host so a client's Host cannot name another proxy app.
 func forwardAuth(r stack.Route, fa *stack.ForwardAuth) string {
-	secret := fa.SecretLine
-	if fa.SecretInclude != "" {
-		secret = "include " + fa.SecretInclude + ";"
-	}
 	edge := fmt.Sprintf(`  proxy_set_header X-Forwarded-Host %s;
-  %s
+  proxy_set_header X-Ky-Edge-Secret "%s";
   proxy_set_header X-Forwarded-For $remote_addr;
   proxy_set_header X-Forwarded-Proto https;
   proxy_pass %s;
-`, r.Hostname, secret, fa.Upstream)
+`, r.Hostname, fa.Secret, fa.Upstream)
 	return `location = /.ky/check {
   internal;
   rewrite ^ /api/forward/check? break;
@@ -516,6 +528,9 @@ func (s hostStep) InputHash() string {
 
 // want resolves the route's certificate and returns its host configuration.
 func (s hostStep) want(ctx context.Context) (hostConfig, error) {
+	if fa := s.r.ForwardAuth; fa != nil && fa.Secret == "" {
+		return hostConfig{}, fmt.Errorf("route %s: KyIdentity's edge secret was not read in this run", s.r.Hostname)
+	}
 	cert, err := s.n.certificateID(ctx, s.e, s.r)
 	return s.n.config(s.e, s.r, cert), err
 }
