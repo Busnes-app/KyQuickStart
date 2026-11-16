@@ -5,3 +5,6 @@
 # write these to the root (tests and CI use temp dirs and `go run`).
 /docker
 /catalog-follow
+
+# Generated mdBook manual
+/docs/book/

@@ -149,3 +149,12 @@ Choosing `finish` saves the plan without touching any server.
 MIT. See [LICENSE.txt](LICENSE.txt).
 
 [![OctoCounts](https://api.octocounts.com/badge/Busnes-app/KyQuickStart/branch/master)](https://octocounts.com/github/Busnes-app/KyQuickStart/tree/master)
+
+## User manual
+
+Read the [online manual](https://busnes.app/manuals/kyquickstart/) or browse its
+[Markdown sources](docs/src/introduction.md).
+
+Build and check it with `mdbook build docs` and `python3 docs/check-links.py`,
+then open `docs/book/index.html`. The documentation workflow also provides a
+downloadable `documentation-book` artifact.
