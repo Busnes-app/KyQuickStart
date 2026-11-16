@@ -856,6 +856,8 @@ calls and kind nodes must carry their own explicit bounds.
 
 ## Child DOX Index
 
+- `docs/AGENTS.md` — mdBook manual, chapter ownership and documentation checks.
+
 - `internal/cli/AGENTS.md`: guided questions, local plan persistence and command orchestration,
   including `backup` and `restore`.
 - `internal/runner/AGENTS.md`: `kyquickstart serve` and the serve-* commands inside the runner
