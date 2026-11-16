@@ -4,6 +4,7 @@ on:
   push:
     branches: [master]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   # dependency-release.yml dispatches it on a catalog-follow commit, which its
   # GITHUB_TOKEN push does not trigger.
   workflow_dispatch:
@@ -25,7 +26,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
         go: ['1.26.x', 'stable']
+    if: github.event.pull_request.draft != true
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -57,7 +60,9 @@ jobs:
         run: go test -fuzz=FuzzStartRequest -fuzztime=100000x -fuzzminimizetime=5s ./internal/runner
 
   vulncheck:
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Saves nothing: a fast job would otherwise store a near-empty cache under the shared key.
@@ -81,7 +86,7 @@ jobs:
     # pull_request run that waits for approval, and dispatches the run it reads on the same
     # commit. Approved, that duplicate skips the kind suite and the image; test and vulncheck,
     # the PR's required checks, still run, so none is ever reported as skipped.
-    if: github.event_name != 'pull_request' || github.actor != 'github-actions[bot]'
+    if: (github.event_name != 'pull_request' || github.actor != 'github-actions[bot]') && github.event.pull_request.draft != true
     strategy:
       fail-fast: false
       matrix:
@@ -108,6 +113,7 @@ jobs:
             skip: ^(TestKubernetesNPMEdge|TestKubernetesNPMEdgeJoins|TestKubernetesNginxEdge|TestKubernetesNginxEdgeJoins|TestKubernetesNginxEdgeFailover|TestKubernetesKyMessage|TestKubernetesApply|TestKubernetesRestore|TestKubernetesKyYard)$
             pkgs: ./test/e2e/ ./internal/edge/
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -143,8 +149,9 @@ jobs:
     # green only when every shard passed. always() makes a failed or cancelled shard a red e2e,
     # not a skipped one, which would read as green.
     needs: e2e-shard
-    if: always() && (github.event_name != 'pull_request' || github.actor != 'github-actions[bot]')
+    if: (always() && (github.event_name != 'pull_request' || github.actor != 'github-actions[bot]')) && github.event.pull_request.draft != true
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - env:
           RESULT: ${{ needs.e2e-shard.result }}
@@ -155,8 +162,9 @@ jobs:
   image:
     # The suite runner image (Dockerfile); release-image.yml publishes it.
     name: Runner image build & run
-    if: github.event_name != 'pull_request' || github.actor != 'github-actions[bot]'
+    if: (github.event_name != 'pull_request' || github.actor != 'github-actions[bot]') && github.event.pull_request.draft != true
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build image
