@@ -238,7 +238,7 @@ func TestKubernetesRestore(t *testing.T) {
 			f := strings.Fields(line)
 			// The restore leaves no ./tls (a fresh host, or the old one moved aside), so the rerun
 			// copies the edge's certificate chain again; anything else must be unchanged.
-			if len(f) >= 2 && f[0] == "kydrive.tls-cert" && f[1] == "ok" {
+			if len(f) >= 2 && f[0] == "kydrive.tls-cert" && (f[1] == "ok" || f[1] == "ok:") {
 				continue
 			}
 			if len(f) >= 2 && (strings.HasPrefix(f[0], "kydrive.") || f[0] == "kyidentity.scim.kydrive") && f[1] != "skipped" {
