@@ -576,7 +576,7 @@
     "kubernetes_secret_payload_count": 0
   },
   "coverage_audit": {
-    "checked_at": "2026-11-17T21:09:30.456276+00:00",
+    "checked_at": "2026-11-17T21:09:30.474136+00:00",
     "status": "in progress; not release qualified",
     "products": {
       "kyidentity": [
@@ -600,8 +600,9 @@
         "Native config/account upgrade passed; real note content/offboarding/restore untested"
       ],
       "kycalendar": [
-        "Reciprocal admin/content endpoints passed",
-        "Previous-image event text/times/IDs/ETag/access and candidate edit passed; offboarding/restore/recurrence/meeting transport untested"
+        "Reciprocal native admin/content access, previous-image ordinary event content/times/IDs/ETag and candidate edit passed",
+        "Candidate native capsule recovery passed: one-share refusal/two-share restore, data/recovery/OIDC/directory key bytes retained, old admin/everyday sessions revoked, fresh native access and restored seeded event edit",
+        "Offboarding, old installer pre-upgrade claim-copy restore, installer resume after native restore, recurrence and meeting delivery untested"
       ],
       "kypost": [
         "Admin users endpoint reciprocal authorization passed",
@@ -874,5 +875,93 @@
     "fresh_combined_integration_run": false,
     "publication_base": "597ec940141b3d7a14000a0c2d995422cba1efc5",
     "ancestry_only_rebase": "Old PR206 head tree and merged master base tree identical; feature code tree unchanged by rebase; private ancestry-only-rebase.result.json retains proof"
+  },
+  "calendar_native_restore_extension": {
+    "status": "PASS: candidate native capsule recovery with retained keys, revoked old sessions and fresh ordinary event access/edit",
+    "recorded_at": "2026-11-17T22:35:55.331839+00:00",
+    "worktree": "/home/yoshi/git/KyQuickStart/.claude/worktrees/suite-calendar-native-restore",
+    "branch": "test/suite-calendar-native-restore",
+    "base": "50ca7a4d8128950bd4626e3cfdd70c87cb40c5bd",
+    "patch_sha256": "01eac85d9c8e59b6d3cd931550ef5432ade1986925fceb83d004acba1bce54bb",
+    "evidence": "20261117-major-calendar-native-restore-v1",
+    "checks_passed": {
+      "upgrade-gate": {
+        "exit_code": 0,
+        "duration_seconds": 7.536,
+        "evidence": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-calendar-native-restore-v1/upgrade-gate.result.json"
+      },
+      "affected-compile-relay": {
+        "exit_code": 0,
+        "duration_seconds": 4.533,
+        "evidence": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-calendar-native-restore-v1/affected-compile-relay.result.json"
+      },
+      "ci": {
+        "exit_code": 0,
+        "duration_seconds": 163.822,
+        "evidence": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-calendar-native-restore-v1/ci.result.json"
+      }
+    },
+    "scope": "Seven actual previous-image configuration/pairing upgrades + ordinary Calendar event; additional candidate native capsule export/two-share offline restore, one-share refusal, key retention, old-session revocation/fresh native access/event edit. NOT Calendar offboarding, restored old pre-upgrade claim copy, meeting delivery, or installer resume after native restore.",
+    "dox": "Separate isolated harness root Verification documents KYQ_TEST_CALENDAR_RESTORE=1; baseline ownership/child indexes unchanged",
+    "results": {
+      "upgrade-gate": {
+        "exit_code": 0,
+        "duration_seconds": 7.536,
+        "evidence": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-calendar-native-restore-v1/upgrade-gate.result.json"
+      },
+      "affected-compile-relay": {
+        "exit_code": 0,
+        "duration_seconds": 4.533,
+        "evidence": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-calendar-native-restore-v1/affected-compile-relay.result.json"
+      },
+      "ci": {
+        "exit_code": 0,
+        "duration_seconds": 163.822,
+        "evidence": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-calendar-native-restore-v1/ci.result.json"
+      },
+      "real-calendar-native-restore": {
+        "exit_code": 0,
+        "duration_seconds": 1242.651,
+        "evidence": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-calendar-native-restore-v1/real-calendar-native-restore.result.json"
+      },
+      "full-qualification": {
+        "exit_code": 0,
+        "duration_seconds": 1418.664,
+        "evidence": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-calendar-native-restore-v1/full-qualification.result.json"
+      }
+    },
+    "named_assertions_qualified": true,
+    "whole_suite_qualified": false
+  },
+  "notes_browser_tls_prerequisite": {
+    "status": "PASS: fixture TLS transport prerequisite only, NOT Notes application acceptance",
+    "limits": "Go jobs remainTasks128. Browser-onlyTasks256 is owner-approved; same2GiB/noSwap/2CPU/exclusiveheavylock.",
+    "notes_application_qualification": false,
+    "previous_failed_run": {
+      "evidence": "20261117-major-notes-browser-trust-v11",
+      "exit_code": 1,
+      "seconds": 2.111,
+      "peak_tasks": 172,
+      "pids_limit_events": 0,
+      "failure": "MOZILLA_PKIX_ERROR_SELF_SIGNED_CERT",
+      "tls_verification_disabled": false
+    },
+    "last_run": {
+      "evidence": "20261117-major-notes-browser-trust-v12",
+      "exit_code": 0,
+      "seconds": 2.244,
+      "peak_tasks": 157,
+      "pids_limit_events": 0,
+      "positive_https": true,
+      "wrong_hostname_refused": "SSL_ERROR_BAD_CERT_DOMAIN",
+      "tls_verification_disabled": false,
+      "private_ca_trust_only": true
+    },
+    "completed_followup": {
+      "evidence": "20261117-major-notes-browser-trust-v12",
+      "status": "PASS: actual isolated browser positiveHTTPS and wrong-host refusal; no Notes application case implemented",
+      "script_sha256": "1efa42926960b609bcd01e350d825c23ca6d634186afe3713c843e138ab12d33",
+      "change": "Own namedCA + signed server certificate, only private NSS authority trust, positiveHTTPS and exact wrong-host denial; no TLS override"
+    }
   }
 }
