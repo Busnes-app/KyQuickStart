@@ -417,6 +417,12 @@ func (s *session) withSetupSources(targets []stack.Target) []stack.Target {
 	if slices.Contains(s.order, euroOffice) {
 		add(s.placed["kydrive"].Name)
 	}
+	// A tls-cert step reads its route's edge.
+	for _, a := range s.order {
+		if e, _, ok := tlsCertRoute(s.plan, a); ok && s.copiesTLSChain(a) {
+			add(e.Target)
+		}
+	}
 	slices.SortFunc(targets, func(a, b stack.Target) int { return strings.Compare(a.Name, b.Name) })
 	return targets
 }

@@ -306,7 +306,7 @@ func TestKyDriveEntry(t *testing.T) {
 	if o.RedirectPaths[0] != "/api/sso/kysignon/callback" || o.AdminRole != "kydrive.admin" || o.UserRole != "kydrive.user" || o.DirectoryPath != "" || o.SCIMTokenFile != "/run/secrets/scim_token" || o.Public {
 		t.Fatalf("oidc = %+v", o)
 	}
-	if !slices.Equal(a.Secrets, []string{"session_secret", "scim_token"}) || !slices.Equal(a.Binds, []string{"backups", "data"}) || !slices.Equal(a.Backup.Volumes, []string{"data", "backups"}) || !a.Upgrade.MigratesData {
+	if !slices.Equal(a.Secrets, []string{"session_secret", "scim_token"}) || !slices.Equal(a.Binds, []string{"backups", "data", "tls"}) || !slices.Equal(a.Backup.Volumes, []string{"data", "backups"}) || !a.Upgrade.MigratesData {
 		t.Fatalf("secrets %v, binds %v, backup %+v", a.Secrets, a.Binds, a.Backup)
 	}
 	// No dump command: a cold backup, carrying both secrets in the snapshot.
@@ -421,7 +421,8 @@ func TestKyPostEntry(t *testing.T) {
 			t.Fatalf("volumes = %v", s.Volumes)
 		}
 	}
-	if len(s.Volumes) != len(binds) || c.Volumes != nil || !slices.Equal(a.Binds, slices.Sorted(slices.Values(binds))) || !slices.Equal(a.FromVolumes, binds) ||
+	// Then the edge's public chain, read-only (docs/edge.md, "TLS pin source").
+	if len(s.Volumes) != len(binds)+1 || s.Volumes[len(binds)] != "./tls:/run/kyq-tls:ro" || c.Volumes != nil || !slices.Equal(a.Binds, slices.Sorted(slices.Values(append(binds, "tls")))) || !slices.Equal(a.FromVolumes, binds) ||
 		!slices.Equal(a.Backup.Volumes, []string{"config", "private", "state"}) || !slices.Contains(s.Tmpfs, "/home/kypost:uid=${KYQ_UID:?},gid=${KYQ_GID:?},mode=0700") || s.Environment["HOME"] != "/home/kypost" {
 		t.Fatalf("volumes %v, top-level %v, binds %v, from_volumes %v, tmpfs %v", s.Volumes, c.Volumes, a.Binds, a.FromVolumes, s.Tmpfs)
 	}
@@ -930,20 +931,29 @@ func TestWithPrivatePeer(t *testing.T) {
 	}
 }
 
-// KyDrive and KyPost take their TLS pin probe from the plan, under the name each reads, and
-// mount no certificate and name no private key for it.
+// KyDrive and KyPost take their TLS pin probe and copied chain from the plan, under the names
+// each reads; the chain is a read-only bind of ./tls, and no private key is named or mounted.
 func TestWithTLSPinProbe(t *testing.T) {
 	cat, err := Load(Embedded())
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, env := range map[string]string{"kydrive": "KYDRIVE_TLS_PIN_PROBE", "kypost": "KYPOST_TLS_PIN_PROBE"} {
-		for _, probe := range []bool{true, false} {
-			got := string(cat[name].WithTLSPinProbe(probe).Compose)
-			if want := env + `: "` + strconv.FormatBool(probe) + `"`; !strings.Contains(got, want) || strings.Contains(got, TLSPinProbeRef) {
-				t.Errorf("%s Compose with %v lacks %s or keeps the reference", name, probe, want)
+	for name, env := range map[string]string{"kydrive": "KYDRIVE_", "kypost": "KYPOST_"} {
+		for _, on := range []bool{true, false} {
+			got := string(cat[name].WithTLSPinProbe(on).WithTLSCertFile(on).Compose)
+			file := ""
+			if on {
+				file = TLSCertFile
 			}
-			for _, bad := range []string{"_TLS_CERT_FILE", "TLS_KEY_FILE", "privkey"} {
+			for _, want := range []string{env + `TLS_PIN_PROBE: "` + strconv.FormatBool(on) + `"`, env + `TLS_CERT_FILE: "` + file + `"`, "./tls:/run/kyq-tls:ro"} {
+				if !strings.Contains(got, want) {
+					t.Errorf("%s Compose with %v lacks %s", name, on, want)
+				}
+			}
+			if strings.Contains(got, TLSPinProbeRef) || strings.Contains(got, TLSCertFileRef) {
+				t.Errorf("%s Compose keeps a reference", name)
+			}
+			for _, bad := range []string{"TLS_KEY_FILE", "privkey", "tls.key", "letsencrypt"} {
 				if strings.Contains(got, bad) {
 					t.Errorf("%s Compose names %s", name, bad)
 				}

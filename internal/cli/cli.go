@@ -543,6 +543,8 @@ func withRoute(st *stack.Stack, name string, t stack.Target, app catalog.App) (c
 		return app, err
 	}
 	app = app.WithPrivateRecovery(privateRecovery(st)).WithPrivatePeer(privatePeer(st, name)).WithTLSPinProbe(tlsPinProbe(st, name))
+	_, _, copied := tlsCertRoute(st, name)
+	app = app.WithTLSCertFile(copied)
 	for _, a := range st.Apps {
 		if a.Name != name {
 			continue
@@ -648,19 +650,31 @@ func (s *session) connect(ctx context.Context, trust trustFlag) error {
 			s.nginx[e.Target] = n
 			continue
 		}
-		token, tunnel, err := s.drivers[e.Target].edgeAccess(ctx, e)
-		if err != nil {
-			return fmt.Errorf("edge %s: %w", e.Target, err)
+		if _, err := s.npmFor(ctx, e); err != nil {
+			return err
 		}
-		s.redact.Add(strings.TrimSpace(string(token)))
-		n, err := edge.NewNPM(e.NPMURL, strings.TrimSpace(string(token)), s.installation, tunnel)
-		if err != nil {
-			return fmt.Errorf("edge %s: %w", e.Target, err)
-		}
-		n.Adopt, n.Secrets, n.Redact = s.adopt, s.drivers[e.Target].edgeSecrets(), s.redact
-		s.npms[e.Target] = n
 	}
 	return nil
+}
+
+// npmFor is e's NPM client, signed in with the installer's token the first time it is asked
+// for: connect makes those of s.edges, and a tls-cert step asks for its route's edge's.
+func (s *session) npmFor(ctx context.Context, e stack.Edge) (*edge.NPM, error) {
+	if n := s.npms[e.Target]; n != nil {
+		return n, nil
+	}
+	token, tunnel, err := s.drivers[e.Target].edgeAccess(ctx, e)
+	if err != nil {
+		return nil, fmt.Errorf("edge %s: %w", e.Target, err)
+	}
+	s.redact.Add(strings.TrimSpace(string(token)))
+	n, err := edge.NewNPM(e.NPMURL, strings.TrimSpace(string(token)), s.installation, tunnel)
+	if err != nil {
+		return nil, fmt.Errorf("edge %s: %w", e.Target, err)
+	}
+	n.Adopt, n.Secrets, n.Redact = s.adopt, s.drivers[e.Target].edgeSecrets(), s.redact
+	s.npms[e.Target] = n
+	return n, nil
 }
 
 // dialTarget connects one target; c holds the SSH settings that are not the target's own.
@@ -964,6 +978,14 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 			steps = append(steps, &preUpgradeBackup{s: s, name: name, t: t, from: backupFrom, to: s.cat[name].Version})
 		}
 		app := d.steps(name, s.cat[name], s.o.ReleaseSet, s.redact)
+		if tls, err := s.tlsCertStep(name); err != nil {
+			return nil, err
+		} else if tls != nil {
+			tls.bootstrap = !deployed.Found
+			// Before its deploy: KyPost refuses to start without the file its Compose file names.
+			k := slices.IndexFunc(app, func(st engine.Step) bool { return st.ID() == name+".deploy" })
+			app = slices.Insert(app, k, engine.Step(tls))
+		}
 		if k, ok := d.(kubeDriver); ok && name == euroOffice {
 			app = s.editorSteps(k)
 		}
@@ -1035,7 +1057,7 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 	}
 	steps = append(append(steps, held...), routes...)
 	// Connectors last: their first delivery goes through the routes the edges just made.
-	return append(steps, connectors...), nil
+	return issueFirst(append(steps, connectors...)), nil
 }
 
 // lock takes every target's lock and refuses a target whose plan marker is newer than this

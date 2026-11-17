@@ -88,7 +88,7 @@ func TestNginxEdgeSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	order := ids(list)
-	want := []string{"hello.secrets", "hello.deploy", "hello.health", "nginx.secrets", "nginx.deploy", "nginx.health", "k1.edge.removed", "k1.edge.cert.wild"}
+	want := []string{"nginx.secrets", "nginx.deploy", "nginx.health", "hello.secrets", "hello.deploy", "hello.health", "k1.edge.removed", "k1.edge.cert.wild"}
 	if len(order) != len(want)+1 || !slices.Equal(order[:len(want)], want) || !strings.HasPrefix(order[len(want)], "k1.edge.") {
 		t.Fatalf("steps = %v", order)
 	}

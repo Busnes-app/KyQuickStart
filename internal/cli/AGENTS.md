@@ -40,6 +40,12 @@ Plain terminal planning and command orchestration for the operator-run installer
   (refusing a plan without KyIdentity's `identity` integration), `proxyAppStep`
   (`kyidentity.proxy-app.<hostname>`, before the edge's host steps, never skipped: `Verify` needs
   the secret read in this run) and preflight's `isolation` dial from the workstation.
+- `tlscert.go` owns copied public chains for KyDrive/KyPost and `RefreshTLS`. Before
+  replacement, `kube.TLSCertificateServed` checks the exact source leaf on every ready managed
+  edge pod with route SNI through authenticated port-forward. Retain a valid old copy and log
+  the reason when unconfirmed; fail on an invalid/missing copy. Only a first deploy without
+  a deployment record or copy may bootstrap before route creation, never restore/refresh.
+  Do not use CA validity dates as renewal/reload timestamps.
 - `lifecycle.go` owns `stop`, `start`, `restart` and `logs` (Docker and Kubernetes, one app
   each) through the drivers' `lifecycleStep`, `workload` and `logs`. Stop, start and restart
   run under `operate` (lock, `guard`, marker), refuse an app its target does not hold as
@@ -121,6 +127,10 @@ Plain terminal planning and command orchestration for the operator-run installer
   stops the app (decision 11). A cold `backup` says it stops the app and, on failure, whether
   it runs again; a dump `backup` names the `backup.stop` services it stops. `backupLines` adds
   the backup, restore and password-record lines to apply's handover.
+  For a copied TLS chain, restore also connects and locks the route's edge target and
+  runs `<app>.tls-cert` from that current edge before any restored service starts.
+  The chain is derived rather than restored from the snapshot; refusal leaves the
+  restore pending and gated apps stopped. The next apply must skip an unchanged copy.
   KyDrive requires the pinned image's `restore-reset` capability before replacing data and
   uses `dockerhost.Store.ResetDriveRestore` before every startup/replay, including resume;
   older pinned images are refused, never replaced with unpublished ones. For every app an
