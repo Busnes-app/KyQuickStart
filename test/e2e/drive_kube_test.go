@@ -134,7 +134,7 @@ func startDriveTarget(t *testing.T, work, catalogDir, nodeIP string, certPEM []b
 	for _, r := range [][2]string{
 		{`    ports: ["{{forward}}:8080"]` + "\n", `    ports: ["{{forward}}:8080"]` + "\n    extra_hosts: [\"" + catalogIdentityHost + ":" + kindGateway + "\"]\n"},
 		{"      GOMEMLIMIT: 768MiB\n", "      GOMEMLIMIT: 768MiB\n      SSL_CERT_FILE: /test-ca/ca.pem\n"},
-		{`volumes: ["./data:/data", "./backups:/backups"]`, `volumes: ["./data:/data", "./backups:/backups", "` + ca + `:/test-ca/ca.pem:ro"]`},
+		{`volumes: ["./data:/data", "./backups:/backups", "./tls:/run/kyq-tls:ro"]`, `volumes: ["./data:/data", "./backups:/backups", "./tls:/run/kyq-tls:ro", "` + ca + `:/test-ca/ca.pem:ro"]`},
 	} {
 		if !strings.Contains(patched, r[0]) {
 			t.Fatalf("KyDrive's compose template changed; test plumbing for %q", r[0])
