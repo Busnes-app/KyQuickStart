@@ -32,6 +32,8 @@ var bulkDest = stack.BackupDestination{Repository: "rest:https://restic.example.
 func TestLegacyDrivePlanKeepsManagementCommands(t *testing.T) {
 	for _, cmd := range []string{"status", "pull-plan", "revoke", "apply", "handoff"} {
 		t.Run(cmd, func(t *testing.T) {
+			// The fake target runs SSH key reconciliation on the local filesystem.
+			t.Setenv("HOME", t.TempDir())
 			f, cat := suiteFixture(t)
 			writeApp(t, cat, "kydrive", "version: 1.0.0\n")
 			f.plan(t, "apps:\n  - name: kydrive\n    target: nas\n")
