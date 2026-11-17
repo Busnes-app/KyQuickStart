@@ -56,6 +56,11 @@ this one wins.
   one KyQuickStart does not install, behind KyIdentity forward-auth on an NPM edge. Catalog apps
   keep native OIDC, and the freeze holds: no catalog app is added
   ([edge](edge.md#operator-routes-behind-kyidentity-protect-kyidentity)).
+- Amendment (owner, 2026-11-16): "Copy at apply + KyYard refresh". Its scope is only this:
+  apply copies the public certificate chain the catalog NPM or the nginx edge serves for
+  KyDrive's and KyPost's route to their Docker host as `KYDRIVE_TLS_CERT_FILE` /
+  `KYPOST_TLS_CERT_FILE`, and the suite runner in KyYard refreshes that copy daily. No other
+  feature, app or schedule is added ([edge](edge.md#tls-pin-source-kydrive-kypost)).
 
 ## What KyQuickStart does now
 
@@ -130,12 +135,11 @@ target markers from earlier builds stay valid.
   per-route opt-in or Cloudflare Access for admin-only apps; a live tunnel through every
   eligible product.
 - A KyPost setting for private mail hosts (`SANDBOX_PRIVATE_HOSTS`).
-- The TLS pin source for KyDrive and KyPost behind an edge that serves its own certificate
-  (`lan`, `frp`, internal routes, a `cloudflare` edge with `lan_dns`): delivering the public
-  chain the edge serves to the app host as `KYDRIVE_TLS_CERT_FILE` / `KYPOST_TLS_CERT_FILE`
-  and refreshing it after each renewal. KyQuickStart runs only on demand, so nothing it owns
-  can follow a renewal; NPM's certificate download includes the private key. Behind Cloudflare
-  apply sets the probe ([edge](edge.md#tls-pin-source-kydrive-kypost)).
+- The TLS pin source for KyDrive and KyPost behind an NPM the operator runs (`npm_url`
+  `https://`): NPM's API hands out the certificate only bundled with its private key, so no
+  chain is copied there; and on a `cloudflare` edge with `lan_dns`, whose external route LAN
+  clients reach through the edge and everyone else through Cloudflare, where neither
+  certificate covers both ([edge](edge.md#tls-pin-source-kydrive-kypost)).
 - KyPost native mail: an end-to-end run that receives and sends real mail (only unit tests
   cover it), its bulk backup (`KYPOST_BULK_BACKUP_REPOSITORY`), KyPost's Cloudflare receiving
   profile, and KyPost's own production-MX gates, which keep the Maddy profile to a test domain.
