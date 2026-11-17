@@ -112,12 +112,15 @@ func TestKyMessageEntry(t *testing.T) {
 	if !slices.Equal(a.Backup.Stop, []string{"app"}) {
 		t.Errorf("backup stops %v, want the console alone", a.Backup.Stop)
 	}
-	if !slices.Equal(a.Binds, []string{"backups", "data", "matrix", "media", "pgdata"}) || !slices.Contains(a.Nested, "./matrix/mas/config.yaml") {
+	if !slices.Equal(a.Binds, []string{"backups", "data", "matrix", "media", "pgdata"}) || !slices.Contains(a.Nested, "./matrix/mas/config.yaml") || !slices.Contains(a.Nested, "./matrix/element/kymessages-guest.html") {
 		t.Errorf("binds %v nested %v", a.Binds, a.Nested)
 	}
 	b := a.Backup
-	if b.Service != "postgres" || !slices.Equal(b.Volumes, []string{"data", "backups", "matrix", "media"}) || b.RestoreOrder[0] != "postgres" || b.ReplayAfter != "app" || a.Upgrade.MigratesData || a.Upgrade.MinFrom != "0.4.3" || a.Upgrade.Allows("0.4.3", a.Version) != nil {
+	if b.Service != "postgres" || !slices.Equal(b.Volumes, []string{"data", "backups", "matrix", "media"}) || b.RestoreOrder[0] != "postgres" || b.ReplayAfter != "app" || !a.Upgrade.MigratesData || a.Upgrade.MinFrom != "0.4.3" || a.Upgrade.Allows("0.4.3", a.Version) != nil {
 		t.Errorf("backup %+v upgrade %+v", b, a.Upgrade)
+	}
+	if !a.Upgrade.Migrates("0.6.0.1") || a.Upgrade.Migrates("0.6.0.2") || a.Upgrade.Migrates(a.Version) {
+		t.Errorf("migration boundary = %+v", a.Upgrade)
 	}
 }
 
@@ -151,6 +154,10 @@ func TestKyMessageComposeHygiene(t *testing.T) {
 	}
 	if services["app"].Environment["KY_SCIM_ENABLED"] != "false" || services["app"].Environment["KY_SSO_AUTO_PROVISION"] != "false" || services["app"].Environment["KY_ENV"] != "production" {
 		t.Errorf("app environment = %v", services["app"].Environment)
+	}
+	// matrix-init writes ky_guests.py beside homeserver.yaml, mounted at /config.
+	if services["synapse"].Environment["PYTHONPATH"] != "/config" {
+		t.Error("Synapse cannot load the meeting-guest confinement module from /config")
 	}
 	if total > 3<<10 {
 		t.Errorf("mem_limit sum %d MiB > 3 GiB", total)

@@ -1,11 +1,11 @@
 name: kypulse
 description: kyPulse, the suite's monitor; polls every app's health, alerts and keeps their logs
 category: ky
-version: 0.6.0.2
+version: 0.6.1
 # Release image of v0.4.2, attested by release-image.yml@refs/tags/v0.4.2 (gh attestation verify).
-# catalog-follow: v0.6.0.2 attested by Busnes-app/KyPulse-server release-image.yml@refs/tags/v0.6.0.2
+# catalog-follow: v0.6.1 attested by Busnes-app/KyPulse-server release-image.yml@refs/tags/v0.6.1
 images:
-  kypulse: ghcr.io/busnes-app/kypulse-server:0.6.0.2@sha256:808ee7b793f5a3ce648a6d71172212de13c7b6c238fa39c7b2482f8e3f03abfb
+  kypulse: ghcr.io/busnes-app/kypulse-server:0.6.1@sha256:1dd907d2cc2ebfcead75ee8b48eaf03b82b995f60f0f5e2963444979e9b184ff
 # verify-edge reads the suite proxy contract here (clientIp, proxyHeadersTrusted, scheme).
 status_path: /api/installer/network
 # Monitoring for administrators: never on the public connection.
@@ -31,7 +31,7 @@ upgrade:
   # 0.6.0 changes no migration (its migrations directory is unchanged since 0.5.0).
   min_from: 0.4.3
   migrates_data: true
-  data_since: 0.6.0.1
+  data_since: 0.6.1
   note: >-
     From 0.4.x: signs out single sign-on sessions once, at first start; people sign in again.
 kubernetes:
