@@ -116,8 +116,11 @@ func TestKyMessageEntry(t *testing.T) {
 		t.Errorf("binds %v nested %v", a.Binds, a.Nested)
 	}
 	b := a.Backup
-	if b.Service != "postgres" || !slices.Equal(b.Volumes, []string{"data", "backups", "matrix", "media"}) || b.RestoreOrder[0] != "postgres" || b.ReplayAfter != "app" || a.Upgrade.MigratesData || a.Upgrade.MinFrom != "0.4.3" || a.Upgrade.Allows("0.4.3", a.Version) != nil {
+	if b.Service != "postgres" || !slices.Equal(b.Volumes, []string{"data", "backups", "matrix", "media"}) || b.RestoreOrder[0] != "postgres" || b.ReplayAfter != "app" || !a.Upgrade.MigratesData || a.Upgrade.MinFrom != "0.4.3" || a.Upgrade.Allows("0.4.3", a.Version) != nil {
 		t.Errorf("backup %+v upgrade %+v", b, a.Upgrade)
+	}
+	if !a.Upgrade.Migrates("0.6.0.1") || a.Upgrade.Migrates("0.6.0.2") || a.Upgrade.Migrates(a.Version) {
+		t.Errorf("migration boundary = %+v", a.Upgrade)
 	}
 }
 

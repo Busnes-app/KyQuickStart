@@ -66,12 +66,15 @@ func TestKyIdentityEntry(t *testing.T) {
 	if k.Env["KYIDENTITY_ISSUER_URL"] != "https://"+HostRef || k.ReadinessPath != "/readyz" || k.Ports[0] != 5867 || k.Volumes[0].Mount != k.Env["KYIDENTITY_DATA_DIR"] {
 		t.Fatalf("env %v, probe %s, volumes %+v", k.Env, k.ReadinessPath, k.Volumes)
 	}
-	// 0.4.4 and later rewrite no data: an upgrade from 0.4.3 needs only an acknowledgement.
+	// Older supported versions remain admitted; schema changes require a backup.
 	if a.Upgrade.Allows("0.4.5", a.Version) != nil || a.Upgrade.Allows("0.4.3", a.Version) != nil {
 		t.Fatalf("0.4.3 or 0.4.5 cannot upgrade to %s", a.Version)
 	}
-	if a.Upgrade.MigratesData || a.Upgrade.MinFrom != "0.4.0" || a.Backup.Volumes[0] != "data" {
+	if !a.Upgrade.MigratesData || a.Upgrade.MinFrom != "0.4.0" || a.Backup.Volumes[0] != "data" {
 		t.Fatalf("upgrade %+v, backup %+v", a.Upgrade, a.Backup)
+	}
+	if !a.Upgrade.Migrates("0.6.0.1") || a.Upgrade.Migrates("0.6.0.2") || a.Upgrade.Migrates(a.Version) {
+		t.Fatalf("migration boundary = %+v", a.Upgrade)
 	}
 }
 
@@ -381,8 +384,11 @@ func TestKyPostEntry(t *testing.T) {
 		o.DirectoryPath != "" || o.SCIMTokenFile != "" || o.BackchannelLogoutPath != "" || o.Public || len(o.LogoutPaths) != 0 {
 		t.Fatalf("oidc = %+v", o)
 	}
-	if a.Backup == nil || !slices.Equal(a.Backup.Volumes, []string{"config", "private", "state"}) || a.Upgrade.MinFrom != "0.4.3" || a.Upgrade.MigratesData {
+	if a.Backup == nil || !slices.Equal(a.Backup.Volumes, []string{"config", "private", "state"}) || a.Upgrade.MinFrom != "0.4.3" || !a.Upgrade.MigratesData {
 		t.Fatalf("upgrade %+v, backup %+v", a.Upgrade, a.Backup)
+	}
+	if !a.Upgrade.Migrates("0.6.0.2") || a.Upgrade.Migrates(a.Version) {
+		t.Fatalf("migration boundary = %+v", a.Upgrade)
 	}
 	type service struct {
 		Image           string
