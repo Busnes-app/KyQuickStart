@@ -317,6 +317,29 @@ func load(state string, trust trustFlag, o Options) (*session, error) {
 }
 
 func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*session, error) {
+	s, err := managementSession(st, state, trust, o)
+	if err != nil {
+		return nil, err
+	}
+	if drive, ok, err := bulkPlan(st, s.cat); err != nil {
+		return nil, err
+	} else if ok {
+		s.cat["kydrive"] = drive
+	}
+	return s, nil
+}
+
+// loadManagement retains plan, transport and ownership validation without requiring the
+// deployment-only KyDrive backup wiring. It is only for status, pull-plan and revoke.
+func loadManagement(state string, trust trustFlag, o Options) (*session, error) {
+	st, err := stack.Load(filepath.Join(state, "stack.yaml"))
+	if err != nil {
+		return nil, err
+	}
+	return managementSession(st, state, trust, o)
+}
+
+func managementSession(st *stack.Stack, state string, trust trustFlag, o Options) (*session, error) {
 	cat, err := catalog.Load(o.Catalog)
 	if st.Demo {
 		cat, err = catalog.Load(catalog.Demo())
@@ -465,11 +488,6 @@ func newSession(st *stack.Stack, state string, trust trustFlag, o Options) (*ses
 	} else if ok {
 		cat["kydrive"] = drive
 	}
-	if drive, ok, err := bulkPlan(st, cat); err != nil {
-		return nil, err
-	} else if ok {
-		cat["kydrive"] = drive
-	}
 	// A cluster edge's egress policy admits an upstream off the cluster by address only.
 	for _, e := range st.Edges {
 		for _, r := range e.Routes {
@@ -606,6 +624,9 @@ func (s *session) connect(ctx context.Context, trust trustFlag) error {
 				}
 			}
 			k.tunnel = tunnelEdge(s.plan, t.Name)
+			for _, name := range k.edges {
+				k.publicApps = append(k.publicApps, k.app(name, s.cat[name], s.o.ReleaseSet, s.redact))
+			}
 			d = k
 		}
 		if h, ok := d.(sshDriver); ok {

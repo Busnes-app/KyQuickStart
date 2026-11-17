@@ -698,7 +698,7 @@ func (n noteStep) Note() string                          { return n.note }
 // status reads every installed app; live adds the CLI's workload read and stop intent, which
 // the runner's wire leaves out.
 func status(ctx context.Context, state string, trust trustFlag, o Options, live bool) (suite.Status, error) {
-	s, err := load(state, trust, o)
+	s, err := loadManagement(state, trust, o)
 	if err != nil {
 		return suite.Status{}, err
 	}

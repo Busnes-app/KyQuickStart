@@ -236,18 +236,22 @@ func TestDeployRepairsAdminExposure(t *testing.T) {
 		t.Fatalf("Inspect after apply = %v %v", done, err)
 	}
 	svcs := a.Client.cs.CoreV1().Services("kyq-npm")
-	svc, _ := svcs.Get(ctx, appName, metav1.GetOptions{})
-	svc.Spec.Type, svc.Spec.Ports[0].NodePort = corev1.ServiceTypeNodePort, 30081
-	svcs.Update(ctx, svc, metav1.UpdateOptions{})
-	if done, _ := d.Inspect(ctx); done {
-		t.Fatal("published admin port counted as deployed")
-	}
-	if err := d.Apply(ctx); err != nil {
-		t.Fatal(err)
-	}
-	svc, _ = svcs.Get(ctx, appName, metav1.GetOptions{})
-	if svc.Spec.Type != "" || svc.Spec.Ports[0].NodePort != 0 {
-		t.Fatalf("admin service not repaired: %+v", svc.Spec)
+	for _, exposed := range []corev1.ServiceType{corev1.ServiceTypeNodePort, corev1.ServiceTypeLoadBalancer} {
+		svc, _ := svcs.Get(ctx, appName, metav1.GetOptions{})
+		svc.Spec.Type, svc.Spec.Ports[0].NodePort = exposed, 30081
+		svc.Spec.HealthCheckNodePort = 31234
+		svc.Annotations = kubeVIPAnnotations("192.168.1.79")
+		svcs.Update(ctx, svc, metav1.UpdateOptions{})
+		if done, _ := d.Inspect(ctx); done {
+			t.Fatal("published admin port counted as deployed")
+		}
+		if err := d.Apply(ctx); err != nil {
+			t.Fatal(err)
+		}
+		svc, _ = svcs.Get(ctx, appName, metav1.GetOptions{})
+		if svc.Spec.Type != "" || svc.Spec.Ports[0].NodePort != 0 || svc.Spec.HealthCheckNodePort != 0 || len(svc.Annotations) != 0 {
+			t.Fatalf("admin service not repaired from %s: %+v", exposed, svc.Spec)
+		}
 	}
 	if err := RemoveSteps(a)[0].Apply(ctx); err != nil {
 		t.Fatal(err)
@@ -258,7 +262,7 @@ func TestDeployRepairsAdminExposure(t *testing.T) {
 }
 
 // kube_vip_address makes app-public a kube-vip LoadBalancer; applies keep what kube-vip
-// writes, repair our annotations, and removing the address returns it to a NodePort.
+// writes, repair our annotations, and refuse to remove its address without a live change.
 func TestDeployKubeVIPLoadBalancer(t *testing.T) {
 	ctx := context.Background()
 	client := New(fake.NewClientset())
@@ -315,11 +319,58 @@ func TestDeployKubeVIPLoadBalancer(t *testing.T) {
 	if done, _ := plain.Inspect(ctx); done {
 		t.Fatal("LoadBalancer counted as the NodePort release")
 	}
+	if err := plain.a.CheckPublicService(ctx); err == nil || !strings.Contains(err.Error(), "kube_vip_address") {
+		t.Fatalf("preflight accepted load balancer removal: %v", err)
+	}
+	if err := plain.Apply(ctx); err == nil || !strings.Contains(err.Error(), "withdraw its address") {
+		t.Fatalf("apply accepted load balancer removal: %v", err)
+	}
+	pub, _ = svcs.Get(ctx, publicName, metav1.GetOptions{})
+	if pub.Spec.Type != corev1.ServiceTypeLoadBalancer || pub.Annotations[kubeVIPPrefix+"loadbalancerIPs"] != "192.168.1.78" {
+		t.Fatal("refused apply changed the load balancer")
+	}
+	// An operator can explicitly retire the address before applying the NodePort plan.
+	pub.Spec.Type = corev1.ServiceTypeNodePort
+	pub.Annotations = nil
+	if _, err := svcs.Update(ctx, pub, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
 	if err := plain.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
 	pub, _ = svcs.Get(ctx, publicName, metav1.GetOptions{})
 	if pub.Spec.Type != corev1.ServiceTypeNodePort || len(pub.Annotations) != 0 {
 		t.Fatalf("not back to a NodePort: %v %v", pub.Spec.Type, pub.Annotations)
+	}
+}
+
+func TestDeployRefusesLoadBalancerAddedAfterPreflight(t *testing.T) {
+	ctx := context.Background()
+	cs := fake.NewClientset()
+	a := App{Name: "npm", Client: New(cs), Catalog: npmApp(t), ReleaseSet: "rs-1"}
+	d := deployOf(a)
+	if err := d.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// The early check sees a NodePort. An external actor changes it before the
+	// service update; the mutation boundary must check the exact object it replaces.
+	cs.PrependReactor("update", "networkpolicies", func(k8stesting.Action) (bool, runtime.Object, error) {
+		resource := corev1.SchemeGroupVersion.WithResource("services")
+		object, err := cs.Tracker().Get(resource, "kyq-npm", publicName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		svc := object.(*corev1.Service).DeepCopy()
+		svc.Spec.Type = corev1.ServiceTypeLoadBalancer
+		svc.Annotations = kubeVIPAnnotations("192.168.1.78")
+		err = cs.Tracker().Update(resource, svc, "kyq-npm")
+		return false, nil, err
+	})
+	if err := d.Apply(ctx); err == nil || !strings.Contains(err.Error(), "kube_vip_address") {
+		t.Fatalf("late load balancer removal was not refused: %v", err)
+	}
+	svc, err := cs.CoreV1().Services("kyq-npm").Get(ctx, publicName, metav1.GetOptions{})
+	if err != nil || svc.Spec.Type != corev1.ServiceTypeLoadBalancer {
+		t.Fatalf("late load balancer was overwritten: %+v %v", svc, err)
 	}
 }

@@ -21,6 +21,8 @@ Plain terminal planning and command orchestration for the operator-run installer
   `GrantRunner`) and the edge's `tlsSecrets`; two apps publishing one NodePort or address on a
   cluster are refused; an app's `node_ports`, `kube_vip_address` and `load_balancer_address` override the catalog's in the session only;
   `loadBalancers` gives a target's addresses to `kube.LoadBalancerCheck` in preflight and to `GrantRunner`.
+  Preflight checks each edge public Service and refuses a LoadBalancer-to-NodePort downgrade;
+  deploy repeats that check before mutations and against the exact Service being updated.
   `version` prints the release set; `version --runner-image` prints `Options.RunnerImage` or
   fails "this build pins no suite runner image (source build); use a release binary".
 - `suite.go` owns `install`, `uninstall`, `unmanage`, `upgrade` and `status`, the upgrade gate
@@ -55,6 +57,9 @@ Plain terminal planning and command orchestration for the operator-run installer
   `get pods/log`, which preflight does not require, and names it when refused. CLI `status`
   adds each app's live `workload` and `stopped`; the exported `Status` (the runner's) leaves
   them out, since KyYard decodes status strictly.
+- `status`, `pull-plan` and `handoff --revoke` use `loadManagement`: all plan, transport and
+  ownership checks remain, while deployment-only KyDrive bulk wiring is deferred. Other
+  commands use `load`/`newSession` and require complete bulk settings.
 - `handoff.go` owns `handoff` (grant, `--revoke`) and `pull-plan`: it reaches the runner only
   through the KyYard target driver's `execRunner` (`docker exec` over SSH, or `pods/exec` into
   the one runner pod `--runner-pod` selects, permission-checked first; its default is

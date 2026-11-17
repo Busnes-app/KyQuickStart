@@ -14,6 +14,17 @@ state directory, target data and target-held credentials; do not reset them as a
 
 ## Unreleased
 
+- Existing Kubernetes load balancers keep their address: preflight and apply refuse a
+  plan that would turn an edge public Service into a NodePort. Record the live
+  `kube_vip_address` or `load_balancer_address` in the plan; intentional retirement
+  requires changing the live Service to NodePort first. **Upgrade impact:** plans
+  missing an existing load-balancer address stop before deployment instead of removing it.
+- `status`, `pull-plan` and `handoff --revoke` work with older KyDrive plans missing
+  `bulk_repository` and `bulk_credential_file`. Deployment and a new handoff still
+  require KyDrive's own rest-server user and password file. **Upgrade impact:** the
+  current binary can retrieve and revoke a runner-owned plan before adding those
+  settings; keeping an older binary is no longer required.
+
 - KyDrive and KyPost pin TLS behind Cloudflare. Apply sets `KYDRIVE_TLS_PIN_PROBE` and
   `KYPOST_TLS_PIN_PROBE` to `true` only on a `cloudflare-direct` route or a `cloudflare` edge's
   external route without `lan_dns`, and to `false` everywhere else, so paired phones follow

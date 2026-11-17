@@ -430,7 +430,9 @@ edges:
 NPM's pod and SNATs that pod's traffic leaving the cluster to it, so connectors, LAN DNS and
 `egress_address` name one address that moves with NPM. Traffic to pods and Services stays
 unchanged, so in-cluster policies still see NPM's pod. Reruns keep the annotations kube-vip
-writes; removing the field returns `app-public` to a NodePort.
+writes. Removing the field while `app-public` is a LoadBalancer is refused by preflight
+and apply: record its live address as `kube_vip_address` to keep it. To deliberately
+retire the address, change the live Service to NodePort first, then apply the plan.
 
 You provide kube-vip, as with the cluster itself: services mode with service election and
 `egress_podcidr`/`egress_servicecidr` set to the cluster's ranges. kube-vip announces any
@@ -462,7 +464,10 @@ implementations' annotations (`lbipam.cilium.io/ips`, `metallb.io/loadBalancerIP
 only its own. It keeps `externalTrafficPolicy: Local`, so NPM still sees the client's own
 address for `allow_cidrs`, and the address is announced from a node running NPM's pod. Its
 NodePorts stay. Reruns keep what MetalLB writes on the Service and repair a removed address
-request; removing the field returns `app-public` to a NodePort. It excludes `kube_vip_address`.
+request. Removing the field while `app-public` is a LoadBalancer is refused by preflight
+and apply: record its live address as `load_balancer_address` to keep it. To deliberately
+retire the address, change the live Service to NodePort first, then apply the plan.
+It excludes `kube_vip_address`.
 
 Preflight refuses the plan, changing nothing, unless the cluster can assign the address:
 Cilium LB IPAM or MetalLB is installed, an enabled pool (`CiliumLoadBalancerIPPool` blocks or
