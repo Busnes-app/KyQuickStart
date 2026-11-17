@@ -322,8 +322,9 @@ worktrees or alter pre-existing services. Native-client distribution is separate
 development archive/signature passed, but Developer ID export remains blocked on a valid
 direct-distribution profile. This server report certifies no Mac or Android artifact.
 
-DOX pass: root `AGENTS.md` was updated to document the opt-in seven-app/Calendar upgrade-test
-contract (`KYQ_TEST_RELEASE_UPGRADE_MANIFESTS`).
+DOX pass: root `AGENTS.md` was updated to document the opt-in seven-app/Calendar
+(`KYQ_TEST_RELEASE_UPGRADE_MANIFESTS`) and Messages (`KYQ_TEST_MESSAGE_UPGRADE_MANIFEST`)
+upgrade-test contracts.
 `docs/AGENTS.md` and the child indexes remain unchanged because documentation ownership
 and workflow did not change. This report and the candidate matrix record observed evidence
 and qualification limits; prior versions are preserved in the timestamped private
