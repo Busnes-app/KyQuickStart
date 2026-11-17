@@ -266,7 +266,7 @@ func TestKubernetesIdentityReplicas(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cat, err := catalog.Load(catalog.Embedded())
+	cat, err := catalog.Load(os.DirFS(relaysOffCatalog(t)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +274,7 @@ func TestKubernetesIdentityReplicas(t *testing.T) {
 	app.Kubernetes = app.Kubernetes.WithHost(catalogIdentityHost)
 	postgres := app.Images[app.Kubernetes.Replicas.DatabaseImage]
 	app.Images = map[string]string{"kyidentity": image, "postgres": postgres}
-	kind(t, "load", "docker-image", image, "--name", cluster)
+	kindLoad(t, cluster, image)
 	r := &replicaCluster{t: t, ctx: ctx, cs: cs, c: connected, app: app}
 	t.Cleanup(func() {
 		if t.Failed() {

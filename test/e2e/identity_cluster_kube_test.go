@@ -76,14 +76,14 @@ func TestKubernetesIdentityDatabaseCluster(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cat, err := catalog.Load(catalog.Embedded())
+	cat, err := catalog.Load(os.DirFS(relaysOffCatalog(t)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	app := cat["kyidentity"]
 	app.Kubernetes = app.Kubernetes.WithHost(catalogIdentityHost)
 	app.Images = map[string]string{"kyidentity": image, "postgres_cluster": app.Images[app.Kubernetes.Replicas.ClusterImage]}
-	kind(t, "load", "docker-image", image, "--name", cluster)
+	kindLoad(t, cluster, image)
 	r := &replicaCluster{t: t, ctx: ctx, cs: cs, c: connected, app: app}
 	kubectl := func(stdin []byte, args ...string) string {
 		t.Helper()
