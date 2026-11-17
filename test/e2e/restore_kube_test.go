@@ -235,13 +235,7 @@ func TestKubernetesRestore(t *testing.T) {
 		scim.wait("prepared-user", func(u scimUser) bool { return u.DisplayName == display }, "displayName "+display)
 		out := apply(label + " rerun")
 		for _, line := range strings.Split(out, "\n") {
-			f := strings.Fields(line)
-			// The restore leaves no ./tls (a fresh host, or the old one moved aside), so the rerun
-			// copies the edge's certificate chain again; anything else must be unchanged.
-			if len(f) >= 2 && f[0] == "kydrive.tls-cert" && f[1] == "ok" {
-				continue
-			}
-			if len(f) >= 2 && (strings.HasPrefix(f[0], "kydrive.") || f[0] == "kyidentity.scim.kydrive") && f[1] != "skipped" {
+			if f := strings.Fields(line); len(f) >= 2 && (strings.HasPrefix(f[0], "kydrive.") || f[0] == "kyidentity.scim.kydrive") && f[1] != "skipped" {
 				t.Errorf("%s rerun: %s", label, line)
 			}
 		}
