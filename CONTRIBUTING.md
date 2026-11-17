@@ -58,6 +58,11 @@ Every pull request gets an adversarial review pass; see
 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md#hostile-reviews-are-about-code-never-people)
 for what that is and the boundary it keeps.
 
+Wait for the trusted GitHub CodeQL check to pass on the current pull-request head
+before merging, alongside the required CI checks. A scan of the resulting
+default-branch merge commit does not replace the pre-merge check. Follow this gate
+even when administrator bypass is available.
+
 ## Licence
 
 KyQuickStart is licensed under the MIT License. See [LICENSE.txt](LICENSE.txt).
