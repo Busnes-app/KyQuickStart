@@ -108,7 +108,7 @@ func checkCatalogPulse(t *testing.T, ctx context.Context, cs kubernetes.Interfac
 
 // pulseTargetsHealthy waits, as kyPulse's signed-in admin, until every target apply registered
 // reports ok: kyPulse polled each app through the edge.
-func pulseTargetsHealthy(t *testing.T, ctx context.Context, send func(method, endpoint string, body []byte, csrf string) (*http.Response, []byte), origin string) {
+func pulseTargetsHealthy(t *testing.T, ctx context.Context, send func(method, endpoint string, body []byte, csrf string) (*http.Response, []byte), origin string, watched []string) {
 	t.Helper()
 	var last []byte
 	for deadline := time.Now().Add(4 * time.Minute); time.Now().Before(deadline); time.Sleep(5 * time.Second) {
@@ -126,7 +126,7 @@ func pulseTargetsHealthy(t *testing.T, ctx context.Context, send func(method, en
 				ok = append(ok, x.Name)
 			}
 		}
-		if slices.Sort(ok); slices.Equal(ok, pulseWatched) && len(list.Targets) == len(pulseWatched) {
+		if slices.Sort(ok); slices.Equal(ok, watched) && len(list.Targets) == len(watched) {
 			t.Logf("kyPulse reports every registered target ok: %v", ok)
 			return
 		}

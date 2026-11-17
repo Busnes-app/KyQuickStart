@@ -132,7 +132,8 @@ func checkCatalogCalendar(t *testing.T, ctx context.Context, cs kubernetes.Inter
 // edge, as a browser would, and proves KyCalendar's admin separation: the admin reaches the
 // console but no calendars, the everyday account its calendars but not the console. Test-only
 // plumbing: testClusterDNS ran and KyCalendar's pod trusts the edge's throwaway certificate.
-func calendarSignOn(t *testing.T, ctx context.Context, c *kube.Client, certPEM []byte, nodeIP string) {
+func calendarSignOn(t *testing.T, ctx context.Context, c *kube.Client, certPEM []byte, nodeIP string) *http.Client {
+	var everyday *http.Client
 	t.Helper()
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(certPEM) {
@@ -218,5 +219,9 @@ func calendarSignOn(t *testing.T, ctx context.Context, c *kube.Client, certPEM [
 			t.Fatalf("%s: admin/users %d, calendars %d %s", account.username, admin.StatusCode, calendars.StatusCode, b)
 		}
 		t.Logf("%s signed in to KyCalendar through KyIdentity: admin/users %d, calendars %d", account.username, admin.StatusCode, calendars.StatusCode)
+		if !account.admin {
+			everyday = client
+		}
 	}
+	return everyday
 }

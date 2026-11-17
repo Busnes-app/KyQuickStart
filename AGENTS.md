@@ -875,6 +875,18 @@ calls and kind nodes must carry their own explicit bounds.
   helper uses the static test executable (`CGO_ENABLED=0`, set by `make e2e`); it proves no
   production edge topology or NetworkPolicy enforcement.
 
+- With `KYQ_TEST_RELEASE_UPGRADE_MANIFESTS` naming an independently attested historical
+  catalog manifest directory, the NPM joins test installs seven previous Ky images and
+  upgrades Identity, Recovery, Pulse, Drive, Notes, Calendar and Post to the candidate.
+  It checks native owner/everyday sign-in, Identity JWKS, available Kubernetes Secret
+  payloads, Docker credential hashes and Recovery pairing/key retention; candidate Pulse
+  must deposit through its existing pairing. An everyday-owned calendar/event must retain
+  its text, times, identifiers and ETag and accept an If-Match edit after upgrading.
+  Non-migrating upgrades explicitly record the fixture operator's no-backup acknowledgement;
+  migrating upgrades still require verified backups. Fixture CA/relay plumbing stays explicit.
+  This verifies seeded native configuration and backup-pairing data, not every product's
+  ordinary content migration, offboarding or full restore.
+
 ## Child DOX Index
 
 - `docs/AGENTS.md` — mdBook manual, chapter ownership and documentation checks.
