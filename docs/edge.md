@@ -876,32 +876,51 @@ Paired phones pin the TLS key their server's URL serves. When the certificate re
 (device TLS pin rollover) and KyPost (the pin in pairing links, and rollover) sign the new pin
 only from a source the operator vouches for: a mounted copy of the certificate the front serves
 (`KYDRIVE_TLS_CERT_FILE`, `KYPOST_TLS_CERT_FILE`), or a probe of their own URL
-(`KYDRIVE_TLS_PIN_PROBE`, `KYPOST_TLS_PIN_PROBE`). Apply sets the probe from the app's route:
+(`KYDRIVE_TLS_PIN_PROBE`, `KYPOST_TLS_PIN_PROBE`). Apply sets one or neither from the app's route:
 
 | Route | Who terminates the clients' TLS | Probe | Certificate file |
 | --- | --- | --- | --- |
-| `cloudflare-direct` | Cloudflare | `true` | none to mount |
-| `cloudflare`, external, edge without `lan_dns` | Cloudflare | `true` | none to mount |
-| `cloudflare`, external, edge with `lan_dns` | Cloudflare outside, the edge on the LAN | `false` | not delivered yet |
-| `cloudflare` or `frp` internal, `frp` external, `lan` | NPM or the nginx edge | `false` | not delivered yet |
+| `cloudflare-direct` | Cloudflare | `true` | none to copy |
+| `cloudflare`, external, edge without `lan_dns` | Cloudflare | `true` | none to copy |
+| `cloudflare`, external, edge with `lan_dns` | Cloudflare outside, the edge on the LAN | `false` | none: no one file covers both |
+| `lan`, or a `cloudflare` internal route, on the catalog NPM or the nginx edge | the edge | `false` | copied |
+| any route on an NPM the operator runs (`https://` `npm_url`) | that NPM | `false` | none: its API hands the certificate out only with its private key |
+
+**Copied.** Apply's step `<app>.tls-cert`, just before the app's deploy, reads the public chain
+the edge serves for the route's hostname through the cluster access apply already has: on the
+catalog NPM, `fullchain.pem` read with `cat` in NPM's pod (`/etc/letsencrypt/live/npm-<id>/`
+for its Let's Encrypt certificates, `/data/custom_ssl/npm-<id>/` for uploaded ones), never the
+key beside it, with the certificate's ID and provider from NPM's API; on the nginx edge, the
+route's TLS Secret, of which only `tls.crt` is kept. Only the `CERTIFICATE` blocks are kept,
+re-encoded; the first must name the hostname and be valid now, or the step fails and the copy
+stays as it was. The chain goes to `<root>/<app>/tls/fullchain.pem` on the app's Docker host,
+0644 in the app's private `tls` bind directory, written to a temporary file and renamed, and the
+app reads it at `/run/kyq-tls/fullchain.pem` through a read-only bind of that directory. A rerun
+with the same chain writes nothing. The step runs before the deploy because KyPost refuses to
+start with a missing file; for the same reason the edge apps deploy before the other apps, and a
+`certificates` entry the route names is issued just before the copy.
+
+**Refreshed.** Nothing on the workstation follows NPM's or cert-manager's renewals, so the suite
+runner in KyYard ([suite runner](superpowers/specs/2026-10-16-suite-runner-design.md)) runs the
+same steps for every installed KyDrive and KyPost five minutes after it starts and then daily,
+under the target locks, while no operation runs (an hour later when one does; requests meanwhile
+answer `busy`). It writes only a changed chain, and neither app restarts: both re-read the file.
+A renewal under an hour old does not replace a valid copy until the next run, so KyPost never
+puts a key in a pairing link before the edge has loaded it. Each copy is logged with its leaf's
+SHA-256 and expiry; a failure is the app's last result in KyYard's status (`<app>.tls-cert`
+failed) until a later run passes. A CLI-owned plan follows renewals only when `apply` runs.
 
 The probe trusts the app host's outbound path and CA store: someone on that path holding a
 certificate for the name that the host trusts gets their key signed. It is set only where there
-is no certificate to mount, never as a fallback for an edge that serves its own certificate. A
-`cloudflare` edge with `lan_dns` sends LAN clients to the edge's certificate and everyone else
-to Cloudflare's, so neither source covers both and the probe stays off.
+is no certificate to copy, never as a fallback. Where neither source is set, KyDrive's rollover
+route answers 503 and phones link again after each renewal; KyPost's pairing links carry no pin
+(trust on first use) and phones need a new link after each renewal. KyPost terminating TLS
+itself does not occur in the catalog, which serves it behind an edge.
 
-Where the edge serves its own certificate, apply sets neither yet: KyDrive's rollover route
-answers 503 and phones link again after each renewal; KyPost's pairing links carry no pin
-(trust on first use) and phones need a new link after each renewal. Delivering that certificate
-to the app host, and keeping it current through NPM's or cert-manager's renewals, is
-unfinished ([redirect record](redirect.md#dispositions)). KyPost terminating TLS itself does not
-occur in the catalog, which serves it behind an edge.
-
-Both values are part of the app's deploy input: the first apply after upgrading the installer
-recreates each KyDrive and KyPost container once, which ends KyPost's sessions (people sign in
-again). Releases without KyDrive-server #149 or KyPost-Server #649, the catalog's pins
-included, ignore the setting.
+The probe, the file setting and the `./tls` bind are part of the app's deploy input: the first
+apply after upgrading the installer recreates each KyDrive and KyPost container once, which ends
+KyPost's sessions (people sign in again). Releases without KyDrive-server #149 or KyPost-Server
+#649 ignore both settings.
 
 ## Operator routes behind KyIdentity (`protect: kyidentity`)
 

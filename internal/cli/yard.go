@@ -30,17 +30,21 @@ const runnerOperatorNote = "not changed: a cluster operator is installed and upg
 
 func isOperator(a catalog.App) bool { return a.Category == "operator" }
 
-// operatorsFirst moves the operators in order before the apps whose objects they serve.
+// operatorsFirst moves the operators in order before the apps whose objects they serve, then
+// the edge apps before the apps they route: a tls-cert step reads the edge's certificate
+// before KyDrive's or KyPost's deploy.
 func operatorsFirst(order []string, cat catalog.Catalog) []string {
-	var first, rest []string
+	var first, edges, rest []string
 	for _, name := range order {
-		if isOperator(cat[name]) {
+		if cat[name].Category == "edge" {
+			edges = append(edges, name)
+		} else if isOperator(cat[name]) {
 			first = append(first, name)
 		} else {
 			rest = append(rest, name)
 		}
 	}
-	return append(first, rest...)
+	return append(append(first, edges...), rest...)
 }
 
 // yardPlan refuses a plan installing KyYard that its setup or its runner could not take:

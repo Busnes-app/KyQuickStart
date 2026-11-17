@@ -221,9 +221,11 @@ kydrive:
               # Forwarded headers only from the edge's own address; none without the edge's egress_address.
               KY_TRUSTED_PROXIES: "192.0.2.8/32"
               KY_BACKUP_ALLOW_PRIVATE_RECOVERY: "{{private_recovery}}"
-              # Device TLS pin rollover: true only behind Cloudflare, which has no certificate to mount.
-              # An edge serving its own certificate gets none yet (docs/edge.md, "TLS pin source").
+              # Device TLS pin rollover (docs/edge.md, "TLS pin source"): the probe only behind
+              # Cloudflare, which has no certificate to mount; behind the catalog NPM or the nginx edge,
+              # the public chain it serves, which apply copies into ./tls and KyYard's runner refreshes.
               KYDRIVE_TLS_PIN_PROBE: "{{tls_pin_probe}}"
+              KYDRIVE_TLS_CERT_FILE: "{{tls_cert_file}}"
               KY_DB_DRIVER: sqlite
               KY_DATA_DIR: /data
               KY_BACKUP_DIR: /backups
@@ -233,7 +235,7 @@ kydrive:
               KY_SCIM_ENABLED: "true"
               KY_SCIM_TOKEN_FILE: /run/secrets/scim_token
               GOMEMLIMIT: 768MiB
-            volumes: ["./data:/data", "./backups:/backups"]
+            volumes: ["./data:/data", "./backups:/backups", "./tls:/run/kyq-tls:ro"]
             # start_interval checks every 2 s while it starts, so apply and restore see it healthy (and
             # restore replays KyIdentity's removals) seconds after it answers rather than after 30 s.
             healthcheck:
@@ -429,10 +431,12 @@ kypost:
               # Forwarded headers only from the edge's own address; none without the edge's egress_address.
               TRUSTED_PROXY_CIDRS: "192.0.2.8/32"
               KYPOST_BACKUP_ALLOW_PRIVATE_RECOVERY: "{{private_recovery}}"
-              # Pairing-link pin and TLS pin rollover: true only behind Cloudflare, which has no
-              # certificate to mount. An edge serving its own certificate gets none yet (docs/edge.md,
-              # "TLS pin source").
+              # Pairing-link pin and TLS pin rollover (docs/edge.md, "TLS pin source"): the probe only
+              # behind Cloudflare, which has no certificate to mount; behind the catalog NPM or the
+              # nginx edge, the public chain it serves, which apply copies into ./tls before KyPost
+              # starts (KyPost refuses a missing file) and KyYard's runner refreshes.
               KYPOST_TLS_PIN_PROBE: "{{tls_pin_probe}}"
+              KYPOST_TLS_CERT_FILE: "{{tls_cert_file}}"
               # KyPost pairs with a catalog KyCalendar through KyIdentity's suite directory; true only
               # when the plan routes KyCalendar to a private address.
               KYPOST_KYCALENDAR_ALLOW_PRIVATE: "{{private_peer}}"
@@ -453,6 +457,7 @@ kypost:
               - ./state:/kypost/state
               - ./logs:/kypost/logs
               - ./ollama-models:/kypost/ollama-models
+              - ./tls:/run/kyq-tls:ro
             healthcheck:
               test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:5866/api/health"]
               interval: 30s

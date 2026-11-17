@@ -38,6 +38,9 @@ straight to the apps, `cloudflare-direct`), and verify product proxy behavior.
   `kyquickstart:<installation>:<target>` for its email; never reuse or change another owner's.
   The DNS credential goes to NPM only in the certificate request body, registered with the
   redactor first. A failed issuance is not retried within a run (Let's Encrypt rate limits).
+- `ChainPath` (KyDrive's and KyPost's copied chain) reads only a certificate's metadata; never
+  call NPM's certificate download, which bundles the private key. The chain itself is read
+  from `fullchain.pem` in NPM's pod by the CLI, and from the nginx edge's Secret as `tls.crt`.
 - KyDNS records carry no owner: a record is ours only while the ledger in
   `kyq-edge/kyq-credentials` lists its ID, name and address. Save the ledger after every KyDNS
   change; refuse any name another record or service publishes. Show KyDNS error codes, never bodies.

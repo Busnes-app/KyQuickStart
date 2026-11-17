@@ -646,7 +646,13 @@ edge compatibility: `docs/redirect.md`.
   is refused before connecting), `{{edge_prefix}}` (that address as a `/32` or `/128`, empty
   when the edge has none) and `{{tls_pin_probe}}` (`true` only where Cloudflare alone terminates
   the route's client TLS: `cloudflare-direct`, or a `cloudflare` edge's external route without
-  `lan_dns`; KyDrive's and KyPost's pin source, `docs/edge.md`, "TLS pin source"). An app whose manifest declares `routes` (KyMessages, Docker only)
+  `lan_dns`; KyDrive's and KyPost's pin source, `docs/edge.md`, "TLS pin source") and
+  `{{tls_cert_file}}` (`/run/kyq-tls/fullchain.pem` where the catalog NPM or the nginx edge
+  alone terminates the route's client TLS, else empty). Behind such a route `<app>.tls-cert`
+  copies the edge's public chain (certificate blocks only, never a key) before the app's
+  deploy into the app's `./tls` bind directory, by temporary file and rename, only when it
+  changed; the edge apps deploy first, and the route's `certificates` entry is issued just before
+  the copy. The suite runner repeats it daily (`internal/runner/AGENTS.md`). An app whose manifest declares `routes` (KyMessages, Docker only)
   takes one plan route per role, the primary without `role`, all on one `forward_host` (one LAN
   IPv4 of the target: no wildcard, loopback, link-local, multicast, IPv6 or name) and one
   `forward_port` per service port, and writes `{{host "<role>"}}`,

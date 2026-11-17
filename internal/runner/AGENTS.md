@@ -29,6 +29,11 @@ v1 in `../../docs/superpowers/specs/2026-10-16-suite-runner-design.md`.
   (`internal/kube` renders it for `kubernetes.suite_runner`), only the runner mounts `/state`
   (after the `private-volumes` init container, which keeps `/state/runner` owner-only), and
   only KyYard (uid 10001) shares the socket.
+- The TLS chain refresh (`refreshLoop`): `cli.RefreshTLS` five minutes after start, then every
+  24 h, an hour later when an operation holds the runner, bounded to 10 minutes. It holds the
+  runner as an operation does (`refreshing`: starts answer `busy`) but records no operation,
+  so the wire is unchanged; its step results are the apps' last results in `/v1/status`, and its
+  output and redacted failure go to the runner's log.
 - The runner never changes the app whose pod it runs in (`internal/cli`, `runner_host`, a 422).
 - `plan/` is the CLI state directory and holds no secret; the key, kubeconfigs and
   `runner.json` live beside it. Import accepts only the listed names, regular files, bounded
@@ -42,7 +47,8 @@ v1 in `../../docs/superpowers/specs/2026-10-16-suite-runner-design.md`.
 
 ## Verification
 
-- `make ci`: HTTP tests over a temporary socket (every endpoint, busy, id_conflict, repeats,
+- `make ci`: `refresh_test.go` (the refresh runs after start, makes requests busy, logs its
+  failure redacted, waits for a running operation); HTTP tests over a temporary socket (every endpoint, busy, id_conflict, repeats,
   limits, unknown fields, startup and shutdown), import hardening, keygen and `--pod-volumes`.
 - `FuzzStartRequest` (`fuzz_test.go`) posts arbitrary bodies to `handleStart` on a runner with
   no plan: every answer decodes as KyYard's, is a 400/413 `invalid_request` or a 409

@@ -149,6 +149,16 @@ reads and writes nothing of it, and an `install`, `uninstall`, `unmanage` or `up
 it is refused (`runner_host`). An upgrade of every app skips it with that note. To change
 KyYard: `handoff --revoke`, `apply` from the workstation, then `handoff` again.
 
+### The TLS chain refresh
+
+The one thing the runner does unasked (owner amendment, 2026-11-16): five minutes after it
+starts and then daily it copies again the public certificate chain the catalog NPM or the nginx
+edge serves for each installed KyDrive and KyPost, writing only a changed chain
+([edge](../../edge.md#tls-pin-source-kydrive-kypost)). It runs only while no operation does, and
+`POST /v1/operations` answers `busy` while it runs. It records no operation; its step
+(`<app>.tls-cert`) results are the apps' `last_result` in `/v1/status`, so a failure shows on
+KyYard's Suite page as the app failing until a later refresh or apply passes.
+
 ### Runner state
 
 `/state` is the runner's private directory (0700, uid 10001): `runner.json`, `ssh/`,

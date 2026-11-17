@@ -127,10 +127,16 @@ operator's job ([README](../README.md#targets)).
 - **SSH enforcement has a specific scope.** It preserves old keys/pins but refuses their use
   when they fail policy. It does not qualify Kubernetes TLS, external authentication plugins,
   installed products or KyQuickStart-AI's separate OpenSSH transport.
-- **Behind Cloudflare, KyDrive's and KyPost's TLS pin comes from a probe.** Apply sets their
-  probe only where Cloudflare terminates the clients' TLS, so there is no certificate to mount;
-  the probe trusts the app host's outbound path and CA store (`docs/edge.md`, "TLS pin
-  source"). Behind an edge with its own certificate no pin source is set yet.
+- **KyDrive's and KyPost's TLS pin comes from a probe behind Cloudflare and from a copy behind
+  the catalog's edges.** Apply sets their probe only where Cloudflare terminates the clients'
+  TLS; the probe trusts the app host's outbound path and CA store. Behind the catalog NPM or the
+  nginx edge, apply and the suite runner copy the public chain from NPM's pod or the edge's TLS
+  Secret over the installer's cluster access: the trust is the cluster's API, and only
+  certificate blocks are written. Each copy names the hostname and is valid when written. A
+  renewal is copied at most a day late (an hour's settling included), so in that window
+  KyDrive's rollover and KyPost's pairing pin still name the old key. Behind an NPM the operator
+  runs, or a `cloudflare` edge with `lan_dns`, no source is set (`docs/edge.md`, "TLS pin
+  source").
 - **Redaction covers registered secrets only.** A secret the installer never read back, or one
   shorter than 8 characters, is not redacted.
 - **A replicated KyIdentity's keys cross the workstation, and its bundled database link is

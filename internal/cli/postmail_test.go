@@ -82,7 +82,7 @@ func TestKyPostMailRenderings(t *testing.T) {
 		native := map[string]string{"imap": "false", "native": "true"}[mode]
 		if len(svc) != 1 || !slices.Equal(svc["app"].Ports, []string{"192.0.2.1:18866:5866"}) || strings.Contains(string(a.Compose), ":25:2525") || strings.Contains(string(a.Compose), "rspamd:") ||
 			e["KYPOST_NATIVE_MAIL"] != native || e["KYPOST_NATIVE_RECEIVING"] != "false" || e["KYPOST_NATIVE_RECEIVER"] != "false" || e["KYPOST_RECEIVING_RSPAMD"] != "" ||
-			!slices.Equal(a.Binds, []string{"config", "logs", "ollama-models", "private", "state"}) || len(a.Nested) != 0 || !slices.Equal(a.Services, []string{"app"}) {
+			!slices.Equal(a.Binds, []string{"config", "logs", "ollama-models", "private", "state", "tls"}) || len(a.Nested) != 0 || !slices.Equal(a.Services, []string{"app"}) {
 			t.Errorf("%s: services %+v, binds %v", mode, svc, a.Binds)
 		}
 	}
