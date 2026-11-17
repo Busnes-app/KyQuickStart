@@ -286,7 +286,7 @@ edge compatibility: `docs/redirect.md`.
   with `internal/appversion/VERSION`, and any commit on which a ci.yml job in its `REQUIRED` list
   did not pass; attestations are pinned to `release-image.yml@refs/tags/<tag>`, and `:stable` moves
   only to the highest non-prerelease, four-part ones included.
-- `dependency-release.yml` runs daily at 23:00 UTC. First it follows the Ky apps
+- `dependency-release.yml` runs daily at 23:53 UTC. First it follows the Ky apps
   (`scripts/catalog-follow`, below); then, if Dependabot or catalog-follow commits landed on
   `master` since the newest release on the current line and the newest ci.yml run on `master`'s
   tip (pushed or dispatched) succeeded, it publishes the next `vX.Y.Z.N` (one per day however
@@ -307,10 +307,11 @@ edge compatibility: `docs/redirect.md`.
   notes. Human comments, other `upgrade` rules and docs are not touched: an app's release that changes its upgrade rules, `status_path` or other fields
   needs a human PR. A newer `MAJOR.MINOR` only warns; an app that does not resolve, verify or
   load keeps its pin with a warning. The workflow tests `./internal/catalog/...` and builds,
-  commits as `github-actions[bot]` ("catalog: follow <app> v<version>, ..."), pushes to `master`
-  (the ruleset only forbids deletion and force-push) and dispatches `ci.yml` on it, since a
-  `GITHUB_TOKEN` push starts no workflow; that run's check runs satisfy `release-image.yml`'s
-  `REQUIRED` gate. A new Ky image in the catalog needs a `sources` entry
+  commits as `github-actions[bot]` ("catalog: follow <app> v<version>, ..."), and opens or
+  updates the `catalog-follow` PR against `master`. It dispatches `ci.yml` on that branch,
+  merges only after success, then dispatches CI on the merge commit for the release gate.
+  Dispatches are required because `GITHUB_TOKEN` pushes and PRs start no workflow.
+  A new Ky image in the catalog needs a `sources` entry
   (`TestSourcesCoverCatalog`). Tests never name a Ky pin: entry tests check the image is tagged
   with the manifest's version, and golden tests render `catalogtest.Unpinned(catalog.Embedded())`.
 
@@ -666,7 +667,10 @@ edge compatibility: `docs/redirect.md`.
   must exist before deploy starts the app.
   Compose runs with `KYQ_UID`/`KYQ_GID` set to the target user's; `./<name>` bind directories
   are created private by the driver before Compose, and no other relative bind source is
-  accepted. A manifest's `from_volumes` names bind directories an earlier version kept in
+  accepted. KyMessages' Synapse sets `PYTHONPATH=/config` to load matrix-init's
+  `ky_guests.py` from its read-only configuration bind; Element serves matrix-init's
+  `kymessages-guest.html` through a read-only file bind, on the chat origin.
+  A manifest's `from_volumes` names bind directories an earlier version kept in
   Compose named volumes of the same name (KyPost's, before #151): `<app>.volumes`, before
   deploy, stops the app and copies each such volume into its missing bind directory once (an
   existing directory, even empty, is done), as the target user, and keeps the volume; `backup`
@@ -747,7 +751,7 @@ calls and kind nodes must carry their own explicit bounds.
   KyIdentity and `euro-office` with KyDrive on an sshd target: baseline pod and its capabilities,
   seeded claims, the copied secret, `/healthcheck` through the edge, a signed KyDrive callback
   (200/401), egress through the edge only, a skipped rerun and a restart. Not part of `make e2e`.
-- `make e2e`: needs Docker (in CI split by `E2E_RUN`/`E2E_SKIP` over five `e2e (<shard>)` jobs, summarised by the `e2e` job that `release-image.yml` requires; a new slow kind test should get a shard or join one); runs `apply` against an sshd container on the local Docker socket and
+- `make e2e`: needs Docker (in CI split by `E2E_RUN`/`E2E_SKIP` over seven `e2e (<shard>)` jobs, summarised by the `e2e` job that `release-image.yml` requires; a new slow kind test should get a shard or join one); runs `apply` against an sshd container on the local Docker socket and
   against a kind cluster (`go run sigs.k8s.io/kind@v0.33.0`), including drift and stale-lock cases.
   Also runs disposable NPM, nginx edge (`TestNginxContainer`, the catalog's pinned image), frpc/frps and cloudflared container tests in `internal/edge`, and
   `TestKubernetesNPMEdge`: catalog NPM on kind with claims, bootstrap, policy probes, a routed
@@ -838,8 +842,10 @@ calls and kind nodes must carry their own explicit bounds.
   its own root; `TestKubernetesNPMEdge` gives the Docker target a destination, asserts KyDrive's
   handover lines, backs KyDrive up cold and proves a restore of the running app is refused.
   `TestKubernetesRestore` runs the KyDrive drill on its own kind cluster: with KyIdentity at the
-  attested 0.4.3 release (a catalog copy), restore is refused before any restic call; after
-  `upgrade kyidentity` to the catalog's 0.4.7 it proves a disaster restore with the handover's
+  attested 0.4.3 release (a catalog copy with its historical upgrade metadata), restore is
+  refused before any restic call. The upgrade to the current KyIdentity must first take a
+  verified pre-upgrade claim copy; `TestIdentity043Catalog` validates the old fixture without
+  Docker. The drill then proves a disaster restore with the handover's
   password, the refusals, `--replace`, a refused `forget`, and no readmission of a person
   unassigned or deleted after the snapshot.
   Set `KYQ_TEST_IDENTITY_BINARY` to a local static KyIdentity build to additionally test real

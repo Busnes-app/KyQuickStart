@@ -14,6 +14,27 @@ state directory, target data and target-held credentials; do not reset them as a
 
 ## Unreleased
 
+- Existing Kubernetes load balancers keep their address: preflight and apply refuse a
+  plan that would turn an edge public Service into a NodePort. Record the live
+  `kube_vip_address` or `load_balancer_address` in the plan; intentional retirement
+  requires changing the live Service to NodePort first. **Upgrade impact:** plans
+  missing an existing load-balancer address stop before deployment instead of removing it.
+- `status`, `pull-plan` and `handoff --revoke` work with older KyDrive plans missing
+  `bulk_repository` and `bulk_credential_file`. Deployment and a new handoff still
+  require KyDrive's own rest-server user and password file. **Upgrade impact:** the
+  current binary can retrieve and revoke a runner-owned plan before adding those
+  settings; keeping an older binary is no longer required.
+- Follow the ten Ky server releases at `0.6.1`, using immutable image digests verified
+  against each release workflow and tagged source revision. **Upgrade impact:** the
+  existing pre-upgrade backup requirement now covers KyIdentity and KyMessages from
+  before `0.6.0.2`, and KyPost from before `0.6.1`, because their published schemas
+  changed. Calendar, DNS, Drive and kyPulse also advance their migration boundary; other
+  recorded backup boundaries stay in place. Keep target data, keys and credentials.
+  KyMessages' Synapse service also uses `/config` as its Python module path, matching
+  the release Compose file so its generated meeting-guest confinement module loads;
+  Element serves the generated guest sign-in page on the chat origin. The next
+  `apply` recreates Synapse and Element with these settings; no data or credential change.
+
 - Prepare application version `0.6.1` (from `0.6.0`) for the compatible dependency refresh. Rebuild or install the updated application; this version bump requires no additional data, account, key or configuration migration.
 
 - Refresh compatible dependency versions and lockfiles. Rebuild or install the updated application; no database, configuration, account or key migration is required.
@@ -55,10 +76,9 @@ state directory, target data and target-held credentials; do not reset them as a
 - KyIdentity as replicas on Kubernetes (owner amendment, 2026-11-13; #183). `replicas: 2` to
   `5` on the plan's `kyidentity` app runs that many pods behind its Service on one Postgres
   database: a Postgres pod the installer deploys, or your own, named by `database_secret`
-  (a Secret you create; the URL never enters `stack.yaml`, state or output). **Not usable
-  yet:** it needs a KyIdentity release later than 0.6.0.1, and the catalog refuses the setting
-  until it pins one. New installs only: an installed single instance is refused, not moved,
-  and so is a change of `database_secret` on an installed one.
+  (a Secret you create; the URL never enters `stack.yaml`, state or output). It needs KyIdentity
+  later than 0.6.0.1; the catalog now pins 0.6.1. New installs only: an installed single
+  instance is refused, not moved, and so is a change of `database_secret` on an installed one.
   The installer's Postgres is one pod with no backup of its own; apply says after every run
   what backs KyIdentity up and what is still outstanding
   ([guided setup](docs/guided-setup.md#kyidentity-as-replicas-on-kubernetes)). **Upgrade
@@ -68,8 +88,9 @@ state directory, target data and target-held credentials; do not reset them as a
   CloudNativePG `Cluster`: that many instances on different nodes, every write confirmed by a
   second instance, automatic failover, and a TLS link KyIdentity verifies. It needs the
   CloudNativePG operator (1.24 or later), from the catalog's `cloudnative-pg` app (next) or
-  the cluster's owner; the installer refuses the plan without it. Same limits as replicas: not usable until the catalog pins a KyIdentity release
-  later than 0.6.0.1, new installs only, and no backup of the database by the installer
+  the cluster's owner; the installer refuses the plan without it. Same limits as replicas:
+  KyIdentity later than 0.6.0.1 (now pinned), new installs only, and no backup of the database
+  by the installer
   ([guided setup](docs/guided-setup.md#the-database)). **Upgrade impact:** none. Without
   `database_instances` nothing a plan deploys changes, and no app restarts.
 - CloudNativePG as a catalog app (owner amendment, 2026-11-14). `cloudnative-pg` on a

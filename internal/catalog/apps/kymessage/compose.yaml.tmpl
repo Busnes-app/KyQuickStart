@@ -164,6 +164,9 @@ services:
     pids_limit: 256
     # The console-owned federation file, loaded second, sets listeners and the allow-list.
     command: ["run", "--config-path", "/config/homeserver.yaml", "--config-path", "/federation.yaml"]
+    # matrix-init writes the meeting-guest confinement module beside homeserver.yaml.
+    environment:
+      PYTHONPATH: /config
     ports: ["{{forward "matrix"}}:8008"]
     networks: [default, matrix-db]
     volumes:
@@ -231,7 +234,9 @@ services:
       ELEMENT_WEB_PORT: "8080"
     ports: ["{{forward "chat"}}:8080"]
     # The file only: the image serves a copy made at start.
-    volumes: [./matrix/element/config.json:/app/config.json:ro]
+    volumes:
+      - ./matrix/element/config.json:/app/config.json:ro
+      - ./matrix/element/kymessages-guest.html:/app/kymessages-guest.html:ro
     depends_on:
       synapse: {condition: service_healthy}
     healthcheck:

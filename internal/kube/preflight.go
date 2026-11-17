@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	authorizationv1 "k8s.io/api/authorization/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -17,6 +18,31 @@ type Finding struct {
 	Check  string
 	OK     bool
 	Detail string
+}
+
+// CheckPublicService refuses to withdraw an existing public load balancer. The same
+// rule runs at the update boundary, since a Service may change after preflight.
+func (a App) CheckPublicService(ctx context.Context) error {
+	want := render(a).Public
+	if want == nil {
+		return nil
+	}
+	have, found, err := getOwned(ctx, a.Client.cs.CoreV1().Services(namespaceOf(a.Name)), "service", publicName)
+	if err != nil || !found {
+		return err
+	}
+	return refuseLoadBalancerRemoval(have, want)
+}
+
+func refuseLoadBalancerRemoval(have, want *corev1.Service) error {
+	if want.Name != publicName || have.Spec.Type != corev1.ServiceTypeLoadBalancer || want.Spec.Type == corev1.ServiceTypeLoadBalancer {
+		return nil
+	}
+	field := "load_balancer_address"
+	if have.Annotations[kubeVIPPrefix+"loadbalancerIPs"] != "" {
+		field = "kube_vip_address"
+	}
+	return fmt.Errorf("service %s/%s is a LoadBalancer but this plan would replace it with %s and withdraw its address; set %s on the app in stack.yaml to keep it, or deliberately change the live Service to NodePort before applying", have.Namespace, have.Name, want.Spec.Type, field)
 }
 
 const minMinor = 30 // Kubernetes 1.30

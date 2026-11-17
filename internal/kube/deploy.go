@@ -166,6 +166,9 @@ func (d deployStep) Inspect(ctx context.Context) (bool, error) {
 // Apply writes the policy, claims and service, then the Deployment carrying the input hash, so
 // a run that dies early redeploys next time.
 func (d deployStep) Apply(ctx context.Context) error {
+	if err := d.a.CheckPublicService(ctx); err != nil {
+		return err
+	}
 	if err := d.a.replicaChange(ctx); err != nil {
 		return err
 	}
@@ -200,13 +203,17 @@ func (d deployStep) Apply(ctx context.Context) error {
 		}
 	}
 	for _, svc := range o.services() {
-		err := upsert(ctx, cs.CoreV1().Services(ns), "service", svc, func(have *corev1.Service) {
+		err := upsert(ctx, cs.CoreV1().Services(ns), "service", svc, func(have *corev1.Service) error {
+			if err := refuseLoadBalancerRemoval(have, svc); err != nil {
+				return err
+			}
 			svc.Spec.ClusterIP, svc.Spec.ClusterIPs = have.Spec.ClusterIP, have.Spec.ClusterIPs
 			svc.Spec.IPFamilies, svc.Spec.IPFamilyPolicy = have.Spec.IPFamilies, have.Spec.IPFamilyPolicy
 			if svc.Spec.Type == corev1.ServiceTypeLoadBalancer {
 				svc.Spec.HealthCheckNodePort = have.Spec.HealthCheckNodePort
 				keepKubeVIPState(svc, have)
 			}
+			return nil
 		})
 		if err != nil {
 			return err

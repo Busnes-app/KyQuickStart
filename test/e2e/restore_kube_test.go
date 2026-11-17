@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/kube"
 	"github.com/Busnes-app/kyquickstart/internal/managed"
 	"github.com/Busnes-app/kyquickstart/internal/remote"
@@ -141,7 +142,7 @@ func TestKubernetesRestore(t *testing.T) {
 
 	// AC5a: on KyIdentity 0.4.3 restore is refused before any restic call, nothing changed.
 	outputs = append(outputs, refuseUntouched(t, ctx, state, catalogDir, trust, drive, id[:8], "restore needs KyIdentity v0.4.4 or later, which replays removals on resync; installed: 0.4.3. Upgrade KyIdentity first")...)
-	// The catalog's KyIdentity (0.4.6 or later) replays removals; it needs only an acknowledgement.
+	// The current KyIdentity replays removals; its schema upgrade first copies the old claim.
 	upgradeIdentity(t, ctx, cs, connected, name, state, catalogDir, trust, certPEM, &outputs)
 	snaps := snapshots(t, b.dest, "kydrive", b.pw)
 	if len(snaps) != 1 || snaps[0].ID != id || strings.Join(snaps[0].Paths, " ") != "/kyq/secrets/scim_token /kyq/secrets/session_secret /kyq/volumes/backups /kyq/volumes/data" {
@@ -339,13 +340,23 @@ func TestKubernetesRestore(t *testing.T) {
 	noSecrets(t, state, outputs, secrets)
 }
 
-// identity043 copies the catalog's KyIdentity into catalogDir pinned to the attested 0.4.3
-// release (v0.4.3^{commit} 65dcae6), and loads that image into kind. Both edits fail on drift.
+// identity043 loads the historical fixture into kind.
 func identity043(t *testing.T, cluster, catalogDir string) {
+	t.Helper()
+	writeIdentity043Catalog(t, catalogDir)
+	kindLoad(t, cluster, identity043Image)
+}
+
+// writeIdentity043Catalog pins the copied app to the attested 0.4.3 release
+// (v0.4.3^{commit} 65dcae6). Each replacement fails on drift.
+func writeIdentity043Catalog(t *testing.T, catalogDir string) {
 	t.Helper()
 	dir := filepath.Join(catalogDir, "kyidentity")
 	copyCatalogApp(t, catalogDir, "kyidentity")
-	m, _ := os.ReadFile(filepath.Join(dir, "manifest.yaml"))
+	m, err := os.ReadFile(filepath.Join(dir, "manifest.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	// The pin moves with scripts/catalog-follow; whatever it is, it is replaced.
 	v := regexp.QuoteMeta(identityVersion(t, m))
 	for _, r := range []struct {
@@ -354,14 +365,30 @@ func identity043(t *testing.T, cluster, catalogDir string) {
 	}{
 		{regexp.MustCompile(`\nversion: ` + v + `\n`), "\nversion: 0.4.3\n"},
 		{regexp.MustCompile(`\n  kyidentity: ghcr\.io/busnes-app/kyidentity-server:` + v + `@sha256:[0-9a-f]{64}\n`), "\n  kyidentity: " + identity043Image + "\n"},
+		// The historical release predates the current schema migration boundary.
+		{regexp.MustCompile(`\n  migrates_data: true\n  data_since: [^\n]+\n`), "\n  migrates_data: false\n"},
 	} {
 		if len(r.re.FindAllIndex(m, -1)) != 1 {
 			t.Fatalf("the catalog's KyIdentity manifest changed; update the 0.4.3 copy for %s", r.re)
 		}
 		m = r.re.ReplaceAll(m, []byte(r.with))
 	}
-	os.WriteFile(filepath.Join(dir, "manifest.yaml"), m, 0o600)
-	kindLoad(t, cluster, identity043Image)
+	if err := os.WriteFile(filepath.Join(dir, "manifest.yaml"), m, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIdentity043Catalog(t *testing.T) {
+	dir := t.TempDir()
+	writeIdentity043Catalog(t, dir)
+	cat, err := catalog.Load(os.DirFS(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := cat["kyidentity"]
+	if a.Version != "0.4.3" || a.Images["kyidentity"] != identity043Image || a.Upgrade.MigratesData || a.Upgrade.DataSince != "" {
+		t.Fatalf("historical fixture: %+v", a.Manifest)
+	}
 }
 
 // identityVersion is the version line of KyIdentity's catalog manifest m.
@@ -390,10 +417,13 @@ func upgradeIdentity(t *testing.T, ctx context.Context, cs kubernetes.Interface,
 	copyCatalogApp(t, catalogDir, "kyidentity")
 	loadCatalogApp(t, cluster, cs, "kyidentity")
 	start := time.Now()
-	out, err := kyq(t, ctx, state, catalogDir, trust, "", "upgrade", "kyidentity", "--acknowledge-no-backup")
+	out, err := kyq(t, ctx, state, catalogDir, trust, "", "upgrade", "kyidentity")
 	*outputs = append(*outputs, out)
 	if err != nil {
 		t.Fatalf("upgrade kyidentity: %v", err)
+	}
+	if got := status(out, "kyidentity.pre-upgrade-backup"); got != "ok" {
+		t.Fatalf("KyIdentity schema upgrade backup = %q, want ok:\n%s", got, out)
 	}
 	if !strings.Contains(out, "check each app's accounts for people disabled") {
 		t.Errorf("upgrade kyidentity did not print its upgrade note:\n%s", out)

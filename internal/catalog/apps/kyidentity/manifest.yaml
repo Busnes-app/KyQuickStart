@@ -1,7 +1,7 @@
 name: kyidentity
 description: KyIdentity, the suite's identity provider (OIDC, MFA, SCIM); every other app signs in through it
 category: ky
-version: 0.6.0.2
+version: 0.6.1
 # No status_path yet: 0.4.7 serves the suite proxy contract at /api/installer/network
 # (KyIdentity-server#141), but reports proxyHeadersTrusted only for a peer in TRUSTED_PROXY_CIDRS,
 # which only its Compose file sets (to the edge's address), so verify-edge would fail its
@@ -11,9 +11,9 @@ version: 0.6.0.2
 # resync-system (its resync replays removals, which kyquickstart restore requires),
 # installer-verified-email (MAS's chat sign-in needs it) and mail-relay. 0.4.6 sends a removal
 # made before the person's first delivery instead of dropping it; 0.4.7 never gives up on one.
-# catalog-follow: v0.6.0.2 attested by Busnes-app/KyIdentity-server release-image.yml@refs/tags/v0.6.0.2
+# catalog-follow: v0.6.1 attested by Busnes-app/KyIdentity-server release-image.yml@refs/tags/v0.6.1
 images:
-  kyidentity: ghcr.io/busnes-app/kyidentity-server:0.6.0.2@sha256:622f9c4d306c499d2964a52ee4c519cf187a91c7fe83bd2a6ce84b9d652e1f51
+  kyidentity: ghcr.io/busnes-app/kyidentity-server:0.6.1@sha256:270a4b3223b7753b2e3bd2eb8895a3c73c3e9469b4f6333991ca2fa1944c3b65
   # Kubernetes, with replicas and no database_secret in the plan: the Postgres they share.
   postgres: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
   # The same, with database_instances in the plan: the CloudNativePG community's Postgres 17
@@ -25,12 +25,11 @@ health:
 backup:
   volumes: [data]
 upgrade:
-  # Migrations run at startup; the release notes cover upgrades from 0.4.x only. 0.4.4 to 0.6.0
-  # add at most one defaulted column (0.4.6) and one-time status corrections; 0.6.0 changes no
-  # stored data. None rewrites people, access or content, so an upgrade needs only an
-  # acknowledgement.
+  # 0.6.0.2 introduced versioned migrations for forward-auth, HR, suite groups and pairing
+  # proofs. Back up older schemas before startup; 0.6.1 keeps that migration set unchanged.
   min_from: 0.4.0
-  migrates_data: false
+  migrates_data: true
+  data_since: 0.6.0.2
   note: >-
     KyIdentity 0.4.5 and earlier dropped a removal made before a person's first delivery to an
     app, with no record a resync can replay: check each app's accounts for people disabled or

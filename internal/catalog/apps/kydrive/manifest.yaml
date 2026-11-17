@@ -1,13 +1,13 @@
 name: kydrive
 description: KyDrive, the suite's drive; personal and group workspaces for files and documents
 category: ky
-version: 0.6.0.2
+version: 0.6.1
 # Release image of v0.4.3 (commit 7eaa56fded8c), attested by
 # Busnes-app/kydrive-server release-image.yml@refs/tags/v0.4.3 (gh attestation verify).
 # It advertises restore-reset, which kyquickstart restore requires.
-# catalog-follow: v0.6.0.2 attested by Busnes-app/kydrive-server release-image.yml@refs/tags/v0.6.0.2
+# catalog-follow: v0.6.1 attested by Busnes-app/kydrive-server release-image.yml@refs/tags/v0.6.1
 images:
-  kydrive: ghcr.io/busnes-app/kydrive-server:0.6.0.2@sha256:10a74c8851264edf3db0ea209c039487c9d15ed2d1b0be6eda886a2be3f6d3ff
+  kydrive: ghcr.io/busnes-app/kydrive-server:0.6.1@sha256:375423d6f83c9d4194fcc3f1c01a799c9ec43f3d499c32870f8b6d1106e318f2
 # Generated on the target. The session secret signs sessions; the SCIM token is the bearer
 # KyIdentity's SCIM connector must present, and KyDrive's setup refuses to run without one.
 secrets: [session_secret, scim_token]
@@ -38,6 +38,6 @@ upgrade:
   # 0.6.0 changes no migration (migrations and schema.go are unchanged since 0.5.0).
   min_from: 0.4.2
   migrates_data: true
-  data_since: 0.6.0.2
+  data_since: 0.6.1
   note: >-
     From 0.4.x: signs out single sign-on sessions once, at first start; people sign in again. Open document editor sessions of directory users are closed.

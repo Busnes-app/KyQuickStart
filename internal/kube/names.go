@@ -70,9 +70,9 @@ func getOwned[T metav1.Object](ctx context.Context, api getter[T], kind, name st
 }
 
 // upsert creates want, or replaces the installer's object of the same name with it. keep copies
-// fields the API server owns from the existing object. A conflict means someone wrote in
+// fields the API server owns and can refuse an unsafe replacement. A conflict means someone wrote in
 // between: transient, so the engine inspects again.
-func upsert[T metav1.Object](ctx context.Context, api writer[T], kind string, want T, keep func(have T)) error {
+func upsert[T metav1.Object](ctx context.Context, api writer[T], kind string, want T, keep func(have T) error) error {
 	have, found, err := getOwned(ctx, api, kind, want.GetName())
 	if err != nil {
 		return err
@@ -80,7 +80,9 @@ func upsert[T metav1.Object](ctx context.Context, api writer[T], kind string, wa
 	if found {
 		want.SetResourceVersion(have.GetResourceVersion())
 		if keep != nil {
-			keep(have)
+			if err := keep(have); err != nil {
+				return err
+			}
 		}
 		_, err = api.Update(ctx, want, metav1.UpdateOptions{})
 	} else {
