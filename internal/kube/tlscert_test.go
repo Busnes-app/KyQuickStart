@@ -137,3 +137,45 @@ func TestTLSCertificateServed(t *testing.T) {
 		})
 	}
 }
+
+// Trusting the source leaf must still run normal TLS hostname and time checks.
+// The valid private-CA control needs no system trust-store entry.
+func TestTLSCertificateServedStandardVerification(t *testing.T) {
+	for _, name := range []string{"private CA", "wrong hostname", "expired"} {
+		t.Run(name, func(t *testing.T) {
+			const host = "drive.example.com"
+			now := time.Now()
+			if name == "expired" {
+				now = now.AddDate(-11, 0, 0)
+			}
+			_, cert, key, err := serverCertificate(host, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pair, err := tls.X509KeyPair(cert, key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			srv := httptest.NewUnstartedServer(nil)
+			srv.TLS = &tls.Config{Certificates: []tls.Certificate{pair}}
+			srv.StartTLS()
+			defer srv.Close()
+			c := New(fake.NewClientset(&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "app-ready", Namespace: "kyq-nginx", Labels: map[string]string{"app.kubernetes.io/name": "nginx", managed.Label: managed.Value}},
+				Status:     corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
+			}))
+			c.portForward = func(ctx context.Context, _, _ string, _ int) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, "tcp", srv.Listener.Addr().String())
+			}
+			probeHost := host
+			if name == "wrong hostname" {
+				probeHost = "other.example.com"
+			}
+			block, _ := pem.Decode(cert)
+			err = c.TLSCertificateServed(context.Background(), "nginx", probeHost, block.Bytes)
+			if (err == nil) != (name == "private CA") {
+				t.Fatalf("standard TLS verification: %v", err)
+			}
+		})
+	}
+}

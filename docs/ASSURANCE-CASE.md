@@ -134,7 +134,9 @@ operator's job ([README](../README.md#targets)).
   Secret over the installer's cluster access: the trust is the cluster's API, and only
   certificate blocks are written. Each copy names the hostname and is valid when written. A
   replacement is copied only once every ready managed edge pod presents that exact leaf over
-  an authenticated Kubernetes port-forward with the route's SNI. A valid old copy stays on
+  an authenticated Kubernetes port-forward with the route's SNI. Normal TLS verification uses
+  a root pool containing only that leaf; hostname and expiry checks stay enabled, with exact
+  leaf matching additionally enforced. A valid old copy stays on
   mismatch or probe failure, with the reason logged; an invalid or missing copy fails closed.
   CA-backdated validity dates are not used as reload evidence. Only an initial deploy without
   a deployment record or copy may bootstrap before route creation; restore and refresh may not.

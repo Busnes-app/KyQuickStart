@@ -907,8 +907,10 @@ under the target locks, while no operation runs (an hour later when one does; re
 answer `busy`). It writes only a changed chain, and neither app restarts: both re-read the file.
 Before replacing an existing copy, the step opens a TLS connection with the route's SNI to
 every ready installer-managed edge pod through the authenticated Kubernetes port-forward.
-Each must present the exact leaf read from the source; the cluster API is the trust anchor,
-so a private CA needs no workstation trust-store change. Certificate validity dates are not
+Each must present the exact leaf read from the source. Go's normal TLS verification runs
+with only that leaf in the probe's root pool, preserving hostname and expiry checks;
+the authenticated cluster API supplies its trust, so private CAs need no workstation
+trust-store change. Certificate validity dates are not
 reload times: ACME CAs may backdate `NotBefore`. If any pod still serves another leaf or
 cannot be checked, a valid old copy stays and the reason is logged, even on a skipped step;
 the next refresh or apply retries. An invalid or missing copy instead fails. Only a first
