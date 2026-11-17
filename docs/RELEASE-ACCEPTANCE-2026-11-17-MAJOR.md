@@ -135,7 +135,7 @@ whole-suite release qualification or every product's ordinary content/offboardin
 | KyRecovery | Native administrative sign-in, everyday identity gate, throwaway public-key ceremony and capsule listing/deposit | Previous-catalog key/pairing retention passed. Restored service with existing capsules/ceremony, administrative revocation and session invalidation remain untested here. Deposit/listing is not product restore. |
 | kyPulse | Native administrative sign-in, everyday identity gate, monitoring targets healthy and real paired deposit | Previous-catalog config/pairing binding and candidate deposit with prior credentials passed. Restored monitoring state and offboarding/session revocation remain untested. |
 | KyNotes | Admin backup-status API 200 / ordinary containers 403 with admin-account refusal; everyday backup-status 403 / containers 200 | Native config/account upgrade passed. Real notes migration, offboarding/session revocation and restored notes remain untested. |
-| KyCalendar | Admin users API 200 / calendars 403; everyday users API 403 / calendars 200 | Old-image event content/times/IDs/ETag/access and candidate edit passed. Offboarding/restored meetings and recurrence/meeting delivery untested. |
+| KyCalendar | Admin users API 200 / calendars 403; everyday users API 403 / calendars 200 | Old-image event preservation/candidate edit and native candidate capsule recovery with restored ordinary event/edit passed. Offboarding, installer resume, recurrence and meeting delivery remain untested. |
 | KyPost | Native Docker setup, pre-bind-volume layout copy, admin users API 200 / everyday 403, session-ending restart and cold backup | Native config/account upgrade passed in IMAP-proxy mode. Real mail migration/restored mail, offboarding and dedicated-admin ordinary-mail denial remain untested. This fixture disables native mail listeners; it does not qualify the workforce mail stack. |
 | KyDNS | Native setup, authoritative UDP/TCP DNS, forged-header rejection, unsafe-gateway trust refusal and fail-closed edge behavior | Successful edge/admin sign-in is UNPROVEN on Major because Docker rewrites source addresses. Previous zones/config upgrade, offboarding and restore remain untested. Never broaden trust to force a pass. |
 | KyMessages | Real encrypted chat, offboarding and history restore; original device decrypts history and removals replay before Synapse starts. Dedicated admin chat sign-in receives KyIdentity access_denied and MAS has no admin account. | Previous0.6.0.1→0.6.1 upgrade with own verified snapshot, original keys/sessions and old/new encrypted events passed; later candidate offboarding/history restore passed. Upstream Matrix-version migration and direct authorization with an otherwise-valid admin token remain unproven. |
@@ -242,7 +242,7 @@ earlier failed evidence/source remain intact. V2 did retain the seeded event exa
 failed because its edit sent an unquoted HTTP If-Match. V3 quotes the original ETag, as the
 product API tests require, and the complete integration **passed1224.364 s**.
 Calendar fixture trust is restored after later apply calls with the repeatable CA helper.
-It qualifies this seeded event, not Calendar restore/offboarding/recurrence/meeting
+That upgrade case alone qualifies the seeded event, not Calendar restore/offboarding/recurrence/meeting
 transport or other products' content. Notes content needs its actual encryption/key flow;
 arbitrary opaque bytes are not substituted as a user-note workflow.
 The product already has native encryption-client and browser-format migration tests, but
@@ -261,7 +261,8 @@ old bundled client, complete action-bound KyIdentity confirmation and save a rec
 copy: notebook creation refuses an unrecoverable key. The local-password browser helper
 cannot replace this installer-created SSO path. Reuse actual UI content creation and
 retain the isolated browser key store across the upgrade; do not inject ciphertext or
-skip reauthentication/recovery. No Notes browser/runtime case was implemented or run.
+skip reauthentication/recovery. No Notes application content case was implemented or run;
+the separate isolated TLS prerequisite below does not qualify the application.
 
 
 ## Passed previous-image Messages history upgrade
@@ -294,6 +295,39 @@ publication tree `message-history-acceptance` matches344 non-documentation files
 passed tree byte for byte, including runtime/pins/dependencies; its later report edits do
 not constitute a fresh test execution.
 
+## Passed native Calendar capsule recovery
+
+The isolated `20261117-major-calendar-native-restore-v1` campaign **PASSED** at
+22:29:48 UTC: fresh upgrade gate7.536 s, affected compile/relay4.533 s, full `make ci`
+163.822 s, actual integration1242.651 s and full controller1418.664 s. All seven
+previous-image upgrade commands, key/pairing retention and ordinary Calendar event
+preservation/edit assertions passed before the new recovery rehearsal.
+
+`KYQ_TEST_CALENDAR_RESTORE=1` follows KyCalendar's native capsule runbook. Only the
+test operator retained two nonconsecutive throwaway custodian shares. The candidate
+refused ordinary-user capsule export and pinned the same suite public key for its admin.
+It exported a real capsule, verified its transfer digest, refused one-share restoration,
+then completed native two-share restore/reset offline. The restored credential map
+matched the recorded installer paths; data/recovery/OIDC/directory key hashes matched.
+Original data was moved aside. The offline helper was removed before CLI startup.
+Old admin/everyday sessions returned401; fresh native sign-in and the restored ordinary
+event's content/identifiers/access and a fresh If-Match edit passed.
+
+The frozen tested patch is
+`01eac85d9c8e59b6d3cd931550ef5432ade1986925fceb83d004acba1bce54bb`, retained with
+its source in `suite-calendar-native-restore`. This is candidate native capsule recovery,
+not restoration of an installer pre-upgrade claim copy, Calendar offboarding, installer
+resume after native restore, recurrence or meeting delivery. The separate root
+Verification contract documents this opt-in scope.
+
+The isolated Notes browser TLS prerequisite V12 separately **PASSED**2.244 s at
+22:32:01 UTC: a private named CA/signed leaf verified normally, and the wrong hostname
+was refused with `SSL_ERROR_BAD_CERT_DOMAIN`. Firefox peaked at157 tasks under the
+owner-approved browser-only256-task cap, with no PID-limit events; Go remains128.
+No TLS error override or global trust/profile changes were used. Previous failedV1–V11
+remain. This proves fixture transport only; no Notes application enrollment, encrypted
+content, retained-client-key upgrade or restore case has been implemented or qualified.
+
 ## HA correction and release gates
 
 The original HA fixture used `kind load docker-image` directly on a digest reference.
@@ -322,9 +356,9 @@ worktrees or alter pre-existing services. Native-client distribution is separate
 development archive/signature passed, but Developer ID export remains blocked on a valid
 direct-distribution profile. This server report certifies no Mac or Android artifact.
 
-DOX pass: root `AGENTS.md` was updated to document the opt-in seven-app/Calendar
-(`KYQ_TEST_RELEASE_UPGRADE_MANIFESTS`) and Messages (`KYQ_TEST_MESSAGE_UPGRADE_MANIFEST`)
-upgrade-test contracts.
+DOX pass: the implementation PRs update root `AGENTS.md` for the opt-in seven-app/Calendar
+(`KYQ_TEST_RELEASE_UPGRADE_MANIFESTS`), Messages (`KYQ_TEST_MESSAGE_UPGRADE_MANIFEST`)
+and native Calendar capsule recovery (`KYQ_TEST_CALENDAR_RESTORE`) test contracts.
 `docs/AGENTS.md` and the child indexes remain unchanged because documentation ownership
 and workflow did not change. This report and the candidate matrix record observed evidence
 and qualification limits; prior versions are preserved in the timestamped private

@@ -171,7 +171,7 @@ func catalogSignOn(t *testing.T, ctx context.Context, cs kubernetes.Interface, k
 	catalogSignOnWithBackup(t, ctx, cs, kubeconfig, certPEM, nodeIP, true, pulseWatched)
 }
 
-func catalogSignOnWithBackup(t *testing.T, ctx context.Context, cs kubernetes.Interface, kubeconfig string, certPEM []byte, nodeIP string, backup bool, watched []string) [32]byte {
+func catalogSignOnWithBackup(t *testing.T, ctx context.Context, cs kubernetes.Interface, kubeconfig string, certPEM []byte, nodeIP string, backup bool, watched []string, custody ...*calendarRestoreKit) [32]byte {
 	var checkpoint [32]byte
 	t.Helper()
 	c, err := kube.Connect(kubeconfig, "")
@@ -289,7 +289,7 @@ func catalogSignOnWithBackup(t *testing.T, ctx context.Context, cs kubernetes.In
 			if app.client == "kypulse" {
 				pulseTargetsHealthy(t, ctx, send, app.origin, watched)
 				if backup {
-					pulseBacksUpByHand(t, ctx, c, jar, send)
+					pulseBacksUpByHand(t, ctx, c, jar, send, custody...)
 				}
 				if !backup {
 					u, _ := url.Parse(app.origin)
@@ -338,7 +338,7 @@ func catalogSignOnWithBackup(t *testing.T, ctx context.Context, cs kubernetes.In
 // mints a code with the handover's command, and pairs kyPulse on its backup API with the
 // handover's URL. kyPulse accepts the private address only because the catalog set
 // KYPULSE_BACKUP_ALLOW_PRIVATE_RECOVERY; its deposit then reaches KyRecovery, which lists it.
-func pulseBacksUpByHand(t *testing.T, ctx context.Context, c *kube.Client, jar http.CookieJar, send func(method, endpoint string, body []byte, csrf string) (*http.Response, []byte)) {
+func pulseBacksUpByHand(t *testing.T, ctx context.Context, c *kube.Client, jar http.CookieJar, send func(method, endpoint string, body []byte, csrf string) (*http.Response, []byte), custody ...*calendarRestoreKit) {
 	t.Helper()
 	recovery, pulse := "https://"+catalogRecoveryURLHost, "https://"+catalogPulseURLHost
 	key, err := recoverykey.Generate()
@@ -346,6 +346,13 @@ func pulseBacksUpByHand(t *testing.T, ctx context.Context, c *kube.Client, jar h
 		t.Fatal(err)
 	}
 	pub := key.Public()
+	if len(custody) != 0 {
+		shares, err := recoverykey.Split(key, 2, 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		*custody[0] = calendarRestoreKit{PublicKey: base64.StdEncoding.EncodeToString(pub.Bytes()), KeyID: pub.ID(), Shares: []string{shares[0].String(), shares[2].String()}}
+	}
 	body, _ := json.Marshal(map[string]any{"public_key": base64.StdEncoding.EncodeToString(pub.Bytes()), "threshold": 2, "total_shares": 3})
 	r, b := send("POST", recovery+"/api/recovery-key", body, "")
 	var imported struct {

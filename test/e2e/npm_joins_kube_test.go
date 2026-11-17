@@ -51,6 +51,9 @@ func testKubernetesEdgeJoins(t *testing.T, proxy string) {
 	cs := kubernetes.NewForConfigOrDie(cfg)
 	catalogDir := filepath.Join(work, "catalog")
 	previous := os.Getenv("KYQ_TEST_RELEASE_UPGRADE_MANIFESTS")
+	if os.Getenv("KYQ_TEST_CALENDAR_RESTORE") == "1" && previous == "" {
+		t.Fatal("Calendar restore case requires the attested previous release manifests")
+	}
 	candidates := map[string][]byte{}
 	fromPrevious := func(app string) {
 		t.Helper()
@@ -92,6 +95,7 @@ func testKubernetesEdgeJoins(t *testing.T, proxy string) {
 	plan := filepath.Join(state, "stack.yaml")
 	os.WriteFile(plan, []byte("version: 1\ntargets:\n  - name: k8s\n    kubeconfig: "+kc+"\n    storage_class: standard\napps:\n  - name: "+proxy+"\n    target: k8s\n  - name: hello\n    target: k8s\n"), 0o600)
 	var outputs, trust []string
+	var restoreCalendar func()
 	apply := func(want string) string {
 		t.Helper()
 		var out bytes.Buffer
@@ -271,12 +275,17 @@ func testKubernetesEdgeJoins(t *testing.T, proxy string) {
 		// OIDC clients, SCIM and receipts. Also seed a real Recovery ceremony,
 		// Pulse pairing and deposit, then preserve them across actual upgrades.
 		watched := []string{"hello", "kycalendar", "kydrive", "kyidentity", "kynotes", "kypost", "kyrecovery"}
-		recoveryPairing := catalogSignOnWithBackup(t, ctx, cs, kc, certPEM, nodeIP, true, watched)
+		var restoreKit calendarRestoreKit
+		var custody []*calendarRestoreKit
+		if os.Getenv("KYQ_TEST_CALENDAR_RESTORE") == "1" {
+			custody = []*calendarRestoreKit{&restoreKit}
+		}
+		recoveryPairing := catalogSignOnWithBackup(t, ctx, cs, kc, certPEM, nodeIP, true, watched, custody...)
 		// Later apply calls may replace this test-only mount. Repeating the ensure
 		// must not append duplicate volumes, mounts or environment values.
 		trustTestCA(t, ctx, cs, connected, "kycalendar", certPEM)
 		trustTestCA(t, ctx, cs, connected, "kycalendar", certPEM)
-		verifyCalendar := seedCalendarUpgrade(t, ctx, calendarSignOn(t, ctx, connected, certPEM, nodeIP))
+		verifyCalendar, verifyRestoredCalendar := seedCalendarUpgrade(t, ctx, calendarSignOn(t, ctx, connected, certPEM, nodeIP))
 		fingerprints := func() map[string][32]byte {
 			t.Helper()
 			out := map[string][32]byte{}
@@ -391,7 +400,13 @@ func testKubernetesEdgeJoins(t *testing.T, proxy string) {
 		t.Logf("preserved %d Kubernetes Secret payloads, Docker client/session keys, Identity JWKS and Recovery pairing; candidate Pulse deposited with its prior pairing", len(before))
 		driveSignOn(t, ctx, kc, certPEM, nodeIP, driveSecrets[1])
 		notesSignOn(t, ctx, connected, certPEM, nodeIP)
-		verifyCalendar(calendarSignOn(t, ctx, connected, certPEM, nodeIP))
+		calendarEveryday := calendarSignOn(t, ctx, connected, certPEM, nodeIP)
+		verifyCalendar(calendarEveryday)
+		if os.Getenv("KYQ_TEST_CALENDAR_RESTORE") == "1" {
+			restoreCalendar = func() {
+				restoreNativeCalendar(t, ctx, cs, connected, state, catalogDir, trust, certPEM, nodeIP, restoreKit, verifyRestoredCalendar)
+			}
+		}
 		postSignOn(t, ctx, connected, certPEM, nodeIP)
 	}
 
@@ -460,6 +475,11 @@ func testKubernetesEdgeJoins(t *testing.T, proxy string) {
 		t.Errorf("rerun: kydns.edge = %q, %v", status(out, "kydns.edge"), err)
 	}
 
+	// Finish all unrelated apply/rerun graphs before the destructive native
+	// recovery rehearsal. Its scope is restored product access, not installer resume.
+	if restoreCalendar != nil {
+		restoreCalendar()
+	}
 	var edgeSecrets []string
 	if npm != nil {
 		edgeSecrets = []string{npm.password, npm.token, npm.stored()}

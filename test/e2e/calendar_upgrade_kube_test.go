@@ -9,12 +9,13 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 )
 
 // seedCalendarUpgrade uses the old product's ordinary API, then checks the same
 // event through a freshly signed-in candidate session. No attendees or mail are sent.
-func seedCalendarUpgrade(t *testing.T, ctx context.Context, old *http.Client) func(*http.Client) {
+func seedCalendarUpgrade(t *testing.T, ctx context.Context, old *http.Client) (func(*http.Client), func(*http.Client)) {
 	t.Helper()
 	origin := "https://" + catalogCalendarURLHost
 	send := func(client *http.Client, method, path, body, etag string, want int, out any) {
@@ -82,22 +83,52 @@ func seedCalendarUpgrade(t *testing.T, ctx context.Context, old *http.Client) fu
 	if before.CalendarID != cal.ID || before.UID != made.UID || before.ETag != made.ETag || before.Title != "Major migration — café" || before.Location != "Room 7" || before.Description != "Retain this ordinary event.\nSecond line." || before.Start != "2026-11-18T09:00:00Z" || before.End != "2026-11-18T10:00:00Z" || !before.Editable {
 		t.Fatal("old Calendar did not read back the seeded event exactly")
 	}
-	return func(candidate *http.Client) {
+	const edited = `{"title":"Edited after candidate upgrade","location":"Room 7","description":"Retain this ordinary event.\nSecond line.","start":"2026-11-18T09:00:00Z","end":"2026-11-18T10:00:00Z","zone":"UTC"}`
+	var afterUpgrade eventView
+	verifyUpgrade := func(candidate *http.Client) {
 		t.Helper()
 		if after := read(candidate); after != before {
 			t.Fatal("candidate Calendar changed existing event content, identity, ETag or access")
 		}
-		const edited = `{"title":"Edited after candidate upgrade","location":"Room 7","description":"Retain this ordinary event.\nSecond line.","start":"2026-11-18T09:00:00Z","end":"2026-11-18T10:00:00Z","zone":"UTC"}`
 		var changed struct{ ETag string }
 		send(candidate, "PUT", "/api/events/"+cal.ID+"/"+made.UID, edited, made.ETag, http.StatusOK, &changed)
 		after := read(candidate)
 		if changed.ETag == "" || changed.ETag == made.ETag || after.ETag != changed.ETag || after.Title != "Edited after candidate upgrade" {
 			t.Fatal("candidate Calendar could not edit preserved event with its old ETag")
 		}
+		afterUpgrade = after
 		after.Title, after.ETag = before.Title, before.ETag
 		if after != before {
 			t.Fatal("candidate Calendar edit changed unrelated event content or access")
 		}
 		t.Log("real previous-image Calendar event retained text/times/IDs/ETag and accepted a candidate If-Match edit")
 	}
+	verifyRestore := func(restored *http.Client) {
+		t.Helper()
+		got := read(restored)
+		if afterUpgrade.ETag == "" || got.ETag == "" {
+			t.Fatal("no upgraded/restored Calendar ETag")
+		}
+		etag := got.ETag
+		// Native restore intentionally rotates the sync epoch; content/identity
+		// must survive even if an epoch-derived ETag changes.
+		got.ETag = afterUpgrade.ETag
+		if got != afterUpgrade {
+			t.Fatal("native restore changed the everyday event, identifiers or edit access")
+		}
+		var changed struct{ ETag string }
+		body := strings.Replace(edited, "Edited after candidate upgrade", "Edited after native capsule restore", 1)
+		send(restored, "PUT", "/api/events/"+cal.ID+"/"+made.UID, body, etag, http.StatusOK, &changed)
+		got = read(restored)
+		if got.Title != "Edited after native capsule restore" || changed.ETag == "" || changed.ETag == etag || got.ETag != changed.ETag {
+			t.Fatal("restored event did not accept an If-Match edit")
+		}
+		got.Title, got.ETag = afterUpgrade.Title, afterUpgrade.ETag
+		if got != afterUpgrade {
+			t.Fatal("restored Calendar edit changed unrelated event fields")
+		}
+		t.Log("native Calendar restore retained everyday event content/IDs/access and accepted a fresh If-Match edit")
+	}
+	return verifyUpgrade, verifyRestore
+
 }
