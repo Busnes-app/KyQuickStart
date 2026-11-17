@@ -14,6 +14,11 @@ state directory, target data and target-held credentials; do not reset them as a
 
 ## Unreleased
 
+- Follow KyPost, KyCalendar and KyYard `0.6.1.1` with verified release image digests.
+  KyPost includes the receiving accelerator and file-lock/fsync fixes; KyCalendar and
+  KyYard refresh their Alpine base. **Upgrade impact:** the selected apps restart on
+  upgrade; existing data, credentials and schema-backup boundaries stay in place.
+
 - Existing Kubernetes load balancers keep their address: preflight and apply refuse a
   plan that would turn an edge public Service into a NodePort. Record the live
   `kube_vip_address` or `load_balancer_address` in the plan; intentional retirement
