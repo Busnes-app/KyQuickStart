@@ -1,12 +1,10 @@
 name: kypost
 description: KyPost, the suite's webmail client for mail accounts you already have; signs in through KyIdentity
 category: ky
-version: 0.6.1
-# Release image of v0.4.2 (commit 621b4d18e8adf7719b93e02b48c61a7343fe8e2f), attested by
-# Busnes-app/KyPost-Server release-image.yml@refs/tags/v0.4.2 (gh attestation verify).
-# catalog-follow: v0.6.1 attested by Busnes-app/KyPost-Server release-image.yml@refs/tags/v0.6.1
+version: 0.6.1.1
+# catalog-follow: v0.6.1.1 attested by Busnes-app/KyPost-Server release-image.yml@refs/tags/v0.6.1.1
 images:
-  kypost: ghcr.io/busnes-app/kypost-server:0.6.1@sha256:d4d3a5e7faad6e52a8dc919253965e8330b0cba64a3ec464b097ccf043a0037d
+  kypost: ghcr.io/busnes-app/kypost-server:0.6.1.1@sha256:330788925808f214947b008083aae7b8fd7e36dcbb4370ecb971eae6f3ae3afe
   # Native mail's receiver only: KyPost v0.4.3's docker-compose.rspamd.yml pin, unchanged.
   rspamd: rspamd/rspamd:4.2.2@sha256:33526f94cfbb5ab5485805ad9d6eddb6a52aca6529aad0ce99b67b01c2e756de
 # verify-edge reads the suite proxy contract here (clientIp, proxyHeadersTrusted, scheme).
