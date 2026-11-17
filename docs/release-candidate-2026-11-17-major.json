@@ -722,11 +722,11 @@
     "kubernetes_secret_payload_count": 0
   },
   "message_history_upgrade_extension": {
-    "prepared_at": "2026-11-17T20:20:02.166022+00:00",
-    "source": "77d9f7aabee3bed6d7ccde361ef11ced4e4bde09",
-    "worktree": "/home/yoshi/git/KyQuickStart/.claude/worktrees/suite-message-history-upgrade",
-    "branch": "test/suite-message-history-upgrade",
-    "harness_patch_sha256": "7e174fcabe27545d0d9fba23cbbd0c1661dac83ce4d765f9f884490bb8bfe667",
+    "prepared_at": "2026-11-17T20:52:27.781523+00:00",
+    "source": "78b993ea8628bae6d5ab80c45a62e3ef0bdfb0f0",
+    "worktree": "/home/yoshi/git/KyQuickStart/.claude/worktrees/suite-message-catalog-upgrade",
+    "branch": "test/suite-message-catalog-upgrade",
+    "harness_patch_sha256": "c94cc8884e0b80bef52dd8a49bda514ac3b1ae2e944f7a7d1b277cd542b9caa5",
     "scope": "Previous published Messages primary-image migration; old real encrypted event, verified own pre-upgrade backup, selected credential hashes, original refresh sessions/history and new encrypted event, then existing candidate offboarding/restore. Auxiliary Matrix images unchanged.",
     "previous_attestation": {
       "image": "ghcr.io/busnes-app/kymessage-server:0.6.0.1@sha256:426b2dd604677ecc230821c92924db2a4803fd330d579caac97728ad3e2a64a6",
@@ -741,8 +741,68 @@
       "seconds": 4.23
     },
     "prerequisite": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-app-content-v3/full-qualification.result.json",
-    "status": "Affected compile/relay6.406s and freshfullCI162.365s passed; real previous-primary integration active, no outcome; not qualification",
-    "dox": "Root optional verification contract updated; no child scope/index changes; no runtime or pin changes"
+    "status": "V1 fresh CI passed162.365s, integration failed157.190s pre-chat/upgrade on current template guest bind; V2 isolated full historical-entry correction fresh checks active; no upgrade qualification",
+    "dox": "Root optional verification contract updated; no child scope/index changes; no runtime or pin changes",
+    "started_by_continuation_at": "2026-11-17T20:42:48.461543+00:00",
+    "supersedes": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-message-upgrade-v1",
+    "historical_compose_sha256": "87545b604d1bcc64bbc434c4f0bbe129aa64179dd806b35fc7cf9ab797ebb060",
+    "correction": "Install full historical manifest+Compose entry with shared explicit fixture CA/host plumbing; old initializer cannot generate candidate guest-page file. Restore complete candidate manifest+prepatched Compose only for native CLI upgrade. No stub/generated data injection or runtime/pin change.",
+    "previous_failed_evidence": [
+      "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-message-upgrade-v1"
+    ],
+    "previous_failed_results": {
+      "ci": {
+        "name": "ci",
+        "command": [
+          "make",
+          "ci"
+        ],
+        "source": "77d9f7aabee3bed6d7ccde361ef11ced4e4bde09",
+        "started_at": "2026-11-17T20:42:54.971120+00:00",
+        "finished_at": "2026-11-17T20:45:37.336126+00:00",
+        "duration_seconds": 162.365,
+        "exit_code": 0,
+        "host": "major"
+      },
+      "real-message-upgrade": {
+        "name": "real-message-upgrade",
+        "command": [
+          "env",
+          "CGO_ENABLED=0",
+          "KYQ_TEST_MESSAGE_UPGRADE_MANIFEST=/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-message-upgrade-v1/previous-manifests/kymessage/manifest.yaml",
+          "go",
+          "test",
+          "-json",
+          "-tags",
+          "e2e,goolm",
+          "-count=1",
+          "-timeout",
+          "60m",
+          "-run",
+          "^TestKubernetesKyMessage$",
+          "./test/e2e/"
+        ],
+        "source": "77d9f7aabee3bed6d7ccde361ef11ced4e4bde09",
+        "started_at": "2026-11-17T20:45:37.359019+00:00",
+        "finished_at": "2026-11-17T20:48:14.548635+00:00",
+        "duration_seconds": 157.19,
+        "exit_code": 1,
+        "host": "major"
+      },
+      "full-qualification": {
+        "name": "full-qualification",
+        "command": [
+          "/usr/bin/python3",
+          "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-message-upgrade-v1/run-qualification.py"
+        ],
+        "source": "77d9f7aabee3bed6d7ccde361ef11ced4e4bde09",
+        "started_at": "2026-11-17T20:42:48.497511+00:00",
+        "finished_at": "2026-11-17T20:48:14.557640+00:00",
+        "duration_seconds": 326.06,
+        "exit_code": 1,
+        "host": "major"
+      }
+    }
   },
   "notes_content_feasibility": {
     "evidence": "20261117-major-notes-content-audit-2029Z/notes-content-feasibility.json",

@@ -33,8 +33,10 @@ the successful app integration tree byte for byte; runtime, pins and dependencie
 This reuses the named integration evidence and is not a fresh combined integration run.
 No wider product-data/offboarding/restore qualification is inferred.
 
-The separate Messages history follow-up has begun its fresh checks; no real-image upgrade
-result is included in this report. Its private worker state is tracked on MySlop.
+The separate Messages history V1 passed fresh CI but failed before old-image chat or upgrade:
+the candidate template bound a guest page the old initializer cannot create. Isolated V2
+uses the complete old manifest/Compose entry and restores the candidate entry only for
+upgrade. V2 is running fresh checks; no Messages upgrade pass is claimed.
 
 Content-v2 remains exit1 / 1082.514 s (controller1256.364 s): exact Calendar readback
 passed but the fixture's bare HTTP If-Match was rejected400. V3 only quoted that header
@@ -208,8 +210,8 @@ KyIdentity → MAS chat gate and checked that MAS had no such account. This evid
 present in the executed test and is now recorded above; it does not create a direct
 Matrix authorization result for an admin token the fixture never received.
 
-The optional previous-primary-image history case has started its fresh checks and its old
-image attestation passed; details appear below. No real-image upgrade result exists yet.
+The optional previous-primary-image history V1 failed before old chat/upgrade on a mismatched
+fixture template; its old image attestation passed. Corrected V2 and limits appear below.
 The candidate crosses console migrations24–27 at `data_since: 0.6.0.2` and must take
 a real verified pre-upgrade backup; no acknowledgement can substitute for it.
 
@@ -260,15 +262,18 @@ skip reauthentication/recovery. No Notes browser/runtime case was implemented or
 
 ## Messages previous-image history follow-up
 
-The separate `suite-message-history-upgrade` worktree (branch
-`test/suite-message-history-upgrade`, base `77d9f7aabee3bed6d7ccde361ef11ced4e4bde09`)
-contains the optional `KYQ_TEST_MESSAGE_UPGRADE_MANIFEST` case. Fresh affected/full CI
-checks have begun; **no real-image upgrade result exists yet, so it is not qualification.**
+The separate `suite-message-catalog-upgrade` worktree (branch
+`test/suite-message-catalog-upgrade`, base `78b993ea8628bae6d5ab80c45a62e3ef0bdfb0f0`)
+contains the optional `KYQ_TEST_MESSAGE_UPGRADE_MANIFEST` case and its sibling historical
+Compose template. V1 passed affected6.406 s/full CI162.365 s, then failed integration157.190 s
+(controller326.060 s) before old chat/upgrade because the old initializer cannot create the
+candidate guest-page bind. **V2 fresh checks are active; no upgrade pass is claimed.**
 The old primary `0.6.0.1` image passed exact repository/workflow/tag attestation at
 20:16:26 UTC. Its manifest is byte-identical to installer `v0.6.0.8`; all auxiliary
 Matrix image pins match the candidate.
 
-The case installs the old primary, uses the existing real Megolm room/device flow, then
+The corrected case installs the complete historical manifest/Compose entry with explicit
+fixture host/CA plumbing, uses the existing real Megolm room/device flow, then
 requires the CLI upgrade's own verified pre-upgrade snapshot across `data_since: 0.6.0.2`.
 It intends to compare selected keys, renew both original device sessions, fetch and decrypt
 the old raw encrypted event with original client keys, exchange a new encrypted event,
@@ -277,9 +282,9 @@ later restore destinations have separate server-work and credential directories;
 server's certificate/password files are overwritten. This does not test an upstream
 Matrix-version migration or restore of the old-image pre-upgrade snapshot itself.
 
-Prepared evidence: `20261117-major-message-upgrade-prepared`. Execution evidence
-`20261117-major-message-upgrade-v1` records its own fresh stages and input/patch guards.
-The corrected content-v3 success prerequisite passed; no previous-image result is claimed.
+Prepared evidence: `20261117-major-message-upgrade-prepared`. Failed `20261117-major-message-upgrade-v1` and its source remain intact. New execution
+evidence `20261117-major-message-upgrade-v2` records fresh stages and patch/manifest/Compose
+hash guards. The corrected content-v3 prerequisite passed; no old-image upgrade result is claimed.
 
 ## HA correction and release gates
 
