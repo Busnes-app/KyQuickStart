@@ -29,6 +29,44 @@ type bulkCompose struct {
 
 var bulkDest = stack.BackupDestination{Repository: "rest:https://restic.example.com:8000/nas", CredentialFile: "/home/kyq/.config/kyquickstart/rest-password"}
 
+func TestLegacyDrivePlanKeepsManagementCommands(t *testing.T) {
+	for _, cmd := range []string{"status", "pull-plan", "revoke", "apply", "handoff"} {
+		t.Run(cmd, func(t *testing.T) {
+			// The fake target runs SSH key reconciliation on the local filesystem.
+			t.Setenv("HOME", t.TempDir())
+			f, cat := suiteFixture(t)
+			writeApp(t, cat, "kydrive", "version: 1.0.0\n")
+			f.plan(t, "apps:\n  - name: kydrive\n    target: nas\n")
+			st := f.stack(t)
+			st.Targets[0].Backup = &bulkDest
+			b, err := yaml.Marshal(st)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(f.state, "stack.yaml"), b, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			r := newFakeRunner(t, f)
+			r.export = string(b)
+			args := []string{cmd}
+			if cmd == "pull-plan" || cmd == "handoff" {
+				args = append(args, "--kyyard-target", "nas")
+			}
+			if cmd == "revoke" {
+				args = []string{"handoff", "--revoke", "--kyyard-target", "nas"}
+			}
+			err = f.run(args...)
+			if cmd == "apply" || cmd == "handoff" {
+				if err == nil || !strings.Contains(err.Error(), "bulk_repository") {
+					t.Fatalf("deployment accepted incomplete backup configuration: %v", err)
+				}
+			} else if err != nil {
+				t.Fatalf("management of an older plan failed: %v\n%s", err, f.out.String())
+			}
+		})
+	}
+}
+
 // With a backup destination, KyDrive's documents go to <repository>/kydrive-bulk, as the
 // destination's user, and the password reaches only a 0600 file in KyDrive's private /tmp.
 func TestWithBulkRepository(t *testing.T) {

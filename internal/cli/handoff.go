@@ -110,7 +110,11 @@ func handoffCommand(ctx context.Context, cmd string, args []string, o Options) e
 	if fl.NArg() > 0 || set["runner-container"] && set["runner-pod"] || *kyyard == "" && (named || cmd == "handoff" && !revoke) {
 		return ErrUsage
 	}
-	s, err := load(*state, trust, o)
+	loader := load
+	if cmd == "pull-plan" || revoke {
+		loader = loadManagement
+	}
+	s, err := loader(*state, trust, o)
 	if err != nil {
 		return err
 	}

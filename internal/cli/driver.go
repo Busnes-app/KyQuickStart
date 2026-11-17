@@ -164,6 +164,7 @@ type kubeDriver struct {
 	tunnel        bool              // the edge here admits only its connector on external routes
 	needs         kube.Needs        // what the plan uses here beyond the base permission list
 	tlsSecrets    []string          // the Secrets the nginx edge here serves certificates from
+	publicApps    []kube.App        // edge Services checked before any deployment
 }
 
 func (d kubeDriver) preflight(ctx context.Context) []finding {
@@ -173,6 +174,14 @@ func (d kubeDriver) preflight(ctx context.Context) []finding {
 	}
 	if len(d.loadBalancers) > 0 {
 		out = append(out, finding(d.c.LoadBalancerCheck(ctx, d.loadBalancers)))
+	}
+	for _, a := range d.publicApps {
+		err := a.CheckPublicService(ctx)
+		f := finding{Check: "public-service." + a.Name, OK: err == nil, Detail: "public Service preserved"}
+		if err != nil {
+			f.Detail = err.Error()
+		}
+		out = append(out, f)
 	}
 	return out
 }

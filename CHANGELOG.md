@@ -14,6 +14,16 @@ state directory, target data and target-held credentials; do not reset them as a
 
 ## Unreleased
 
+- Existing Kubernetes load balancers keep their address: preflight and apply refuse a
+  plan that would turn an edge public Service into a NodePort. Record the live
+  `kube_vip_address` or `load_balancer_address` in the plan; intentional retirement
+  requires changing the live Service to NodePort first. **Upgrade impact:** plans
+  missing an existing load-balancer address stop before deployment instead of removing it.
+- `status`, `pull-plan` and `handoff --revoke` work with older KyDrive plans missing
+  `bulk_repository` and `bulk_credential_file`. Deployment and a new handoff still
+  require KyDrive's own rest-server user and password file. **Upgrade impact:** the
+  current binary can retrieve and revoke a runner-owned plan before adding those
+  settings; keeping an older binary is no longer required.
 - Follow the ten Ky server releases at `0.6.1`, using immutable image digests verified
   against each release workflow and tagged source revision. **Upgrade impact:** the
   existing pre-upgrade backup requirement now covers KyIdentity and KyMessages from

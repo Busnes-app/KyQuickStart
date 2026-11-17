@@ -304,16 +304,15 @@ targets:
 ```
 
 `plan` asks for `bulk_repository` and `bulk_credential_file` when KyDrive is placed on a target
-whose destination has no `ca_file`, and every command refuses a plan with KyDrive there
-without them. The bulk user must differ from the target's, and its password file is another
+whose destination has no `ca_file`. Deployment commands refuse a plan with KyDrive there
+without them; `status`, `pull-plan` and `handoff --revoke` remain available. The bulk user must differ from the target's, and its password file is another
 0600 file. KyDrive's documents go to `<bulk_repository>/kydrive-bulk`. A plan made before this
 release kept them in `<repository>/kydrive-bulk` under the target's user: those snapshots stay
 there (append-only), so keep that repository and the target's password until no KyDrive
-capsule you might restore predates the change. Until the keys are added every command refuses
-the plan, `pull-plan` and `handoff --revoke` included. So for a plan handed to KyYard's runner,
-first run `pull-plan` and `handoff --revoke` with the release you have (or the previous one,
-from the releases page), then add the keys with this release (rerun `plan`), `apply`, and
-`handoff` again.
+capsule you might restore predates the change. For a plan handed to KyYard's runner,
+run `pull-plan` and `handoff --revoke` with this release, then add the keys (rerun `plan`),
+`apply`, and `handoff` again. These management commands retain plan, ownership and
+transport validation; they do not deploy an incomplete backup configuration.
 
 `review`, `plan --noninteractive` and `apply` refuse, before connecting, any scheme but
 `rest:https`, credentials, a query or fragment in the URL, a missing user segment, relative

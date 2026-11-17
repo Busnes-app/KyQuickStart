@@ -25,6 +25,41 @@ import (
 
 const edgePlan = "apps:\n  - name: hello\n    target: nas\nedges:\n  - target: nas\n    provider: frp\n    npm_url: https://npm.test\n    connector_cidr: 172.30.0.3/32\n    routes:\n      - app: hello\n        hostname: hello.example.com\n        forward_host: app\n        forward_port: 8080\n        certificate_id: 1\n"
 
+func TestPreflightRefusesUnplannedPublicLoadBalancer(t *testing.T) {
+	f := newFixture(t, "../catalog/testdata/apps")
+	f.o.Catalog = catalog.Embedded()
+	kc := filepath.Join(t.TempDir(), "kubeconfig")
+	if err := os.WriteFile(kc, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.plan(t, "  - name: k1\n    kubeconfig: "+kc+"\napps:\n  - name: npm\n    target: k1\n")
+	s, err := load(f.state, nil, f.o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	_, err = f.cs.CoreV1().Services("kyq-npm").Create(ctx, &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "app-public", Namespace: "kyq-npm", Labels: map[string]string{"ky.managed-by": "kyquickstart"}, Annotations: map[string]string{"kube-vip.io/loadbalancerIPs": "192.168.1.78"}},
+		Spec:       corev1.ServiceSpec{Type: corev1.ServiceTypeLoadBalancer},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.connect(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	defer s.close()
+	for _, f := range s.drivers["k1"].preflight(ctx) {
+		if f.Check == "public-service.npm" {
+			if f.OK || !strings.Contains(f.Detail, "kube_vip_address") {
+				t.Fatalf("unsafe public Service accepted: %+v", f)
+			}
+			return
+		}
+	}
+	t.Fatal("public Service omitted from CLI preflight")
+}
+
 // The installation ID is a plan change: it bumps the revision, is published only by a
 // passing apply, and is refused on a runner-owned target unless already present.
 func TestInstallationIDIsAPlanChange(t *testing.T) {
