@@ -888,6 +888,13 @@ calls and kind nodes must carry their own explicit bounds.
   migrating upgrades still require verified backups. Fixture CA/relay plumbing stays explicit.
   This verifies seeded native configuration and backup-pairing data, not every product's
   ordinary content migration, offboarding or full restore.
+  With `KYQ_TEST_CALENDAR_RESTORE=1` as well, retain two throwaway ceremony custodian shares
+  only in the test operator, export a candidate Calendar capsule and run its native restore
+  offline on its own claim. One share must fail; restore the sealed installer credentials
+  to their recorded paths before startup. Verify key bytes, pre-restore session revocation,
+  fresh native sign-in and the ordinary event's content/identifiers/edit access. Original data
+  is moved aside. This is native candidate capsule recovery, not restore of the installer's
+  pre-upgrade claim copy or offboarding/meeting delivery qualification.
 
 - With `KYQ_TEST_MESSAGE_UPGRADE_MANIFEST` naming an independently attested historical
   KyMessages manifest and its sibling Compose template, `TestKubernetesKyMessage` starts
