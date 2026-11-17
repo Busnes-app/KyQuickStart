@@ -930,6 +930,28 @@ func TestWithPrivatePeer(t *testing.T) {
 	}
 }
 
+// KyDrive and KyPost take their TLS pin probe from the plan, under the name each reads, and
+// mount no certificate and name no private key for it.
+func TestWithTLSPinProbe(t *testing.T) {
+	cat, err := Load(Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, env := range map[string]string{"kydrive": "KYDRIVE_TLS_PIN_PROBE", "kypost": "KYPOST_TLS_PIN_PROBE"} {
+		for _, probe := range []bool{true, false} {
+			got := string(cat[name].WithTLSPinProbe(probe).Compose)
+			if want := env + `: "` + strconv.FormatBool(probe) + `"`; !strings.Contains(got, want) || strings.Contains(got, TLSPinProbeRef) {
+				t.Errorf("%s Compose with %v lacks %s or keeps the reference", name, probe, want)
+			}
+			for _, bad := range []string{"_TLS_CERT_FILE", "TLS_KEY_FILE", "privkey"} {
+				if strings.Contains(got, bad) {
+					t.Errorf("%s Compose names %s", name, bad)
+				}
+			}
+		}
+	}
+}
+
 // The nginx edge: restricted, unprivileged, digest-pinned, with no secret, volume or Docker
 // deployment, publishing 80 and 443 alone.
 func TestNginxEntry(t *testing.T) {

@@ -130,6 +130,12 @@ target markers from earlier builds stay valid.
   per-route opt-in or Cloudflare Access for admin-only apps; a live tunnel through every
   eligible product.
 - A KyPost setting for private mail hosts (`SANDBOX_PRIVATE_HOSTS`).
+- The TLS pin source for KyDrive and KyPost behind an edge that serves its own certificate
+  (`lan`, `frp`, internal routes, a `cloudflare` edge with `lan_dns`): delivering the public
+  chain the edge serves to the app host as `KYDRIVE_TLS_CERT_FILE` / `KYPOST_TLS_CERT_FILE`
+  and refreshing it after each renewal. KyQuickStart runs only on demand, so nothing it owns
+  can follow a renewal; NPM's certificate download includes the private key. Behind Cloudflare
+  apply sets the probe ([edge](edge.md#tls-pin-source-kydrive-kypost)).
 - KyPost native mail: an end-to-end run that receives and sends real mail (only unit tests
   cover it), its bulk backup (`KYPOST_BULK_BACKUP_REPOSITORY`), KyPost's Cloudflare receiving
   profile, and KyPost's own production-MX gates, which keep the Maddy profile to a test domain.
