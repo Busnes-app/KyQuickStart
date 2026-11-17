@@ -37,14 +37,15 @@ func TestTLSPinProbe(t *testing.T) {
 	}
 }
 
-// The plan's edge reaches the rendered Compose file: false behind NPM, true behind
-// cloudflare-direct. Neither mounts a certificate or names a private key, and a second load
-// renders the same bytes, so a rerun redeploys nothing.
+// The plan's edge reaches the rendered Compose file: behind the catalog NPM the probe is off and
+// the copied chain is named; behind cloudflare-direct the probe is on and no chain is named.
+// Neither names a private key, and a second load renders the same bytes, so a rerun
+// redeploys nothing.
 func TestTLSPinProbeRendered(t *testing.T) {
 	f := newFixture(t, "../catalog/apps")
 	drivePlan(t, f, "192.0.2.1")
 	lan := renderedDrive(t, f)
-	if !strings.Contains(lan, `KYDRIVE_TLS_PIN_PROBE: "false"`) {
+	if !strings.Contains(lan, `KYDRIVE_TLS_PIN_PROBE: "false"`) || !strings.Contains(lan, `KYDRIVE_TLS_CERT_FILE: "`+catalog.TLSCertFile+`"`) {
 		t.Errorf("lan edge: probe not off:\n%s", lan)
 	}
 	if again := renderedDrive(t, f); again != lan {
@@ -54,7 +55,7 @@ func TestTLSPinProbeRendered(t *testing.T) {
 	f.plan(t, strings.Replace(directPlan, "apps:\n", "apps:\n  - name: kydrive\n    target: nas\n", 1)+
 		"      - {app: kydrive, hostname: drive.example.com, forward_host: 127.0.0.1, forward_port: 18443}\n")
 	direct := renderedDrive(t, f)
-	if !strings.Contains(direct, `KYDRIVE_TLS_PIN_PROBE: "true"`) {
+	if !strings.Contains(direct, `KYDRIVE_TLS_PIN_PROBE: "true"`) || !strings.Contains(direct, `KYDRIVE_TLS_CERT_FILE: ""`) {
 		t.Errorf("cloudflare-direct: probe not on:\n%s", direct)
 	}
 
@@ -63,10 +64,10 @@ func TestTLSPinProbeRendered(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, c := range []string{lan, direct} {
-		if !strings.Contains(c, `volumes: ["./data:/data", "./backups:/backups"]`) {
+		if !strings.Contains(c, `volumes: ["./data:/data", "./backups:/backups", "./tls:/run/kyq-tls:ro"]`) {
 			t.Error("KyDrive's mounts changed")
 		}
-		for _, bad := range []string{"TLS_CERT_FILE", "TLS_KEY_FILE", "privkey", ".key", catalog.TLSPinProbeRef} {
+		for _, bad := range []string{"TLS_KEY_FILE", "privkey", ".key", catalog.TLSPinProbeRef, catalog.TLSCertFileRef} {
 			if strings.Contains(c, bad) {
 				t.Errorf("rendered KyDrive contains %q", bad)
 			}

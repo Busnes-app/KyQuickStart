@@ -355,6 +355,14 @@ const PrivatePeerRef = "{{private_peer}}"
 // its own URL reaches, and "false" otherwise. It may appear in a Compose template.
 const TLSPinProbeRef = "{{tls_pin_probe}}"
 
+// TLSCertFileRef stands for the in-container path of the public certificate chain the app's
+// edge serves (TLSCertFile) when apply copies it to the app's host, and "" otherwise. It may
+// appear in a Compose template.
+const TLSCertFileRef = "{{tls_cert_file}}"
+
+// TLSCertFile is where a Compose file binding ./tls at /run/kyq-tls reads that chain.
+const TLSCertFile = "/run/kyq-tls/fullchain.pem"
+
 // PinnedImagePrefix starts a kubernetes.env value "{{pinned_image:<key>}}": the manifest's
 // image <key> as repository@sha256:<digest>, without its tag. KyYard needs that form for the
 // agents it enrolls, and cannot find it itself without a Docker socket.
@@ -415,6 +423,7 @@ var routeFuncs = template.FuncMap{
 	"private_recovery": func() string { return PrivateRecoveryRef },
 	"private_peer":     func() string { return PrivatePeerRef },
 	"tls_pin_probe":    func() string { return TLSPinProbeRef },
+	"tls_cert_file":    func() string { return TLSCertFileRef },
 	"pinned_image":     PinnedImage,
 	"smtp_address":     func() string { return SMTPAddressRef },
 	"mail_hostname":    func() string { return MailHostnameRef },
@@ -680,6 +689,17 @@ func (a App) WithPrivatePeer(allow bool) App { return a.withFlag(PrivatePeerRef,
 
 // WithTLSPinProbe returns a copy whose Compose file has every TLSPinProbeRef replaced by probe.
 func (a App) WithTLSPinProbe(probe bool) App { return a.withFlag(TLSPinProbeRef, probe) }
+
+// WithTLSCertFile returns a copy whose Compose file names TLSCertFile for every TLSCertFileRef
+// when copied, and "" otherwise.
+func (a App) WithTLSCertFile(copied bool) App {
+	v := ""
+	if copied {
+		v = TLSCertFile
+	}
+	a.Compose = bytes.ReplaceAll(a.Compose, []byte(TLSCertFileRef), []byte(v))
+	return a
+}
 
 func (a App) withFlag(ref string, allow bool) App {
 	v := strconv.FormatBool(allow)

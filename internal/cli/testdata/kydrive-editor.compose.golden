@@ -33,9 +33,11 @@ services:
       # Forwarded headers only from the edge's own address; none without the edge's egress_address.
       KY_TRUSTED_PROXIES: ""
       KY_BACKUP_ALLOW_PRIVATE_RECOVERY: "false"
-      # Device TLS pin rollover: true only behind Cloudflare, which has no certificate to mount.
-      # An edge serving its own certificate gets none yet (docs/edge.md, "TLS pin source").
+      # Device TLS pin rollover (docs/edge.md, "TLS pin source"): the probe only behind
+      # Cloudflare, which has no certificate to mount; behind the catalog NPM or the nginx edge,
+      # the public chain it serves, which apply copies into ./tls and KyYard's runner refreshes.
       KYDRIVE_TLS_PIN_PROBE: "false"
+      KYDRIVE_TLS_CERT_FILE: "/run/kyq-tls/fullchain.pem"
       KY_DB_DRIVER: sqlite
       KY_DATA_DIR: /data
       KY_BACKUP_DIR: /backups
@@ -46,7 +48,7 @@ services:
       KY_SCIM_TOKEN_FILE: /run/secrets/scim_token
       KYDRIVE_EDITOR_URL: "https://office.example.com"
       GOMEMLIMIT: 768MiB
-    volumes: ["./data:/data", "./backups:/backups"]
+    volumes: ["./data:/data", "./backups:/backups", "./tls:/run/kyq-tls:ro"]
     # start_interval checks every 2 s while it starts, so apply and restore see it healthy (and
     # restore replays KyIdentity's removals) seconds after it answers rather than after 30 s.
     healthcheck:

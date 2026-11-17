@@ -18,11 +18,34 @@ state directory, target data and target-held credentials; do not reset them as a
 
 - Refresh compatible dependency versions and lockfiles. Rebuild or install the updated application; no database, configuration, account or key migration is required.
 
+- Copied TLS renewals now require the exact source leaf to be served by every ready
+  managed edge pod, instead of treating CA-backdated `NotBefore` as a reload timestamp.
+  A valid old copy stays with a logged reason until the next refresh/apply can confirm
+  the replacement. Restore and refresh also verify when their copy is missing; only
+  a first deploy may bootstrap before route creation. **Upgrade impact:** no data or
+  credential changes; the probe uses the existing Kubernetes port-forward permission.
+
+- Restore reconstructs KyDrive's and KyPost's copied public TLS chain from the current
+  edge before starting restored services. A missing or invalid source leaves recovery
+  incomplete and the app stopped. The derived copy stays outside the backup, and an
+  unchanged follow-up apply skips it. **Upgrade impact:** restore now also needs access
+  to the route's edge target when the app uses a copied certificate.
+
+- KyDrive and KyPost pin TLS behind the catalog NPM and the nginx edge (owner amendment
+  2026-11-16). Apply copies the public chain the edge serves for their route (NPM's
+  `fullchain.pem`, read in its pod, or the nginx edge's TLS Secret's `tls.crt`; never a key) to
+  `<root>/<app>/tls/fullchain.pem` before the app starts, mounts it read-only and sets
+  `KYDRIVE_TLS_CERT_FILE` / `KYPOST_TLS_CERT_FILE`. The KyYard suite runner refreshes it daily,
+  writing only on change. The edge apps now deploy before the other apps. An NPM the operator
+  runs, and a `cloudflare` edge with `lan_dns`, still get no pin source
+  ([edge](docs/edge.md#tls-pin-source-kydrive-kypost)). **Upgrade impact:** the next `apply`
+  recreates each KyDrive and KyPost container once (with the probe change below, once in all);
+  KyPost's sessions end and people sign in again. No data changes.
 - KyDrive and KyPost pin TLS behind Cloudflare. Apply sets `KYDRIVE_TLS_PIN_PROBE` and
   `KYPOST_TLS_PIN_PROBE` to `true` only on a `cloudflare-direct` route or a `cloudflare` edge's
   external route without `lan_dns`, and to `false` everywhere else, so paired phones follow
   Cloudflare's certificate renewals (KyDrive-server #149, KyPost-Server #649; releases without
-  them ignore it). Behind NPM or the nginx edge no pin source is set yet
+  them ignore it). Behind the catalog's edges the certificate is copied instead (above)
   ([edge](docs/edge.md#tls-pin-source-kydrive-kypost)). **Upgrade impact:** the next `apply`
   recreates each KyDrive and KyPost container once; KyPost's sessions end and people sign in
   again. No data or other setting changes.

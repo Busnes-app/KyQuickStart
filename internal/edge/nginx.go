@@ -108,7 +108,7 @@ func (n *Nginx) claim(files map[string]string, e stack.Edge, r stack.Route) erro
 
 // certificate refuses a route whose TLS Secret is absent, expired or does not cover it.
 func (n *Nginx) certificate(ctx context.Context, r stack.Route) error {
-	name := tlsSecret(r)
+	name := TLSSecret(r)
 	b, err := n.c.TLSCertificate(ctx, name)
 	if err != nil {
 		return err
@@ -372,7 +372,7 @@ func (s nginxCert) certificate() map[string]any {
 	}
 }
 
-func (s nginxCert) ID() string { return s.e.Target + ".edge.cert." + s.c.Name }
+func (s nginxCert) ID() string { return CertStepID(s.e, s.c.Name) }
 func (s nginxCert) InputHash() string {
 	b, _ := json.Marshal([]any{"nginx", s.n.installation, s.issuer(), s.certificate()}) // references only
 	sum := sha256.Sum256(b)

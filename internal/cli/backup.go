@@ -404,8 +404,8 @@ func restore(ctx context.Context, state string, r restoreRequest, trust trustFla
 			s.targets = append(s.targets, identity)
 		}
 	}
-	// KyDNS's setup verification asks from NPM's pod, on its edge's cluster.
-	if e, _ := appRoute(s.plan, r.app); r.app == "kydns" && !slices.ContainsFunc(s.targets, func(x stack.Target) bool { return x.Name == e.Target }) {
+	// KyDNS verifies from its edge; a restored TLS copy also reads its edge.
+	if e, _ := appRoute(s.plan, r.app); (r.app == "kydns" || s.copiesTLSChain(r.app)) && !slices.ContainsFunc(s.targets, func(x stack.Target) bool { return x.Name == e.Target }) {
 		if k := slices.IndexFunc(s.allTargets, func(x stack.Target) bool { return x.Name == e.Target }); k >= 0 {
 			s.targets = append(s.targets, s.allTargets[k])
 		}
@@ -691,6 +691,15 @@ func (s *session) finishRestore(ctx context.Context, st dockerhost.Store, id, st
 		}
 	}
 	e := &engine.Engine{Dir: s.state + "/results", Out: s.o.Out, Redact: s.redact, Progress: s.o.Progress}
+	// The public certificate is derived from the current edge, not retained in
+	// the backup. Reconstruct it before any restored service starts.
+	if tls, err := s.tlsCertStep(name); err != nil {
+		return err
+	} else if tls != nil {
+		if err := e.Run(ctx, []engine.Step{tls}); err != nil {
+			return &suite.Error{Code: suite.StepFailed, Message: err.Error(), Err: err}
+		}
+	}
 	order := b.RestoreOrder
 	if len(b.Command) > 0 && len(order) == 0 {
 		order = []string{b.Service}
