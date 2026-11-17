@@ -839,8 +839,10 @@ calls and kind nodes must carry their own explicit bounds.
   its own root; `TestKubernetesNPMEdge` gives the Docker target a destination, asserts KyDrive's
   handover lines, backs KyDrive up cold and proves a restore of the running app is refused.
   `TestKubernetesRestore` runs the KyDrive drill on its own kind cluster: with KyIdentity at the
-  attested 0.4.3 release (a catalog copy), restore is refused before any restic call; after
-  `upgrade kyidentity` to the catalog's 0.4.7 it proves a disaster restore with the handover's
+  attested 0.4.3 release (a catalog copy with its historical upgrade metadata), restore is
+  refused before any restic call. The upgrade to the current KyIdentity must first take a
+  verified pre-upgrade claim copy; `TestIdentity043Catalog` validates the old fixture without
+  Docker. The drill then proves a disaster restore with the handover's
   password, the refusals, `--replace`, a refused `forget`, and no readmission of a person
   unassigned or deleted after the snapshot.
   Set `KYQ_TEST_IDENTITY_BINARY` to a local static KyIdentity build to additionally test real
