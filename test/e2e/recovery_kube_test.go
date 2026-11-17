@@ -5,6 +5,7 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -27,6 +28,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -114,7 +116,7 @@ func testClusterDNS(t *testing.T, ctx context.Context, cs kubernetes.Interface, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	hosts := strings.Join([]string{catalogIdentityHost, catalogRecoveryHost, catalogPulseHost, catalogDriveHost, catalogNotesHost, catalogCalendarHost, catalogDNSHost, catalogYardHost, "hello.example.test", "message.example.test", "home.example.test", "matrix.example.test", "auth.example.test", "chat.example.test", "rtc.example.test"}, " ")
+	hosts := strings.Join([]string{catalogIdentityHost, catalogRecoveryHost, catalogPulseHost, catalogDriveHost, catalogNotesHost, catalogCalendarHost, catalogPostHost, catalogDNSHost, catalogYardHost, "hello.example.test", "message.example.test", "home.example.test", "matrix.example.test", "auth.example.test", "chat.example.test", "rtc.example.test"}, " ")
 	lines := strings.Join(append([]string{nodeIP + " " + hosts}, extra...), "\n       ")
 	corefile := strings.Replace(dns.Data["Corefile"], "    kubernetes cluster.local", "    hosts {\n       "+lines+"\n       fallthrough\n    }\n    kubernetes cluster.local", 1)
 	if corefile == dns.Data["Corefile"] {
@@ -166,13 +168,21 @@ func testClusterDNS(t *testing.T, ctx context.Context, cs kubernetes.Interface, 
 // account. Test-only plumbing: testClusterDNS ran, and both apps' pods trust the edge's
 // throwaway certificate.
 func catalogSignOn(t *testing.T, ctx context.Context, cs kubernetes.Interface, kubeconfig string, certPEM []byte, nodeIP string) {
+	catalogSignOnWithBackup(t, ctx, cs, kubeconfig, certPEM, nodeIP, true, pulseWatched)
+}
+
+func catalogSignOnWithBackup(t *testing.T, ctx context.Context, cs kubernetes.Interface, kubeconfig string, certPEM []byte, nodeIP string, backup bool, watched []string) [32]byte {
+	var checkpoint [32]byte
 	t.Helper()
 	c, err := kube.Connect(kubeconfig, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	trustTestCA(t, ctx, cs, c, "kyrecovery", certPEM)
-	trustTestCA(t, ctx, cs, c, "kypulse", certPEM)
+	// Initial setup needs fixture CA trust; the candidate deploy hook already retains it.
+	if backup {
+		trustTestCA(t, ctx, cs, c, "kyrecovery", certPEM)
+		trustTestCA(t, ctx, cs, c, "kypulse", certPEM)
+	}
 
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(certPEM) {
@@ -277,11 +287,49 @@ func catalogSignOn(t *testing.T, ctx context.Context, cs kubernetes.Interface, k
 			}
 			t.Logf("owner admin signed in to %s through KyIdentity as %q, role %s", app.client, me.User.Name+me.User.Username, me.User.Role)
 			if app.client == "kypulse" {
-				pulseTargetsHealthy(t, ctx, send, app.origin)
-				pulseBacksUpByHand(t, ctx, c, jar, send)
+				pulseTargetsHealthy(t, ctx, send, app.origin, watched)
+				if backup {
+					pulseBacksUpByHand(t, ctx, c, jar, send)
+				}
+				if !backup {
+					u, _ := url.Parse(app.origin)
+					csrf := ""
+					for _, cookie := range jar.Cookies(u) {
+						if cookie.Name == "ky_csrf" {
+							csrf = cookie.Value
+						}
+					}
+					if csrf == "" {
+						t.Fatal("candidate Pulse set no CSRF cookie")
+					}
+					r, body := send("POST", app.origin+"/api/backup/deposit", nil, csrf)
+					var run struct {
+						Receipt *struct {
+							CapsuleID string `json:"capsule_id"`
+						} `json:"receipt"`
+					}
+					if r.StatusCode != 200 || json.Unmarshal(body, &run) != nil || run.Receipt == nil || run.Receipt.CapsuleID == "" {
+						t.Fatal("candidate Pulse could not deposit with its existing pairing")
+					}
+				}
+				r, body := send("GET", "https://"+catalogRecoveryURLHost+"/api/pairing/list", nil, "")
+				var pairings []struct {
+					Status        string `json:"status"`
+					ServiceName   string `json:"service_name"`
+					RecoveryKeyID string `json:"recovery_key_id"`
+				}
+				if r.StatusCode != 200 || json.Unmarshal(body, &pairings) != nil || len(pairings) != 1 || pairings[0].Status != "paired" || pairings[0].RecoveryKeyID == "" {
+					t.Fatal("Recovery lost its native pairing/key record")
+				}
+				data, err := json.Marshal(pairings)
+				if err != nil {
+					t.Fatal(err)
+				}
+				checkpoint = sha256.Sum256(data)
 			}
 		}
 	}
+	return checkpoint
 }
 
 // pulseBacksUpByHand proves #93 on the catalog's internal KyRecovery, whose URL resolves to
@@ -370,7 +418,10 @@ func pulseBacksUpByHand(t *testing.T, ctx context.Context, c *kube.Client, jar h
 	t.Logf("kyPulse paired by hand with the internal KyRecovery at %s and deposited capsule %s", recovery, run.Receipt.CapsuleID)
 }
 
-// trustTestCA restarts app with the edge's throwaway certificate as its only trusted root.
+// testCAPatch retains normal TLS verification with the fixture edge as its trusted root.
+const testCAPatch = `{"spec":{"template":{"spec":{"volumes":[{"name":"test-ca","configMap":{"name":"test-ca"}}],"containers":[{"name":"app","volumeMounts":[{"name":"test-ca","mountPath":"/test-ca","readOnly":true}],"env":[{"name":"SSL_CERT_FILE","value":"/test-ca/ca.pem"}]}]}}}}`
+
+// trustTestCA ensures the app trusts the fixture CA, restarting only when its pod template changes.
 func trustTestCA(t *testing.T, ctx context.Context, cs kubernetes.Interface, c *kube.Client, app string, certPEM []byte) {
 	t.Helper()
 	ns := "kyq-" + app
@@ -385,12 +436,13 @@ func trustTestCA(t *testing.T, ctx context.Context, cs kubernetes.Interface, c *
 	if err != nil {
 		t.Fatal(err)
 	}
-	spec := &dep.Spec.Template.Spec
-	spec.Volumes = append(spec.Volumes, corev1.Volume{Name: "test-ca", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "test-ca"}}}})
-	spec.Containers[0].VolumeMounts = append(spec.Containers[0].VolumeMounts, corev1.VolumeMount{Name: "test-ca", MountPath: "/test-ca", ReadOnly: true})
-	spec.Containers[0].Env = append(spec.Containers[0].Env, corev1.EnvVar{Name: "SSL_CERT_FILE", Value: "/test-ca/ca.pem"})
-	if _, err := cs.AppsV1().Deployments(ns).Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
+	// Merge keyed lists so restoring fixture trust after apply is repeatable.
+	updated, err := cs.AppsV1().Deployments(ns).Patch(ctx, "app", types.StrategicMergePatchType, []byte(testCAPatch), metav1.PatchOptions{})
+	if err != nil {
 		t.Fatal(err)
+	}
+	if updated.Generation == dep.Generation {
+		return
 	}
 	for deadline := time.Now().Add(3 * time.Minute); ; time.Sleep(2 * time.Second) {
 		_, pod, _, err := c.AppPod(ctx, app)

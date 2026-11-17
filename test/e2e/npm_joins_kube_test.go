@@ -5,18 +5,27 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"maps"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/cli"
+	"github.com/Busnes-app/kyquickstart/internal/engine"
 	"github.com/Busnes-app/kyquickstart/internal/kube"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
 	"go.yaml.in/yaml/v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -41,11 +50,44 @@ func testKubernetesEdgeJoins(t *testing.T, proxy string) {
 	}
 	cs := kubernetes.NewForConfigOrDie(cfg)
 	catalogDir := filepath.Join(work, "catalog")
+	previous := os.Getenv("KYQ_TEST_RELEASE_UPGRADE_MANIFESTS")
+	candidates := map[string][]byte{}
+	fromPrevious := func(app string) {
+		t.Helper()
+		if previous == "" || !strings.HasPrefix(app, "ky") {
+			return
+		}
+		path := filepath.Join(catalogDir, app, "manifest.yaml")
+		current, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		old, err := os.ReadFile(filepath.Join(previous, app, "manifest.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Compose plumbing is already relay-disabled. Only replace/patch the
+		// historical manifest; relaysOff deliberately rejects a double patch.
+		for _, patch := range relayPatches[app] {
+			if patch.file != "manifest.yaml" {
+				continue
+			}
+			if strings.Count(string(old), patch.from) != 1 {
+				t.Fatal("previous relay manifest anchor changed", app)
+			}
+			old = []byte(strings.Replace(string(old), patch.from, patch.to, 1))
+		}
+		candidates[app] = current
+		if err := os.WriteFile(path, old, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, src := range []string{"../../internal/catalog/testdata/apps/hello", "../../internal/catalog/apps/" + proxy, "../../internal/catalog/apps/kyidentity", "../../internal/catalog/apps/kyrecovery", "../../internal/catalog/apps/kypulse", "../../internal/catalog/apps/kynotes", "../../internal/catalog/apps/kycalendar"} {
 		if err := os.CopyFS(filepath.Join(catalogDir, filepath.Base(src)), os.DirFS(src)); err != nil {
 			t.Fatal(err)
 		}
 		relaysOff(t, filepath.Join(catalogDir, filepath.Base(src)))
+		fromPrevious(filepath.Base(src))
 	}
 	plan := filepath.Join(state, "stack.yaml")
 	os.WriteFile(plan, []byte("version: 1\ntargets:\n  - name: k8s\n    kubeconfig: "+kc+"\n    storage_class: standard\napps:\n  - name: "+proxy+"\n    target: k8s\n  - name: hello\n    target: k8s\n"), 0o600)
@@ -98,6 +140,7 @@ func testKubernetesEdgeJoins(t *testing.T, proxy string) {
 	loadCatalogApp(t, name, cs, "kyrecovery")
 	loadCatalogApp(t, name, cs, "kypulse")
 	drive := startDriveTarget(t, work, catalogDir, nodeIP, certPEM)
+	fromPrevious("kydrive")
 	testClusterDNS(t, ctx, cs, nodeIP)
 	allow := []string{ip(client) + "/32", mustNode(t, ctx, cs, node).Spec.PodCIDR}
 	for _, gw := range strings.Fields(docker(t, "network", "inspect", "kind", "--format", "{{range .IPAM.Config}}{{.Gateway}} {{end}}")) {
@@ -203,6 +246,7 @@ func testKubernetesEdgeJoins(t *testing.T, proxy string) {
 	// The host also holds the configuration volume of a KyPost from before #151, which apply
 	// copies into the bind directory once.
 	postPort := preparePost(t, work, catalogDir, drive)
+	fromPrevious("kypost")
 	seedPostVolume(t)
 	st, _ = stack.Load(plan)
 	addCatalogPost(st, certID, drive, postPort)
@@ -220,6 +264,135 @@ func testKubernetesEdgeJoins(t *testing.T, proxy string) {
 		if status(out, id) != "skipped" {
 			t.Errorf("rerun: %s = %q", id, status(out, id))
 		}
+	}
+
+	if previous != "" {
+		// Native setup has seeded seven real old-image databases with the owner,
+		// OIDC clients, SCIM and receipts. Also seed a real Recovery ceremony,
+		// Pulse pairing and deposit, then preserve them across actual upgrades.
+		watched := []string{"hello", "kycalendar", "kydrive", "kyidentity", "kynotes", "kypost", "kyrecovery"}
+		recoveryPairing := catalogSignOnWithBackup(t, ctx, cs, kc, certPEM, nodeIP, true, watched)
+		// Later apply calls may replace this test-only mount. Repeating the ensure
+		// must not append duplicate volumes, mounts or environment values.
+		trustTestCA(t, ctx, cs, connected, "kycalendar", certPEM)
+		trustTestCA(t, ctx, cs, connected, "kycalendar", certPEM)
+		verifyCalendar := seedCalendarUpgrade(t, ctx, calendarSignOn(t, ctx, connected, certPEM, nodeIP))
+		fingerprints := func() map[string][32]byte {
+			t.Helper()
+			out := map[string][32]byte{}
+			for app := range candidates {
+				if app == "kydrive" || app == "kypost" {
+					continue
+				}
+				list, err := cs.CoreV1().Secrets("kyq-"+app).List(ctx, metav1.ListOptions{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, secret := range list.Items {
+					data, err := json.Marshal(secret.Data)
+					if err != nil {
+						t.Fatal(err)
+					}
+					out[app+"/"+secret.Name] = sha256.Sum256(data)
+				}
+			}
+			return out
+		}
+		transport := driveTransport(t, certPEM, nodeIP)
+		client := &http.Client{Transport: transport, Timeout: 30 * time.Second}
+		jwks := func() [32]byte {
+			t.Helper()
+			r, body := get(t, ctx, client, "https://"+catalogIdentityURLHost+"/.well-known/openid-configuration")
+			var discovery struct {
+				JWKS string `json:"jwks_uri"`
+			}
+			if r.StatusCode != 200 || json.Unmarshal(body, &discovery) != nil {
+				t.Fatal("Identity discovery unavailable during upgrade qualification")
+			}
+			u, err := url.Parse(discovery.JWKS)
+			if err != nil || u.Scheme != "https" || u.Host != catalogIdentityURLHost {
+				t.Fatal("Identity JWKS left the fixture origin")
+			}
+			r, body = get(t, ctx, client, u.String())
+			var keys any
+			if r.StatusCode != 200 || json.Unmarshal(body, &keys) != nil {
+				t.Fatal("Identity JWKS unavailable during upgrade qualification")
+			}
+			canonical, err := json.Marshal(keys)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return sha256.Sum256(canonical)
+		}
+		dockerCredentials := func() string {
+			return docker(t, "exec", drive.name, "sha256sum", drive.root+"/kydrive/secrets/session_secret", drive.root+"/kydrive/secrets/scim_token") +
+				docker(t, "exec", postContainer, "sha256sum", postSetupDir+"/client.secret")
+		}
+		before, signingKeys, dockerKeys := fingerprints(), jwks(), dockerCredentials()
+		oldCatalog, err := catalog.Load(os.DirFS(catalogDir))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for app, manifest := range candidates {
+			if err := os.WriteFile(filepath.Join(catalogDir, app, "manifest.yaml"), manifest, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		newCatalog, err := catalog.Load(os.DirFS(catalogDir))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, app := range []string{"kyidentity", "kyrecovery", "kypulse", "kydrive", "kynotes", "kycalendar", "kypost"} {
+			if !catalog.VersionAtLeast(newCatalog[app].Version, oldCatalog[app].Version) || newCatalog[app].Version == oldCatalog[app].Version {
+				t.Fatal("release fixture does not upgrade", app)
+			}
+			migrates := newCatalog[app].Upgrade.Migrates(oldCatalog[app].Version)
+			args := []string{"upgrade", app, "--state", state}
+			if !migrates {
+				args = append(args, "--acknowledge-no-backup")
+			}
+			var upgrade bytes.Buffer
+			err := cli.Run(ctx, append(args, trust...), cli.Options{
+				Catalog: os.DirFS(catalogDir), ReleaseSet: "e2e", Out: &upgrade,
+				Progress: func(event engine.Event) {
+					if event.ID != app+".deploy" || event.Status != "ok" || app == "kydrive" || app == "kypost" {
+						return
+					}
+					// Keep fixture CA trust when the new pod starts, before health/setup
+					// can need its issuer. The ordinary installer never writes this mount.
+					patch := []byte(testCAPatch)
+					if _, err := cs.AppsV1().Deployments("kyq-"+app).Patch(ctx, "app", types.StrategicMergePatchType, patch, metav1.PatchOptions{}); err != nil {
+						t.Fatal(err)
+					}
+				},
+			})
+			out := upgrade.String()
+			t.Logf("release upgrade %s: %v\n%s", app, err, out)
+			outputs = append(outputs, out)
+			if err != nil || status(out, app+".deploy") != "ok" || status(out, app+".health") != "ok" {
+				t.Fatalf("real release upgrade %s: %v", app, err)
+			}
+			if migrates && status(out, app+".pre-upgrade-backup") != "ok" {
+				t.Fatal("release migration did not verify its required pre-upgrade backup", app)
+			}
+			if !migrates && !strings.Contains(out, "operator acknowledged no pre-upgrade backup") {
+				t.Fatal("release upgrade did not record the fixture operator's acknowledgement", app)
+			}
+			t.Logf("release upgrade %s %s -> %s passed", app, oldCatalog[app].Version, newCatalog[app].Version)
+		}
+		if after := fingerprints(); !maps.Equal(before, after) || jwks() != signingKeys || dockerCredentials() != dockerKeys {
+			t.Fatal("release upgrade changed target credential material or Identity signing keys")
+		}
+		// The candidate must use the old identities and native configuration. Do
+		// not rerun the write-once Recovery ceremony when checking sign-in again.
+		if after := catalogSignOnWithBackup(t, ctx, cs, kc, certPEM, nodeIP, false, watched); after != recoveryPairing {
+			t.Fatal("Recovery pairing/key binding changed across release upgrades")
+		}
+		t.Logf("preserved %d Kubernetes Secret payloads, Docker client/session keys, Identity JWKS and Recovery pairing; candidate Pulse deposited with its prior pairing", len(before))
+		driveSignOn(t, ctx, kc, certPEM, nodeIP, driveSecrets[1])
+		notesSignOn(t, ctx, connected, certPEM, nodeIP)
+		verifyCalendar(calendarSignOn(t, ctx, connected, certPEM, nodeIP))
+		postSignOn(t, ctx, connected, certPEM, nodeIP)
 	}
 
 	// KyDNS joins on the Docker target by setup amendment too, its admin UI behind the edge and
