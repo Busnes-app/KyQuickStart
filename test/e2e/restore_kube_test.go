@@ -91,6 +91,33 @@ func TestKubernetesRestore(t *testing.T) {
 	}
 
 	drive := startDriveTarget(t, work, catalogDir, nodeIP, certPEM)
+	// Optional release qualification starts Drive from an operator-supplied, attested
+	// previous manifest. Keep the current transport plumbing and the candidate manifest;
+	// the later upgrade runs against the same real file, accounts and keys.
+	var driveCandidate []byte
+	if previous := os.Getenv("KYQ_TEST_DRIVE_UPGRADE_MANIFEST"); previous != "" {
+		manifest := filepath.Join(catalogDir, "kydrive", "manifest.yaml")
+		driveCandidate, err = os.ReadFile(manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		old, err := os.ReadFile(previous)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(manifest, old, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cat, err := catalog.Load(os.DirFS(catalogDir))
+		if err != nil {
+			t.Fatal(err)
+		}
+		candidateVersion := identityVersion(t, driveCandidate)
+		if catalog.VersionAtLeast(cat["kydrive"].Version, candidateVersion) {
+			t.Fatal("Drive upgrade fixture must precede the candidate version")
+		}
+		t.Logf("Drive release drill starts at %s, candidate %s", cat["kydrive"].Version, candidateVersion)
+	}
 	st, err := stack.Load(plan)
 	if err != nil {
 		t.Fatal(err)
@@ -225,7 +252,22 @@ func TestKubernetesRestore(t *testing.T) {
 			t.Fatalf("%s: SCIM users %+v, recorded %+v", label, got, recorded)
 		}
 		owners()
+		if driveCandidate != nil {
+			owner := driveLogin(t, ctx, transport, "prepared-admin", ownerPassword(t, ctx, connected, "admin.password"), true)
+			if response, _ := get(t, ctx, owner, "https://"+catalogDriveURLHost+"/api/drive/status"); response.StatusCode != http.StatusOK {
+				t.Fatalf("%s: dedicated administrator cannot reach the administration API", label)
+			}
+			response, body := get(t, ctx, owner, "https://"+catalogDriveURLHost+"/api/drive/files/"+fileID+"/download")
+			if response.StatusCode != http.StatusForbidden || !bytes.Contains(body, []byte("Use your everyday identity")) {
+				t.Fatalf("%s: dedicated administrator was not refused ordinary file access", label)
+			}
+		}
 		everyday := driveLogin(t, ctx, transport, "prepared-user", ownerPassword(t, ctx, connected, "everyday.password"), false)
+		if driveCandidate != nil {
+			if response, _ := get(t, ctx, everyday, "https://"+catalogDriveURLHost+"/api/drive/status"); response.StatusCode != http.StatusForbidden {
+				t.Fatalf("%s: everyday identity reached the administration API", label)
+			}
+		}
 		if got := driveDownload(t, ctx, everyday, fileID); !bytes.Equal(got, f) {
 			t.Fatalf("%s: F differs after the restore (%d bytes)", label, len(got))
 		}
@@ -270,6 +312,77 @@ func TestKubernetesRestore(t *testing.T) {
 		t.Fatalf("moved aside: %s", got)
 	}
 	restored("replace")
+
+	if driveCandidate != nil {
+		// The real candidate starts on existing data but its injected Docker health
+		// probe never passes. This models deployment failure after startup/migration,
+		// not a fake image or a process that exits before opening its database.
+		dir := filepath.Join(catalogDir, "kydrive")
+		tmpl := filepath.Join(dir, "compose.yaml.tmpl")
+		compose, err := os.ReadFile(tmpl)
+		if err != nil {
+			t.Fatal(err)
+		}
+		probe := `test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]`
+		if strings.Count(string(compose), probe) != 1 || bytes.Count(driveCandidate, []byte("timeout_seconds: 300")) != 1 {
+			t.Fatal("Drive health fixture changed; update the bounded failure injection")
+		}
+		faulty := strings.Replace(string(compose), probe, `test: ["CMD", "/bin/sh", "-c", "exit 1"]`, 1)
+		if err := os.WriteFile(tmpl, []byte(faulty), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "manifest.yaml"), bytes.Replace(driveCandidate, []byte("timeout_seconds: 300"), []byte("timeout_seconds: 12"), 1), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		before := snapshots(t, b.dest, "kydrive", b.pw)
+		keyFiles := []string{drive.root + "/kydrive/secrets/session_secret", drive.root + "/kydrive/secrets/scim_token", b.pw}
+		keys := docker(t, append([]string{"exec", drive.name, "sha256sum"}, keyFiles...)...)
+		o, err := kyq(t, ctx, state, catalogDir, trust, "", "upgrade", "kydrive")
+		outputs = append(outputs, o)
+		if err == nil || status(o, "kydrive.pre-upgrade-backup") != "ok" || status(o, "kydrive.deploy") != "ok" || status(o, "kydrive.health") != "failed" {
+			t.Fatalf("expected candidate deployment health failure after verified backup: %v", err)
+		}
+		cat, err := catalog.Load(os.DirFS(catalogDir))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if image := docker(t, "inspect", driveContainer(t), "--format", "{{.Config.Image}}"); image != cat["kydrive"].Images["kydrive"] {
+			t.Fatal("failed deployment did not run the real candidate image")
+		}
+		if response, _ := get(t, ctx, &http.Client{Transport: transport, Timeout: 30 * time.Second}, "https://"+catalogDriveURLHost+"/healthz"); response.StatusCode != http.StatusOK {
+			t.Fatal("candidate did not answer its native health endpoint before recovery")
+		}
+		// Recover the snapshot taken by the upgrade itself, not an unrelated manual
+		// backup. Restic verification and the printed receipt must name that snapshot.
+		var recovery string
+		for _, snap := range snapshots(t, b.dest, "kydrive", b.pw) {
+			if !slices.ContainsFunc(before, func(old resticSnapshot) bool { return old.ID == snap.ID }) {
+				if recovery != "" {
+					t.Fatal("upgrade created more than one snapshot")
+				}
+				recovery = snap.ID
+			}
+		}
+		if recovery == "" || !strings.Contains(o, "snapshot "+recovery[:8]) || !strings.Contains(o, "restic check passed") {
+			t.Fatal("upgrade did not retain its verified recovery snapshot")
+		}
+		if checked, err := restic(b.dest, "kydrive", b.pw, "check"); err != nil {
+			t.Fatalf("pre-upgrade repository check: %v\n%s", err, checked)
+		}
+		docker(t, "compose", "-p", "kyq-kydrive", "stop")
+		if err := os.WriteFile(tmpl, compose, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "manifest.yaml"), driveCandidate, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		restore("failed candidate upgrade", recovery, "kydrive\n", "--replace")
+		restored("failed-upgrade")
+		if got := docker(t, append([]string{"exec", drive.name, "sha256sum"}, keyFiles...)...); got != keys {
+			t.Fatal("failed-upgrade recovery changed target-held credentials")
+		}
+		t.Log("real previous Drive data recovered into candidate after injected deployment health failure; file bytes, owner accounts, connector and credential hashes verified")
+	}
 
 	// AC15: L and D are assigned in KyIdentity and provisioned in KyDrive by its connector; L
 	// signs in. Snapshot S is taken while both are active.

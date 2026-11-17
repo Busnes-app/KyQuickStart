@@ -848,6 +848,13 @@ calls and kind nodes must carry their own explicit bounds.
   Docker. The drill then proves a disaster restore with the handover's
   password, the refusals, `--replace`, a refused `forget`, and no readmission of a person
   unassigned or deleted after the snapshot.
+  With `KYQ_TEST_DRIVE_UPGRADE_MANIFEST` pointing to an independently attested previous
+  KyDrive catalog manifest, that drill starts the previous image, injects a bounded failing
+  Docker health probe into the candidate upgrade, and restores the upgrade's own verified
+  snapshot into the candidate. It checks exact file bytes, owner accounts, SCIM delivery,
+  credential hashes, reciprocal administrator/content authorization and subsequent removal
+  replay. Current test transport plumbing is retained;
+  this opt-in case proves recovery from an induced deployment failure, not every schema failure.
   Set `KYQ_TEST_IDENTITY_BINARY` to a local static KyIdentity build to additionally test real
   container-local identity setup over SSH and kind, including target-held preparation,
   inspection/resume and changed-intent refusal; SSH additionally refuses lost credentials.
