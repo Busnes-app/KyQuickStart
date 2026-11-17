@@ -131,6 +131,12 @@ chown kyq `+base)
 	if err := os.CopyFS(dir, os.DirFS("../../internal/catalog/apps/kymessage")); err != nil {
 		t.Fatal(err)
 	}
+	patchMessageTransport(t, dir, ca, gateway)
+	return messageTarget{name: name, port: port, root: base + "/root", fp: fp, forward: gateway, ports: ports, relay: relay}
+}
+
+func patchMessageTransport(t *testing.T, dir, ca, gateway string) {
+	t.Helper()
 	extra := "    extra_hosts: [\"" + catalogIdentityHost + ":" + gateway + "\"]\n"
 	patch(t, filepath.Join(dir, "compose.yaml.tmpl"), [][2]string{
 		{`    ports: ["{{forward}}:8080"]` + "\n", `    ports: ["{{forward}}:8080"]` + "\n" + extra},
@@ -139,7 +145,6 @@ chown kyq `+base)
 		{`    ports: ["{{forward "auth"}}:8080"]` + "\n", `    ports: ["{{forward "auth"}}:8080"]` + "\n" + extra + "    environment: {SSL_CERT_FILE: /test-ca/ca.pem}\n"},
 		{"    volumes: [./matrix/mas/config.yaml:/config/config.yaml:ro]\n", "    volumes: [./matrix/mas/config.yaml:/config/config.yaml:ro, \"" + ca + ":/test-ca/ca.pem:ro\"]\n"},
 	})
-	return messageTarget{name: name, port: port, root: base + "/root", fp: fp, forward: gateway, ports: ports, relay: relay}
 }
 
 // wildcardListeners is the target's TCP and UDP sockets listening on every address, from
@@ -246,6 +251,7 @@ func TestKubernetesKyMessage(t *testing.T) {
 	certID, certPEM := uploadCertificate(t, ctx, connected.ServiceDialer("kyq-npm", "app", 81), string(sec.Data["npm_token"]))
 	nodeIP := docker(t, "inspect", node, "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}")
 	msg := startMessageTarget(t, work, catalogDir, nodeIP, certPEM)
+	upgradeMessage := prepareMessageUpgrade(t, catalogDir, work, msg)
 	st, err := stack.Load(plan)
 	if err != nil {
 		t.Fatal(err)
@@ -486,6 +492,9 @@ func TestKubernetesKyMessage(t *testing.T) {
 	sampler := sampleMemory()
 	chatStart := time.Now()
 	chat.encryptedRoom()
+	if upgradeMessage != nil {
+		upgradeMessage(chat, messageOps{work: work, state: state, catalogDir: catalogDir, plan: plan, trust: trust, apply: apply, outputs: &outputs, checks: checks})
+	}
 	chat.offboarding(chat.calls())
 	chat.unassign()
 	chat.earlyRemoval()

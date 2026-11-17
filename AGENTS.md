@@ -887,6 +887,16 @@ calls and kind nodes must carry their own explicit bounds.
   This verifies seeded native configuration and backup-pairing data, not every product's
   ordinary content migration, offboarding or full restore.
 
+- With `KYQ_TEST_MESSAGE_UPGRADE_MANIFEST` naming an independently attested historical
+  KyMessages manifest and its sibling Compose template, `TestKubernetesKyMessage` starts
+  the complete old catalog entry with explicit fixture transport/CA plumbing, exchanges
+  encrypted messages, then restores the candidate entry for a CLI data-migration upgrade
+  with its own verified pre-upgrade snapshot. It checks selected session/directory/OIDC/
+  provider/signing keys, original device-token renewal, server-fetched encrypted history
+  and a new encrypted event. Auxiliary images stay unchanged. The existing candidate
+  offboarding/restore drill follows against a separate backup destination; this is not an
+  upstream Matrix-version migration.
+
 ## Child DOX Index
 
 - `docs/AGENTS.md` — mdBook manual, chapter ownership and documentation checks.

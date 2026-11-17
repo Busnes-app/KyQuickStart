@@ -576,7 +576,7 @@
     "kubernetes_secret_payload_count": 0
   },
   "coverage_audit": {
-    "checked_at": "2026-11-17T20:38:22.473659+00:00",
+    "checked_at": "2026-11-17T21:09:30.456276+00:00",
     "status": "in progress; not release qualified",
     "products": {
       "kyidentity": [
@@ -612,8 +612,9 @@
         "Successful edge/admin sign-in unproven on Major; zone/config upgrade/restore/offboarding untested"
       ],
       "kymessage": [
-        "Executed encrypted chat/offboarding/history restore and dedicated-admin KyIdentity/MAS admission denial (MAS no account)",
-        "Previous-catalog upgrade untested; direct downstream authorization with otherwise-valid admin token not established"
+        "Published previous0.6.0.1\u21920.6.1 primary upgrade with own verified pre-upgrade snapshot, selected session/directory/OIDC/provider/signing keys and original device sessions passed",
+        "Original devices fetched/decrypted old raw encrypted event and new event; subsequent candidate offboarding and candidate snapshot/history restore passed",
+        "Auxiliary Matrix image versions unchanged; old pre-upgrade snapshot itself not restored; direct downstream authorization with otherwise-valid dedicated-admin token unproven"
       ],
       "kyyard": [
         "Admin/everyday gate, runner ownership and credential/session persistence passed",
@@ -741,7 +742,7 @@
       "seconds": 4.23
     },
     "prerequisite": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-app-content-v3/full-qualification.result.json",
-    "status": "V1 fresh CI passed162.365s, integration failed157.190s pre-chat/upgrade on current template guest bind; V2 isolated full historical-entry correction fresh checks active; no upgrade qualification",
+    "status": "PASS: affected7.045s/fresh fullCI162.118s; real integration511.402s/controller680.688s, including subsequent candidate offboarding/history restore",
     "dox": "Root optional verification contract updated; no child scope/index changes; no runtime or pin changes",
     "started_by_continuation_at": "2026-11-17T20:42:48.461543+00:00",
     "supersedes": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-message-upgrade-v1",
@@ -802,7 +803,32 @@
         "exit_code": 1,
         "host": "major"
       }
-    }
+    },
+    "results": {
+      "affected-compile-relay": {
+        "exit_code": 0,
+        "duration_seconds": 7.045,
+        "result_file": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-message-upgrade-v2/affected-compile-relay.result.json"
+      },
+      "ci": {
+        "exit_code": 0,
+        "duration_seconds": 162.118,
+        "result_file": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-message-upgrade-v2/ci.result.json"
+      },
+      "real-message-upgrade": {
+        "exit_code": 0,
+        "duration_seconds": 511.402,
+        "result_file": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-message-upgrade-v2/real-message-upgrade.result.json"
+      },
+      "full-qualification": {
+        "exit_code": 0,
+        "duration_seconds": 680.688,
+        "result_file": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-message-upgrade-v2/full-qualification.result.json"
+      }
+    },
+    "completed_at": "2026-11-17T21:03:48.525687+00:00",
+    "publication_tree_equivalence": "20261117-major-message-upgrade-v2/publish-tree-equivalence.result.json:344 non-doc files equal; new report metadata only; no fresh execution claimed on publication ancestry",
+    "scope_limit": "Primary console migration with unchanged upstream Matrix image versions; selected key/session/history and subsequent candidate restore/offboarding, not restore of old pre-upgrade snapshot or all meeting/guest features"
   },
   "notes_content_feasibility": {
     "evidence": "20261117-major-notes-content-audit-2029Z/notes-content-feasibility.json",
