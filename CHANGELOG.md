@@ -14,6 +14,8 @@ state directory, target data and target-held credentials; do not reset them as a
 
 ## Unreleased
 
+- Prepare application version `0.6.1` (from `0.6.0`) for the compatible dependency refresh. Rebuild or install the updated application; this version bump requires no additional data, account, key or configuration migration.
+
 - Refresh compatible dependency versions and lockfiles. Rebuild or install the updated application; no database, configuration, account or key migration is required.
 
 - KyDrive and KyPost pin TLS behind Cloudflare. Apply sets `KYDRIVE_TLS_PIN_PROBE` and
