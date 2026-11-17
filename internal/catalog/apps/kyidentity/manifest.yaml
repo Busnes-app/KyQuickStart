@@ -1,7 +1,7 @@
 name: kyidentity
 description: KyIdentity, the suite's identity provider (OIDC, MFA, SCIM); every other app signs in through it
 category: ky
-version: 0.6.0.1
+version: 0.6.0.2
 # No status_path yet: 0.4.7 serves the suite proxy contract at /api/installer/network
 # (KyIdentity-server#141), but reports proxyHeadersTrusted only for a peer in TRUSTED_PROXY_CIDRS,
 # which only its Compose file sets (to the edge's address), so verify-edge would fail its
@@ -11,9 +11,9 @@ version: 0.6.0.1
 # resync-system (its resync replays removals, which kyquickstart restore requires),
 # installer-verified-email (MAS's chat sign-in needs it) and mail-relay. 0.4.6 sends a removal
 # made before the person's first delivery instead of dropping it; 0.4.7 never gives up on one.
-# catalog-follow: v0.6.0.1 attested by Busnes-app/KyIdentity-server release-image.yml@refs/tags/v0.6.0.1
+# catalog-follow: v0.6.0.2 attested by Busnes-app/KyIdentity-server release-image.yml@refs/tags/v0.6.0.2
 images:
-  kyidentity: ghcr.io/busnes-app/kyidentity-server:0.6.0.1@sha256:096da2158984cdb1c195841a9f7d1c9b26b50ecd06753e9f4382054250876cb6
+  kyidentity: ghcr.io/busnes-app/kyidentity-server:0.6.0.2@sha256:622f9c4d306c499d2964a52ee4c519cf187a91c7fe83bd2a6ce84b9d652e1f51
   # Kubernetes, with replicas and no database_secret in the plan: the Postgres they share.
   postgres: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
   # The same, with database_instances in the plan: the CloudNativePG community's Postgres 17
