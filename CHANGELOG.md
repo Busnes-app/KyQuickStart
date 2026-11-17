@@ -14,6 +14,14 @@ state directory, target data and target-held credentials; do not reset them as a
 
 ## Unreleased
 
+- KyDrive and KyPost pin TLS behind Cloudflare. Apply sets `KYDRIVE_TLS_PIN_PROBE` and
+  `KYPOST_TLS_PIN_PROBE` to `true` only on a `cloudflare-direct` route or a `cloudflare` edge's
+  external route without `lan_dns`, and to `false` everywhere else, so paired phones follow
+  Cloudflare's certificate renewals (KyDrive-server #149, KyPost-Server #649; releases without
+  them ignore it). Behind NPM or the nginx edge no pin source is set yet
+  ([edge](docs/edge.md#tls-pin-source-kydrive-kypost)). **Upgrade impact:** the next `apply`
+  recreates each KyDrive and KyPost container once; KyPost's sessions end and people sign in
+  again. No data or other setting changes.
 - Releases also carry `kyquickstart-<tag>.intoto.jsonl`, the Sigstore bundle of the binaries'
   build-provenance attestation, for `gh attestation verify --bundle`. `golang.org/x/crypto` is
   v0.59.0. **Upgrade impact:** none.

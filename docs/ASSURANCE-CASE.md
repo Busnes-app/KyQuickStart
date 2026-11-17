@@ -127,6 +127,10 @@ operator's job ([README](../README.md#targets)).
 - **SSH enforcement has a specific scope.** It preserves old keys/pins but refuses their use
   when they fail policy. It does not qualify Kubernetes TLS, external authentication plugins,
   installed products or KyQuickStart-AI's separate OpenSSH transport.
+- **Behind Cloudflare, KyDrive's and KyPost's TLS pin comes from a probe.** Apply sets their
+  probe only where Cloudflare terminates the clients' TLS, so there is no certificate to mount;
+  the probe trusts the app host's outbound path and CA store (`docs/edge.md`, "TLS pin
+  source"). Behind an edge with its own certificate no pin source is set yet.
 - **Redaction covers registered secrets only.** A secret the installer never read back, or one
   shorter than 8 characters, is not redacted.
 - **A replicated KyIdentity's keys cross the workstation, and its bundled database link is

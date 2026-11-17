@@ -643,8 +643,10 @@ edge compatibility: `docs/redirect.md`.
   `forward_host:forward_port`, an IP of the Docker target, where the app publishes its port),
   `{{forward_addr}}` (that IP alone), `{{hostname}}` (the route's hostname without a client
   port), `{{edge_address}}` (the route's edge's `egress_address`; a plan whose edge has none
-  is refused before connecting) and `{{edge_prefix}}` (that address as a `/32` or `/128`, empty
-  when the edge has none). An app whose manifest declares `routes` (KyMessages, Docker only)
+  is refused before connecting), `{{edge_prefix}}` (that address as a `/32` or `/128`, empty
+  when the edge has none) and `{{tls_pin_probe}}` (`true` only where Cloudflare alone terminates
+  the route's client TLS: `cloudflare-direct`, or a `cloudflare` edge's external route without
+  `lan_dns`; KyDrive's and KyPost's pin source, `docs/edge.md`, "TLS pin source"). An app whose manifest declares `routes` (KyMessages, Docker only)
   takes one plan route per role, the primary without `role`, all on one `forward_host` (one LAN
   IPv4 of the target: no wildcard, loopback, link-local, multicast, IPv6 or name) and one
   `forward_port` per service port, and writes `{{host "<role>"}}`,

@@ -47,6 +47,10 @@ services:
       # Forwarded headers only from the edge's own address; none without the edge's egress_address.
       TRUSTED_PROXY_CIDRS: "{{edge_prefix}}"
       KYPOST_BACKUP_ALLOW_PRIVATE_RECOVERY: "{{private_recovery}}"
+      # Pairing-link pin and TLS pin rollover: true only behind Cloudflare, which has no
+      # certificate to mount. An edge serving its own certificate gets none yet (docs/edge.md,
+      # "TLS pin source").
+      KYPOST_TLS_PIN_PROBE: "{{tls_pin_probe}}"
       # KyPost pairs with a catalog KyCalendar through KyIdentity's suite directory; true only
       # when the plan routes KyCalendar to a private address.
       KYPOST_KYCALENDAR_ALLOW_PRIVATE: "{{private_peer}}"

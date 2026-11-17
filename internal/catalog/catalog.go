@@ -350,6 +350,11 @@ const PrivateRecoveryRef = "{{private_recovery}}"
 // It may appear in a Compose template and as a whole kubernetes.env value.
 const PrivatePeerRef = "{{private_peer}}"
 
+// TLSPinProbeRef stands for "true" when Cloudflare alone terminates the TLS clients see for the
+// app's route, so there is no certificate to mount and the product signs the TLS pin a probe of
+// its own URL reaches, and "false" otherwise. It may appear in a Compose template.
+const TLSPinProbeRef = "{{tls_pin_probe}}"
+
 // PinnedImagePrefix starts a kubernetes.env value "{{pinned_image:<key>}}": the manifest's
 // image <key> as repository@sha256:<digest>, without its tag. KyYard needs that form for the
 // agents it enrolls, and cannot find it itself without a Docker socket.
@@ -409,6 +414,7 @@ var routeFuncs = template.FuncMap{
 	"media_address":    func() string { return MediaAddressRef },
 	"private_recovery": func() string { return PrivateRecoveryRef },
 	"private_peer":     func() string { return PrivatePeerRef },
+	"tls_pin_probe":    func() string { return TLSPinProbeRef },
 	"pinned_image":     PinnedImage,
 	"smtp_address":     func() string { return SMTPAddressRef },
 	"mail_hostname":    func() string { return MailHostnameRef },
@@ -671,6 +677,9 @@ func (a App) WithPrivateRecovery(allow bool) App { return a.withFlag(PrivateReco
 // WithPrivatePeer returns a copy whose Compose file and Kubernetes env have every
 // PrivatePeerRef replaced by allow.
 func (a App) WithPrivatePeer(allow bool) App { return a.withFlag(PrivatePeerRef, allow) }
+
+// WithTLSPinProbe returns a copy whose Compose file has every TLSPinProbeRef replaced by probe.
+func (a App) WithTLSPinProbe(probe bool) App { return a.withFlag(TLSPinProbeRef, probe) }
 
 func (a App) withFlag(ref string, allow bool) App {
 	v := strconv.FormatBool(allow)

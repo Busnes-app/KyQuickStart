@@ -870,6 +870,39 @@ expressions answered with 404 before `location /`. A role's host carries the rol
 foreign host holding any of the hostnames, the server-name apex included, is refused, never
 adopted.
 
+## TLS pin source (KyDrive, KyPost)
+
+Paired phones pin the TLS key their server's URL serves. When the certificate renews, KyDrive
+(device TLS pin rollover) and KyPost (the pin in pairing links, and rollover) sign the new pin
+only from a source the operator vouches for: a mounted copy of the certificate the front serves
+(`KYDRIVE_TLS_CERT_FILE`, `KYPOST_TLS_CERT_FILE`), or a probe of their own URL
+(`KYDRIVE_TLS_PIN_PROBE`, `KYPOST_TLS_PIN_PROBE`). Apply sets the probe from the app's route:
+
+| Route | Who terminates the clients' TLS | Probe | Certificate file |
+| --- | --- | --- | --- |
+| `cloudflare-direct` | Cloudflare | `true` | none to mount |
+| `cloudflare`, external, edge without `lan_dns` | Cloudflare | `true` | none to mount |
+| `cloudflare`, external, edge with `lan_dns` | Cloudflare outside, the edge on the LAN | `false` | not delivered yet |
+| `cloudflare` or `frp` internal, `frp` external, `lan` | NPM or the nginx edge | `false` | not delivered yet |
+
+The probe trusts the app host's outbound path and CA store: someone on that path holding a
+certificate for the name that the host trusts gets their key signed. It is set only where there
+is no certificate to mount, never as a fallback for an edge that serves its own certificate. A
+`cloudflare` edge with `lan_dns` sends LAN clients to the edge's certificate and everyone else
+to Cloudflare's, so neither source covers both and the probe stays off.
+
+Where the edge serves its own certificate, apply sets neither yet: KyDrive's rollover route
+answers 503 and phones link again after each renewal; KyPost's pairing links carry no pin
+(trust on first use) and phones need a new link after each renewal. Delivering that certificate
+to the app host, and keeping it current through NPM's or cert-manager's renewals, is
+unfinished ([redirect record](redirect.md#dispositions)). KyPost terminating TLS itself does not
+occur in the catalog, which serves it behind an edge.
+
+Both values are part of the app's deploy input: the first apply after upgrading the installer
+recreates each KyDrive and KyPost container once, which ends KyPost's sessions (people sign in
+again). Releases without KyDrive-server #149 or KyPost-Server #649, the catalog's pins
+included, ignore the setting.
+
 ## Operator routes behind KyIdentity (`protect: kyidentity`)
 
 An operator route puts one of your own web apps, one KyQuickStart does not install (Sonarr,

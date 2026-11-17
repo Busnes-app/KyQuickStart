@@ -524,7 +524,7 @@ func withRoute(st *stack.Stack, name string, t stack.Target, app catalog.App) (c
 	if err != nil {
 		return app, err
 	}
-	app = app.WithPrivateRecovery(privateRecovery(st)).WithPrivatePeer(privatePeer(st, name))
+	app = app.WithPrivateRecovery(privateRecovery(st)).WithPrivatePeer(privatePeer(st, name)).WithTLSPinProbe(tlsPinProbe(st, name))
 	for _, a := range st.Apps {
 		if a.Name != name {
 			continue
@@ -1200,6 +1200,21 @@ func privatePeer(st *stack.Stack, app string) bool {
 	for _, e := range st.Edges {
 		for _, r := range e.Routes {
 			if r.App == peer && (e.Internal(r) || e.LANDNS != nil) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// tlsPinProbe reports whether Cloudflare alone terminates the TLS clients see for app's route:
+// a cloudflare-direct route, or a cloudflare edge's external route on an edge without lan_dns
+// (which sends LAN clients to the edge's own certificate). Nowhere else may the product pin
+// what a probe reaches: an edge that serves its own certificate needs that certificate mounted.
+func tlsPinProbe(st *stack.Stack, app string) bool {
+	for _, e := range st.Edges {
+		for _, r := range e.Routes {
+			if r.App == app && (e.Provider == "cloudflare-direct" || e.Provider == "cloudflare" && !e.Internal(r) && e.LANDNS == nil) {
 				return true
 			}
 		}
