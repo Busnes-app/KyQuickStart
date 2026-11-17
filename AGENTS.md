@@ -667,7 +667,10 @@ edge compatibility: `docs/redirect.md`.
   must exist before deploy starts the app.
   Compose runs with `KYQ_UID`/`KYQ_GID` set to the target user's; `./<name>` bind directories
   are created private by the driver before Compose, and no other relative bind source is
-  accepted. A manifest's `from_volumes` names bind directories an earlier version kept in
+  accepted. KyMessages' Synapse sets `PYTHONPATH=/config` to load matrix-init's
+  `ky_guests.py` from its read-only configuration bind; Element serves matrix-init's
+  `kymessages-guest.html` through a read-only file bind, on the chat origin.
+  A manifest's `from_volumes` names bind directories an earlier version kept in
   Compose named volumes of the same name (KyPost's, before #151): `<app>.volumes`, before
   deploy, stops the app and copies each such volume into its missing bind directory once (an
   existing directory, even empty, is done), as the target user, and keeps the volume; `backup`

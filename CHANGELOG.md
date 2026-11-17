@@ -20,6 +20,10 @@ state directory, target data and target-held credentials; do not reset them as a
   before `0.6.0.2`, and KyPost from before `0.6.1`, because their published schemas
   changed. Calendar, DNS, Drive and kyPulse also advance their migration boundary; other
   recorded backup boundaries stay in place. Keep target data, keys and credentials.
+  KyMessages' Synapse service also uses `/config` as its Python module path, matching
+  the release Compose file so its generated meeting-guest confinement module loads;
+  Element serves the generated guest sign-in page on the chat origin. The next
+  `apply` recreates Synapse and Element with these settings; no data or credential change.
 
 - Prepare application version `0.6.1` (from `0.6.0`) for the compatible dependency refresh. Rebuild or install the updated application; this version bump requires no additional data, account, key or configuration migration.
 
