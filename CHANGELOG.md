@@ -14,6 +14,8 @@ state directory, target data and target-held credentials; do not reset them as a
 
 ## Unreleased
 
+- Refresh compatible dependency versions and lockfiles. Rebuild or install the updated application; no database, configuration, account or key migration is required.
+
 - KyDrive and KyPost pin TLS behind Cloudflare. Apply sets `KYDRIVE_TLS_PIN_PROBE` and
   `KYPOST_TLS_PIN_PROBE` to `true` only on a `cloudflare-direct` route or a `cloudflare` edge's
   external route without `lan_dns`, and to `false` everywhere else, so paired phones follow
