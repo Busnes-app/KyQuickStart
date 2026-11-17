@@ -33,10 +33,14 @@ the successful app integration tree byte for byte; runtime, pins and dependencie
 This reuses the named integration evidence and is not a fresh combined integration run.
 No wider product-data/offboarding/restore qualification is inferred.
 
-The separate Messages history V1 passed fresh CI but failed before old-image chat or upgrade:
-the candidate template bound a guest page the old initializer cannot create. Isolated V2
-uses the complete old manifest/Compose entry and restores the candidate entry only for
-upgrade. V2 is running fresh checks; no Messages upgrade pass is claimed.
+The Messages previous-primary campaign `20261117-major-message-upgrade-v2` **PASSED**
+at21:03:48 UTC: fresh affected7.045 s/full CI162.118 s, real integration511.402 s,
+full controller680.688 s. It used the complete historical manifest/Compose entry,
+upgraded0.6.0.1→0.6.1 with its own verified pre-upgrade snapshot, retained selected
+keys and original sessions, and decrypted both old server-fetched history and a new
+encrypted event. Candidate offboarding and the existing candidate-backup/history-restore
+drill passed afterward. This is not an upstream Matrix-version migration or a restore
+of the old pre-upgrade snapshot itself. The failed V1/source remain intact.
 
 Content-v2 remains exit1 / 1082.514 s (controller1256.364 s): exact Calendar readback
 passed but the fixture's bare HTTP If-Match was rejected400. V3 only quoted that header
@@ -111,6 +115,7 @@ credentials, containers and the separate mail-capacity workstream stay preserved
 | Previous-image Drive upgrade/recovery | PASS | 384.324 s; fresh full CI 163.607 s; combined controller 554.558 s |
 | Initial seven-app extension (app-upgrades-v3) | FAILED; superseded by passing content-v3 | V3 full CI 162.783 s passed; integration 851.258 s stopped at Recovery acknowledgement; final retention checks not reached |
 | Seven-app configuration + Calendar content | PASS (content-v3) | Fresh gate8.095 s /affected4.491 s /full CI163.326 s; integration1224.364 s/controller1400.410 s; prior failed runs retained |
+| Previous-image Messages encrypted-history upgrade | PASS (message-v2) | Fresh affected7.045 s/full CI162.118 s; real integration511.402 s/controller680.688 s; old/new encrypted history, selected keys/sessions and subsequent candidate offboarding/restore |
 
 
 The corrected controller completes the named fixture campaign, not the whole-suite
@@ -133,7 +138,7 @@ whole-suite release qualification or every product's ordinary content/offboardin
 | KyCalendar | Admin users API 200 / calendars 403; everyday users API 403 / calendars 200 | Old-image event content/times/IDs/ETag/access and candidate edit passed. Offboarding/restored meetings and recurrence/meeting delivery untested. |
 | KyPost | Native Docker setup, pre-bind-volume layout copy, admin users API 200 / everyday 403, session-ending restart and cold backup | Native config/account upgrade passed in IMAP-proxy mode. Real mail migration/restored mail, offboarding and dedicated-admin ordinary-mail denial remain untested. This fixture disables native mail listeners; it does not qualify the workforce mail stack. |
 | KyDNS | Native setup, authoritative UDP/TCP DNS, forged-header rejection, unsafe-gateway trust refusal and fail-closed edge behavior | Successful edge/admin sign-in is UNPROVEN on Major because Docker rewrites source addresses. Previous zones/config upgrade, offboarding and restore remain untested. Never broaden trust to force a pass. |
-| KyMessages | Real encrypted chat, offboarding and history restore; original device decrypts history and removals replay before Synapse starts. Dedicated admin chat sign-in receives KyIdentity access_denied and MAS has no admin account. | Previous-catalog upgrade remains untested. The admin negative check is native OAuth/MAS admission; independent downstream authorization with an otherwise-valid admin chat token is not established. |
+| KyMessages | Real encrypted chat, offboarding and history restore; original device decrypts history and removals replay before Synapse starts. Dedicated admin chat sign-in receives KyIdentity access_denied and MAS has no admin account. | Previous0.6.0.1→0.6.1 upgrade with own verified snapshot, original keys/sessions and old/new encrypted events passed; later candidate offboarding/history restore passed. Upstream Matrix-version migration and direct authorization with an otherwise-valid admin token remain unproven. |
 | KyYard | Native admin sign-in/everyday identity gate, runner ownership and session/credential persistence; Docker startup/runner checks | Previous-catalog upgrade, offboarding and restored management service remain untested. Source-built runner fixtures do not qualify a published runner artifact. |
 | Nginx Proxy Manager | Both NPM shards: routing, ownership, administrative bootstrap, token refresh and reruns | No general upstream data migration/recovery claim. |
 | nginx edge | Both nginx shards plus node/pod failover, route reload/ownership and certificate assertions | Cluster topology/storage/network conditions beyond these fixtures. |
@@ -210,10 +215,9 @@ KyIdentity → MAS chat gate and checked that MAS had no such account. This evid
 present in the executed test and is now recorded above; it does not create a direct
 Matrix authorization result for an admin token the fixture never received.
 
-The optional previous-primary-image history V1 failed before old chat/upgrade on a mismatched
-fixture template; its old image attestation passed. Corrected V2 and limits appear below.
-The candidate crosses console migrations24–27 at `data_since: 0.6.0.2` and must take
-a real verified pre-upgrade backup; no acknowledgement can substitute for it.
+The previous-primary-image history case passed after correcting the V1 historical-template
+mismatch. It crosses console migrations24–27 at `data_since: 0.6.0.2` and takes its
+own verified pre-upgrade backup; no acknowledgement substitutes for it. Details below.
 
 ## Calendar content case in corrected acknowledgement rerun
 
@@ -260,14 +264,15 @@ retain the isolated browser key store across the upgrade; do not inject cipherte
 skip reauthentication/recovery. No Notes browser/runtime case was implemented or run.
 
 
-## Messages previous-image history follow-up
+## Passed previous-image Messages history upgrade
 
-The separate `suite-message-catalog-upgrade` worktree (branch
+The tested `suite-message-catalog-upgrade` worktree (branch
 `test/suite-message-catalog-upgrade`, base `78b993ea8628bae6d5ab80c45a62e3ef0bdfb0f0`)
-contains the optional `KYQ_TEST_MESSAGE_UPGRADE_MANIFEST` case and its sibling historical
+implements the opt-in `KYQ_TEST_MESSAGE_UPGRADE_MANIFEST` case with its sibling historical
 Compose template. V1 passed affected6.406 s/full CI162.365 s, then failed integration157.190 s
-(controller326.060 s) before old chat/upgrade because the old initializer cannot create the
-candidate guest-page bind. **V2 fresh checks are active; no upgrade pass is claimed.**
+(controller326.060 s) before old chat/upgrade: its old initializer could not create the
+candidate guest-page bind. Corrected V2 passed affected7.045 s/full CI162.118 s and the
+complete real-image integration511.402 s/controller680.688 s. The failed source is unchanged.
 The old primary `0.6.0.1` image passed exact repository/workflow/tag attestation at
 20:16:26 UTC. Its manifest is byte-identical to installer `v0.6.0.8`; all auxiliary
 Matrix image pins match the candidate.
@@ -275,16 +280,19 @@ Matrix image pins match the candidate.
 The corrected case installs the complete historical manifest/Compose entry with explicit
 fixture host/CA plumbing, uses the existing real Megolm room/device flow, then
 requires the CLI upgrade's own verified pre-upgrade snapshot across `data_since: 0.6.0.2`.
-It intends to compare selected keys, renew both original device sessions, fetch and decrypt
-the old raw encrypted event with original client keys, exchange a new encrypted event,
-then continue existing candidate offboarding and history restore. The pre-upgrade and
+It compared selected keys, renewed both original device sessions, fetched and decrypted
+the old raw encrypted event with original client keys, exchanged a new encrypted event,
+then completed existing candidate offboarding and history restore. The pre-upgrade and
 later restore destinations have separate server-work and credential directories; no live
 server's certificate/password files are overwritten. This does not test an upstream
 Matrix-version migration or restore of the old-image pre-upgrade snapshot itself.
 
 Prepared evidence: `20261117-major-message-upgrade-prepared`. Failed `20261117-major-message-upgrade-v1` and its source remain intact. New execution
 evidence `20261117-major-message-upgrade-v2` records fresh stages and patch/manifest/Compose
-hash guards. The corrected content-v3 prerequisite passed; no old-image upgrade result is claimed.
+hash guards. The corrected content-v3 prerequisite and all V2 stages passed. A separate
+publication tree `message-history-acceptance` matches344 non-documentation files of this
+passed tree byte for byte, including runtime/pins/dependencies; its later report edits do
+not constitute a fresh test execution.
 
 ## HA correction and release gates
 
