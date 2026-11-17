@@ -8,13 +8,18 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/dockerhost"
 	"github.com/Busnes-app/kyquickstart/internal/dockerhost/fakedocker"
 	"github.com/Busnes-app/kyquickstart/internal/engine"
+	"github.com/Busnes-app/kyquickstart/internal/kube"
 	"github.com/Busnes-app/kyquickstart/internal/remote"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 type driveResetRunner struct {
@@ -24,6 +29,7 @@ type driveResetRunner struct {
 	resetErr, replayErr error
 	reset, replayed     bool
 	failPublish         bool
+	requiredTLS         string
 }
 
 func (r *driveResetRunner) Run(ctx context.Context, cmd string, stdin []byte) ([]byte, error) {
@@ -59,12 +65,70 @@ func (r *driveResetRunner) Run(ctx context.Context, cmd string, stdin []byte) ([
 		if !r.reset {
 			r.t.Fatal("restored Drive started before its access grants were reset")
 		}
+		if r.requiredTLS != "" {
+			if b, err := os.ReadFile(r.requiredTLS); err != nil || len(b) == 0 {
+				r.t.Fatal("restored Drive started before its TLS certificate was reconstructed", err)
+			}
+		}
 	}
 	return remote.Local{}.Run(ctx, cmd, stdin)
 }
 func (r *driveResetRunner) Close() error { return nil }
 
 const driveResetCapabilities = `{"schema":"ky.setup-capabilities/1","service":"kydrive","bundleSchema":"ky.product-setup/1","features":["restore-reset"]}`
+
+func TestDriveRestoreReconstructsTLSBeforeStartup(t *testing.T) {
+	for _, name := range []string{"valid chain", "wrong host"} {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			s, st, r := driveResetFixture(t)
+			nas := stack.Target{Name: "nas", Root: st.App.Root}
+			e := stack.Edge{Target: "edge", Provider: "lan", Proxy: "nginx", Routes: []stack.Route{{App: "kydrive", Hostname: "drive.example.com", Certificate: "wild"}}}
+			st.App.Catalog = st.App.Catalog.WithTLSCertFile(true)
+			s.cat = catalog.Catalog{"kydrive": st.App.Catalog}
+			s.plan = &stack.Stack{Edges: []stack.Edge{e}}
+			s.placed["kydrive"] = nas
+			s.drivers["nas"] = sshDriver{t: nas, c: r}
+			cs := fake.NewClientset()
+			s.drivers["edge"] = kubeDriver{c: kube.New(cs)}
+			host := "drive.example.com"
+			if name == "wrong host" {
+				host = "other.example.com"
+			}
+			cert, key := tlsTestCert(t, time.Now().Add(-2*time.Hour), host)
+			_, err := cs.CoreV1().Secrets("kyq-nginx").Create(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "kyq-tls-wild", Namespace: "kyq-nginx", Labels: map[string]string{"ky.managed-by": "kyquickstart"}},
+				Type:       corev1.SecretTypeTLS, Data: map[string][]byte{corev1.TLSCertKey: cert, corev1.TLSPrivateKeyKey: key},
+			}, metav1.CreateOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.requiredTLS = filepath.Join(st.App.Root, "kydrive", "tls", "fullchain.pem")
+			id := strings.Repeat("a", 64)
+			if err := st.SetPending(ctx, id, "files"); err != nil {
+				t.Fatal(err)
+			}
+			err = s.finishRestore(ctx, st, id, "files")
+			if name == "wrong host" {
+				if err == nil || fakedocker.Running(t, r.fake)["app"] {
+					t.Fatalf("invalid TLS source did not leave restore stopped: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			step, err := s.tlsCertStep("kydrive")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if done, err := step.Inspect(ctx); err != nil || !done {
+				t.Fatalf("next apply would rewrite restored TLS: %v %v", done, err)
+			}
+			noKeyWritten(t, filepath.Join(st.App.Root, "kydrive", "tls"))
+		})
+	}
+}
 
 func driveResetFixture(t *testing.T) (*session, dockerhost.Store, *driveResetRunner) {
 	t.Helper()

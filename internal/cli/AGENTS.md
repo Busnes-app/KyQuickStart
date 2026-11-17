@@ -116,6 +116,10 @@ Plain terminal planning and command orchestration for the operator-run installer
   stops the app (decision 11). A cold `backup` says it stops the app and, on failure, whether
   it runs again; a dump `backup` names the `backup.stop` services it stops. `backupLines` adds
   the backup, restore and password-record lines to apply's handover.
+  For a copied TLS chain, restore also connects and locks the route's edge target and
+  runs `<app>.tls-cert` from that current edge before any restored service starts.
+  The chain is derived rather than restored from the snapshot; refusal leaves the
+  restore pending and gated apps stopped. The next apply must skip an unchanged copy.
   KyDrive requires the pinned image's `restore-reset` capability before replacing data and
   uses `dockerhost.Store.ResetDriveRestore` before every startup/replay, including resume;
   older pinned images are refused, never replaced with unpublished ones. For every app an

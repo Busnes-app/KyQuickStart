@@ -14,6 +14,12 @@ state directory, target data and target-held credentials; do not reset them as a
 
 ## Unreleased
 
+- Restore reconstructs KyDrive's and KyPost's copied public TLS chain from the current
+  edge before starting restored services. A missing or invalid source leaves recovery
+  incomplete and the app stopped. The derived copy stays outside the backup, and an
+  unchanged follow-up apply skips it. **Upgrade impact:** restore now also needs access
+  to the route's edge target when the app uses a copied certificate.
+
 - KyDrive and KyPost pin TLS behind the catalog NPM and the nginx edge (owner amendment
   2026-11-16). Apply copies the public chain the edge serves for their route (NPM's
   `fullchain.pem`, read in its pod, or the nginx edge's TLS Secret's `tls.crt`; never a key) to
