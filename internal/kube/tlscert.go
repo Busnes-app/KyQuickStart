@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"time"
@@ -23,6 +24,12 @@ func (c *Client) TLSCertificateServed(ctx context.Context, app, host string, lea
 	if err != nil {
 		return fmt.Errorf("list %s pods: %w", app, err)
 	}
+	cert, err := x509.ParseCertificate(leaf)
+	if err != nil {
+		return fmt.Errorf("parse the copied leaf: %w", err)
+	}
+	anchor := x509.NewCertPool()
+	anchor.AddCert(cert)
 	checked := 0
 	for _, p := range pods.Items {
 		if !owned(&p) || !podReady(&p) {
@@ -38,9 +45,11 @@ func (c *Client) TLSCertificateServed(ctx context.Context, app, host string, lea
 		}
 		client := tls.Client(conn, &tls.Config{
 			ServerName: host,
-			// The exact leaf from the authenticated cluster API is the trust
-			// anchor. The caller already checked its hostname and validity.
-			InsecureSkipVerify: true,
+			MinVersion: tls.VersionTLS12,
+			// The exact leaf from the authenticated cluster API is the only trust
+			// anchor: crypto/tls still checks its hostname and validity, and
+			// VerifyConnection requires those exact bytes.
+			RootCAs: anchor,
 			VerifyConnection: func(cs tls.ConnectionState) error {
 				if len(cs.PeerCertificates) == 0 || !bytes.Equal(cs.PeerCertificates[0].Raw, leaf) {
 					return errors.New("edge has not loaded the replacement certificate")
