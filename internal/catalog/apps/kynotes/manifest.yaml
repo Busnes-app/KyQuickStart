@@ -1,12 +1,12 @@
 name: kynotes
 description: KyNotes, the suite's end-to-end encrypted notes; signs in through KyIdentity
 category: ky
-version: 0.6.0.2
+version: 0.6.1
 # Release image of v0.4.2 (commit f597e99703316cf53d2efac2224cb6ae66df5752), attested by
 # Busnes-app/KyNotes-server release-image.yml@refs/tags/v0.4.2 (gh attestation verify).
-# catalog-follow: v0.6.0.2 attested by Busnes-app/KyNotes-server release-image.yml@refs/tags/v0.6.0.2
+# catalog-follow: v0.6.1 attested by Busnes-app/KyNotes-server release-image.yml@refs/tags/v0.6.1
 images:
-  kynotes: ghcr.io/busnes-app/kynotes-server:0.6.0.2@sha256:135ccd7df01e3218422b0baed2ec6de79906b43306f57df173f0039986c8f07f
+  kynotes: ghcr.io/busnes-app/kynotes-server:0.6.1@sha256:8997d6e37d29ee48a16f345a7aebcd83365a4f3e60b366b556c623cea4e3b100
 # verify-edge reads the suite proxy contract here (clientIp, proxyHeadersTrusted, scheme).
 status_path: /api/v1/installer/network
 # Its setup needs KyIdentity's issuer, client and signed directory.

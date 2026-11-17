@@ -1,16 +1,16 @@
 name: kymessage
 description: KyMessages, the suite's chat and calls (Matrix, Element, LiveKit); signs in through KyIdentity
 category: ky
-version: 0.6.0.1
+version: 0.6.1
 # kymessage: release image of v0.4.4 (commit b0f2001e3d3fd80093e6b2f5bd341168dc7517dd), attested by
 # Busnes-app/KyMessage-Server release-image.yml@refs/tags/v0.4.4 (gh attestation verify; the
 # attested gitCommit is v0.4.4^{commit}).
 # The other five are the stock upstream images KyMessage's docker-compose.matrix.yml pins, by
 # tag and digest in v0.4.4 (unchanged since v0.4.3); no attestation was found for them
 # (provenance: KyMessage's compose).
-# catalog-follow: v0.6.0.1 attested by Busnes-app/KyMessage-Server release-image.yml@refs/tags/v0.6.0.1
+# catalog-follow: v0.6.1 attested by Busnes-app/KyMessage-Server release-image.yml@refs/tags/v0.6.1
 images:
-  kymessage: ghcr.io/busnes-app/kymessage-server:0.6.0.1@sha256:426b2dd604677ecc230821c92924db2a4803fd330d579caac97728ad3e2a64a6
+  kymessage: ghcr.io/busnes-app/kymessage-server:0.6.1@sha256:766f9c9d1d6d36a5ed33f05e810f69f075fb8f8f0054b8d7eb95a4946766991d
   postgres: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
   synapse: ghcr.io/element-hq/synapse:v1.162.0@sha256:6b84a7bbac36f080b2d2e51e0289cf1b08b349598ea44a558df38d558f2c2311
   mas: ghcr.io/element-hq/matrix-authentication-service:1.26.0@sha256:e089f1048a1d4a9a492ed17b9fe759100f1bd619407b001f5927928d88b780c4
@@ -78,7 +78,8 @@ backup:
   # starts: a restored session of someone removed later has no homeserver to use until then.
   replay_after: app
 upgrade:
-  # 0.4.3 to 0.6.0 changes no schema: no console migration and the same stock images. matrix-init
-  # now refuses kept secrets below its strength floors; the ones it generated meet them.
+  # 0.6.0.2 added console migrations 24-27 (meetings, guests, presence and suite rooms).
+  # Back up older schemas before startup; 0.6.1 keeps that migration set unchanged.
   min_from: 0.4.3
-  migrates_data: false
+  migrates_data: true
+  data_since: 0.6.0.2
