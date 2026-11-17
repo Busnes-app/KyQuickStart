@@ -170,7 +170,11 @@ type certStep struct {
 	c stack.Certificate
 }
 
-func (s certStep) ID() string { return s.e.Target + ".edge.cert." + s.c.Name }
+func (s certStep) ID() string { return CertStepID(s.e, s.c.Name) }
+
+// CertStepID is the ID of the step that issues e's certificate name, on NPM or the nginx edge.
+func CertStepID(e stack.Edge, name string) string { return e.Target + ".edge.cert." + name }
+
 func (s certStep) InputHash() string {
 	b, _ := json.Marshal(struct {
 		API, Installation string
@@ -230,4 +234,25 @@ func (s certStep) Verify(ctx context.Context) error {
 		err = fmt.Errorf("NPM certificate %s is absent", s.c.Name)
 	}
 	return err
+}
+
+// ChainPath is the file in NPM's container holding the public chain NPM serves for r, as its
+// nginx templates name it: fullchain.pem, never the private key beside it. It reads only the
+// certificate's metadata through the API, whose download would bundle the key.
+func (n *NPM) ChainPath(ctx context.Context, e stack.Edge, r stack.Route) (string, error) {
+	id, err := n.certificateID(ctx, e, r)
+	if err != nil {
+		return "", err
+	}
+	var cert certificate
+	if err := n.request(ctx, http.MethodGet, fmt.Sprintf("%s/%d", certPath, id), nil, &cert); err != nil {
+		return "", err
+	}
+	if cert.ID != id {
+		return "", fmt.Errorf("NPM has no certificate %d", id)
+	}
+	if cert.Provider == "letsencrypt" {
+		return fmt.Sprintf("/etc/letsencrypt/live/npm-%d/fullchain.pem", id), nil
+	}
+	return fmt.Sprintf("/data/custom_ssl/npm-%d/fullchain.pem", id), nil
 }

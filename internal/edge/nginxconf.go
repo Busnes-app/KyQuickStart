@@ -158,8 +158,8 @@ func NginxGeneration(files map[string]string) string {
 // ManagedTLSSecret is the Secret cert-manager writes for the edge certificate named cert.
 func ManagedTLSSecret(cert string) string { return "kyq-tls-" + cert }
 
-// tlsSecret is the Secret holding r's certificate.
-func tlsSecret(r stack.Route) string {
+// TLSSecret is the Secret holding r's certificate.
+func TLSSecret(r stack.Route) string {
 	if r.Certificate != "" {
 		return ManagedTLSSecret(r.Certificate)
 	}
@@ -171,7 +171,7 @@ func tlsSecret(r stack.Route) string {
 func TLSSecrets(e stack.Edge) []string {
 	var out []string
 	for _, r := range e.Routes {
-		out = append(out, tlsSecret(r))
+		out = append(out, TLSSecret(r))
 	}
 	slices.Sort(out)
 	return slices.Compact(out)
@@ -208,7 +208,7 @@ func routeKey(hostname string) string {
 
 // nginxServer is r's file: its ownership marker, then its server block.
 func nginxServer(marker string, e stack.Edge, r stack.Route) string {
-	dir := NginxTLSDir + "/" + tlsSecret(r)
+	dir := NginxTLSDir + "/" + TLSSecret(r)
 	upstream := r.ForwardScheme + "://" + net.JoinHostPort(r.ForwardHost, strconv.Itoa(r.ForwardPort))
 	return marker + fmt.Sprintf("server {\nlisten 443 ssl;\nhttp2 on;\nserver_name %s;\nssl_certificate %s/tls.crt;\nssl_certificate_key %s/tls.key;\n", r.Hostname, dir, dir) +
 		serverConfig(e, r, upstream) + "}\n"

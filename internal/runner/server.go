@@ -37,6 +37,11 @@ const (
 	// shutdownGrace is how long SIGTERM waits for a running operation; give the container a
 	// longer stop timeout.
 	shutdownGrace = 4 * time.Minute
+	// The TLS chain refresh: daily, since certificates renew weeks before they expire; an
+	// hour later when an operation holds the runner; bounded like any one operation.
+	refreshEvery   = 24 * time.Hour
+	refreshRetry   = time.Hour
+	refreshTimeout = 10 * time.Minute
 )
 
 var actorRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,127}$`)
@@ -52,13 +57,16 @@ type server struct {
 	o               cli.Options
 	run             func(ctx context.Context, kind, plan string, r cli.Request, o cli.Options) error
 	status          func(ctx context.Context, plan string, o cli.Options) (suite.Status, error)
+	refreshTLS      func(ctx context.Context, plan, holder string, o cli.Options) error
+	refreshAfter    time.Duration // the first refresh, after startup
 	grace           time.Duration
 	log             *log.Logger
 
-	mu      sync.Mutex // guards running and every operation file
-	running *record
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
+	mu         sync.Mutex // guards running and every operation file
+	running    *record
+	refreshing bool // the TLS chain refresh holds the runner
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
 }
 
 func operate(ctx context.Context, kind, plan string, r cli.Request, o cli.Options) error {
@@ -83,7 +91,7 @@ func newServer(state string, podVolume bool, o cli.Options, stderr io.Writer) (*
 		return nil, err
 	}
 	o.RunnerID, o.SSHKey, o.Redact, o.In, o.Out = id, filepath.Join(state, keyFile), &engine.Redactor{}, nil, stderr
-	s := &server{state: state, plan: filepath.Join(state, planDir), id: id, o: o, run: operate, status: cli.Status, grace: shutdownGrace, log: log.New(stderr, "kyquickstart runner: ", 0)}
+	s := &server{state: state, plan: filepath.Join(state, planDir), id: id, o: o, run: operate, status: cli.Status, refreshTLS: cli.RefreshTLS, refreshAfter: 5 * time.Minute, grace: shutdownGrace, log: log.New(stderr, "kyquickstart runner: ", 0)}
 	return s, s.recover()
 }
 
@@ -184,6 +192,11 @@ func (s *server) serve(ctx context.Context, l net.Listener) error {
 		WriteTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8 << 10}
 	done := make(chan error, 1)
 	go func() { done <- srv.Serve(l) }()
+	refreshCtx, stopRefresh := context.WithCancel(ctx)
+	var refresher sync.WaitGroup
+	refresher.Add(1)
+	go func() { defer refresher.Done(); s.refreshLoop(refreshCtx) }()
+	defer func() { stopRefresh(); waitFor(&refresher, 45*time.Second) }() // a cancelled refresh releases its target locks
 	select {
 	case err := <-done:
 		return err
@@ -423,6 +436,10 @@ func (s *server) handleStart(w http.ResponseWriter, r *http.Request) {
 		s.refuse(w, suite.Errorf(suite.Busy, "operation %s is running", s.running.ID))
 		return
 	}
+	if s.refreshing {
+		s.refuse(w, suite.Errorf(suite.Busy, "the daily TLS certificate refresh is running; retry in a minute"))
+		return
+	}
 	rec := &record{Request: req, Operation: suite.Operation{ID: req.ID, Kind: req.Kind, Apps: req.Apps, Actor: req.Actor,
 		State: "running", Started: time.Now().UTC(), Steps: []suite.Step{}}}
 	if err := s.write(rec); err != nil {
@@ -491,4 +508,50 @@ func (s *server) handleOperation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reply(w, http.StatusOK, rec.Operation)
+}
+
+// refreshLoop runs the TLS chain refresh refreshAfter startup, then every refreshEvery.
+func (s *server) refreshLoop(ctx context.Context) {
+	t := time.NewTimer(s.refreshAfter)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		next := refreshEvery
+		if !s.refresh(ctx) {
+			next = refreshRetry
+		}
+		t.Reset(next)
+	}
+}
+
+// refresh copies again the public certificate chain KyDrive's and KyPost's edge serves
+// (cli.RefreshTLS) while no operation runs, holding the runner as one would. It reports
+// false when an operation held the runner. Each copy is logged with its leaf's fingerprint,
+// and a failure is also the app's last result in status.
+func (s *server) refresh(ctx context.Context) bool {
+	if !hasPlan(s.state) {
+		return true
+	}
+	s.mu.Lock()
+	if s.running != nil {
+		s.mu.Unlock()
+		return false
+	}
+	s.refreshing = true
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.refreshing = false
+		s.mu.Unlock()
+	}()
+	ctx, cancel := context.WithTimeout(ctx, refreshTimeout)
+	defer cancel()
+	if err := s.refreshTLS(ctx, s.plan, "kyquickstart runner "+s.id+" TLS refresh", s.o); err != nil {
+		s.log.Printf("TLS certificate refresh: %s", s.o.Redact.Redact(err.Error()))
+	}
+	return true
 }

@@ -577,6 +577,7 @@ func TestKyDNSSetupBeforeEdges(t *testing.T) {
 	}
 	// The check asks from the catalog NPM's pod; another edge cannot be checked and is refused.
 	delete(s.placed, "npm")
+	s.order = slices.DeleteFunc(s.order, func(a string) bool { return a == "npm" })
 	if _, err := s.deploySteps(context.Background()); err == nil || !strings.Contains(err.Error(), "catalog NPM on a cluster") {
 		t.Fatalf("edge without the catalog NPM: %v", err)
 	}
