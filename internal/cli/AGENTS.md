@@ -38,6 +38,12 @@ Plain terminal planning and command orchestration for the operator-run installer
   (refusing a plan without KyIdentity's `identity` integration), `proxyAppStep`
   (`kyidentity.proxy-app.<hostname>`, before the edge's host steps, never skipped: `Verify` needs
   the secret read in this run) and preflight's `isolation` dial from the workstation.
+- `tlscert.go` owns copied public chains for KyDrive/KyPost and `RefreshTLS`. Before
+  replacement, `kube.TLSCertificateServed` checks the exact source leaf on every ready managed
+  edge pod with route SNI through authenticated port-forward. Retain a valid old copy and log
+  the reason when unconfirmed; fail on an invalid/missing copy. Only a first deploy without
+  a deployment record or copy may bootstrap before route creation, never restore/refresh.
+  Do not use CA validity dates as renewal/reload timestamps.
 - `lifecycle.go` owns `stop`, `start`, `restart` and `logs` (Docker and Kubernetes, one app
   each) through the drivers' `lifecycleStep`, `workload` and `logs`. Stop, start and restart
   run under `operate` (lock, `guard`, marker), refuse an app its target does not hold as

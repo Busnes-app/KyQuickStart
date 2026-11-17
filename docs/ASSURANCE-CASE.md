@@ -133,8 +133,13 @@ operator's job ([README](../README.md#targets)).
   nginx edge, apply and the suite runner copy the public chain from NPM's pod or the edge's TLS
   Secret over the installer's cluster access: the trust is the cluster's API, and only
   certificate blocks are written. Each copy names the hostname and is valid when written. A
-  renewal is copied at most a day late (an hour's settling included), so in that window
-  KyDrive's rollover and KyPost's pairing pin still name the old key. Behind an NPM the operator
+  replacement is copied only once every ready managed edge pod presents that exact leaf over
+  an authenticated Kubernetes port-forward with the route's SNI. A valid old copy stays on
+  mismatch or probe failure, with the reason logged; an invalid or missing copy fails closed.
+  CA-backdated validity dates are not used as reload evidence. Only an initial deploy without
+  a deployment record or copy may bootstrap before route creation; restore and refresh may not.
+  The runner retries daily; until a successful refresh, KyDrive's rollover and KyPost's
+  pairing pin still name the old key. Behind an NPM the operator
   runs, or a `cloudflare` edge with `lan_dns`, no source is set (`docs/edge.md`, "TLS pin
   source").
 - **Redaction covers registered secrets only.** A secret the installer never read back, or one

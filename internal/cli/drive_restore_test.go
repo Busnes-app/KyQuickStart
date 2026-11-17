@@ -14,7 +14,6 @@ import (
 	"github.com/Busnes-app/kyquickstart/internal/dockerhost"
 	"github.com/Busnes-app/kyquickstart/internal/dockerhost/fakedocker"
 	"github.com/Busnes-app/kyquickstart/internal/engine"
-	"github.com/Busnes-app/kyquickstart/internal/kube"
 	"github.com/Busnes-app/kyquickstart/internal/remote"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
 	corev1 "k8s.io/api/core/v1"
@@ -78,7 +77,7 @@ func (r *driveResetRunner) Close() error { return nil }
 const driveResetCapabilities = `{"schema":"ky.setup-capabilities/1","service":"kydrive","bundleSchema":"ky.product-setup/1","features":["restore-reset"]}`
 
 func TestDriveRestoreReconstructsTLSBeforeStartup(t *testing.T) {
-	for _, name := range []string{"valid chain", "wrong host"} {
+	for _, name := range []string{"valid chain", "wrong host", "not loaded"} {
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
 			s, st, r := driveResetFixture(t)
@@ -90,12 +89,16 @@ func TestDriveRestoreReconstructsTLSBeforeStartup(t *testing.T) {
 			s.placed["kydrive"] = nas
 			s.drivers["nas"] = sshDriver{t: nas, c: r}
 			cs := fake.NewClientset()
-			s.drivers["edge"] = kubeDriver{c: kube.New(cs)}
 			host := "drive.example.com"
 			if name == "wrong host" {
 				host = "other.example.com"
 			}
 			cert, key := tlsTestCert(t, time.Now().Add(-2*time.Hour), host)
+			servingCert, servingKey := cert, key
+			if name == "not loaded" {
+				servingCert, servingKey = tlsTestCert(t, time.Now().Add(-3*time.Hour), host)
+			}
+			s.drivers["edge"] = kubeDriver{c: tlsServingClient(t, cs, servingCert, servingKey)}
 			_, err := cs.CoreV1().Secrets("kyq-nginx").Create(ctx, &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{Name: "kyq-tls-wild", Namespace: "kyq-nginx", Labels: map[string]string{"ky.managed-by": "kyquickstart"}},
 				Type:       corev1.SecretTypeTLS, Data: map[string][]byte{corev1.TLSCertKey: cert, corev1.TLSPrivateKeyKey: key},
@@ -109,7 +112,7 @@ func TestDriveRestoreReconstructsTLSBeforeStartup(t *testing.T) {
 				t.Fatal(err)
 			}
 			err = s.finishRestore(ctx, st, id, "files")
-			if name == "wrong host" {
+			if name != "valid chain" {
 				if err == nil || fakedocker.Running(t, r.fake)["app"] {
 					t.Fatalf("invalid TLS source did not leave restore stopped: %v", err)
 				}

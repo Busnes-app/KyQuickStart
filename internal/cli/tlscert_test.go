@@ -6,9 +6,11 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io/fs"
 	"math/big"
@@ -138,24 +140,55 @@ func tlsHost(t *testing.T) (stack.Target, string) {
 // tlsSession is a session with KyDrive on nas behind e on cluster k1 (client), its rendered
 // Compose file naming the copied chain.
 func tlsSession(e stack.Edge, nas stack.Target, client *kube.Client) *session {
-	return &session{plan: &stack.Stack{Edges: []stack.Edge{e}}, installation: "test-installation", redact: &engine.Redactor{},
+	return &session{plan: &stack.Stack{Edges: []stack.Edge{e}}, installation: "test-installation", redact: &engine.Redactor{}, o: Options{Out: &bytes.Buffer{}},
 		cat:    catalog.Catalog{"kydrive": {Compose: []byte(`KYDRIVE_TLS_CERT_FILE: "` + catalog.TLSCertFile + `"`)}},
 		placed: map[string]stack.Target{"kydrive": nas}, npms: map[string]*edge.NPM{},
 		drivers: map[string]driver{"nas": sshDriver{t: nas, c: localHost{}}, "k1": kubeDriver{c: client}}}
 }
 
+// tlsServingClient keeps the API fake but performs real TLS handshakes through
+// its pod port-forward, as restore and refresh do even when no copy exists.
+func tlsServingClient(t *testing.T, cs *fake.Clientset, cert, key []byte) *kube.Client {
+	t.Helper()
+	pair, err := tls.X509KeyPair(cert, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewUnstartedServer(nil)
+	srv.TLS = &tls.Config{Certificates: []tls.Certificate{pair}}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	_, err = cs.CoreV1().Pods("kyq-nginx").Create(context.Background(), &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "app-ready", Namespace: "kyq-nginx", Labels: map[string]string{"app.kubernetes.io/name": "nginx", managed.Label: managed.Value}},
+		Status:     corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return kube.FakeWithForward(cs, func(ctx context.Context, ns, pod string, port int) (net.Conn, error) {
+		if ns != "kyq-nginx" || pod != "app-ready" || port != 443 {
+			t.Fatalf("unexpected probe %s/%s:%d", ns, pod, port)
+		}
+		return (&net.Dialer{}).DialContext(ctx, "tcp", srv.Listener.Addr().String())
+	})
+}
+
 // run runs the step s makes for KyDrive and returns its event status ("ok", "skipped",
 // "failed") with the step, and the engine's error.
-func runTLSStep(t *testing.T, s *session, results string) (string, *tlsCertStep, error) {
+func runTLSStep(t *testing.T, s *session, results string, served ...func(context.Context, []byte) error) (string, *tlsCertStep, error) {
 	t.Helper()
 	st, err := s.tlsCertStep("kydrive")
 	if err != nil || st == nil {
 		t.Fatalf("step = %v, %v", st, err)
 	}
+	if len(served) > 0 {
+		st.served = served[0]
+	}
+	st.bootstrap = true // this helper exercises apply's first-deploy path
 	var status string
 	e := &engine.Engine{Dir: results, Out: &bytes.Buffer{}, Redact: s.redact, Progress: func(ev engine.Event) { status = ev.Status }}
 	err = e.Run(context.Background(), []engine.Step{st})
-	return status, st.(*tlsCertStep), err
+	return status, st, err
 }
 
 // noKeyWritten fails when any file below root holds key material.
@@ -181,8 +214,8 @@ func inode(t *testing.T, p string) uint64 {
 }
 
 // Behind the nginx edge the chain comes from the route's TLS Secret, whose key is never
-// written: the first run copies it 0644, a rerun changes nothing, a settled renewal replaces
-// it atomically, a renewal under an hour old waits, and a chain for another host is refused
+// written: the first run copies it 0644, a rerun changes nothing, a served renewal replaces
+// it atomically, a backdated renewal not yet served waits, and another hostname is refused
 // with the copy left as it was.
 // A first copy is written however new: KyPost has none to start with otherwise.
 func TestTLSCertFromNginxSecret(t *testing.T) {
@@ -201,8 +234,15 @@ func TestTLSCertFromNginxSecret(t *testing.T) {
 	e := stack.Edge{Target: "k1", Provider: "lan", Proxy: "nginx", Routes: []stack.Route{{App: "kydrive", Hostname: "drive.example.com", Certificate: "wild"}}}
 	s := tlsSession(e, nas, kube.New(cs))
 	file := filepath.Join(root, "kydrive", "tls", "fullchain.pem")
+	ready := true
+	served := func(context.Context, []byte) error {
+		if !ready {
+			return errors.New("edge has not reloaded")
+		}
+		return nil
+	}
 
-	status, st, err := runTLSStep(t, s, results)
+	status, st, err := runTLSStep(t, s, results, served)
 	if b, _ := os.ReadFile(file); err != nil || status != "ok" || !bytes.Equal(b, leaf) || st.issuer != "k1.edge.cert.wild" || !strings.Contains(st.note, "copied") {
 		t.Fatalf("first run: %s %v, issuer %q, note %q, file %q", status, err, st.issuer, st.note, b)
 	}
@@ -216,14 +256,14 @@ func TestTLSCertFromNginxSecret(t *testing.T) {
 	noKeyWritten(t, results)
 	ino := inode(t, file)
 
-	if status, _, err := runTLSStep(t, s, results); err != nil || status != "skipped" || inode(t, file) != ino {
+	if status, _, err := runTLSStep(t, s, results, served); err != nil || status != "skipped" || inode(t, file) != ino {
 		t.Fatalf("rerun: %s %v", status, err)
 	}
 
 	renewed, renewedKey := tlsTestCert(t, now.Add(-2*time.Hour), "drive.example.com")
 	secret.Data = map[string][]byte{corev1.TLSCertKey: renewed, corev1.TLSPrivateKeyKey: renewedKey}
 	cs.CoreV1().Secrets("kyq-nginx").Update(ctx, secret, metav1.UpdateOptions{})
-	status, _, err = runTLSStep(t, s, results)
+	status, _, err = runTLSStep(t, s, results, served)
 	if b, _ := os.ReadFile(file); err != nil || status != "ok" || !bytes.Equal(b, renewed) || inode(t, file) == ino {
 		t.Fatalf("renewal: %s %v, file %q", status, err, b)
 	}
@@ -232,19 +272,28 @@ func TestTLSCertFromNginxSecret(t *testing.T) {
 	}
 
 	// The edge may not serve it yet: the copy stays, so the step passes as it did.
-	fresh, _ := tlsTestCert(t, now.Add(-time.Minute), "drive.example.com")
+	fresh, _ := tlsTestCert(t, now.Add(-2*time.Hour), "drive.example.com")
+	ready = false
 	secret.Data = map[string][]byte{corev1.TLSCertKey: fresh}
 	cs.CoreV1().Secrets("kyq-nginx").Update(ctx, secret, metav1.UpdateOptions{})
-	status, st, err = runTLSStep(t, s, results)
+	status, st, err = runTLSStep(t, s, results, served)
 	if b, _ := os.ReadFile(file); err != nil || status != "skipped" || !bytes.Equal(b, renewed) || !strings.Contains(st.note, "kept the current copy") {
 		t.Fatalf("fresh renewal: %s %v, note %q", status, err, st.note)
+	}
+	if !strings.Contains(s.o.Out.(*bytes.Buffer).String(), "edge has not reloaded") {
+		t.Fatal("deferred renewal was not logged on the skipped path")
+	}
+	ready = true
+	status, _, err = runTLSStep(t, s, results, served)
+	if b, _ := os.ReadFile(file); err != nil || status != "ok" || !bytes.Equal(b, fresh) {
+		t.Fatalf("loaded renewal: %s %v", status, err)
 	}
 
 	other, _ := tlsTestCert(t, now.Add(-2*time.Hour), "other.example.com")
 	secret.Data = map[string][]byte{corev1.TLSCertKey: other}
 	cs.CoreV1().Secrets("kyq-nginx").Update(ctx, secret, metav1.UpdateOptions{})
 	status, _, err = runTLSStep(t, s, results)
-	if b, _ := os.ReadFile(file); err == nil || status != "failed" || !strings.Contains(err.Error(), "does not name drive.example.com") || !bytes.Equal(b, renewed) {
+	if b, _ := os.ReadFile(file); err == nil || status != "failed" || !strings.Contains(err.Error(), "does not name drive.example.com") || !bytes.Equal(b, fresh) {
 		t.Fatalf("other host: %s %v, file %q", status, err, b)
 	}
 	if r, ok := engine.Read(results, "kydrive.tls-cert"); !ok || r.Status != "failed" {
@@ -300,6 +349,33 @@ func TestTLSCertFromNPM(t *testing.T) {
 			t.Fatalf("%s: asked NPM for %v", provider, paths)
 		}
 		noKeyWritten(t, root)
+	}
+}
+
+// A freshly observed renewal may already have a backdated NotBefore. With no
+// serving edge to confirm it, replacement must wait and leave the copy intact.
+func TestTLSCertBackdatedRenewalNeedsServingEdge(t *testing.T) {
+	ctx := context.Background()
+	nas, root := tlsHost(t)
+	old, _ := tlsTestCert(t, time.Now().Add(-3*time.Hour), "drive.example.com")
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "kyq-tls-wild", Namespace: "kyq-nginx", Labels: map[string]string{managed.Label: managed.Value}},
+		Type: corev1.SecretTypeTLS, Data: map[string][]byte{corev1.TLSCertKey: old}}
+	cs := fake.NewClientset(secret)
+	e := stack.Edge{Target: "k1", Provider: "lan", Proxy: "nginx", Routes: []stack.Route{{App: "kydrive", Hostname: "drive.example.com", Certificate: "wild"}}}
+	s := tlsSession(e, nas, kube.New(cs))
+	results := t.TempDir()
+	if _, _, err := runTLSStep(t, s, results); err != nil {
+		t.Fatal(err)
+	}
+	renewed, _ := tlsTestCert(t, time.Now().Add(-2*time.Hour), "drive.example.com")
+	secret.Data[corev1.TLSCertKey] = renewed
+	if _, err := cs.CoreV1().Secrets("kyq-nginx").Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	status, _, err := runTLSStep(t, s, results)
+	b, readErr := os.ReadFile(filepath.Join(root, "kydrive", "tls", "fullchain.pem"))
+	if err != nil || status != "skipped" || readErr != nil || !bytes.Equal(b, old) {
+		t.Fatalf("unconfirmed backdated renewal replaced copy: status %s, err %v, read %v", status, err, readErr)
 	}
 }
 
@@ -360,6 +436,17 @@ func TestRefreshTLS(t *testing.T) {
 	leaf, key := tlsTestCert(t, time.Now().Add(-2*time.Hour), "drive.example.com", "identity.example.com")
 	f.cs.CoreV1().Secrets("kyq-nginx").Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "my-tls", Labels: map[string]string{managed.Label: managed.Value}},
 		Type: corev1.SecretTypeTLS, Data: map[string][]byte{corev1.TLSCertKey: leaf, corev1.TLSPrivateKeyKey: key}}, metav1.CreateOptions{})
+	if err := RefreshTLS(ctx, f.state, "test", f.o); err == nil {
+		t.Fatal("refresh treated a missing copy as permission to bootstrap without a serving edge")
+	}
+	client := tlsServingClient(t, f.cs, leaf, key)
+	previousDial := dialTarget
+	dialTarget = func(ctx context.Context, target stack.Target, config remote.SSHConfig, needsStorage bool) (driver, error) {
+		if target.Kubernetes() {
+			return kubeDriver{c: client, needsStorage: needsStorage, storageClass: target.StorageClass}, nil
+		}
+		return previousDial(ctx, target, config, needsStorage)
+	}
 	if err := RefreshTLS(ctx, f.state, "test", f.o); err != nil {
 		t.Fatalf("%v\n%s", err, f.out.String())
 	}

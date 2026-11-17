@@ -14,6 +14,13 @@ state directory, target data and target-held credentials; do not reset them as a
 
 ## Unreleased
 
+- Copied TLS renewals now require the exact source leaf to be served by every ready
+  managed edge pod, instead of treating CA-backdated `NotBefore` as a reload timestamp.
+  A valid old copy stays with a logged reason until the next refresh/apply can confirm
+  the replacement. Restore and refresh also verify when their copy is missing; only
+  a first deploy may bootstrap before route creation. **Upgrade impact:** no data or
+  credential changes; the probe uses the existing Kubernetes port-forward permission.
+
 - Restore reconstructs KyDrive's and KyPost's copied public TLS chain from the current
   edge before starting restored services. A missing or invalid source leaves recovery
   incomplete and the app stopped. The derived copy stays outside the backup, and an

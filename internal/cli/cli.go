@@ -960,9 +960,10 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 		if tls, err := s.tlsCertStep(name); err != nil {
 			return nil, err
 		} else if tls != nil {
+			tls.bootstrap = !deployed.Found
 			// Before its deploy: KyPost refuses to start without the file its Compose file names.
 			k := slices.IndexFunc(app, func(st engine.Step) bool { return st.ID() == name+".deploy" })
-			app = slices.Insert(app, k, tls)
+			app = slices.Insert(app, k, engine.Step(tls))
 		}
 		if k, ok := d.(kubeDriver); ok && name == euroOffice {
 			app = s.editorSteps(k)

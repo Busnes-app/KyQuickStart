@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"slices"
 
 	corev1 "k8s.io/api/core/v1"
@@ -121,4 +122,9 @@ func (b *boundedExecOutput) Write(p []byte) (int, error) {
 // stream. For tests outside this package.
 func Fake(cs kubernetes.Interface, host string, stream func(ctx context.Context, namespace, pod, container string, args []string, o remotecommand.StreamOptions) error) *Client {
 	return &Client{cs: cs, config: &rest.Config{Host: host}, execStream: stream}
+}
+
+// FakeWithForward sends pod port-forwards to forward, for tests outside this package.
+func FakeWithForward(cs kubernetes.Interface, forward func(context.Context, string, string, int) (net.Conn, error)) *Client {
+	return &Client{cs: cs, portForward: forward}
 }

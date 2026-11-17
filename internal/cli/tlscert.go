@@ -18,11 +18,6 @@ import (
 	"github.com/Busnes-app/kyquickstart/internal/stack"
 )
 
-// tlsSettle is how old a renewed certificate must be before it replaces a valid copy: the
-// edge loads a renewal moments to minutes after it is written, and KyPost must not put a key
-// in pairing links before the edge serves it.
-const tlsSettle = time.Hour
-
 // tlsCertRoute is the route whose edge's public chain apply copies to app's host: app's route
 // where the catalog NPM or the nginx edge alone terminates the clients' TLS. A cloudflare
 // edge's external route is Cloudflare's (the probe), or with lan_dns split between Cloudflare
@@ -82,7 +77,10 @@ func publicChain(raw []byte, host string, now time.Time) ([]byte, *x509.Certific
 type tlsCertStep struct {
 	app, host, source string
 	issuer            string // the edge step issuing the route's certificate; "" when it exists already
+	bootstrap         bool   // only a first deploy may copy before its route exists
 	read              func(context.Context) ([]byte, error)
+	served            func(context.Context, []byte) error
+	notice            func(string)
 	hostRead          func(context.Context) ([]byte, error)
 	hostWrite         func(context.Context, []byte) error
 	now               func() time.Time
@@ -116,8 +114,19 @@ func (s *tlsCertStep) decide(ctx context.Context) error {
 	}
 	fp := sha256.Sum256(leaf.Raw)
 	s.want, s.note = chain, fmt.Sprintf("copied the chain %s serves: leaf SHA-256 %x, valid until %s", s.source, fp, leaf.NotAfter.UTC().Format(time.RFC3339))
-	if _, _, err := publicChain(s.cur, s.host, now); err == nil && !bytes.Equal(s.cur, chain) && now.Sub(leaf.NotBefore) < tlsSettle {
-		s.want, s.note = s.cur, fmt.Sprintf("kept the current copy: the certificate in %s was renewed under an hour ago, and the next run copies it", s.source)
+	// Bootstrap precedes route creation. Replacements must prove every ready edge
+	// pod serves the new leaf; CA validity dates say nothing about reload timing.
+	if !bytes.Equal(s.cur, chain) && !(s.bootstrap && len(s.cur) == 0) {
+		if err := s.served(ctx, leaf.Raw); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if _, _, oldErr := publicChain(s.cur, s.host, now); oldErr != nil {
+				return fmt.Errorf("no valid TLS copy and replacement not confirmed: %w", err)
+			}
+			s.want, s.note = s.cur, fmt.Sprintf("kept the current copy: replacement not confirmed on every ready edge pod: %v; retry on the next refresh or apply", err)
+			s.notice(s.note) // The engine does not print notes for a skipped step.
+		}
 	}
 	s.decided = true
 	return nil
@@ -150,7 +159,7 @@ func (s *tlsCertStep) Verify(ctx context.Context) error {
 // chain comes from where the edge keeps it, through the cluster access apply already has:
 // the nginx edge's TLS Secret (its tls.crt; the key is never kept), or NPM's fullchain.pem
 // read in NPM's pod.
-func (s *session) tlsCertStep(app string) (engine.Step, error) {
+func (s *session) tlsCertStep(app string) (*tlsCertStep, error) {
 	if !s.copiesTLSChain(app) {
 		return nil, nil
 	}
@@ -164,6 +173,12 @@ func (s *session) tlsCertStep(app string) (engine.Step, error) {
 		return nil, fmt.Errorf("%s: edge %s is not connected", app, e.Target)
 	}
 	st := &tlsCertStep{app: app, host: r.Hostname, now: time.Now,
+		notice: func(message string) {
+			fmt.Fprintf(s.o.Out, "%s.tls-cert: %s\n", app, s.redact.Redact(message))
+		},
+		served: func(ctx context.Context, leaf []byte) error {
+			return cluster.c.TLSCertificateServed(ctx, e.ClusterApp(), r.Hostname, leaf)
+		},
 		hostRead: func(ctx context.Context) ([]byte, error) {
 			return dockerhost.ReadTLSChain(ctx, host.c, host.t.Root, app)
 		},

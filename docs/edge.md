@@ -905,10 +905,19 @@ runner in KyYard ([suite runner](superpowers/specs/2026-10-16-suite-runner-desig
 same steps for every installed KyDrive and KyPost five minutes after it starts and then daily,
 under the target locks, while no operation runs (an hour later when one does; requests meanwhile
 answer `busy`). It writes only a changed chain, and neither app restarts: both re-read the file.
-A renewal under an hour old does not replace a valid copy until the next run, so KyPost never
-puts a key in a pairing link before the edge has loaded it. Each copy is logged with its leaf's
-SHA-256 and expiry; a failure is the app's last result in KyYard's status (`<app>.tls-cert`
-failed) until a later run passes. A CLI-owned plan follows renewals only when `apply` runs.
+Before replacing an existing copy, the step opens a TLS connection with the route's SNI to
+every ready installer-managed edge pod through the authenticated Kubernetes port-forward.
+Each must present the exact leaf read from the source; the cluster API is the trust anchor,
+so a private CA needs no workstation trust-store change. Certificate validity dates are not
+reload times: ACME CAs may backdate `NotBefore`. If any pod still serves another leaf or
+cannot be checked, a valid old copy stays and the reason is logged, even on a skipped step;
+the next refresh or apply retries. An invalid or missing copy instead fails. Only a first
+deploy without an existing deployment record or local copy may bootstrap before route
+creation without this check. Restore and daily refresh always check a missing copy.
+Each copy is logged with its leaf's SHA-256 and expiry; a failure is the app's last result in
+KyYard's status (`<app>.tls-cert` failed) until a later run passes. Renewals can leave an old
+pin until the next successful refresh; the daily schedule is not an immediate rollover
+guarantee. A CLI-owned plan follows renewals only when `apply` runs.
 
 The probe trusts the app host's outbound path and CA store: someone on that path holding a
 certificate for the name that the host trusts gets their key signed. It is set only where there
