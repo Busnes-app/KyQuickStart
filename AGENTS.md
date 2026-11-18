@@ -912,6 +912,21 @@ calls and kind nodes must carry their own explicit bounds.
   preserve the Go task cap and approved browser-only cap. This does not qualify offboarding
   or recovery from loss of the client's keys.
 
+- With `KYQ_TEST_YARD_UPGRADE_MANIFEST` naming an independently attested historical
+  Kubernetes manifest, `TestKubernetesKyYard` installs that published primary image and
+  upgrades it while CLI-owned, before handoff. Verify selected key/setup bytes, original
+  admin session, fresh native admin sign-in and everyday denial, then run the existing
+  runner ownership/recreation tests. Preserve the catalog backup/acknowledgement policy.
+  The resident runner is source-built fixture plumbing. Constrained hosts may reuse an
+  already-built fixture through `KYQ_TEST_YARD_FIXTURE_RUNNER_ID` (immutable local image
+  ID recorded by the controller), preserving the original image and using an owned tag.
+  Build the runner from a copied source tree with the existing test relay patches embedded.
+  Before workload startup, inspect the runner binary for the exact patched catalog, including
+  cached overrides; reject unpatched images. Verify Identity's explicit empty relay settings
+  in its Deployment and pods before handoff and after runner upgrade, recreation and revoke.
+  This does not qualify a published runner artifact, Docker placement, offboarding or
+  disaster recovery.
+
 - With `KYQ_TEST_MESSAGE_UPGRADE_MANIFEST` naming an independently attested historical
   KyMessages manifest and its sibling Compose template, `TestKubernetesKyMessage` starts
   the complete old catalog entry with explicit fixture transport/CA plumbing, exchanges

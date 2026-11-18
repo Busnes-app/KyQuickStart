@@ -27,12 +27,14 @@ import (
 
 	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/cli"
+	"github.com/Busnes-app/kyquickstart/internal/engine"
 	"github.com/Busnes-app/kyquickstart/internal/kube"
 	"github.com/Busnes-app/kyquickstart/internal/stack"
 	"github.com/google/uuid"
 	"go.yaml.in/yaml/v3"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/utils/ptr"
@@ -69,9 +71,83 @@ func TestKubernetesKyYard(t *testing.T) {
 		t.Fatal(err)
 	}
 	cs := kubernetes.NewForConfigOrDie(cfg)
+	// Inspect both desired and running Identity environments: the resident runner
+	// deploys from its own embedded catalog, independently of the CLI's copied catalog.
+	checkIdentityRelays := func(stage string) {
+		t.Helper()
+		deployment, err := cs.AppsV1().Deployments("kyq-kyidentity").Get(ctx, "app", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal("Identity relay-isolation deployment unavailable")
+		}
+		check := func(containers []corev1.Container) {
+			t.Helper()
+			for _, c := range containers {
+				if c.Name != "app" {
+					continue
+				}
+				for _, name := range []string{"PUSH_RELAY_URL", "APNS_RELAY_URL"} {
+					count := 0
+					for _, e := range c.Env {
+						if e.Name == name {
+							count++
+							if e.Value != "" || e.ValueFrom != nil {
+								t.Fatal("Identity production relay not explicitly disabled at " + stage)
+							}
+						}
+					}
+					if count != 1 {
+						t.Fatal("Identity explicit empty relay setting missing or duplicated at " + stage)
+					}
+				}
+				return
+			}
+			t.Fatal("Identity app container missing at " + stage)
+		}
+		check(deployment.Spec.Template.Spec.Containers)
+		pods, err := cs.CoreV1().Pods("kyq-kyidentity").List(ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/name=kyidentity"})
+		if err != nil || len(pods.Items) == 0 {
+			t.Fatal("Identity relay-isolation pods unavailable at " + stage)
+		}
+		for _, pod := range pods.Items {
+			check(pod.Spec.Containers)
+		}
+		t.Logf("Identity explicit empty production relays verified in Deployment and pods: %s", stage)
+	}
 	catalogDir := filepath.Join(work, "catalog")
 	for _, app := range []string{"npm", "kyidentity", "kyyard"} {
 		copyCatalogApp(t, catalogDir, app)
+	}
+	// Optional published primary-image upgrade. The runner is still explicit source-built
+	// fixture plumbing, not qualification of a published runner artifact.
+	previousYard := os.Getenv("KYQ_TEST_YARD_UPGRADE_MANIFEST")
+	yardManifest := filepath.Join(catalogDir, "kyyard", "manifest.yaml")
+	var candidateYard []byte
+	if previousYard != "" {
+		candidateYard, err = os.ReadFile(yardManifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		current, err := catalog.Load(os.DirFS(catalogDir))
+		if err != nil {
+			t.Fatal(err)
+		}
+		old, err := os.ReadFile(previousYard)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(yardManifest, old, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		relaysOff(t, filepath.Dir(yardManifest))
+		historical, err := catalog.Load(os.DirFS(catalogDir))
+		if err != nil {
+			t.Fatal(err)
+		}
+		from, to := historical["kyyard"], current["kyyard"]
+		if from.Version == to.Version || !catalog.VersionAtLeast(to.Version, from.Version) || from.Images["kyyard"] == to.Images["kyyard"] {
+			t.Fatal("KyYard fixture must upgrade a distinct published primary image/version")
+		}
+		kindLoad(t, name, from.Images["kyyard"])
 	}
 	runnerImage := yardRunnerImage(t, name, node)
 	plan := filepath.Join(state, "stack.yaml")
@@ -130,6 +206,8 @@ func TestKubernetesKyYard(t *testing.T) {
 		t.Fatal("KyIdentity's first setup did not run")
 	}
 
+	checkIdentityRelays("initial CLI install")
+
 	// KyYard joins after KyIdentity's first setup, by setup amendment.
 	loadCatalogApp(t, name, cs, "kyyard")
 	st, _ = stack.Load(plan)
@@ -144,6 +222,100 @@ func TestKubernetesKyYard(t *testing.T) {
 	yardSignOn(t, ctx, connected, client, false)
 	admin := yardSignOn(t, ctx, connected, client, true)
 
+	if previousYard != "" {
+		oldCatalog, err := catalog.Load(os.DirFS(catalogDir))
+		if err != nil {
+			t.Fatal(err)
+		}
+		primaryImage := func() string {
+			t.Helper()
+			deployment, err := cs.AppsV1().Deployments("kyq-kyyard").Get(ctx, "app", metav1.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, container := range deployment.Spec.Template.Spec.Containers {
+				if container.Name == "app" {
+					// Kubernetes preserves tag+digest; compare both sides by the
+					// same immutable repository/digest identity, not tag spelling.
+					image, err := catalog.PinnedImage(container.Image)
+					if err != nil {
+						t.Fatal("deployed KyYard primary image is not pinned")
+					}
+					t.Logf("observed KyYard primary immutable image %s", image)
+					return image
+				}
+			}
+			t.Fatal("KyYard primary container missing")
+			return ""
+		}
+		oldImage, err := catalog.PinnedImage(oldCatalog["kyyard"].Images["kyyard"])
+		if err != nil || primaryImage() != oldImage {
+			t.Fatal("old published KyYard primary image was not installed")
+		}
+		keyHashes := func() string {
+			t.Helper()
+			ns, pod, container, err := connected.AppPod(ctx, "kyyard")
+			if err != nil {
+				t.Fatal(err)
+			}
+			out, err := connected.Exec(ctx, ns, pod, container, []string{"sha256sum", "/data/session.key", "/data/encryption.key", "/data/instance.key", yardSetupDir + "/client.secret", yardSetupDir + "/directory.secret", yardSetupDir + "/setup.json"})
+			if err != nil {
+				t.Fatal("KyYard selected key/config fingerprint unavailable")
+			}
+			return string(out)
+		}
+		beforeKeys := keyHashes()
+		if err := os.WriteFile(yardManifest, candidateYard, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		current, err := catalog.Load(os.DirFS(catalogDir))
+		if err != nil {
+			t.Fatal(err)
+		}
+		migrates := current["kyyard"].Upgrade.Migrates(oldCatalog["kyyard"].Version)
+		args := []string{"upgrade", "kyyard", "--state", state}
+		if !migrates {
+			args = append(args, "--acknowledge-no-backup")
+		}
+		var upgrade bytes.Buffer
+		err = cli.Run(ctx, args, cli.Options{Catalog: os.DirFS(catalogDir), ReleaseSet: "e2e", Out: &upgrade, RunnerImage: runnerImage, Progress: func(event engine.Event) {
+			if event.ID == "kyyard.deploy" && event.Status == "ok" {
+				// Preserve the named test CA when the candidate pod starts. This is
+				// the existing fixture-only mount; no global trust/TLS override.
+				if _, err := cs.AppsV1().Deployments("kyq-kyyard").Patch(ctx, "app", types.StrategicMergePatchType, []byte(testCAPatch), metav1.PatchOptions{}); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}})
+		out := upgrade.String()
+		outputs = append(outputs, out)
+		t.Logf("published KyYard primary upgrade: %v\n%s", err, out)
+		if err != nil || status(out, "kyyard.deploy") != "ok" || status(out, "kyyard.health") != "ok" {
+			t.Fatal("published KyYard primary upgrade failed")
+		}
+		if migrates && status(out, "kyyard.pre-upgrade-backup") != "ok" {
+			t.Fatal("KyYard migration omitted required verified backup")
+		}
+		if !migrates && !strings.Contains(out, "operator acknowledged no pre-upgrade backup") {
+			t.Fatal("KyYard upgrade omitted operator acknowledgement")
+		}
+		newImage, err := catalog.PinnedImage(current["kyyard"].Images["kyyard"])
+		if err != nil || primaryImage() != newImage || keyHashes() != beforeKeys {
+			t.Fatal("KyYard candidate image or retained key/config fingerprints mismatch")
+		}
+		r, b := send(t, ctx, admin, "GET", "https://"+catalogYardURLHost+"/api/auth/me", nil, "")
+		var retained struct {
+			Authenticated bool
+			User          struct{ Username, Role string }
+		}
+		if r.StatusCode != 200 || json.Unmarshal(b, &retained) != nil || !retained.Authenticated || retained.User.Username != "prepared-admin" || retained.User.Role != "admin" {
+			t.Fatal("KyYard upgrade did not retain the original administrator session")
+		}
+		yardSignOn(t, ctx, connected, client, false)
+		admin = yardSignOn(t, ctx, connected, client, true)
+		t.Logf("published KyYard primary upgrade %s -> %s passed; selected keys/config and old session retained; fresh admin SSO and everyday denial passed", oldCatalog["kyyard"].Version, current["kyyard"].Version)
+	}
+
 	// AC15: a rerun with no plan change skips every KyYard step.
 	out = apply("yard rerun")
 	for _, id := range []string{"kyidentity.amend.kyyard", "kyyard.deploy", "kyyard.health", "kyyard.setup", yardRouteStep} {
@@ -151,6 +323,8 @@ func TestKubernetesKyYard(t *testing.T) {
 			t.Errorf("rerun: %s = %q", id, status(out, id))
 		}
 	}
+
+	checkIdentityRelays("before handoff")
 
 	// AC14: the printed handoff line, run as printed with this checkout's kyquickstart, twice.
 	line := ""
@@ -265,6 +439,7 @@ func TestKubernetesKyYard(t *testing.T) {
 	if op["state"] != "succeeded" || stepStatus["kyyard.runner"] == "" || stepStatus["kyidentity.deploy"] == "" || stepStatus["kyyard.deploy"] != "" || stepStatus["kyyard.setup"] != "" {
 		t.Fatalf("upgrade through the runner: %v", op)
 	}
+	checkIdentityRelays("after runner upgrade")
 	if op := operate("kyyard"); op["state"] != "failed" || op["error"].(map[string]any)["code"] != "runner_host" {
 		t.Fatalf("upgrade kyyard through the runner: %v", op)
 	}
@@ -323,6 +498,8 @@ func TestKubernetesKyYard(t *testing.T) {
 		t.Fatalf("KyYard's suite status after the pod was recreated: %d %s", r.StatusCode, b)
 	}
 
+	checkIdentityRelays("after runner pod recreation")
+
 	// The workstation may not redeploy KyYard under its runner; revoke gives the plan back.
 	if _, err := run("under the runner", "apply"); err == nil || !strings.Contains(err.Error(), "owned_by_runner") {
 		t.Fatalf("workstation apply under the runner: %v", err)
@@ -346,6 +523,8 @@ func TestKubernetesKyYard(t *testing.T) {
 			t.Errorf("after revoke: %s = %q", id, status(out, id))
 		}
 	}
+
+	checkIdentityRelays("after revoke and CLI apply")
 
 	// AC16: no credential reached any output or the workstation state.
 	all := append(secrets, runnerSecrets...)
@@ -374,9 +553,25 @@ func TestKubernetesKyYard(t *testing.T) {
 // this proves a source build, by digest, through the same render and pull path.
 func yardRunnerImage(t *testing.T, cluster, node string) string {
 	t.Helper()
-	docker(t, "build", "-q", "--build-arg", "VERSION=e2e", "-t", "kyq-e2e-runner", "../..")
-	kind(t, "load", "docker-image", "kyq-e2e-runner", "--name", cluster)
-	const tagged = "docker.io/library/kyq-e2e-runner:latest"
+	tag := "kyq-e2e-runner"
+	if image := os.Getenv("KYQ_TEST_YARD_FIXTURE_RUNNER_ID"); image != "" {
+		// Reuse an explicit already-built fixture on constrained hosts. The controller
+		// records its immutable local image ID; this is not a published-artifact claim.
+		if len(image) != 71 || !strings.HasPrefix(image, "sha256:") {
+			t.Fatal("cached fixture runner must be an immutable local image ID")
+		}
+		if _, err := hex.DecodeString(strings.TrimPrefix(image, "sha256:")); err != nil {
+			t.Fatal("invalid cached fixture runner image ID")
+		}
+		tag = "kyq-e2e-yard-runner-" + strconv.Itoa(os.Getpid())
+		docker(t, "tag", image, tag)
+		t.Cleanup(func() { _ = exec.Command("docker", "image", "rm", tag).Run() })
+	} else {
+		docker(t, "build", "-q", "--build-arg", "VERSION=e2e", "-t", tag, yardRunnerSource(t))
+	}
+	yardCheckRunnerRelayCatalog(t, tag)
+	kind(t, "load", "docker-image", tag, "--name", cluster)
+	tagged := "docker.io/library/" + tag + ":latest"
 	lines := strings.Split(docker(t, "exec", node, "ctr", "-n", "k8s.io", "images", "ls", "name=="+tagged), "\n")
 	if len(lines) != 2 || len(strings.Fields(lines[1])) < 3 || !strings.HasPrefix(strings.Fields(lines[1])[2], "sha256:") {
 		t.Fatalf("loaded runner image: %q", lines)
@@ -384,7 +579,7 @@ func yardRunnerImage(t *testing.T, cluster, node string) string {
 	ref := "docker.io/library/kyq-e2e-runner@" + strings.Fields(lines[1])[2]
 	docker(t, "exec", node, "ctr", "-n", "k8s.io", "images", "tag", "--force", tagged, ref)
 	docker(t, "exec", node, "crictl", "inspecti", ref) // kubelet resolves it without a registry
-	t.Logf("test plumbing: runner image %s, built from this checkout", ref)
+	t.Logf("test plumbing: runner image %s, local fixture build (cached override=%t); not a published runner artifact", ref, os.Getenv("KYQ_TEST_YARD_FIXTURE_RUNNER_ID") != "")
 	return ref
 }
 
