@@ -30,7 +30,7 @@ within its own scope. Baseline coverage does not prove content migration or full
 | KyPost | Native Docker setup, pre-bind-volume layout copy, admin users API 200 / everyday 403, session-ending restart and cold backup | Native config/account upgrade passed in IMAP-proxy mode. Real mail migration/restored mail, offboarding and dedicated-admin ordinary-mail denial remain untested. This fixture disables native mail listeners; it does not qualify the workforce mail stack. |
 | KyDNS | Native setup, authoritative UDP/TCP DNS, forged-header rejection, unsafe-gateway trust refusal and fail-closed edge behavior; owner confirms an existing in-place upgrade to v0.6.1 is working | Owner report is successful operational upgrade evidence; its prior version and detailed checks were not supplied. Controlled previous-catalog zone/config retention, successful edge/admin sign-in on Major, offboarding and restore remain unqualified. Never broaden trust to force a pass. |
 | KyMessages | Real encrypted chat, offboarding and history restore; original device decrypts history and removals replay before Synapse starts. Dedicated admin chat sign-in receives KyIdentity access_denied and MAS has no admin account. | Previous0.6.0.1→0.6.1 upgrade with own verified snapshot, original keys/sessions and old/new encrypted events passed; later candidate offboarding/history restore passed. Upstream Matrix-version migration and direct authorization with an otherwise-valid admin token remain unproven. |
-| KyYard | V4 published primary0.6.0.3-to-0.6.1.1 Kubernetes CLI upgrade; observed exact image digests, selected key/setup hashes and original admin session retained; fresh native admin SSO/everyday denial plus existing runner ownership/recreation/revoke checks passed | Published runner artifact/source provenance, Docker upgrade, offboarding and restored management service remain unqualified. The resident runner was an explicit cached local fixture. |
+| KyYard | Relay-corrected published primary0.6.0.3-to-0.6.1.1 Kubernetes CLI upgrade; observed exact image digests, selected key/setup hashes and original admin session retained; fresh native admin SSO/everyday denial plus existing runner ownership/recreation/revoke checks passed | Published runner artifact/source provenance, Docker upgrade, offboarding and restored management service remain unqualified. The resident runner was an explicit local fixture with a preflight-verified relay-isolated embedded catalog. |
 | Nginx Proxy Manager | Both NPM shards: routing, ownership, administrative bootstrap, token refresh and reruns | No general upstream data migration/recovery claim. |
 | nginx edge | Both nginx shards plus node/pod failover, route reload/ownership and certificate assertions | Cluster topology/storage/network conditions beyond these fixtures. |
 | CloudNativePG | Pinned operator/database HA fixture: synchronous replication, TLS, primary/node loss, hibernation/reinstall and object ownership | Node return and production storage/topology behavior beyond kind. |
@@ -88,55 +88,55 @@ named issuing CA. No global trust or host DNS changes are required.
 
 ## Yard published-primary Kubernetes upgrade
 
-`TestKubernetesKyYard` with `KYQ_TEST_YARD_UPGRADE_MANIFEST` passed at
-2026-11-18T03:59:35Z. The old primary was the exact0.6.0.3 image from installer0.6.0.8;
-the candidate was the frozen0.6.1.1 image. Both deployed immutable repository/digest
-identities were observed and matched. The historical image's exact-tag release-workflow
-attestation passed independently; the matrix records both image references.
+The relay-corrected `TestKubernetesKyYard` case **PASSED** on 2026-11-18. It used the
+exact published0.6.0.3 primary from installer0.6.0.8 and frozen candidate0.6.1.1.
+Both deployed repository/digest identities matched; the old exact-tag release-workflow
+attestation remains independently verified. Product runtime, dependencies and all14pins
+are unchanged.
 
 | Check | Duration | Result |
 | --- | ---: | --- |
-| Existing Yard renderer control | 6.830 s | PASS |
-| Affected e2e compilation and relay isolation | 6.543 s | PASS |
-| Fresh full `make ci` | 157.890 s | PASS |
-| Real primary-upgrade integration command | 282.398 s | PASS |
-| Full campaign controller | 453.832 s | PASS |
+| Actual unsafe cached-runner preflight | 6.788 s | Expected refusal, exit1; no container started |
+| Affected/source/relay/issuing-CA controls | 1.571 s | PASS |
+| Bounded static fixture build | 5.112 s | PASS |
+| Actual corrected cached-runner preflight | 1.641 s | PASS |
+| Fresh full `make ci` | 162.286 s | PASS |
+| Real primary-upgrade integration command | 255.414 s | PASS |
+| Full campaign controller | 433.124 s | PASS |
 
-The tested base was `f2af41f118405a23a2f5d44407bc3f1d3b2dd87f`, patch
-`52dff11b6f93be85d76e9237f83f74b3d4c93ed6122f0c9721554be3f19b21a2`.
-The publication preserves the Yard test source byte for byte. Merged Notes changes the
-shared certificate-helper call path, so publication checks include a fresh real Yard
-case on the merged base; the earlier passing run remains a separate historical result.
+Tested base `e38f3c7612eea0ee24071f721ec26affe909ddfd`, frozen source patch
+`9f5b223cf11e2e5bccd7320a56c8223a24b6b119a8e155ab40791a231fa44b15`.
+Only this report and its matrix changed after execution; test/runtime inputs stayed
+byte-identical. The final report has a separate fresh mdBook/link check.
 
-Fresh publication verification on merged Notes base
-`fd7134aff1acfdf49c70f08849f3f8639d2f14b1` also **PASSED** at2026-11-18T04:57:54Z:
-renderer6.862 s, affected compilation/relay/issuing-CA controls6.474 s, fresh fullCI
-158.698 s, actual primary-upgrade integration287.535 s, mdBook0.5.4 build and283 local
-links/fragments (full controller459.825 s). Both old/candidate immutable primary-image
-identities and the final Go test/package pass were observed again. This is a fresh
-integration on the merged base, separate from the earlier V4 result above.
+The CLI upgrades Yard before handoff. Selected session/encryption/instance/client/
+directory/setup hashes and the original administrator session remain unchanged. Fresh
+candidate native administrator SSO and everyday Identity denial pass, followed by runner
+socket, ownership, self-upgrade refusal, pod recreation and revoke checks. This specific
+transition requires the explicit no-backup acknowledgement, which was observed; no
+required migration backup or disaster restore is claimed. Both image references are
+canonicalized using `catalog.PinnedImage`, retaining exact repository/digest equality.
 
-The CLI upgrades Yard before handoff, while the workstation owns the installation.
-Selected session/encryption/instance/client/directory/setup hashes and the original admin
-session remain unchanged. Fresh candidate native administrator SSO and everyday Identity
-denial pass, followed by the existing runner socket, ownership, self-upgrade refusal,
-pod recreation and revoke checks. The catalog does not require a migration backup for
-this specific0.6.0.3-to-0.6.1.1 transition; the operator's explicit no-backup acknowledgement
-is required and observed. No pre-upgrade migration backup or disaster restore is claimed.
+Earlier V4/publication commands exited0 (282.398 s/287.535 s), but later inspection found
+their local runner embedded an unpatched Identity catalog and redeployed Identity. Those
+primary assertions remain historical evidence; they did not prove relay isolation through
+the runner phase. No production registration has been observed; no production service
+query was performed to infer otherwise. Original sources and results remain preserved.
 
-The image comparison canonicalizes both actual and expected references with the existing
-`catalog.PinnedImage` helper. Kubernetes retains the tag alongside the digest; equality
-still requires the same repository and immutable digest. Earlier failed fixture sources
-and private diagnosis evidence remain preserved.
+The corrected runner builds from copied source with existing Identity/Post relay patches
+applied before embedding. Both default builds and cached overrides must pass a binary
+inspection of the exact patched templates before kind imports or starts the image.
+Identity's explicit empty relay values were observed in its Deployment and pods at all
+five stages: initial install, before handoff, after runner upgrade, after pod recreation,
+and after revoke/CLI apply. The actual old image failed the guard without being started;
+the corrected image passed it. The constrained-host fixture was compiled under the same
+Go cgroup bounds, then inserted into a never-started networkless container based on the
+preserved local fixture. It required no Docker build. The original image was preserved.
 
-The resident runner is an explicitly selected previously built local fixture, not a
-published runner artifact. `KYQ_TEST_YARD_FIXTURE_RUNNER_ID` accepts its immutable local
-image ID, uses a per-PID owned import tag and removes that tag after the test, preserving
-the original image. It avoids an uncapped Docker build on the constrained host. The
-ordinary CI fixture still builds its runner when this opt-in is absent. This primary
-Kubernetes upgrade does not qualify a published runner, Docker upgrade, offboarding or
-restored management service. Product runtime, dependencies, image pins and trust policy
-are unchanged.
+`KYQ_TEST_YARD_FIXTURE_RUNNER_ID` accepts an immutable local image ID and uses an owned
+per-PID import tag, removed after the test. The ordinary CI fixture builds from the patched
+source copy when the override is absent. This remains local fixture plumbing: published
+runner provenance, Docker upgrade, offboarding and restored management service are open.
 
 ## Reproduction and boundaries
 

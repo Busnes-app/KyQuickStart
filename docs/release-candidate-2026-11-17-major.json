@@ -272,7 +272,7 @@
     }
   ],
   "safety": {
-    "production_push_relays": "explicitly empty in disposable fixtures",
+    "production_push_relays": "Explicit empty values verified throughout corrected Yard case; historical unpatched Yard runner gap recorded in yard_primary_upgrade_case",
     "heavy_work": "serial under /tmp/ky-heavy-test.lock",
     "existing_services": "not adopted or modified"
   },
@@ -585,8 +585,8 @@
     "private_evidence_name": "20261117-major-notes-content-v12/successful-content-upgrade-milestone.json"
   },
   "yard_primary_upgrade_case": {
-    "tested_base": "f2af41f118405a23a2f5d44407bc3f1d3b2dd87f",
-    "patch_sha256": "52dff11b6f93be85d76e9237f83f74b3d4c93ed6122f0c9721554be3f19b21a2",
+    "tested_base": "e38f3c7612eea0ee24071f721ec26affe909ddfd",
+    "patch_sha256": "9f5b223cf11e2e5bccd7320a56c8223a24b6b119a8e155ab40791a231fa44b15",
     "old_installer": "v0.6.0.8",
     "old_installer_source": "724fc276c77a56c392ba0e402a2a90ddcd408257",
     "old_version": "0.6.0.3",
@@ -596,40 +596,97 @@
       "ghcr.io/busnes-app/kyyard@sha256:33a53d97eea363bb863ee33775d4d8515c114d9cc50b5f27dd0248560b1c9d13"
     ],
     "results": {
-      "render-control": {
-        "name": "render-control",
+      "old-primary-attestation": {
+        "checked_at": "2026-11-18T02:49:17.260412+00:00",
         "command": [
-          "go",
-          "test",
-          "-race",
-          "-count=1",
-          "-run",
-          "^TestRenderKyYard$",
-          "./internal/kube"
+          "gh",
+          "attestation",
+          "verify",
+          "oci://ghcr.io/busnes-app/kyyard@sha256:c8e64559a7eb83edb50b84e762b31cc894d2ce5237afc3e8efcbcdf5533d221f",
+          "--repo",
+          "Busnes-app/KyYard-server",
+          "--cert-identity",
+          "https://github.com/Busnes-app/KyYard-server/.github/workflows/release-image.yml@refs/tags/v0.6.0.3",
+          "--format",
+          "json"
         ],
-        "source": "f2af41f118405a23a2f5d44407bc3f1d3b2dd87f",
-        "started_at": "2026-11-18T03:52:01.630652+00:00",
-        "finished_at": "2026-11-18T03:52:08.461036+00:00",
-        "duration_seconds": 6.83,
         "exit_code": 0,
-        "host": "major"
+        "duration_seconds": 17.083,
+        "product_execution_qualified": false
       },
-      "affected": {
-        "name": "affected",
+      "unsafe-cached-runner-control": {
+        "name": "unsafe-cached-runner-control",
         "command": [
+          "env",
+          "KYQ_TEST_YARD_FIXTURE_RUNNER_ID=sha256:9ee2686e53a07fd19ca4da6ead6dfda1584f234b61599a2f99ef0e9e804f5260",
           "go",
           "test",
           "-tags",
           "e2e,goolm",
           "-count=1",
           "-run",
-          "^TestRelaysOffCatalog$",
+          "^TestYardRunnerRelayCatalog$",
           "./test/e2e/"
         ],
-        "source": "f2af41f118405a23a2f5d44407bc3f1d3b2dd87f",
-        "started_at": "2026-11-18T03:52:08.501211+00:00",
-        "finished_at": "2026-11-18T03:52:15.044445+00:00",
-        "duration_seconds": 6.543,
+        "source": "e38f3c7612eea0ee24071f721ec26affe909ddfd",
+        "started_at": "2026-11-18T05:17:55.514461+00:00",
+        "finished_at": "2026-11-18T05:18:02.302200+00:00",
+        "duration_seconds": 6.788,
+        "exit_code": 1,
+        "host": "major"
+      },
+      "affected": {
+        "name": "affected",
+        "command": [
+          "env",
+          "KYQ_TEST_YARD_FIXTURE_RUNNER_ID=",
+          "go",
+          "test",
+          "-tags",
+          "e2e,goolm",
+          "-count=1",
+          "-run",
+          "^(TestRelaysOffCatalog|TestNotesBrowserCertificate|TestYardRunnerSource)$",
+          "./test/e2e/"
+        ],
+        "source": "e38f3c7612eea0ee24071f721ec26affe909ddfd",
+        "started_at": "2026-11-18T05:18:02.328004+00:00",
+        "finished_at": "2026-11-18T05:18:03.899435+00:00",
+        "duration_seconds": 1.571,
+        "exit_code": 0,
+        "host": "major"
+      },
+      "fixture-build": {
+        "name": "fixture-build",
+        "command": [
+          "python3",
+          "/home/yoshi/.local/state/kyquickstart-acceptance/20261118-major-yard-relay-isolation-v1/build-fixture.py"
+        ],
+        "source": "e38f3c7612eea0ee24071f721ec26affe909ddfd",
+        "started_at": "2026-11-18T05:18:03.925767+00:00",
+        "finished_at": "2026-11-18T05:18:09.037729+00:00",
+        "duration_seconds": 5.112,
+        "exit_code": 0,
+        "host": "major"
+      },
+      "safe-cached-runner-control": {
+        "name": "safe-cached-runner-control",
+        "command": [
+          "env",
+          "KYQ_TEST_YARD_FIXTURE_RUNNER_ID=sha256:668940103607776604b1ee58baa822608e87d2911279cb9f7da5f9823b28d7a9",
+          "go",
+          "test",
+          "-tags",
+          "e2e,goolm",
+          "-count=1",
+          "-run",
+          "^TestYardRunnerRelayCatalog$",
+          "./test/e2e/"
+        ],
+        "source": "e38f3c7612eea0ee24071f721ec26affe909ddfd",
+        "started_at": "2026-11-18T05:18:09.063185+00:00",
+        "finished_at": "2026-11-18T05:18:10.703908+00:00",
+        "duration_seconds": 1.641,
         "exit_code": 0,
         "host": "major"
       },
@@ -639,10 +696,10 @@
           "make",
           "ci"
         ],
-        "source": "f2af41f118405a23a2f5d44407bc3f1d3b2dd87f",
-        "started_at": "2026-11-18T03:52:15.083685+00:00",
-        "finished_at": "2026-11-18T03:54:52.973268+00:00",
-        "duration_seconds": 157.89,
+        "source": "e38f3c7612eea0ee24071f721ec26affe909ddfd",
+        "started_at": "2026-11-18T05:18:10.730124+00:00",
+        "finished_at": "2026-11-18T05:20:53.016132+00:00",
+        "duration_seconds": 162.286,
         "exit_code": 0,
         "host": "major"
       },
@@ -651,8 +708,9 @@
         "command": [
           "env",
           "CGO_ENABLED=0",
-          "KYQ_TEST_YARD_UPGRADE_MANIFEST=/home/yoshi/.local/state/kyquickstart-acceptance/20261118-major-yard-primary-upgrade-v4/previous/kyyard/manifest.yaml",
-          "KYQ_TEST_YARD_FIXTURE_RUNNER_ID=sha256:9ee2686e53a07fd19ca4da6ead6dfda1584f234b61599a2f99ef0e9e804f5260",
+          "KYQ_TEST_NOTES_BROWSER=",
+          "KYQ_TEST_YARD_UPGRADE_MANIFEST=/home/yoshi/.local/state/kyquickstart-acceptance/20261118-major-yard-relay-isolation-v1/previous/kyyard/manifest.yaml",
+          "KYQ_TEST_YARD_FIXTURE_RUNNER_ID=sha256:668940103607776604b1ee58baa822608e87d2911279cb9f7da5f9823b28d7a9",
           "go",
           "test",
           "-json",
@@ -665,10 +723,37 @@
           "^TestKubernetesKyYard$",
           "./test/e2e/"
         ],
-        "source": "f2af41f118405a23a2f5d44407bc3f1d3b2dd87f",
-        "started_at": "2026-11-18T03:54:52.999377+00:00",
-        "finished_at": "2026-11-18T03:59:35.396924+00:00",
-        "duration_seconds": 282.398,
+        "source": "e38f3c7612eea0ee24071f721ec26affe909ddfd",
+        "started_at": "2026-11-18T05:20:53.042600+00:00",
+        "finished_at": "2026-11-18T05:25:08.456621+00:00",
+        "duration_seconds": 255.414,
+        "exit_code": 0,
+        "host": "major"
+      },
+      "docs-build": {
+        "name": "docs-build",
+        "command": [
+          "/home/yoshi/.cache/ky-tools/mdbook/0.5.4/mdbook",
+          "build",
+          "docs"
+        ],
+        "source": "e38f3c7612eea0ee24071f721ec26affe909ddfd",
+        "started_at": "2026-11-18T05:25:08.486814+00:00",
+        "finished_at": "2026-11-18T05:25:08.514321+00:00",
+        "duration_seconds": 0.028,
+        "exit_code": 0,
+        "host": "major"
+      },
+      "docs-links": {
+        "name": "docs-links",
+        "command": [
+          "python3",
+          "docs/check-links.py"
+        ],
+        "source": "e38f3c7612eea0ee24071f721ec26affe909ddfd",
+        "started_at": "2026-11-18T05:25:08.539441+00:00",
+        "finished_at": "2026-11-18T05:25:08.588304+00:00",
+        "duration_seconds": 0.049,
         "exit_code": 0,
         "host": "major"
       },
@@ -676,12 +761,12 @@
         "name": "full-qualification",
         "command": [
           "python3",
-          "/home/yoshi/.local/state/kyquickstart-acceptance/20261118-major-yard-primary-upgrade-v4/run-qualification.py"
+          "/home/yoshi/.local/state/kyquickstart-acceptance/20261118-major-yard-relay-isolation-v1/run-qualification.py"
         ],
-        "source": "f2af41f118405a23a2f5d44407bc3f1d3b2dd87f",
-        "started_at": "2026-11-18T03:52:01.574733+00:00",
-        "finished_at": "2026-11-18T03:59:35.406700+00:00",
-        "duration_seconds": 453.832,
+        "source": "e38f3c7612eea0ee24071f721ec26affe909ddfd",
+        "started_at": "2026-11-18T05:17:55.472021+00:00",
+        "finished_at": "2026-11-18T05:25:08.595844+00:00",
+        "duration_seconds": 433.124,
         "exit_code": 0,
         "host": "major"
       }
@@ -697,8 +782,8 @@
     "docker_upgrade_qualified": false,
     "offboarding_restore_qualified": false,
     "whole_suite_qualified": false,
-    "cached_local_fixture_runner_image_id": "sha256:9ee2686e53a07fd19ca4da6ead6dfda1584f234b61599a2f99ef0e9e804f5260",
-    "private_evidence_name": "20261118-major-yard-primary-upgrade-v4/successful-primary-upgrade-milestone.json",
+    "cached_local_fixture_runner_image_id": "sha256:668940103607776604b1ee58baa822608e87d2911279cb9f7da5f9823b28d7a9",
+    "private_evidence_name": "20261118-major-yard-relay-isolation-v1/successful-relay-isolated-primary-upgrade.json",
     "publication_verification": {
       "checked_at": "2026-11-18T05:00:36.619277+00:00",
       "base": "fd7134aff1acfdf49c70f08849f3f8639d2f14b1",
@@ -859,7 +944,48 @@
           "Elapsed": 281.243
         }
       ],
-      "qualification_scope": "Published Yard primary Kubernetes upgrade, named retention/access/runner contract checks; cached local fixture runner, not published artifact/source provenance; no Docker/offboarding/restore qualification"
+      "qualification_scope": "Published Yard primary Kubernetes upgrade, named retention/access/runner contract checks; cached local fixture runner, not published artifact/source provenance; no Docker/offboarding/restore qualification",
+      "historical_result_only": true,
+      "relay_isolation_qualified": false
+    },
+    "historical_runs_before_relay_correction": [
+      {
+        "evidence": "20261118-major-yard-primary-upgrade-v4",
+        "real_exit_code": 0,
+        "real_seconds": 282.398,
+        "controller_seconds": 453.832
+      },
+      {
+        "evidence": "20261118-major-yard-publication",
+        "real_exit_code": 0,
+        "real_seconds": 287.535,
+        "controller_seconds": 459.825
+      }
+    ],
+    "historical_relay_isolation_caveat": "Primary upgrade assertions passed, but the old local runner embedded unpatched Identity catalog; relay isolation through its redeployment phase was not proved. Earlier results and sources are retained, not relabelled as relay-isolated.",
+    "relay_isolation_verification": {
+      "fixture": {
+        "image_id": "sha256:668940103607776604b1ee58baa822608e87d2911279cb9f7da5f9823b28d7a9",
+        "binary_sha256": "1f21a8dfef8bfe4fcea5318079363d4aee46d8b04d0a8e9945ffe8df914539f4",
+        "base_image": "sha256:9ee2686e53a07fd19ca4da6ead6dfda1584f234b61599a2f99ef0e9e804f5260",
+        "container_never_started": true,
+        "container_removed": true,
+        "network": "none",
+        "published_provenance_qualified": false
+      },
+      "actual_old_image_refusal_expected_exit_code": 1,
+      "actual_old_image_refusal_observed_exit_code": 1,
+      "new_actual_image_preflight_exit_code": 0,
+      "deployment_and_pod_stages": [
+        "initial CLI install",
+        "before handoff",
+        "after runner upgrade",
+        "after runner pod recreation",
+        "after revoke and CLI apply"
+      ],
+      "all_five_stages_passed": true,
+      "production_registration_observed": false,
+      "production_service_queries_performed": false
     }
   }
 }

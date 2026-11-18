@@ -920,6 +920,10 @@ calls and kind nodes must carry their own explicit bounds.
   The resident runner is source-built fixture plumbing. Constrained hosts may reuse an
   already-built fixture through `KYQ_TEST_YARD_FIXTURE_RUNNER_ID` (immutable local image
   ID recorded by the controller), preserving the original image and using an owned tag.
+  Build the runner from a copied source tree with the existing test relay patches embedded.
+  Before workload startup, inspect the runner binary for the exact patched catalog, including
+  cached overrides; reject unpatched images. Verify Identity's explicit empty relay settings
+  in its Deployment and pods before handoff and after runner upgrade, recreation and revoke.
   This does not qualify a published runner artifact, Docker placement, offboarding or
   disaster recovery.
 

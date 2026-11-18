@@ -71,6 +71,48 @@ func TestKubernetesKyYard(t *testing.T) {
 		t.Fatal(err)
 	}
 	cs := kubernetes.NewForConfigOrDie(cfg)
+	// Inspect both desired and running Identity environments: the resident runner
+	// deploys from its own embedded catalog, independently of the CLI's copied catalog.
+	checkIdentityRelays := func(stage string) {
+		t.Helper()
+		deployment, err := cs.AppsV1().Deployments("kyq-kyidentity").Get(ctx, "app", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal("Identity relay-isolation deployment unavailable")
+		}
+		check := func(containers []corev1.Container) {
+			t.Helper()
+			for _, c := range containers {
+				if c.Name != "app" {
+					continue
+				}
+				for _, name := range []string{"PUSH_RELAY_URL", "APNS_RELAY_URL"} {
+					count := 0
+					for _, e := range c.Env {
+						if e.Name == name {
+							count++
+							if e.Value != "" || e.ValueFrom != nil {
+								t.Fatal("Identity production relay not explicitly disabled at " + stage)
+							}
+						}
+					}
+					if count != 1 {
+						t.Fatal("Identity explicit empty relay setting missing or duplicated at " + stage)
+					}
+				}
+				return
+			}
+			t.Fatal("Identity app container missing at " + stage)
+		}
+		check(deployment.Spec.Template.Spec.Containers)
+		pods, err := cs.CoreV1().Pods("kyq-kyidentity").List(ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/name=kyidentity"})
+		if err != nil || len(pods.Items) == 0 {
+			t.Fatal("Identity relay-isolation pods unavailable at " + stage)
+		}
+		for _, pod := range pods.Items {
+			check(pod.Spec.Containers)
+		}
+		t.Logf("Identity explicit empty production relays verified in Deployment and pods: %s", stage)
+	}
 	catalogDir := filepath.Join(work, "catalog")
 	for _, app := range []string{"npm", "kyidentity", "kyyard"} {
 		copyCatalogApp(t, catalogDir, app)
@@ -163,6 +205,8 @@ func TestKubernetesKyYard(t *testing.T) {
 	if out := apply("identity"); status(out, "kyidentity.setup") != "ok" {
 		t.Fatal("KyIdentity's first setup did not run")
 	}
+
+	checkIdentityRelays("initial CLI install")
 
 	// KyYard joins after KyIdentity's first setup, by setup amendment.
 	loadCatalogApp(t, name, cs, "kyyard")
@@ -280,6 +324,8 @@ func TestKubernetesKyYard(t *testing.T) {
 		}
 	}
 
+	checkIdentityRelays("before handoff")
+
 	// AC14: the printed handoff line, run as printed with this checkout's kyquickstart, twice.
 	line := ""
 	for _, l := range strings.Split(out, "\n") {
@@ -393,6 +439,7 @@ func TestKubernetesKyYard(t *testing.T) {
 	if op["state"] != "succeeded" || stepStatus["kyyard.runner"] == "" || stepStatus["kyidentity.deploy"] == "" || stepStatus["kyyard.deploy"] != "" || stepStatus["kyyard.setup"] != "" {
 		t.Fatalf("upgrade through the runner: %v", op)
 	}
+	checkIdentityRelays("after runner upgrade")
 	if op := operate("kyyard"); op["state"] != "failed" || op["error"].(map[string]any)["code"] != "runner_host" {
 		t.Fatalf("upgrade kyyard through the runner: %v", op)
 	}
@@ -451,6 +498,8 @@ func TestKubernetesKyYard(t *testing.T) {
 		t.Fatalf("KyYard's suite status after the pod was recreated: %d %s", r.StatusCode, b)
 	}
 
+	checkIdentityRelays("after runner pod recreation")
+
 	// The workstation may not redeploy KyYard under its runner; revoke gives the plan back.
 	if _, err := run("under the runner", "apply"); err == nil || !strings.Contains(err.Error(), "owned_by_runner") {
 		t.Fatalf("workstation apply under the runner: %v", err)
@@ -474,6 +523,8 @@ func TestKubernetesKyYard(t *testing.T) {
 			t.Errorf("after revoke: %s = %q", id, status(out, id))
 		}
 	}
+
+	checkIdentityRelays("after revoke and CLI apply")
 
 	// AC16: no credential reached any output or the workstation state.
 	all := append(secrets, runnerSecrets...)
@@ -516,8 +567,9 @@ func yardRunnerImage(t *testing.T, cluster, node string) string {
 		docker(t, "tag", image, tag)
 		t.Cleanup(func() { _ = exec.Command("docker", "image", "rm", tag).Run() })
 	} else {
-		docker(t, "build", "-q", "--build-arg", "VERSION=e2e", "-t", tag, "../..")
+		docker(t, "build", "-q", "--build-arg", "VERSION=e2e", "-t", tag, yardRunnerSource(t))
 	}
+	yardCheckRunnerRelayCatalog(t, tag)
 	kind(t, "load", "docker-image", tag, "--name", cluster)
 	tagged := "docker.io/library/" + tag + ":latest"
 	lines := strings.Split(docker(t, "exec", node, "ctr", "-n", "k8s.io", "images", "ls", "name=="+tagged), "\n")
