@@ -389,7 +389,7 @@
     ]
   },
   "coverage_audit": {
-    "checked_at": "2026-11-18T02:23:47.308343+00:00",
+    "checked_at": "2026-11-18T04:03:49.584700+00:00",
     "status": "in progress; not release qualified",
     "products": {
       "kyidentity": [
@@ -434,8 +434,10 @@
         "Auxiliary Matrix image versions unchanged; old pre-upgrade snapshot itself not restored; direct downstream authorization with otherwise-valid dedicated-admin token unproven"
       ],
       "kyyard": [
-        "Admin/everyday gate, runner ownership and credential/session persistence passed",
-        "Previous-catalog upgrade/offboarding/restored service untested; runner built from source"
+        "Published old0.6.0.3 ->candidate0.6.1.1 primary Kubernetes CLI upgrade passed; exact immutable old/new image references observed",
+        "Selected session/encryption/instance/client/directory/setup byte hashes and original admin session retained; fresh native administrator SSO/everyday Identity denial passed",
+        "Existing runner socket/ownership/self-upgrade refusal/pod recreation/revoke assertions completed using explicitly cached local fixture runner",
+        "Published runner artifact/source provenance, Docker upgrade, offboarding and restored management service remain unqualified"
       ],
       "npm": [
         "Both NPM shards passed",
@@ -466,15 +468,13 @@
     },
     "upgrade_evidence_counts": {
       "ky_products": 10,
-      "controlled_previous_version_campaigns_passed": 8,
+      "controlled_previous_version_campaigns_passed": 9,
       "additional_owner_confirmed_working_upgrade_products": [
         "kydns"
       ],
-      "products_with_successful_upgrade_evidence": 9,
-      "remaining_without_successful_upgrade_evidence": [
-        "kyyard"
-      ],
-      "scope": "Operational owner reports and controlled campaign results retain distinct provenance; not a whole-suite qualification count"
+      "products_with_successful_upgrade_evidence": 10,
+      "remaining_without_successful_upgrade_evidence": [],
+      "scope": "Nine controlled previous-version primary-product cases plus owner-confirmed working KyDNS upgrade; published runner, other placement/content/offboarding/restore and whole-suite release gates remain separate"
     }
   },
   "notes_content_case": {
@@ -583,5 +583,283 @@
     "edited_paragraphs": 1,
     "key_records_unchanged_after_owned_note_cache_evictions": true,
     "private_evidence_name": "20261117-major-notes-content-v12/successful-content-upgrade-milestone.json"
+  },
+  "yard_primary_upgrade_case": {
+    "tested_base": "f2af41f118405a23a2f5d44407bc3f1d3b2dd87f",
+    "patch_sha256": "52dff11b6f93be85d76e9237f83f74b3d4c93ed6122f0c9721554be3f19b21a2",
+    "old_installer": "v0.6.0.8",
+    "old_installer_source": "724fc276c77a56c392ba0e402a2a90ddcd408257",
+    "old_version": "0.6.0.3",
+    "candidate_version": "0.6.1.1",
+    "observed_primary_images": [
+      "ghcr.io/busnes-app/kyyard@sha256:c8e64559a7eb83edb50b84e762b31cc894d2ce5237afc3e8efcbcdf5533d221f",
+      "ghcr.io/busnes-app/kyyard@sha256:33a53d97eea363bb863ee33775d4d8515c114d9cc50b5f27dd0248560b1c9d13"
+    ],
+    "results": {
+      "render-control": {
+        "name": "render-control",
+        "command": [
+          "go",
+          "test",
+          "-race",
+          "-count=1",
+          "-run",
+          "^TestRenderKyYard$",
+          "./internal/kube"
+        ],
+        "source": "f2af41f118405a23a2f5d44407bc3f1d3b2dd87f",
+        "started_at": "2026-11-18T03:52:01.630652+00:00",
+        "finished_at": "2026-11-18T03:52:08.461036+00:00",
+        "duration_seconds": 6.83,
+        "exit_code": 0,
+        "host": "major"
+      },
+      "affected": {
+        "name": "affected",
+        "command": [
+          "go",
+          "test",
+          "-tags",
+          "e2e,goolm",
+          "-count=1",
+          "-run",
+          "^TestRelaysOffCatalog$",
+          "./test/e2e/"
+        ],
+        "source": "f2af41f118405a23a2f5d44407bc3f1d3b2dd87f",
+        "started_at": "2026-11-18T03:52:08.501211+00:00",
+        "finished_at": "2026-11-18T03:52:15.044445+00:00",
+        "duration_seconds": 6.543,
+        "exit_code": 0,
+        "host": "major"
+      },
+      "ci": {
+        "name": "ci",
+        "command": [
+          "make",
+          "ci"
+        ],
+        "source": "f2af41f118405a23a2f5d44407bc3f1d3b2dd87f",
+        "started_at": "2026-11-18T03:52:15.083685+00:00",
+        "finished_at": "2026-11-18T03:54:52.973268+00:00",
+        "duration_seconds": 157.89,
+        "exit_code": 0,
+        "host": "major"
+      },
+      "real-yard-primary-upgrade": {
+        "name": "real-yard-primary-upgrade",
+        "command": [
+          "env",
+          "CGO_ENABLED=0",
+          "KYQ_TEST_YARD_UPGRADE_MANIFEST=/home/yoshi/.local/state/kyquickstart-acceptance/20261118-major-yard-primary-upgrade-v4/previous/kyyard/manifest.yaml",
+          "KYQ_TEST_YARD_FIXTURE_RUNNER_ID=sha256:9ee2686e53a07fd19ca4da6ead6dfda1584f234b61599a2f99ef0e9e804f5260",
+          "go",
+          "test",
+          "-json",
+          "-tags",
+          "e2e,goolm",
+          "-count=1",
+          "-timeout",
+          "45m",
+          "-run",
+          "^TestKubernetesKyYard$",
+          "./test/e2e/"
+        ],
+        "source": "f2af41f118405a23a2f5d44407bc3f1d3b2dd87f",
+        "started_at": "2026-11-18T03:54:52.999377+00:00",
+        "finished_at": "2026-11-18T03:59:35.396924+00:00",
+        "duration_seconds": 282.398,
+        "exit_code": 0,
+        "host": "major"
+      },
+      "full-qualification": {
+        "name": "full-qualification",
+        "command": [
+          "python3",
+          "/home/yoshi/.local/state/kyquickstart-acceptance/20261118-major-yard-primary-upgrade-v4/run-qualification.py"
+        ],
+        "source": "f2af41f118405a23a2f5d44407bc3f1d3b2dd87f",
+        "started_at": "2026-11-18T03:52:01.574733+00:00",
+        "finished_at": "2026-11-18T03:59:35.406700+00:00",
+        "duration_seconds": 453.832,
+        "exit_code": 0,
+        "host": "major"
+      }
+    },
+    "selected_key_setup_hashes_retained": true,
+    "original_administrator_session_retained": true,
+    "fresh_native_administrator_sso_and_everyday_identity_denial": true,
+    "runner_socket_ownership_refusal_recreation_revoke_case_completed": true,
+    "migration_backup_required_or_claimed": false,
+    "explicit_no_backup_acknowledgement_required_and_observed": true,
+    "primary_kubernetes_upgrade_qualified": true,
+    "published_runner_artifact_qualified": false,
+    "docker_upgrade_qualified": false,
+    "offboarding_restore_qualified": false,
+    "whole_suite_qualified": false,
+    "cached_local_fixture_runner_image_id": "sha256:9ee2686e53a07fd19ca4da6ead6dfda1584f234b61599a2f99ef0e9e804f5260",
+    "private_evidence_name": "20261118-major-yard-primary-upgrade-v4/successful-primary-upgrade-milestone.json",
+    "publication_verification": {
+      "checked_at": "2026-11-18T05:00:36.619277+00:00",
+      "base": "fd7134aff1acfdf49c70f08849f3f8639d2f14b1",
+      "fresh_real_integration": true,
+      "results": {
+        "old-primary-attestation": {
+          "checked_at": "2026-11-18T02:49:17.260412+00:00",
+          "command": [
+            "gh",
+            "attestation",
+            "verify",
+            "oci://ghcr.io/busnes-app/kyyard@sha256:c8e64559a7eb83edb50b84e762b31cc894d2ce5237afc3e8efcbcdf5533d221f",
+            "--repo",
+            "Busnes-app/KyYard-server",
+            "--cert-identity",
+            "https://github.com/Busnes-app/KyYard-server/.github/workflows/release-image.yml@refs/tags/v0.6.0.3",
+            "--format",
+            "json"
+          ],
+          "exit_code": 0,
+          "duration_seconds": 17.083,
+          "product_execution_qualified": false
+        },
+        "render-control": {
+          "name": "render-control",
+          "command": [
+            "go",
+            "test",
+            "-race",
+            "-count=1",
+            "-run",
+            "^TestRenderKyYard$",
+            "./internal/kube"
+          ],
+          "source": "fd7134aff1acfdf49c70f08849f3f8639d2f14b1",
+          "started_at": "2026-11-18T04:50:14.628593+00:00",
+          "finished_at": "2026-11-18T04:50:21.490203+00:00",
+          "duration_seconds": 6.862,
+          "exit_code": 0,
+          "host": "major"
+        },
+        "affected": {
+          "name": "affected",
+          "command": [
+            "go",
+            "test",
+            "-tags",
+            "e2e,goolm",
+            "-count=1",
+            "-run",
+            "^(TestRelaysOffCatalog|TestNotesBrowserCertificate)$",
+            "./test/e2e/"
+          ],
+          "source": "fd7134aff1acfdf49c70f08849f3f8639d2f14b1",
+          "started_at": "2026-11-18T04:50:21.517143+00:00",
+          "finished_at": "2026-11-18T04:50:27.991185+00:00",
+          "duration_seconds": 6.474,
+          "exit_code": 0,
+          "host": "major"
+        },
+        "ci": {
+          "name": "ci",
+          "command": [
+            "make",
+            "ci"
+          ],
+          "source": "fd7134aff1acfdf49c70f08849f3f8639d2f14b1",
+          "started_at": "2026-11-18T04:50:28.017339+00:00",
+          "finished_at": "2026-11-18T04:53:06.714842+00:00",
+          "duration_seconds": 158.698,
+          "exit_code": 0,
+          "host": "major"
+        },
+        "real-yard-primary-upgrade": {
+          "name": "real-yard-primary-upgrade",
+          "command": [
+            "env",
+            "CGO_ENABLED=0",
+            "KYQ_TEST_NOTES_BROWSER=",
+            "KYQ_TEST_YARD_UPGRADE_MANIFEST=/home/yoshi/.local/state/kyquickstart-acceptance/20261118-major-yard-publication/previous/kyyard/manifest.yaml",
+            "KYQ_TEST_YARD_FIXTURE_RUNNER_ID=sha256:9ee2686e53a07fd19ca4da6ead6dfda1584f234b61599a2f99ef0e9e804f5260",
+            "go",
+            "test",
+            "-json",
+            "-tags",
+            "e2e,goolm",
+            "-count=1",
+            "-timeout",
+            "45m",
+            "-run",
+            "^TestKubernetesKyYard$",
+            "./test/e2e/"
+          ],
+          "source": "fd7134aff1acfdf49c70f08849f3f8639d2f14b1",
+          "started_at": "2026-11-18T04:53:06.740288+00:00",
+          "finished_at": "2026-11-18T04:57:54.275039+00:00",
+          "duration_seconds": 287.535,
+          "exit_code": 0,
+          "host": "major"
+        },
+        "docs-build": {
+          "name": "docs-build",
+          "command": [
+            "/home/yoshi/.cache/ky-tools/mdbook/0.5.4/mdbook",
+            "build",
+            "docs"
+          ],
+          "source": "fd7134aff1acfdf49c70f08849f3f8639d2f14b1",
+          "started_at": "2026-11-18T04:57:54.301492+00:00",
+          "finished_at": "2026-11-18T04:57:54.329310+00:00",
+          "duration_seconds": 0.028,
+          "exit_code": 0,
+          "host": "major"
+        },
+        "docs-links": {
+          "name": "docs-links",
+          "command": [
+            "python3",
+            "docs/check-links.py"
+          ],
+          "source": "fd7134aff1acfdf49c70f08849f3f8639d2f14b1",
+          "started_at": "2026-11-18T04:57:54.354496+00:00",
+          "finished_at": "2026-11-18T04:57:54.402025+00:00",
+          "duration_seconds": 0.048,
+          "exit_code": 0,
+          "host": "major"
+        },
+        "full-qualification": {
+          "name": "full-qualification",
+          "command": [
+            "python3",
+            "/home/yoshi/.local/state/kyquickstart-acceptance/20261118-major-yard-publication/run-publication.py"
+          ],
+          "source": "fd7134aff1acfdf49c70f08849f3f8639d2f14b1",
+          "started_at": "2026-11-18T04:50:14.584990+00:00",
+          "finished_at": "2026-11-18T04:57:54.409815+00:00",
+          "duration_seconds": 459.825,
+          "exit_code": 0,
+          "host": "major"
+        }
+      },
+      "observed_primary_images": [
+        "ghcr.io/busnes-app/kyyard@sha256:c8e64559a7eb83edb50b84e762b31cc894d2ce5237afc3e8efcbcdf5533d221f",
+        "ghcr.io/busnes-app/kyyard@sha256:33a53d97eea363bb863ee33775d4d8515c114d9cc50b5f27dd0248560b1c9d13"
+      ],
+      "final_go_actions": [
+        {
+          "Time": "2026-11-17T23:57:54.243552938-05:00",
+          "Action": "pass",
+          "Package": "github.com/Busnes-app/kyquickstart/test/e2e",
+          "Test": "TestKubernetesKyYard",
+          "Elapsed": 281.23
+        },
+        {
+          "Time": "2026-11-17T23:57:54.245572625-05:00",
+          "Action": "pass",
+          "Package": "github.com/Busnes-app/kyquickstart/test/e2e",
+          "Elapsed": 281.243
+        }
+      ],
+      "qualification_scope": "Published Yard primary Kubernetes upgrade, named retention/access/runner contract checks; cached local fixture runner, not published artifact/source provenance; no Docker/offboarding/restore qualification"
+    }
   }
 }
