@@ -216,14 +216,16 @@ operator's job ([README](../README.md#targets)).
   and kind clusters, including drift, stale-lock and refusal cases.
 - **Backup TLS:** `TestResticTLSKeyFloor` drives `dockerhost.Store.Snapshots` and the pinned restic image against real disposable TLS chains; weak leaf/intermediate/root controls and strong RSA/P-256 cases run in the default e2e shard. Its fixture uses host networking solely to reach the owned host server; existing backup/restore acceptance retains the production bridge network. This does not establish whole-installer key-length compliance.
 - **TLS profile qualification:** actual-client local Go1.26.10 race probes cover132 Kubernetes REST/exec/port-forward and NPM/KyDNS/route outcomes. Six local-mTLS outcomes establish that client credential selection remains a separate condition; no claim of automatic weak-client-key rejection. [STRONG-CRYPTO.md](STRONG-CRYPTO.md) records scope and primary runtime sources.
-- **Static analysis:** CodeQL (GitHub default setup, Go and Actions) on every push and pull
+- **Static analysis:** CodeQL (GitHub default setup, Go, Python and Actions) on every push and pull
   request, `go vet` (with and without the `e2e,goolm` tags), `govulncheck`, and `actionlint`
   and `zizmor` on the workflows (`make workflow-lint`).
 - **Dynamic analysis:** the race detector on the full suite and the e2e suite against real
   targets.
 - **Review:** the `main: green checks` ruleset requires a pull request into `master` with
-  `test (ubuntu-latest, stable)`, `test (ubuntu-latest, 1.26.x)` and `vulncheck` green; repository
-  administrators can bypass it.
+  `test (ubuntu-latest, stable)`, `test (ubuntu-latest, 1.26.x)`, `vulncheck` and the trusted
+  GitHub Advanced Security `CodeQL` check green. Repository administrators retain bypass,
+  but the [contribution policy](../CONTRIBUTING.md#pull-requests) requires waiting for the
+  current-head CodeQL result before merging.
 - **Releases:** attested binaries and runner image; binaries rebuild to the same bytes
   ([VERIFYING-RELEASES.md](VERIFYING-RELEASES.md)); [human notes](../CHANGELOG.md) and the
   missing-summary publication guard (`make notes-check`).

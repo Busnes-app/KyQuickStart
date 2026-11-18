@@ -270,6 +270,8 @@ edge compatibility: `docs/redirect.md`.
 - Contribution process, test policy and coding standard: `CONTRIBUTING.md`. Threat model, trust
   boundaries and the weaknesses table: `docs/ASSURANCE-CASE.md`, updated by any change that moves
   a trust boundary or security requirement.
+  Follow `CONTRIBUTING.md`'s current-head CodeQL merge gate even when administrator bypass
+  is available.
 - `CHANGELOG.md` owns version-by-version release summaries and upgrade impact, including
   maintenance releases and missing/failed artifacts. The daily publisher checks generated
   notes before creating a release; `release-image.yml` checks the published body before
