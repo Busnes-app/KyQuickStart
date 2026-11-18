@@ -3,7 +3,7 @@
   "host": "major",
   "installer_source": "48bfb674ab664f91b07b79fda6df221f75a23362",
   "installer_version": "0.6.1",
-  "status": "candidate; acceptance pending",
+  "status": "Named campaigns passed; whole-suite release qualification incomplete",
   "scope": "All installer catalog applications and both supported proxy paths; native client distribution is recorded separately from server lifecycle acceptance.",
   "apps": [
     {
@@ -276,11 +276,6 @@
     "heavy_work": "serial under /tmp/ky-heavy-test.lock",
     "existing_services": "not adopted or modified"
   },
-  "acceptance_harness": {
-    "base_source": "48bfb674ab664f91b07b79fda6df221f75a23362",
-    "patch_sha256": "e6ea1011544b57af8597c8ff0982e33f6e2266d2af94529a1f6101cda63dca18",
-    "changes": "Two opt-in KyIdentity HA tests load the existing relay-disabled catalog. Product/installer runtime sources and image pins are unchanged."
-  },
   "upgrade_baseline": {
     "installer_release": "v0.6.0.8",
     "installer_source": "724fc276c77a56c392ba0e402a2a90ddcd408257",
@@ -391,192 +386,10 @@
           "npm": "jc21/nginx-proxy-manager:2.16.0@sha256:4393e642e233e5efd5adeb7f10918d4aaea71c9ed875b94190273fc8e87f9594"
         }
       }
-    ],
-    "status": "frozen upgrade input; per-product real-data upgrade execution pending"
-  },
-  "ha_fixture_correction": {
-    "worktree": "suite-ha-image-loading",
-    "branch": "fix/suite-ha-image-loading",
-    "patch_sha256": "59af532ad421fc7276a7bea8fe2f116a1506966c68ff0fa8833877c43ee82aaa",
-    "status": "PASS: local CI/relay/pinned HA/editor and18 exact-head GitHub checks/authenticated security cleared; human-merged as57b2676cc7fa10c60693efd541dd914ebd7541d0",
-    "original_failed_evidence": "20261117-major/identity-ha.result.json",
-    "corrected_evidence": "20261117-major-ha-rerun-1",
-    "change": "Reuse existing kindLoad in two optional HA fixtures; retain relay-disabled catalog; runtime and pins unchanged",
-    "pull_request": "https://github.com/Busnes-app/KyQuickStart/pull/205",
-    "pull_request_head": "77d9f7aabee3bed6d7ccde361ef11ced4e4bde09",
-    "ha_duration_seconds": 804.611,
-    "github_gate_evidence": "20261117-major-pr205-gates-191307Z/gates.result.json",
-    "merge_commit": "57b2676cc7fa10c60693efd541dd914ebd7541d0"
-  },
-  "drive_lifecycle_extension": {
-    "revision": 3,
-    "evidence": "20261117-major-drive-upgrade-v3",
-    "patch_sha256": "08c5237530ad58f785ced1cf7d725866ed575f1d8e8d0b72a16a740de0fd9683",
-    "status": "PASS: full CI 163.607 s; real previous-image upgrade/recovery 384.324 s; combined 554.558 s",
-    "previous_manifest_sha256": "61d81d4ce3ea7580db410f4b4393f3e0b11e90c50be3e6552da8f55f6b6f8808",
-    "prerequisite": "successful corrected fixture campaign; original failure retained",
-    "pull_request": "https://github.com/Busnes-app/KyQuickStart/pull/206",
-    "pull_request_head": "704cf0ab33cbb38cd5b1fbdcd745050d92172482",
-    "github_gates": "Human-merged as597ec940141b3d7a14000a0c2d995422cba1efc5; CI/security were not re-polled during this remote continuation",
-    "tree_equivalence_evidence": "20261117-major-drive-pr-192500Z/tree-equivalence.result.json",
-    "merge_commit": "597ec940141b3d7a14000a0c2d995422cba1efc5"
-  },
-  "native_configuration_upgrade_extension": {
-    "source": "77d9f7aabee3bed6d7ccde361ef11ced4e4bde09",
-    "patch_sha256": "314128ae7c2f3fa570954387110fc1fadc1d6de394f34bd2918faaceb6996510",
-    "evidence": "20261117-major-app-content-v3",
-    "status": "PASS: fresh fullCI163.326s, real integration1224.364s, controller1400.410s; only named assertions qualified",
-    "scope": "seven real previous-image to candidate native-config/credential/pairing upgrades; not full per-product ordinary content migration/offboarding/restore",
-    "verified_previous_images": [
-      {
-        "app": "kyidentity",
-        "image": "ghcr.io/busnes-app/kyidentity-server:0.6.0.1@sha256:096da2158984cdb1c195841a9f7d1c9b26b50ecd06753e9f4382054250876cb6",
-        "repository": "Busnes-app/KyIdentity-server",
-        "tag": "v0.6.0.1",
-        "identity": "https://github.com/Busnes-app/KyIdentity-server/.github/workflows/release-image.yml@refs/tags/v0.6.0.1",
-        "exit_code": 0,
-        "manifest_sha256": "20bf173c10b901c21e21b8fea15b68e04f9f267722b3595dc33217ae544b39df",
-        "checked_at": "2026-11-17T18:36:24.911545+00:00"
-      },
-      {
-        "app": "kyrecovery",
-        "image": "ghcr.io/busnes-app/kyrecovery-server:0.6.0.2@sha256:ee489f04dc11000e0be3d6e2b71b9faae127988a548a8f84c1445f5ed4252042",
-        "repository": "Busnes-app/KyRecovery-server",
-        "tag": "v0.6.0.2",
-        "identity": "https://github.com/Busnes-app/KyRecovery-server/.github/workflows/release-image.yml@refs/tags/v0.6.0.2",
-        "exit_code": 0,
-        "manifest_sha256": "a83a739c01cbf95198cb84506c7f82013ce65d8f74da6070d9ee093a9fd52127",
-        "checked_at": "2026-11-17T18:36:29.124656+00:00"
-      },
-      {
-        "app": "kypulse",
-        "image": "ghcr.io/busnes-app/kypulse-server:0.6.0.2@sha256:808ee7b793f5a3ce648a6d71172212de13c7b6c238fa39c7b2482f8e3f03abfb",
-        "repository": "Busnes-app/KyPulse-server",
-        "tag": "v0.6.0.2",
-        "identity": "https://github.com/Busnes-app/KyPulse-server/.github/workflows/release-image.yml@refs/tags/v0.6.0.2",
-        "exit_code": 0,
-        "manifest_sha256": "523798ba318807bda838c035f1ae180783ea5fe126726ef9289e1a820648a0af",
-        "checked_at": "2026-11-17T18:36:32.878216+00:00"
-      },
-      {
-        "app": "kydrive",
-        "image": "ghcr.io/busnes-app/kydrive-server:0.6.0.1@sha256:5a6b6e6cec2c2dd5b4da4f9bc6e470944e7c6e235269b45ca9622957fbc37160",
-        "repository": "Busnes-app/kydrive-server",
-        "tag": "v0.6.0.1",
-        "identity": "https://github.com/Busnes-app/kydrive-server/.github/workflows/release-image.yml@refs/tags/v0.6.0.1",
-        "exit_code": 0,
-        "manifest_sha256": "61d81d4ce3ea7580db410f4b4393f3e0b11e90c50be3e6552da8f55f6b6f8808",
-        "checked_at": "2026-11-17T18:36:37.126566+00:00"
-      },
-      {
-        "app": "kynotes",
-        "image": "ghcr.io/busnes-app/kynotes-server:0.6.0.2@sha256:135ccd7df01e3218422b0baed2ec6de79906b43306f57df173f0039986c8f07f",
-        "repository": "Busnes-app/KyNotes-server",
-        "tag": "v0.6.0.2",
-        "identity": "https://github.com/Busnes-app/KyNotes-server/.github/workflows/release-image.yml@refs/tags/v0.6.0.2",
-        "exit_code": 0,
-        "manifest_sha256": "0b7997a5ecee44e9390713d25d7ec3ab9eab0d3344833c4a424e1420f57d7e8b",
-        "checked_at": "2026-11-17T18:36:41.035045+00:00"
-      },
-      {
-        "app": "kycalendar",
-        "image": "ghcr.io/busnes-app/kycalendar:0.6.0.2@sha256:e76bf9abb055b25e72a5e244e18564230b4ef1e0a27f0f578c5988a089699b3c",
-        "repository": "Busnes-app/KyCalendar",
-        "tag": "v0.6.0.2",
-        "identity": "https://github.com/Busnes-app/KyCalendar/.github/workflows/release-image.yml@refs/tags/v0.6.0.2",
-        "exit_code": 0,
-        "manifest_sha256": "36634fe928456c95279c8afc8e1b4c7e3f9233bb4beac830844fdfa8f3ea6153",
-        "checked_at": "2026-11-17T18:36:45.077005+00:00"
-      },
-      {
-        "app": "kypost",
-        "image": "ghcr.io/busnes-app/kypost-server:0.6.0.2@sha256:cd7154c167a81a46825d108a3b9b5486bbabdc6c6c1e6013e80a4875428bb108",
-        "repository": "Busnes-app/KyPost-Server",
-        "tag": "v0.6.0.2",
-        "identity": "https://github.com/Busnes-app/KyPost-Server/.github/workflows/release-image.yml@refs/tags/v0.6.0.2",
-        "exit_code": 0,
-        "manifest_sha256": "ba25a33bd0698545b15af68f639b1eea2cbc704fc14be78be0f60ecdcb19dd32",
-        "checked_at": "2026-11-17T18:36:49.021180+00:00"
-      }
-    ],
-    "previous_failed_evidence": [
-      "20261117-major-app-upgrades-v1",
-      "20261117-major-app-upgrades-v2",
-      "20261117-major-app-upgrades-v3",
-      "20261117-major-app-content-v1",
-      "20261117-major-app-content-v2"
-    ],
-    "worktree": "suite-calendar-etag",
-    "branch": "test/suite-calendar-etag",
-    "acknowledgement": "Only manifest-declared non-migrating versions get explicit --acknowledge-no-backup; migration cases still require verified pre-upgrade-backup ok",
-    "previous_content_v2_observed": {
-      "evidence": "20261117-major-app-content-v2",
-      "exit_code": 1,
-      "integration_seconds": 1082.514,
-      "full_seconds": 1256.364,
-      "passed_before_failure": [
-        "seven upgrade commands/deploy/health and all required verified pre-upgrade backups",
-        "Docker credentials, Identity JWKS, Recovery pairing/key, candidate Pulse deposit with prior pairing",
-        "fresh candidate Drive/Notes/Calendar reciprocal native API sign-in",
-        "exact old Calendar event readback including ETag and editability"
-      ],
-      "failure": "fixture bare If-Match header rejected HTTP400; corrected isolated source quotes HTTP strong entity-tag",
-      "not_reached": [
-        "successful candidate event edit",
-        "final Post fresh re-sign-in",
-        "completed integration outcome"
-      ],
-      "kubernetes_secret_payload_count": 0
-    },
-    "current_passed_checks": {
-      "upgrade-gate": {
-        "exit_code": 0,
-        "duration_seconds": 8.095,
-        "result_file": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-app-content-v3/upgrade-gate.result.json"
-      },
-      "affected-compile-relay": {
-        "exit_code": 0,
-        "duration_seconds": 4.491,
-        "result_file": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-app-content-v3/affected-compile-relay.result.json"
-      },
-      "ci": {
-        "exit_code": 0,
-        "duration_seconds": 163.326,
-        "result_file": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-app-content-v3/ci.result.json"
-      }
-    },
-    "results": {
-      "upgrade-gate": {
-        "exit_code": 0,
-        "duration_seconds": 8.095,
-        "result_file": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-app-content-v3/upgrade-gate.result.json"
-      },
-      "affected-compile-relay": {
-        "exit_code": 0,
-        "duration_seconds": 4.491,
-        "result_file": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-app-content-v3/affected-compile-relay.result.json"
-      },
-      "ci": {
-        "exit_code": 0,
-        "duration_seconds": 163.326,
-        "result_file": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-app-content-v3/ci.result.json"
-      },
-      "real-app-upgrades": {
-        "exit_code": 0,
-        "duration_seconds": 1224.364,
-        "result_file": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-app-content-v3/real-app-upgrades.result.json"
-      },
-      "full-qualification": {
-        "exit_code": 0,
-        "duration_seconds": 1400.41,
-        "result_file": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-app-content-v3/full-qualification.result.json"
-      }
-    },
-    "completed_at": "2026-11-17T20:35:59.950686+00:00",
-    "kubernetes_secret_payload_count": 0
+    ]
   },
   "coverage_audit": {
-    "checked_at": "2026-11-17T21:09:30.474136+00:00",
+    "checked_at": "2026-11-18T02:23:47.308343+00:00",
     "status": "in progress; not release qualified",
     "products": {
       "kyidentity": [
@@ -596,8 +409,10 @@
         "Restored monitoring/offboarding untested"
       ],
       "kynotes": [
-        "Reciprocal admin/content endpoints passed",
-        "Native config/account upgrade passed; real note content/offboarding/restore untested"
+        "Reciprocal native admin/content API and previous-image native configuration/account upgrade passed",
+        "V12 published old-client native encrypted notebook/page Unicode seed and seven-image CLI upgrade passed; retained browser keys/fresh native SSO decrypted exact server-backed old content",
+        "Candidate exact Unicode edit/native save and cache-evicted exact edited-body decryption passed, with empty pending/upload queues and unchanged key records; nine seed and two edit request bodies excluded plaintext and matched last PUT digest to stored ciphertext",
+        "Offboarding, restored notes, client-key-loss recovery and other page/content forms remain unqualified"
       ],
       "kycalendar": [
         "Reciprocal native admin/content access, previous-image ordinary event content/times/IDs/ETag and candidate edit passed",
@@ -609,8 +424,9 @@
         "Native config/account upgrade passed in IMAP-proxy mode; real mail migration/restore/offboarding/admin-mail denial untested"
       ],
       "kydns": [
-        "DNS and fail-closed/unsafe-trust refusal passed",
-        "Successful edge/admin sign-in unproven on Major; zone/config upgrade/restore/offboarding untested"
+        "DNS and fail-closed/unsafe-trust refusal passed in controlled fixtures",
+        "Owner confirms existing in-place upgrade to v0.6.1 is working; operational evidence, not an independently executed controlled campaign",
+        "Prior version and detailed zone/config retention checks were not supplied; controlled previous-catalog retention, positive edge/admin sign-in on Major, restore and offboarding remain unqualified"
       ],
       "kymessage": [
         "Published previous0.6.0.1\u21920.6.1 primary upgrade with own verified pre-upgrade snapshot, selected session/directory/OIDC/provider/signing keys and original device sessions passed",
@@ -638,140 +454,89 @@
         "Production provenance and real editing/desktop saves open"
       ]
     },
-    "report": "RELEASE-ACCEPTANCE-2026-11-17-MAJOR.md",
-    "notes_content_source_audit": {
-      "evidence": "20261117-major-report-notes-193642Z/notes-content-source-audit.json",
-      "status": "source review only; no product content qualification inferred"
+    "owner_reported_kydns_upgrade": {
+      "recorded_at": "2026-11-18T02:23:47.308343+00:00",
+      "source": "Owner statement in current conversation",
+      "statement": "I already did a KyDNS in place upgrade to v0.6.1 and it is working fine",
+      "target_version": "0.6.1",
+      "previous_version": null,
+      "working": true,
+      "agent_executed_or_independently_verified": false,
+      "live_operations_performed_for_record": false
     },
-    "message_source_execution_audit": {
-      "evidence": "20261117-major-message-coverage-200546Z/message-coverage-audit.json",
-      "scope": "Existing candidate execution and source audit only; previous-image case still not run"
+    "upgrade_evidence_counts": {
+      "ky_products": 10,
+      "controlled_previous_version_campaigns_passed": 8,
+      "additional_owner_confirmed_working_upgrade_products": [
+        "kydns"
+      ],
+      "products_with_successful_upgrade_evidence": 9,
+      "remaining_without_successful_upgrade_evidence": [
+        "kyyard"
+      ],
+      "scope": "Operational owner reports and controlled campaign results retain distinct provenance; not a whole-suite qualification count"
     }
   },
-  "calendar_content_upgrade_extension": {
-    "status": "PASS: fresh fullCI163.326s, real integration1224.364s, controller1400.410s; only named assertions qualified",
-    "worktree": "suite-calendar-etag",
-    "branch": "test/suite-calendar-etag",
-    "base": "77d9f7aabee3bed6d7ccde361ef11ced4e4bde09",
-    "patch_sha256": "314128ae7c2f3fa570954387110fc1fadc1d6de394f34bd2918faaceb6996510",
-    "evidence": "20261117-major-app-content-v3",
-    "scope": "Native everyday calendar/event old-image creation, content/IDs/times/ETag retention and candidate If-Match edit; not restore/offboarding/recurrence/meeting transport",
-    "prepared_evidence": "20261117-major-calendar-content-prepared",
-    "previous_content_v2_observed": {
-      "evidence": "20261117-major-app-content-v2",
-      "exit_code": 1,
-      "integration_seconds": 1082.514,
-      "full_seconds": 1256.364,
-      "passed_before_failure": [
-        "seven upgrade commands/deploy/health and all required verified pre-upgrade backups",
-        "Docker credentials, Identity JWKS, Recovery pairing/key, candidate Pulse deposit with prior pairing",
-        "fresh candidate Drive/Notes/Calendar reciprocal native API sign-in",
-        "exact old Calendar event readback including ETag and editability"
-      ],
-      "failure": "fixture bare If-Match header rejected HTTP400; corrected isolated source quotes HTTP strong entity-tag",
-      "not_reached": [
-        "successful candidate event edit",
-        "final Post fresh re-sign-in",
-        "completed integration outcome"
-      ],
-      "kubernetes_secret_payload_count": 0
-    },
-    "current_passed_checks": {
-      "upgrade-gate": {
-        "exit_code": 0,
-        "duration_seconds": 8.095,
-        "result_file": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-app-content-v3/upgrade-gate.result.json"
-      },
-      "affected-compile-relay": {
-        "exit_code": 0,
-        "duration_seconds": 4.491,
-        "result_file": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-app-content-v3/affected-compile-relay.result.json"
-      },
-      "ci": {
-        "exit_code": 0,
-        "duration_seconds": 163.326,
-        "result_file": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-app-content-v3/ci.result.json"
-      }
-    },
+  "notes_content_case": {
+    "tested_base": "8f36d2085c2c4110373733b01b6df62aee508ad9",
+    "patch_sha256": "9a2d0439e5acdce70e21cd1869ad748d2427ff125bfd5bd3f6a42f539509be31",
+    "old_client_attested_source": "2fb29f3871a243728d0794c3b93688fe2de45797",
+    "candidate_client_attested_source": "ba93e8281b3f64a9b0c5a4b786971da56180dc65",
     "results": {
-      "upgrade-gate": {
+      "browser-input-smoke": {
+        "name": "browser-input-smoke",
+        "command": [
+          "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-notes-content-v12/browser-wrapper.sh",
+          "node",
+          "--max-old-space-size=256",
+          "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-notes-content-v12/browser-input-smoke.mjs"
+        ],
+        "source": "8f36d2085c2c4110373733b01b6df62aee508ad9",
+        "started_at": "2026-11-18T01:51:36.475085+00:00",
+        "finished_at": "2026-11-18T01:51:40.028217+00:00",
+        "duration_seconds": 3.553,
         "exit_code": 0,
-        "duration_seconds": 8.095,
-        "result_file": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-app-content-v3/upgrade-gate.result.json"
+        "host": "major"
       },
       "affected-compile-relay": {
+        "name": "affected-compile-relay",
+        "command": [
+          "go",
+          "test",
+          "-tags",
+          "e2e,goolm",
+          "-count=1",
+          "-run",
+          "^(TestRelaysOffCatalog|TestNotesBrowserCertificate)$",
+          "./test/e2e/"
+        ],
+        "source": "8f36d2085c2c4110373733b01b6df62aee508ad9",
+        "started_at": "2026-11-18T01:51:40.051422+00:00",
+        "finished_at": "2026-11-18T01:51:46.618734+00:00",
+        "duration_seconds": 6.567,
         "exit_code": 0,
-        "duration_seconds": 4.491,
-        "result_file": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-app-content-v3/affected-compile-relay.result.json"
+        "host": "major"
       },
-      "ci": {
-        "exit_code": 0,
-        "duration_seconds": 163.326,
-        "result_file": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-app-content-v3/ci.result.json"
-      },
-      "real-app-upgrades": {
-        "exit_code": 0,
-        "duration_seconds": 1224.364,
-        "result_file": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-app-content-v3/real-app-upgrades.result.json"
-      },
-      "full-qualification": {
-        "exit_code": 0,
-        "duration_seconds": 1400.41,
-        "result_file": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-app-content-v3/full-qualification.result.json"
-      }
-    },
-    "completed_at": "2026-11-17T20:35:59.950686+00:00",
-    "kubernetes_secret_payload_count": 0
-  },
-  "message_history_upgrade_extension": {
-    "prepared_at": "2026-11-17T20:52:27.781523+00:00",
-    "source": "78b993ea8628bae6d5ab80c45a62e3ef0bdfb0f0",
-    "worktree": "/home/yoshi/git/KyQuickStart/.claude/worktrees/suite-message-catalog-upgrade",
-    "branch": "test/suite-message-catalog-upgrade",
-    "harness_patch_sha256": "c94cc8884e0b80bef52dd8a49bda514ac3b1ae2e944f7a7d1b277cd542b9caa5",
-    "scope": "Previous published Messages primary-image migration; old real encrypted event, verified own pre-upgrade backup, selected credential hashes, original refresh sessions/history and new encrypted event, then existing candidate offboarding/restore. Auxiliary Matrix images unchanged.",
-    "previous_attestation": {
-      "image": "ghcr.io/busnes-app/kymessage-server:0.6.0.1@sha256:426b2dd604677ecc230821c92924db2a4803fd330d579caac97728ad3e2a64a6",
-      "repository": "Busnes-app/KyMessage-Server",
-      "tag": "v0.6.0.1",
-      "identity": "https://github.com/Busnes-app/KyMessage-Server/.github/workflows/release-image.yml@refs/tags/v0.6.0.1",
-      "source_installer": "v0.6.0.8",
-      "source_commit": "724fc276c77a56c392ba0e402a2a90ddcd408257",
-      "manifest_sha256": "06df7f03202d2af0bd917de83810545c469839b62d8e2b5d2f4262ba7403b3b1",
-      "checked_at": "2026-11-17T20:16:26.703467+00:00",
-      "exit_code": 0,
-      "seconds": 4.23
-    },
-    "prerequisite": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-app-content-v3/full-qualification.result.json",
-    "status": "PASS: affected7.045s/fresh fullCI162.118s; real integration511.402s/controller680.688s, including subsequent candidate offboarding/history restore",
-    "dox": "Root optional verification contract updated; no child scope/index changes; no runtime or pin changes",
-    "started_by_continuation_at": "2026-11-17T20:42:48.461543+00:00",
-    "supersedes": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-message-upgrade-v1",
-    "historical_compose_sha256": "87545b604d1bcc64bbc434c4f0bbe129aa64179dd806b35fc7cf9ab797ebb060",
-    "correction": "Install full historical manifest+Compose entry with shared explicit fixture CA/host plumbing; old initializer cannot generate candidate guest-page file. Restore complete candidate manifest+prepatched Compose only for native CLI upgrade. No stub/generated data injection or runtime/pin change.",
-    "previous_failed_evidence": [
-      "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-message-upgrade-v1"
-    ],
-    "previous_failed_results": {
       "ci": {
         "name": "ci",
         "command": [
           "make",
           "ci"
         ],
-        "source": "77d9f7aabee3bed6d7ccde361ef11ced4e4bde09",
-        "started_at": "2026-11-17T20:42:54.971120+00:00",
-        "finished_at": "2026-11-17T20:45:37.336126+00:00",
-        "duration_seconds": 162.365,
+        "source": "8f36d2085c2c4110373733b01b6df62aee508ad9",
+        "started_at": "2026-11-18T01:51:46.642572+00:00",
+        "finished_at": "2026-11-18T01:54:29.230225+00:00",
+        "duration_seconds": 162.588,
         "exit_code": 0,
         "host": "major"
       },
-      "real-message-upgrade": {
-        "name": "real-message-upgrade",
+      "real-notes-content-upgrade": {
+        "name": "real-notes-content-upgrade",
         "command": [
           "env",
           "CGO_ENABLED=0",
-          "KYQ_TEST_MESSAGE_UPGRADE_MANIFEST=/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-message-upgrade-v1/previous-manifests/kymessage/manifest.yaml",
+          "KYQ_TEST_RELEASE_UPGRADE_MANIFESTS=/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-notes-content-v12/previous-manifests",
+          "KYQ_TEST_NOTES_BROWSER=1",
           "go",
           "test",
           "-json",
@@ -781,187 +546,42 @@
           "-timeout",
           "60m",
           "-run",
-          "^TestKubernetesKyMessage$",
+          "^TestKubernetesNPMEdgeJoins$",
           "./test/e2e/"
         ],
-        "source": "77d9f7aabee3bed6d7ccde361ef11ced4e4bde09",
-        "started_at": "2026-11-17T20:45:37.359019+00:00",
-        "finished_at": "2026-11-17T20:48:14.548635+00:00",
-        "duration_seconds": 157.19,
-        "exit_code": 1,
+        "source": "8f36d2085c2c4110373733b01b6df62aee508ad9",
+        "started_at": "2026-11-18T01:54:29.252930+00:00",
+        "finished_at": "2026-11-18T02:17:26.046469+00:00",
+        "duration_seconds": 1376.794,
+        "exit_code": 0,
         "host": "major"
       },
       "full-qualification": {
         "name": "full-qualification",
         "command": [
           "/usr/bin/python3",
-          "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-message-upgrade-v1/run-qualification.py"
+          "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-notes-content-v12/run-qualification.py"
         ],
-        "source": "77d9f7aabee3bed6d7ccde361ef11ced4e4bde09",
-        "started_at": "2026-11-17T20:42:48.497511+00:00",
-        "finished_at": "2026-11-17T20:48:14.557640+00:00",
-        "duration_seconds": 326.06,
-        "exit_code": 1,
+        "source": "8f36d2085c2c4110373733b01b6df62aee508ad9",
+        "started_at": "2026-11-18T01:51:36.417871+00:00",
+        "finished_at": "2026-11-18T02:17:26.054783+00:00",
+        "duration_seconds": 1549.637,
+        "exit_code": 0,
         "host": "major"
       }
     },
-    "results": {
-      "affected-compile-relay": {
-        "exit_code": 0,
-        "duration_seconds": 7.045,
-        "result_file": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-message-upgrade-v2/affected-compile-relay.result.json"
-      },
-      "ci": {
-        "exit_code": 0,
-        "duration_seconds": 162.118,
-        "result_file": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-message-upgrade-v2/ci.result.json"
-      },
-      "real-message-upgrade": {
-        "exit_code": 0,
-        "duration_seconds": 511.402,
-        "result_file": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-message-upgrade-v2/real-message-upgrade.result.json"
-      },
-      "full-qualification": {
-        "exit_code": 0,
-        "duration_seconds": 680.688,
-        "result_file": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-message-upgrade-v2/full-qualification.result.json"
-      }
-    },
-    "completed_at": "2026-11-17T21:03:48.525687+00:00",
-    "publication_tree_equivalence": "20261117-major-message-upgrade-v2/publish-tree-equivalence.result.json:344 non-doc files equal; new report metadata only; no fresh execution claimed on publication ancestry",
-    "scope_limit": "Primary console migration with unchanged upstream Matrix image versions; selected key/session/history and subsequent candidate restore/offboarding, not restore of old pre-upgrade snapshot or all meeting/guest features"
-  },
-  "notes_content_feasibility": {
-    "evidence": "20261117-major-notes-content-audit-2029Z/notes-content-feasibility.json",
-    "kind": "source only; not qualification",
-    "old_source": "2fb29f3871a243728d0794c3b93688fe2de45797",
-    "candidate_attested_source": "ba93e8281b3f64a9b0c5a4b786971da56180dc65",
-    "unchanged_client_files": 6,
-    "requires": "Ordinary SSO identity enrollment, action-bound KyIdentity reauthentication, saved recovery copy, old bundled-client notebook/page content, isolated key store retained over CLI upgrade, candidate decrypt/edit; no ciphertext injection",
-    "execution_started": false
-  },
-  "post_fixture_scope": {
-    "evidence": "20261117-major-post-scope-audit-2034Z/post-fixture-scope.json",
-    "kind": "source-only scope audit",
-    "candidate_attested_source": "7b067ded42ca0ede5f3efdfd649cd6ffc3be3cad",
-    "native_mail_enabled_in_fixture": false,
-    "limit": "No mail block selects IMAP-proxy mode; native workforce mailbox/content/admin-denial remains unqualified. Empty mailbox listings or absent IMAP config are not isolation proof. Separate saltmarsh workforce capacity tests use different builds and still fail their target."
-  },
-  "consolidated_review_tree": {
-    "source": "704cf0ab33cbb38cd5b1fbdcd745050d92172482",
-    "worktree": "suite-lifecycle-acceptance",
-    "branch": "test/suite-lifecycle-acceptance",
-    "test_input_patch_sha256": "734ca5c0b30b859ed6db892179b0f2ec813f39b345235cc3e002f20c3b2431fc",
-    "results": {
-      "affected-compile-relay": {
-        "exit_code": 0,
-        "duration_seconds": 6.689
-      },
-      "ci": {
-        "exit_code": 0,
-        "duration_seconds": 163.476
-      },
-      "full-qualification": {
-        "exit_code": 0,
-        "duration_seconds": 170.24
-      }
-    },
-    "integration_reuse": {
-      "app_integration_source": "/home/yoshi/git/KyQuickStart/.claude/worktrees/suite-calendar-etag",
-      "identical_non_docs_files_except_drive": 341,
-      "drive_test_exact_pr206_head": true,
-      "runtime_pins_and_dependencies_unchanged": true
-    },
-    "fresh_combined_integration_run": false,
-    "publication_base": "597ec940141b3d7a14000a0c2d995422cba1efc5",
-    "ancestry_only_rebase": "Old PR206 head tree and merged master base tree identical; feature code tree unchanged by rebase; private ancestry-only-rebase.result.json retains proof"
-  },
-  "calendar_native_restore_extension": {
-    "status": "PASS: candidate native capsule recovery with retained keys, revoked old sessions and fresh ordinary event access/edit",
-    "recorded_at": "2026-11-17T22:35:55.331839+00:00",
-    "worktree": "/home/yoshi/git/KyQuickStart/.claude/worktrees/suite-calendar-native-restore",
-    "branch": "test/suite-calendar-native-restore",
-    "base": "50ca7a4d8128950bd4626e3cfdd70c87cb40c5bd",
-    "patch_sha256": "01eac85d9c8e59b6d3cd931550ef5432ade1986925fceb83d004acba1bce54bb",
-    "evidence": "20261117-major-calendar-native-restore-v1",
-    "checks_passed": {
-      "upgrade-gate": {
-        "exit_code": 0,
-        "duration_seconds": 7.536,
-        "evidence": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-calendar-native-restore-v1/upgrade-gate.result.json"
-      },
-      "affected-compile-relay": {
-        "exit_code": 0,
-        "duration_seconds": 4.533,
-        "evidence": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-calendar-native-restore-v1/affected-compile-relay.result.json"
-      },
-      "ci": {
-        "exit_code": 0,
-        "duration_seconds": 163.822,
-        "evidence": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-calendar-native-restore-v1/ci.result.json"
-      }
-    },
-    "scope": "Seven actual previous-image configuration/pairing upgrades + ordinary Calendar event; additional candidate native capsule export/two-share offline restore, one-share refusal, key retention, old-session revocation/fresh native access/event edit. NOT Calendar offboarding, restored old pre-upgrade claim copy, meeting delivery, or installer resume after native restore.",
-    "dox": "Separate isolated harness root Verification documents KYQ_TEST_CALENDAR_RESTORE=1; baseline ownership/child indexes unchanged",
-    "results": {
-      "upgrade-gate": {
-        "exit_code": 0,
-        "duration_seconds": 7.536,
-        "evidence": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-calendar-native-restore-v1/upgrade-gate.result.json"
-      },
-      "affected-compile-relay": {
-        "exit_code": 0,
-        "duration_seconds": 4.533,
-        "evidence": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-calendar-native-restore-v1/affected-compile-relay.result.json"
-      },
-      "ci": {
-        "exit_code": 0,
-        "duration_seconds": 163.822,
-        "evidence": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-calendar-native-restore-v1/ci.result.json"
-      },
-      "real-calendar-native-restore": {
-        "exit_code": 0,
-        "duration_seconds": 1242.651,
-        "evidence": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-calendar-native-restore-v1/real-calendar-native-restore.result.json"
-      },
-      "full-qualification": {
-        "exit_code": 0,
-        "duration_seconds": 1418.664,
-        "evidence": "/home/yoshi/.local/state/kyquickstart-acceptance/20261117-major-calendar-native-restore-v1/full-qualification.result.json"
-      }
-    },
-    "named_assertions_qualified": true,
-    "whole_suite_qualified": false
-  },
-  "notes_browser_tls_prerequisite": {
-    "status": "PASS: fixture TLS transport prerequisite only, NOT Notes application acceptance",
-    "limits": "Go jobs remainTasks128. Browser-onlyTasks256 is owner-approved; same2GiB/noSwap/2CPU/exclusiveheavylock.",
-    "notes_application_qualification": false,
-    "previous_failed_run": {
-      "evidence": "20261117-major-notes-browser-trust-v11",
-      "exit_code": 1,
-      "seconds": 2.111,
-      "peak_tasks": 172,
-      "pids_limit_events": 0,
-      "failure": "MOZILLA_PKIX_ERROR_SELF_SIGNED_CERT",
-      "tls_verification_disabled": false
-    },
-    "last_run": {
-      "evidence": "20261117-major-notes-browser-trust-v12",
-      "exit_code": 0,
-      "seconds": 2.244,
-      "peak_tasks": 157,
-      "pids_limit_events": 0,
-      "positive_https": true,
-      "wrong_hostname_refused": "SSL_ERROR_BAD_CERT_DOMAIN",
-      "tls_verification_disabled": false,
-      "private_ca_trust_only": true
-    },
-    "completed_followup": {
-      "evidence": "20261117-major-notes-browser-trust-v12",
-      "status": "PASS: actual isolated browser positiveHTTPS and wrong-host refusal; no Notes application case implemented",
-      "script_sha256": "1efa42926960b609bcd01e350d825c23ca6d634186afe3713c843e138ab12d33",
-      "change": "Own namedCA + signed server certificate, only private NSS authority trust, positiveHTTPS and exact wrong-host denial; no TLS override"
-    }
+    "notes_content_qualified": true,
+    "whole_suite_qualified": false,
+    "scope": "Published old native encrypted notebook/page and exact Unicode content; seven old-image CLI upgrades; retained browser keys/fresh native SSO/server-backed decryption; exact edited UI/native save/cache-evicted exact reload. Not Notes offboarding, key-loss recovery, all page types or whole-suite release qualification.",
+    "seed_request_bodies_inspected": 9,
+    "edit_request_bodies_inspected": 2,
+    "uninspectable_bodies": 0,
+    "plaintext_markers_seen": false,
+    "last_put_digests_match_stored_ciphertext": true,
+    "caret_inside_original_paragraph_at_end": true,
+    "exact_edited_characters": 78,
+    "edited_paragraphs": 1,
+    "key_records_unchanged_after_owned_note_cache_evictions": true,
+    "private_evidence_name": "20261117-major-notes-content-v12/successful-content-upgrade-milestone.json"
   }
 }

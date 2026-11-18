@@ -412,7 +412,7 @@ func uploadCertificate(t *testing.T, ctx context.Context, tunnel edge.Dial, toke
 			json.NewDecoder(res.Body).Decode(result)
 		}
 	}
-	certPEM, keyPEM := testCertificate(t)
+	certPEM, keyPEM := browserEdgeCertificate(t)
 	var created struct {
 		ID int `json:"id"`
 	}

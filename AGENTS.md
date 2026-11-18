@@ -896,6 +896,22 @@ calls and kind nodes must carry their own explicit bounds.
   is moved aside. This is native candidate capsule recovery, not restore of the installer's
   pre-upgrade claim copy or offboarding/meeting delivery qualification.
 
+- With `KYQ_TEST_NOTES_BROWSER=1` and historical release manifests, the NPM joins test
+  uses explicit Node/Playwright module and Firefox executable paths to drive the old
+  bundled Notes client through everyday OIDC sign-in, action-bound confirmation, device
+  key enrollment, saved recovery copy and encrypted notebook/page creation. An isolated
+  private-CA browser profile retains client keys across the CLI upgrade; fresh sessions
+  must decrypt exact old content, save an edit and decrypt it after reloading. Content
+  request bodies and stored ciphertext must exclude the plaintext markers. Where BiDi
+  omits request bodies, observe bounded copies of native fetch arguments and compare sent
+  ciphertext hashes with the stored object. The observer preserves native arguments,
+  headers and responses and supplies no credentials or confirmation shortcuts. Before candidate
+  reads, explicitly save and prove pending queues empty; clear only the owned note cache,
+  preserving byte-identical client key records, so cached plaintext cannot satisfy the read. Browser launch
+  wrappers may enforce host bounds separately while the single campaign holds its lock;
+  preserve the Go task cap and approved browser-only cap. This does not qualify offboarding
+  or recovery from loss of the client's keys.
+
 - With `KYQ_TEST_MESSAGE_UPGRADE_MANIFEST` naming an independently attested historical
   KyMessages manifest and its sibling Compose template, `TestKubernetesKyMessage` starts
   the complete old catalog entry with explicit fixture transport/CA plumbing, exchanges

@@ -38,6 +38,11 @@ func TestKubernetesNPMEdgeJoins(t *testing.T) { testKubernetesEdgeJoins(t, "npm"
 
 // testKubernetesEdgeJoins is the joins suite behind proxy: the catalog npm, or nginx.
 func testKubernetesEdgeJoins(t *testing.T, proxy string) {
+	if os.Getenv("KYQ_TEST_NOTES_BROWSER") == "1" {
+		if proxy != "npm" || os.Getenv("KYQ_TEST_RELEASE_UPGRADE_MANIFESTS") == "" || os.Getenv("KYQ_TEST_BROWSER_MODULE") == "" || os.Getenv("KYQ_TEST_BROWSER_EXECUTABLE") == "" {
+			t.Fatal("Notes browser case requires NPM, historical manifests and explicit browser/module paths")
+		}
+	}
 	ctx := context.Background()
 	work := t.TempDir()
 	state := filepath.Join(work, "state")
@@ -96,6 +101,7 @@ func testKubernetesEdgeJoins(t *testing.T, proxy string) {
 	os.WriteFile(plan, []byte("version: 1\ntargets:\n  - name: k8s\n    kubeconfig: "+kc+"\n    storage_class: standard\napps:\n  - name: "+proxy+"\n    target: k8s\n  - name: hello\n    target: k8s\n"), 0o600)
 	var outputs, trust []string
 	var restoreCalendar func()
+	var verifyNotes func()
 	apply := func(want string) string {
 		t.Helper()
 		var out bytes.Buffer
@@ -225,6 +231,13 @@ func testKubernetesEdgeJoins(t *testing.T, proxy string) {
 		}
 	}
 
+	// Diagnose real browser/key enrollment as soon as old Notes is ready, before
+	// installing unrelated Calendar/Post fixtures. Later apply calls keep its data.
+	if os.Getenv("KYQ_TEST_NOTES_BROWSER") == "1" {
+		trustTestCA(t, ctx, cs, connected, "kynotes", certPEM)
+		verifyNotes = seedNotesBrowser(t, ctx, connected, certPEM, nodeIP)
+	}
+
 	// KyCalendar joins after KyIdentity's first setup too, by setup amendment. Its setup needs
 	// no issuer probe, so it runs before the edges as kyPulse's does; its everyday account's
 	// subject comes from KyIdentity's read-only check of its first setup.
@@ -285,6 +298,7 @@ func testKubernetesEdgeJoins(t *testing.T, proxy string) {
 		// must not append duplicate volumes, mounts or environment values.
 		trustTestCA(t, ctx, cs, connected, "kycalendar", certPEM)
 		trustTestCA(t, ctx, cs, connected, "kycalendar", certPEM)
+		trustTestCA(t, ctx, cs, connected, "kynotes", certPEM)
 		verifyCalendar, verifyRestoredCalendar := seedCalendarUpgrade(t, ctx, calendarSignOn(t, ctx, connected, certPEM, nodeIP))
 		fingerprints := func() map[string][32]byte {
 			t.Helper()
@@ -400,6 +414,9 @@ func testKubernetesEdgeJoins(t *testing.T, proxy string) {
 		t.Logf("preserved %d Kubernetes Secret payloads, Docker client/session keys, Identity JWKS and Recovery pairing; candidate Pulse deposited with its prior pairing", len(before))
 		driveSignOn(t, ctx, kc, certPEM, nodeIP, driveSecrets[1])
 		notesSignOn(t, ctx, connected, certPEM, nodeIP)
+		if verifyNotes != nil {
+			verifyNotes()
+		}
 		calendarEveryday := calendarSignOn(t, ctx, connected, certPEM, nodeIP)
 		verifyCalendar(calendarEveryday)
 		if os.Getenv("KYQ_TEST_CALENDAR_RESTORE") == "1" {
