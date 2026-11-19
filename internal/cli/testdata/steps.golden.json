@@ -11,8 +11,8 @@
     "kyidentity.secrets": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "kyidentity.setup": "258b6e2e7355357a63e588dca2d267a04960087e677f974e18f24e55aae9f24e",
     "npm.bootstrap": "3846c1c4be7a7cb2af2e3b8a6f849519ec9f6b63cfa25b1b6386b7ce37ac7e49",
-    "npm.deploy": "f267a21fb616a64ae82bff76b80a4a49308a913d6c4f9873e6e4dd042f793db9",
-    "npm.health": "f267a21fb616a64ae82bff76b80a4a49308a913d6c4f9873e6e4dd042f793db9",
+    "npm.deploy": "77610e246f60a4e9020782e28df0a41ea5c757e606fe47f69230cccf490648f6",
+    "npm.health": "77610e246f60a4e9020782e28df0a41ea5c757e606fe47f69230cccf490648f6",
     "npm.secrets": "1b0d3a28cae4aadd5f9666de25a3eafe9258f32d9627fe4cbeb1625850a57c90"
   },
   "kydns": {
@@ -28,8 +28,8 @@
     "kyidentity.secrets": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "kyidentity.setup": "ba4a8f58d5f472d8eaf13603fee6490e97be0764a363de568148d8165a2c0c0c",
     "npm.bootstrap": "3846c1c4be7a7cb2af2e3b8a6f849519ec9f6b63cfa25b1b6386b7ce37ac7e49",
-    "npm.deploy": "f267a21fb616a64ae82bff76b80a4a49308a913d6c4f9873e6e4dd042f793db9",
-    "npm.health": "f267a21fb616a64ae82bff76b80a4a49308a913d6c4f9873e6e4dd042f793db9",
+    "npm.deploy": "77610e246f60a4e9020782e28df0a41ea5c757e606fe47f69230cccf490648f6",
+    "npm.health": "77610e246f60a4e9020782e28df0a41ea5c757e606fe47f69230cccf490648f6",
     "npm.secrets": "1b0d3a28cae4aadd5f9666de25a3eafe9258f32d9627fe4cbeb1625850a57c90"
   },
   "kydrive": {
@@ -46,8 +46,8 @@
     "kyidentity.secrets": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "kyidentity.setup": "35d88b1f606e973fa9d5fd09e7420e1afd202abea47f3649e00ba4921ff0a6d7",
     "npm.bootstrap": "3846c1c4be7a7cb2af2e3b8a6f849519ec9f6b63cfa25b1b6386b7ce37ac7e49",
-    "npm.deploy": "f267a21fb616a64ae82bff76b80a4a49308a913d6c4f9873e6e4dd042f793db9",
-    "npm.health": "f267a21fb616a64ae82bff76b80a4a49308a913d6c4f9873e6e4dd042f793db9",
+    "npm.deploy": "77610e246f60a4e9020782e28df0a41ea5c757e606fe47f69230cccf490648f6",
+    "npm.health": "77610e246f60a4e9020782e28df0a41ea5c757e606fe47f69230cccf490648f6",
     "npm.secrets": "1b0d3a28cae4aadd5f9666de25a3eafe9258f32d9627fe4cbeb1625850a57c90"
   },
   "kynotes": {
@@ -62,8 +62,8 @@
     "kynotes.secrets": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "kynotes.setup": "6b21dbc3385ffe3d1a2ff094e6351818750b60dbd61048b377e05be1d2b839b2",
     "npm.bootstrap": "3846c1c4be7a7cb2af2e3b8a6f849519ec9f6b63cfa25b1b6386b7ce37ac7e49",
-    "npm.deploy": "f267a21fb616a64ae82bff76b80a4a49308a913d6c4f9873e6e4dd042f793db9",
-    "npm.health": "f267a21fb616a64ae82bff76b80a4a49308a913d6c4f9873e6e4dd042f793db9",
+    "npm.deploy": "77610e246f60a4e9020782e28df0a41ea5c757e606fe47f69230cccf490648f6",
+    "npm.health": "77610e246f60a4e9020782e28df0a41ea5c757e606fe47f69230cccf490648f6",
     "npm.secrets": "1b0d3a28cae4aadd5f9666de25a3eafe9258f32d9627fe4cbeb1625850a57c90"
   },
   "kypost": {
@@ -79,8 +79,8 @@
     "kypost.tls-cert": "1ef381a9a617d09804590cbfdddfb5a1a6ed0ded6f6ab0e75ae72f597b5131ad",
     "kypost.volumes": "config private state logs ollama-models",
     "npm.bootstrap": "3846c1c4be7a7cb2af2e3b8a6f849519ec9f6b63cfa25b1b6386b7ce37ac7e49",
-    "npm.deploy": "f267a21fb616a64ae82bff76b80a4a49308a913d6c4f9873e6e4dd042f793db9",
-    "npm.health": "f267a21fb616a64ae82bff76b80a4a49308a913d6c4f9873e6e4dd042f793db9",
+    "npm.deploy": "77610e246f60a4e9020782e28df0a41ea5c757e606fe47f69230cccf490648f6",
+    "npm.health": "77610e246f60a4e9020782e28df0a41ea5c757e606fe47f69230cccf490648f6",
     "npm.secrets": "1b0d3a28cae4aadd5f9666de25a3eafe9258f32d9627fe4cbeb1625850a57c90"
   },
   "kypost-native": {
@@ -97,8 +97,8 @@
     "kypost.tls-cert": "1ef381a9a617d09804590cbfdddfb5a1a6ed0ded6f6ab0e75ae72f597b5131ad",
     "kypost.volumes": "config private state logs ollama-models",
     "npm.bootstrap": "3846c1c4be7a7cb2af2e3b8a6f849519ec9f6b63cfa25b1b6386b7ce37ac7e49",
-    "npm.deploy": "f267a21fb616a64ae82bff76b80a4a49308a913d6c4f9873e6e4dd042f793db9",
-    "npm.health": "f267a21fb616a64ae82bff76b80a4a49308a913d6c4f9873e6e4dd042f793db9",
+    "npm.deploy": "77610e246f60a4e9020782e28df0a41ea5c757e606fe47f69230cccf490648f6",
+    "npm.health": "77610e246f60a4e9020782e28df0a41ea5c757e606fe47f69230cccf490648f6",
     "npm.secrets": "1b0d3a28cae4aadd5f9666de25a3eafe9258f32d9627fe4cbeb1625850a57c90"
   },
   "kypost-receiver": {
@@ -115,8 +115,8 @@
     "kypost.tls-cert": "1ef381a9a617d09804590cbfdddfb5a1a6ed0ded6f6ab0e75ae72f597b5131ad",
     "kypost.volumes": "config private state logs ollama-models",
     "npm.bootstrap": "3846c1c4be7a7cb2af2e3b8a6f849519ec9f6b63cfa25b1b6386b7ce37ac7e49",
-    "npm.deploy": "f267a21fb616a64ae82bff76b80a4a49308a913d6c4f9873e6e4dd042f793db9",
-    "npm.health": "f267a21fb616a64ae82bff76b80a4a49308a913d6c4f9873e6e4dd042f793db9",
+    "npm.deploy": "77610e246f60a4e9020782e28df0a41ea5c757e606fe47f69230cccf490648f6",
+    "npm.health": "77610e246f60a4e9020782e28df0a41ea5c757e606fe47f69230cccf490648f6",
     "npm.secrets": "1b0d3a28cae4aadd5f9666de25a3eafe9258f32d9627fe4cbeb1625850a57c90"
   }
 }

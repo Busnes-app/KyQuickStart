@@ -24,7 +24,7 @@ var renderedHashes = map[string]string{
 	"kypulse":     "7790db6ec9b21a012ac7525f9445418f496b167d597ac21f0241e28d9606ec97",
 	"kyrecovery":  "cf5c4c3e7ef5ead88e94ff9ac10784d4e10305fe870e76b1a460a7873a942576",
 	"nginx":       "5b9d747cb46f004c7d65f4861bc313d991ee5d54c855e85dc8ceefbdc6a3a040",
-	"npm":         "c44905a672dc46b3f2c30d302290eb2272a40d19f54da634d5141d179e43c723",
+	"npm":         "cca1276fe87ee377b836092064d2b6fa260873fc53d3ec640e486f38f8995b87",
 }
 
 func TestRenderGolden(t *testing.T) {
