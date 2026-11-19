@@ -36,7 +36,7 @@ import (
 	"github.com/Busnes-app/kyquickstart/internal/stack"
 )
 
-const npmImage = "jc21/nginx-proxy-manager:2.16.0@sha256:57d85bffc776c01909c7b24e127a69a72b7d8c75d387e6cb26c762978fc43e4c"
+const npmImage = "jc21/nginx-proxy-manager:2.17.1@sha256:ddccef5311d962ce733bc3439f9efdc11f167888804e60c5912f8a37ecdc5d52"
 const nginxTestImage = "nginxinc/nginx-unprivileged:1.30.6-alpine@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03"
 const backendImage = "traefik/whoami:v1.11.0@sha256:200689790a0a0ea48ca45992e0450bc26ccab5307375b41c84dfc4f2475937ab"
 

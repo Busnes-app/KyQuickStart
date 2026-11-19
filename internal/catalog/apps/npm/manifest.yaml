@@ -1,11 +1,11 @@
 name: npm
 description: Nginx Proxy Manager, the reverse proxy at the edge; its admin API never leaves the cluster
 category: edge
-version: 2.16.0
+version: 2.17.1
 # The one exception to restricted: NPM's s6 init must start as root (see docs/edge.md).
 pod_security: baseline
 images:
-  npm: jc21/nginx-proxy-manager:2.16.0@sha256:4393e642e233e5efd5adeb7f10918d4aaea71c9ed875b94190273fc8e87f9594
+  npm: jc21/nginx-proxy-manager:2.17.1@sha256:04a9d0835560b9719ab577275f84fe1f713298a1c1e2bdefa034b87f10e062e1
 secrets: [admin_password]
 health:
   timeout_seconds: 300
