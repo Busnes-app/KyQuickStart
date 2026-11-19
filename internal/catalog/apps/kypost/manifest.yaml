@@ -1,10 +1,10 @@
 name: kypost
 description: KyPost, the suite's webmail client for mail accounts you already have; signs in through KyIdentity
 category: ky
-version: 0.6.1.1
-# catalog-follow: v0.6.1.1 attested by Busnes-app/KyPost-Server release-image.yml@refs/tags/v0.6.1.1
+version: 0.6.1.2
+# catalog-follow: v0.6.1.2 attested by Busnes-app/KyPost-Server release-image.yml@refs/tags/v0.6.1.2
 images:
-  kypost: ghcr.io/busnes-app/kypost-server:0.6.1.1@sha256:330788925808f214947b008083aae7b8fd7e36dcbb4370ecb971eae6f3ae3afe
+  kypost: ghcr.io/busnes-app/kypost-server:0.6.1.2@sha256:e1ef9715a152bd66cc6a2fb53644b2188d6e98605879fe0a54c54bd5495319d5
   # Native mail's receiver only: KyPost v0.4.3's docker-compose.rspamd.yml pin, unchanged.
   rspamd: rspamd/rspamd:4.2.2@sha256:33526f94cfbb5ab5485805ad9d6eddb6a52aca6529aad0ce99b67b01c2e756de
 # verify-edge reads the suite proxy contract here (clientIp, proxyHeadersTrusted, scheme).
@@ -43,7 +43,7 @@ upgrade:
   # From 0.4.2 the state still migrates: those upgrade to 0.4.3 first.
   min_from: 0.4.3
   migrates_data: true
-  data_since: 0.6.1
+  data_since: 0.6.1.2
   note: >-
     New device enrollments now need KyPost for Android 0.5.1.1 or later; older Android builds
     are told to update. Devices already enrolled keep working. From 0.6.0 a device paired by
