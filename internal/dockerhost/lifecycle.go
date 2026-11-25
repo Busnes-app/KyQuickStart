@@ -62,7 +62,7 @@ func (s lifecycleStep) Inspect(ctx context.Context) (bool, error) {
 func (s lifecycleStep) Apply(ctx context.Context) error {
 	cmd := map[string]string{"stop": "stop", "start": "up -d", "restart": "restart"}[s.op]
 	if _, err := s.a.Runner.Run(ctx, s.a.compose(cmd), nil); err != nil {
-		return fmt.Errorf("docker compose %s: %w", cmd, err)
+		return s.a.upFailed(ctx, cmd, err)
 	}
 	if s.op == "stop" {
 		return nil

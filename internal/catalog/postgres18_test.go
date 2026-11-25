@@ -11,9 +11,9 @@ import (
 	"testing/fstest"
 )
 
-// kitSHA256 is the suite's PostgreSQL 17 to 18 kit v2 (ky-postgres-18): every copy in this
+// kitSHA256 is the suite's PostgreSQL 17 to 18 kit v4 (ky-postgres-18): every copy in this
 // repository is that file byte for byte.
-const kitSHA256 = "2992644109716cd34297fbcb76eba8907f4a5e3031a12c05aade010e5ea2b571"
+const kitSHA256 = "195ae8684e34dd515158a88b1f76b918cf6e3f3c854ce83fe4fb190a5178cf06"
 
 func TestPostgresKitIsVendoredByteForByte(t *testing.T) {
 	vendored, err := os.ReadFile("../../scripts/postgres-17-to-18.sh")
@@ -21,7 +21,7 @@ func TestPostgresKitIsVendoredByteForByte(t *testing.T) {
 		t.Fatal(err)
 	}
 	if sum := sha256.Sum256(vendored); hex.EncodeToString(sum[:]) != kitSHA256 {
-		t.Fatalf("scripts/postgres-17-to-18.sh is not kit v2: sha256 %x", sum)
+		t.Fatalf("scripts/postgres-17-to-18.sh is not kit v4: sha256 %x", sum)
 	}
 	if fi, err := os.Stat("../../scripts/postgres-17-to-18.sh"); err != nil || fi.Mode().Perm() != 0o755 {
 		t.Fatalf("scripts/postgres-17-to-18.sh mode: %v %v", fi.Mode(), err)

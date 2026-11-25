@@ -817,10 +817,16 @@ reach it, and it can reach nothing. Read this before choosing it:
   postgres-17-dump`). A dump refuses too while `pgdata/postmaster.pid` exists, which only a 17
   that crashed leaves: start the previous release's pod once and let it stop. KyIdentity cannot
   sign anyone in while the move runs, about as long as a restore of its data. To go back, apply
-  with the previous release: its 17 pod starts on the untouched `pgdata/`. Once satisfied, you
-  may delete `pgdata/` and `upgrade-from-17/` from the claim (for example from a debug pod
-  mounting it); nothing does it for you. No pre-upgrade backup is taken: there is none of this
-  database (above), and the 17 data stays as the way back.
+  with the previous release: its 17 pod starts on the untouched `pgdata/`. Applying this
+  release again after 17 has run refuses: 18 lacks what 17 wrote since, so the dump stops the
+  pod in its init container, and the apply's health wait ends with the dump's message. Your
+  choice, from a debug pod mounting the claim, with the database scaled to 0: to move 17 again,
+  rename `18/` (and `upgrade-from-17/`, if it is there) with a suffix such as `.replaced`
+  (nothing is deleted); to keep 18 as it was, delete `18/moved-from-17.checkpoint`. Then apply
+  again. Once the move is done you may delete `upgrade-from-17/` (the dump) from the claim, for
+  example from a debug pod mounting it; 18 keeps starting. Deleting `pgdata/` (17) is separate,
+  and ends the way back. Nothing does either for you. No pre-upgrade backup is taken: there is
+  none of this database (above), and the 17 data stays as the way back.
 
 **The installer's, highly available (`database_instances`).** Owner amendment, 2026-11-13.
 `database_instances: 3` (3 to 5) replaces that one pod with a
@@ -2429,8 +2435,17 @@ integrations:
     release once and stop it cleanly.
   - **Going back.** Deploy the previous release (or restore the pre-upgrade snapshot): its 17
     starts on the untouched `pgdata/pgdata`.
-  - **Clean-up, your choice.** Once satisfied, `rm -r pgdata/pgdata pgdata/upgrade-from-17` in the
-    app's directory, as the target user. Nothing removes them for you.
+  - **Back to 18 after that.** Once 17 has run, the next deploy of this release refuses: 18
+    lacks what 17 wrote since, so `postgres-17-dump` exits with that message, which apply
+    shows, and PostgreSQL does not start. Your choice, as the target user in the app's
+    directory with the stack stopped: to move 17 again, rename `pgdata/18` (and
+    `pgdata/upgrade-from-17`, if it is there) with a suffix such as `.replaced` (nothing is
+    deleted); to keep 18 as it was, delete `pgdata/18/moved-from-17.checkpoint`. Then deploy
+    again.
+  - **Clean-up, your choice**, in the app's directory as the target user. `rm -r
+    pgdata/upgrade-from-17` (the dump) is safe once the move is done; 18 keeps starting, and a
+    later return from 17 is still refused as above. `rm -r pgdata/pgdata` (17, and any
+    `.replaced` copies) is separate, and ends the way back. Nothing removes them for you.
 
 ### KyMessages: provenance, measurements and residuals
 

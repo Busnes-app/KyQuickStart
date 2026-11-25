@@ -653,3 +653,47 @@ func TestReplicasCatalogValidation(t *testing.T) {
 		t.Fatalf("cluster image = %q", image)
 	}
 }
+
+// A database pod held by its 17 dump exiting non-zero (a refusal) is not ready, and health
+// says so with the dump's message; one whose dump exited 0 is ready.
+func TestHealthReportsFailedDump(t *testing.T) {
+	ctx := context.Background()
+	a, cs, _ := replicatedApp(t, 3, "")
+	steps := Steps(a)
+	for _, s := range steps[:3] {
+		if err := s.Apply(ctx); err != nil {
+			t.Fatalf("%s: %v", s.ID(), err)
+		}
+	}
+	markReady(t, cs)
+	db, _ := cs.AppsV1().Deployments("kyq-kyidentity").Get(ctx, databaseName, metav1.GetOptions{})
+	if c := db.Spec.Template.Spec.InitContainers[1]; c.Name != "postgres-17-dump" || c.TerminationMessagePolicy != corev1.TerminationMessageFallbackToLogsOnError {
+		t.Fatalf("dump init container = %s %s", c.Name, c.TerminationMessagePolicy)
+	}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "database-x", Namespace: "kyq-kyidentity", Labels: db.Spec.Template.Labels}}
+	pod.Status.InitContainerStatuses = []corev1.ContainerStatus{
+		{Name: "private-volumes", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}},
+		{Name: "postgres-17-dump", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+			LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 1, Message: "postgres-17-to-18: PostgreSQL 17 has run on /v/pgdata since it was moved to 18\n"}}},
+	}
+	pod, err := cs.CoreV1().Pods("kyq-kyidentity").Create(ctx, pod, metav1.CreateOptions{}) // named by the fixture
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := steps[3].Verify(ctx); err != nil {
+		t.Fatalf("a ready database with an old failed pod: %v", err)
+	}
+	db.Status = appsv1.DeploymentStatus{ObservedGeneration: db.Generation, Replicas: 1}
+	cs.AppsV1().Deployments("kyq-kyidentity").UpdateStatus(ctx, db, metav1.UpdateOptions{})
+	err = steps[3].Verify(ctx)
+	if err == nil || !strings.Contains(err.Error(), "database: 0 of 1 replicas ready; init container postgres-17-dump exited 1: postgres-17-to-18: PostgreSQL 17 has run on") {
+		t.Fatalf("health = %v", err)
+	}
+	pod.Status.InitContainerStatuses[1] = corev1.ContainerStatus{Name: "postgres-17-dump", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}}
+	if _, err := cs.CoreV1().Pods("kyq-kyidentity").UpdateStatus(ctx, pod, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := steps[3].Verify(ctx); err == nil || strings.Contains(err.Error(), "init container") {
+		t.Fatalf("health with the dump done = %v", err)
+	}
+}

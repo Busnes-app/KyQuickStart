@@ -141,7 +141,7 @@ func (d deployStep) Apply(ctx context.Context) error {
 		up += " --force-recreate"
 	}
 	if _, err := d.a.Runner.Run(ctx, d.a.compose(up), nil); err != nil {
-		return fmt.Errorf("docker compose up: %w", err)
+		return d.a.upFailed(ctx, "up", err)
 	}
 	_, err := d.a.Runner.Run(ctx, "umask 077; printf %s "+remote.Quote(d.hash)+" > "+remote.Quote(d.a.dir()+"/.input-hash"), nil)
 	return err
