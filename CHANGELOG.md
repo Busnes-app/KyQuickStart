@@ -20,7 +20,14 @@ state directory, target data and target-held credentials; do not reset them as a
   a backup destination; without one, `apply`/`upgrade` needs `--acknowledge-no-backup`. Chat or
   KyIdentity sign-in is down while the restore runs; the app's disk needs about twice the 17
   data free. Removing the 17 data afterwards is a manual step (`docs/guided-setup.md`).
-  CloudNativePG clusters stay on 17.
+- PostgreSQL 18 for the highly available KyIdentity database (`database_instances`). A
+  CloudNativePG `Cluster` on 17 is hibernated, every instance's claim is copied and verified,
+  and only then does CloudNativePG upgrade it in place; fresh Clusters start on 18.
+  **Upgrade impact:** sign-in is down for the copy and the upgrade; the copies need as much
+  storage as the Cluster's claims and are never deleted for you; CloudNativePG 1.26 or later is
+  required, and the plan's kubeconfig needs list on persistentvolumeclaims. A failed copy leaves
+  the Cluster on 17 unchanged. Going back to 17 is by hand from the copies
+  (`docs/guided-setup.md`, "Going back to PostgreSQL 17").
 - Follow KyPost, KyCalendar and KyYard `0.6.1.1` with verified release image digests.
   KyPost includes the receiving accelerator and file-lock/fsync fixes; KyCalendar and
   KyYard refresh their Alpine base. **Upgrade impact:** the selected apps restart on

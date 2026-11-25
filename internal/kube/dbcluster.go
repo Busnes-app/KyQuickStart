@@ -60,7 +60,8 @@ var clusterAccess = func() []authorizationv1.ResourceAttributes {
 	for _, v := range []string{"get", "create", "update", "patch"} {
 		out = append(out, authorizationv1.ResourceAttributes{Group: clusterGroup, Resource: clusterResource.Resource, Verb: v})
 	}
-	return out
+	// The major upgrade finds the claims the Cluster owns.
+	return append(out, authorizationv1.ResourceAttributes{Resource: "persistentvolumeclaims", Verb: "list"})
 }()
 
 // clustered reports whether the installer's Postgres is a CloudNativePG Cluster.
@@ -218,6 +219,13 @@ func (c *Client) applyCluster(ctx context.Context, a App, spec map[string]any, h
 	want.SetNamespace(namespaceOf(a.Name))
 	want.SetLabels(workloadLabels(a.ReleaseSet))
 	want.SetAnnotations(map[string]string{hashAnnotation: hash})
+	// Only the database-upgrade step, after its copies, moves the data to another major.
+	if have != nil {
+		image, _, _ := unstructured.NestedString(have.Object, "spec", "imageName")
+		if from, to := imageMajor(image), imageMajor(spec["imageName"].(string)); from != to {
+			return fmt.Errorf("cluster %s runs PostgreSQL %d, and this release's is %d: step %s.database-upgrade moves it first", databaseName, from, to, a.Name)
+		}
+	}
 	api := c.dyn.Resource(clusterResource).Namespace(namespaceOf(a.Name))
 	// Strict: a field this operator does not know is refused, never silently dropped.
 	if have == nil {
@@ -269,6 +277,11 @@ func (c *Client) hibernate(ctx context.Context, app string, on bool) error {
 
 // waitCluster waits until every instance of the app's Cluster is ready.
 func (c *Client) waitCluster(ctx context.Context, app string) error {
+	return c.waitClusterFor(ctx, app, clusterState)
+}
+
+// waitClusterFor waits until state, why the Cluster is not yet as wanted, returns "".
+func (c *Client) waitClusterFor(ctx context.Context, app string, state func(*unstructured.Unstructured) string) error {
 	deadline := time.Now().Add(clusterTimeout)
 	for {
 		o, err := c.clusterObject(ctx, app)
@@ -277,7 +290,7 @@ func (c *Client) waitCluster(ctx context.Context, app string) error {
 		}
 		why := "no answer from the API server"
 		if err == nil {
-			if why = clusterState(o); why == "" {
+			if why = state(o); why == "" {
 				return nil
 			}
 		}

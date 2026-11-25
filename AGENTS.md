@@ -613,8 +613,7 @@ edge compatibility: `docs/redirect.md`.
   `database_instances: 3-5` beside `replicas`, never with `database_secret`, replaces
   Deployment `database` with a CloudNativePG `Cluster` of that name (`postgresql.cnpg.io/v1`,
   written through the dynamic client with strict field validation): the catalog's
-  `replicas.cluster_image` (a CloudNativePG operand image; PostgreSQL 17, since the installer
-  has no backup of a Cluster to take before CloudNativePG's major upgrade), required
+  `replicas.cluster_image` (a CloudNativePG operand image, PostgreSQL 18 on trixie), required
   anti-affinity by node, synchronous replication `ANY 1`, the same UTF8/C database and
   non-superuser owner, taken from `kyq-database` (basic-auth here: `username`, `password`, `url`). The operator is the
   catalog's `cloudnative-pg` (next) or the cluster owner's: `DatabaseOperatorCheck` (preflight
@@ -628,6 +627,20 @@ edge compatibility: `docs/redirect.md`.
   `stop` and `uninstall` hibernate the `Cluster` (`cnpg.io/hibernation`) and never delete
   it: it owns its claims. Between the single pod and the `Cluster` is a database move, refused
   like any other (`kyquickstart/database` is `cluster`).
+  A `Cluster` whose data is an older major (17, from earlier releases; owner decision
+  2026-11-25, `internal/kube/dbupgrade.go`) moves only in step `<app>.database-upgrade`, before
+  deploy: create claim `pre-upgrade-pg<major>-<claim>` for every claim the Cluster owns (refused
+  claims stop nothing), hibernate, copy and verify each (`copyCommand`, uid 26, one pod per
+  instance), then one patch sets the new `imageName` and wakes it for CloudNativePG's in-place
+  `pg_upgrade --link` (operator 1.26+); then wait healthy and `vacuumdb --analyze-only
+  --missing-stats-only`. A failed copy or a refused image wakes it on the old major unchanged; an
+  upgrade still on old data after `clusterTimeout` gets the old image back (CloudNativePG's
+  rollback). Deploy's `applyCluster` refuses any major change itself. The copies (labels
+  `kyquickstart/postgres`, `copy-of`, `instance`, `instance-role`; annotations `copied-at`,
+  `cluster-uid`) are never deleted, by `prune-copies` either; a same-named copy of another
+  Cluster is refused, never overwritten. Rollback is by hand from the primary's copy
+  (`docs/guided-setup.md`, "Going back to PostgreSQL 17"). The plan's permissions add list on
+  claims.
 - The database operator (owner amendment, 2026-11-14; `internal/kube/operator.go`,
   `docs/guided-setup.md`): the catalog app `cloudnative-pg`, category `operator`, Kubernetes
   only, written in `stack.yaml` and never asked by `plan`. `kubernetes.operator` names its
@@ -740,6 +753,11 @@ calls and kind nodes must carry their own explicit bounds.
   beside a live 17, passwords over the network, rollback, rerun, a bad dump, a fresh install, a 17
   backup restored with the manifest's command); `scripts/test-postgres-17-to-18-pod.sh` runs the
   previous and current database pod specs in Docker as a kubelet would (not Kubernetes itself).
+- CI's `e2e (kube-cluster-upgrade)` shard: `TestKubernetesIdentityDatabaseClusterUpgrade`
+  (three kind workers, the catalog's KyIdentity and CloudNativePG) installs on a 17 `Cluster`,
+  seeds rows and a password role, applies this release (rows, the role's password over the
+  network and a wrong one refused, a session made on 17, three verified copies, an idle second
+  apply), then goes back to 17 from the primary's copy by the documented steps.
 - `make workflow-lint`: needs Docker (CI runs it in `vulncheck`); actionlint v1.7.12 on every
   workflow and offline, digest-pinned zizmor (medium and up) on `release-image.yml` and
   `dependency-release.yml`.
