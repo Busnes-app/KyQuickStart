@@ -794,7 +794,7 @@ In namespace `kyq-kyidentity`, Pod Security `restricted`:
 
 ### The database
 
-**The installer's (default).** Deployment `database`: one Postgres 17 pod on claim
+**The installer's (default).** Deployment `database`: one PostgreSQL 18 pod on claim
 `vol-database` (2 GiB), created UTF8 with the C locale as KyIdentity requires. KyIdentity
 connects as a role that owns its database and is not a superuser. Only KyIdentity's pods can
 reach it, and it can reach nothing. Read this before choosing it:
@@ -806,8 +806,21 @@ reach it, and it can reach nothing. Read this before choosing it:
 - **The connection is not encrypted.** It stays inside the cluster, between the pods the
   network policy names; a cluster whose network you do not trust needs your own Postgres with
   TLS.
-- **The installer does not back it up** and does not upgrade it. KyIdentity's own backups
-  (below) are its only backup.
+- **The installer does not back it up.** KyIdentity's own backups (below) are its only backup.
+- **PostgreSQL 17 to 18.** A pod made by an earlier release ran 17 with its data in
+  `pgdata/` of the claim. The first apply of this release moves it on the same claim: init
+  container `postgres-17-dump` (the 17 image) dumps `pgdata/` once into `upgrade-from-17/`,
+  and the 18 container restores that dump into `18/docker` beside it before it starts, roles
+  and passwords included. The 17 data is only read. The claim needs about twice the 17 data
+  free; with less, the dump refuses, writes nothing and the pod stays in its init container
+  until the claim grows (`kubectl -n kyq-kyidentity logs deploy/database -c
+  postgres-17-dump`). A dump refuses too while `pgdata/postmaster.pid` exists, which only a 17
+  that crashed leaves: start the previous release's pod once and let it stop. KyIdentity cannot
+  sign anyone in while the move runs, about as long as a restore of its data. To go back, apply
+  with the previous release: its 17 pod starts on the untouched `pgdata/`. Once satisfied, you
+  may delete `pgdata/` and `upgrade-from-17/` from the claim (for example from a debug pod
+  mounting it); nothing does it for you. No pre-upgrade backup is taken: there is none of this
+  database (above), and the 17 data stays as the way back.
 
 **The installer's, highly available (`database_instances`).** Owner amendment, 2026-11-13.
 `database_instances: 3` (3 to 5) replaces that one pod with a
@@ -848,7 +861,8 @@ The first apply takes several minutes: the instances start one after another, ea
 the one before, and KyIdentity's pods start once all are ready (15 minutes at most, then
 apply stops and names the `kubectl describe` to read). The installer still does not back the
 database up: KyIdentity's own backups (below) are its only backup. It does not upgrade
-Postgres across major versions.
+Postgres across major versions: a `Cluster` stays on PostgreSQL 17 (17.12), supported until
+November 2029, until the installer has a backup of it to take first.
 
 ### The CloudNativePG operator
 
@@ -2394,14 +2408,36 @@ integrations:
   secret, taken while the stack runs. Restore starts Postgres, loads the dump (without the dump's
   `DROP ROLE`/`CREATE ROLE postgres`, which Postgres refuses for the role restoring it), starts
   MAS and the console, replays KyIdentity's removals (`replay_after: app`), and only then starts
-  Synapse, Element and LiveKit.
+  Synapse, Element and LiveKit. A dump of PostgreSQL 17 restores on 18.
+- **PostgreSQL 18.** The stack's Postgres is 18, with its data in `pgdata/18/docker` of the app's
+  directory. An install made by an earlier release (17, data in `pgdata/pgdata`) moves on the
+  next `apply`, `install` or `upgrade` that deploys it, whatever the versions:
+  - **Backup first.** With a backup destination on the target, a `kyquickstart backup`
+    snapshot is taken before anything changes (step `kymessage.pre-upgrade-backup`); if it
+    fails, nothing is deployed. Without a destination the command refuses (`ack_required`) until
+    you pass `--acknowledge-no-backup`; the 17 data is kept either way.
+  - **The move.** Compose stops the 17 Postgres, the one-shot `postgres-17-dump` (the 17 image,
+    no network) dumps `pgdata/pgdata` once into `pgdata/upgrade-from-17`, and Postgres restores
+    it into `pgdata/18/docker` before it starts, roles and passwords included. The suite's
+    script that does both is `pg-upgrade/postgres-17-to-18.sh` (`scripts/postgres-17-to-18.sh`).
+    The 17 data is only read. Chat is down while it runs, about as long as a restore of the
+    backup's dump; past the app's 10-minute health wait apply fails, and a rerun waits again
+    while the restore finishes.
+  - **Space.** About twice the 17 data free on the app's disk; with less, the one-shot refuses,
+    writes nothing, and the stack does not start until there is room. It refuses too while
+    `pgdata/pgdata/postmaster.pid` exists, which only a crashed 17 leaves: start the previous
+    release once and stop it cleanly.
+  - **Going back.** Deploy the previous release (or restore the pre-upgrade snapshot): its 17
+    starts on the untouched `pgdata/pgdata`.
+  - **Clean-up, your choice.** Once satisfied, `rm -r pgdata/pgdata pgdata/upgrade-from-17` in the
+    app's directory, as the target user. Nothing removes them for you.
 
 ### KyMessages: provenance, measurements and residuals
 
 - **Images.** The console image is KyMessage v0.4.4's, attested by `Busnes-app/KyMessage-Server`
-  `release-image.yml@refs/tags/v0.4.4` from commit `b0f2001e`. The five Matrix images are the
-  stock upstream builds KyMessage's `docker-compose.matrix.yml` pins by digest; no attestation
-  was found for them.
+  `release-image.yml@refs/tags/v0.4.4` from commit `b0f2001e`. The Matrix images, PostgreSQL 18
+  and the 17 dump one-shot are the stock upstream builds KyMessage's `docker-compose.matrix.yml`
+  pins by digest; no attestation was found for them.
 - **Measured in the end-to-end test.** A chat-only person was locked 0-3 s after their sign-in.
   Offboarding refused the open session and its refresh token 0.6-2.6 s after the disable, for
   the owner's everyday account and for a person added later. Removing "KyMessages chat" alone

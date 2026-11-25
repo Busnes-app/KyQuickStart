@@ -8,7 +8,8 @@ services:
     secrets: [db_password]
     # The entrypoint reads the secret as root, before it drops to postgres.
     entrypoint: ["/bin/sh", "-c", "POSTGRES_PASSWORD=$$(cat /run/secrets/db_password) || exit 1; export POSTGRES_PASSWORD; exec docker-entrypoint.sh postgres"]
-    volumes: ["pgdata:/var/lib/postgresql/data"]
+    # 18 keeps its data in 18/docker below the volume; a test run starts on a fresh volume.
+    volumes: ["pgdata:/var/lib/postgresql"]
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres"]
       interval: 2s

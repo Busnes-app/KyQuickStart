@@ -13,9 +13,9 @@
 # Images are the official upstream builds, pinned by tag and digest, configured only by files.
 # Postgres, Synapse and MAS run as the owner of ./matrix (KY_MATRIX_UID/GID, printed by
 # matrix-init) so its 0600 files stay unreadable to anyone else.
-# Element's page loads the logo from <KY_ADMIN_HOST>/app-icon.png. Its nginx sends no CSP
-# header and its own meta CSP allows img-src *; a proxy in front must not add an img-src that
-# excludes the admin host. Route https://<server name>/.well-known/matrix/{client,server} to the
+# Element's page loads the logo from <KY_ADMIN_HOST>/app-icon.png and its home page and marks
+# from <KY_ADMIN_HOST>/element-home*. Its nginx sends no CSP header and its own meta CSP allows
+# img-src * and connect-src *; a proxy in front must not add either that excludes the admin host. Route https://<server name>/.well-known/matrix/{client,server} to the
 # app (the server file answers only while federation is open).
 x-hardening: &hardening
   restart: unless-stopped
@@ -23,6 +23,12 @@ x-hardening: &hardening
   cap_drop: [ALL]
 # A read-only bind of a path matrix-init made; a missing one refuses the start, never creates it.
 x-matrix-ro: &matrix-ro {type: bind, read_only: true, bind: {create_host_path: false}}
+# Calls are on by default and need KY_MATRIX_RTC_HOST and KY_MATRIX_MEDIA_BIND_IP; Compose
+# refuses to start without them (compose/calls-on.yml). Chat only: KY_MATRIX_CALLS=off and
+# docker-compose.chat-only.yml (docs/CALLS.md). No wildcard default. Any other value of
+# KY_MATRIX_CALLS names no file and is refused.
+include:
+  - path: compose/calls-${KY_MATRIX_CALLS:-on}.yml
 
 services:
   # Serves /.well-known/matrix/{client,server} and the members' Open chat link.
@@ -33,7 +39,9 @@ services:
       - KY_MATRIX_SERVER_NAME=${KY_MATRIX_SERVER_NAME:?Set KY_MATRIX_SERVER_NAME}
       - KY_MATRIX_HOST=${KY_MATRIX_HOST:?Set KY_MATRIX_HOST}
       - KY_MATRIX_CHAT_HOST=${KY_MATRIX_CHAT_HOST:?Set KY_MATRIX_CHAT_HOST}
-      - KY_MATRIX_RTC_HOST=${KY_MATRIX_RTC_HOST:?Set KY_MATRIX_RTC_HOST}
+      # on unless KY_MATRIX_CALLS=off; compose/calls-on.yml holds the RTC host to being set.
+      - KY_MATRIX_CALLS=${KY_MATRIX_CALLS:-on}
+      - KY_MATRIX_RTC_HOST=${KY_MATRIX_RTC_HOST:-}
       - KY_MATRIX_RTC_KEY_FILE=/matrix/secrets/livekit_api_key
       - KY_MATRIX_RTC_SECRET_FILE=/matrix/secrets/livekit_api_secret
       # The meeting-notes bot (docker-compose.notes.yml) authenticates with it; off until Settings.
@@ -92,27 +100,57 @@ services:
       - {<<: *matrix-ro, source: ./matrix/secrets/kyidentity_client_secret, target: /matrix/secrets/kyidentity_client_secret}
       - matrix-media:/matrix-media:ro
 
+  # PostgreSQL 18 keeps its data in 18/docker of the same volume, beside the 17 data in pgdata/,
+  # which stays untouched (docs/CHAT-SETUP.md "PostgreSQL 18"). A 17 stack moves on its first
+  # start: this one-shot dumps pgdata/ once into upgrade-from-17/, then the postgres service
+  # restores that dump before it starts. Without 17 data it does nothing.
+  postgres-17-dump:
+    image: postgres:17.12-alpine3.24@sha256:f9cf3e1f0066f0eb0c48707d864f0ac5941e9ff454a072077d97a4d278d07d73
+    user: "${KY_MATRIX_UID:?}:${KY_MATRIX_GID:?}"
+    entrypoint: ["bash", "/ky/postgres-17-to-18.sh", "dump"]
+    environment:
+      OLD: /v/pgdata
+      NEW: /v
+    network_mode: none
+    restart: "no"
+    # A clean stop removes postmaster.pid, without which the next dump refuses.
+    stop_grace_period: 2m
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    volumes:
+      - matrix-postgres:/v
+      - &pg-upgrade {type: bind, source: ./scripts/postgres-17-to-18.sh, target: /ky/postgres-17-to-18.sh, read_only: true, bind: {create_host_path: false}}
+
   postgres:
     <<: *hardening
-    image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+    image: postgres:18.7-alpine3.24@sha256:0115267ab5a509022df9319c77be365cef335adb71556c75f60f5360ee247e71
     user: "${KY_MATRIX_UID:?Set KY_MATRIX_UID (printed by matrix-init)}:${KY_MATRIX_GID:?Set KY_MATRIX_GID (printed by matrix-init)}"
+    # Restores postgres-17-dump's dump once, then runs the image's own entrypoint.
+    entrypoint: ["bash", "/ky/postgres-17-to-18.sh", "restore"]
+    command: [postgres]
     environment:
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
-      # A subdirectory: the volume root belongs to the image's postgres user, and initdb must
-      # own its directory.
-      PGDATA: /var/lib/postgresql/data/pgdata
     secrets: [postgres_password]
     networks: [matrix-db]
     volumes:
-      - matrix-postgres:/var/lib/postgresql/data
+      - matrix-postgres:/var/lib/postgresql
       - ./matrix/postgres:/docker-entrypoint-initdb.d:ro
-    # TCP, not the socket: during first-run init the entrypoint's temporary server listens on
-    # the socket only, so this passes once init.sql has run and the real server is up.
+      - *pg-upgrade
+    depends_on:
+      postgres-17-dump: {condition: service_completed_successfully}
+    # Time for a clean shutdown, so a rollback to 17 or a restore never meets a crashed cluster.
+    stop_grace_period: 2m
+    # TCP, not the socket: during first-run init or the restore the temporary server listens on
+    # the socket only, so this passes once the real server is up. The restore takes about as
+    # long as a pg_dumpall restore of the data, hence the long start period.
     healthcheck:
       test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres"]
       interval: 5s
       timeout: 5s
       retries: 30
+      start_period: 1h
 
   # The media volume starts root-owned (the image's /media); hand it to the Synapse user once
   # per start. Only CAP_CHOWN, no network.
@@ -135,6 +173,9 @@ services:
     # The stock start.py passes these through; Synapse merges the files in order, so the
     # console-owned federation file sets listeners and the allow-list.
     command: ["run", "--config-path", "/config/homeserver.yaml", "--config-path", "/federation.yaml"]
+    # homeserver.yaml loads the meeting-guest confinement module, ky_guests.py in /config.
+    environment:
+      PYTHONPATH: /config
     networks: [default, matrix-db]
     volumes:
       - ./matrix/synapse:/config:ro
@@ -186,6 +227,9 @@ services:
       # a copy made at start, so a console rename shows after `docker compose restart element`
       # (the restart keeps this bind's inode, which both writers update in place).
       - ./matrix/element/config.json:/app/config.json:ro
+      # The meeting-guest bootstrap page matrix-init renders (docs/KYCALENDAR.md "Guests"), served
+      # from Element's origin, where Element restores sessions from. Static; its CSP is its own.
+      - ./matrix/element/kymessages-guest.html:/app/kymessages-guest.html:ro
     depends_on:
       synapse: {condition: service_healthy}
     healthcheck:
@@ -202,11 +246,14 @@ services:
     volumes:
       - {<<: *matrix-ro, source: ./matrix/livekit, target: /config}
     # Media bypasses the HTTP tunnel. Forward these two ports unchanged to this host. No
-    # wildcard default: the operator names the interface that may receive media.
+    # wildcard default: the operator names the interface that may receive media
+    # (compose/calls-on.yml; loopback only with KY_MATRIX_CALLS=off, which starts no LiveKit).
+    # The same port on both sides: LiveKit advertises what matrix-init wrote from the same
+    # KY_MATRIX_MEDIA_TCP_PORT/_UDP_PORT (default 7881/7882) in its ICE candidates.
     # 7880 signalling/admin stays private, reached by the proxy and KyMessages.
     ports:
-      - "${KY_MATRIX_MEDIA_BIND_IP:?set KY_MATRIX_MEDIA_BIND_IP to the host address for call media, or 0.0.0.0 for every interface}:7881:7881/tcp"
-      - "${KY_MATRIX_MEDIA_BIND_IP:?set KY_MATRIX_MEDIA_BIND_IP to the host address for call media, or 0.0.0.0 for every interface}:7882:7882/udp"
+      - "${KY_MATRIX_MEDIA_BIND_IP:-127.0.0.1}:${KY_MATRIX_MEDIA_TCP_PORT:-7881}:${KY_MATRIX_MEDIA_TCP_PORT:-7881}/tcp"
+      - "${KY_MATRIX_MEDIA_BIND_IP:-127.0.0.1}:${KY_MATRIX_MEDIA_UDP_PORT:-7882}:${KY_MATRIX_MEDIA_UDP_PORT:-7882}/udp"
 
   # One-shot, after `kymessages restore` and `kymessages matrix-init` (which recreates the
   # superuser password the capsule leaves out), against a fresh stack with only postgres up:

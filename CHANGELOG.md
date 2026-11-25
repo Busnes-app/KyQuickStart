@@ -14,6 +14,13 @@ state directory, target data and target-held credentials; do not reset them as a
 
 ## Unreleased
 
+- PostgreSQL 18 for KyMessages' Matrix stack (Docker) and the replicated KyIdentity's database
+  pod (Kubernetes), with an automatic dump and restore from 17 that keeps the 17 data.
+  **Upgrade impact:** a KyMessages install still on 17 is backed up first when its target has
+  a backup destination; without one, `apply`/`upgrade` needs `--acknowledge-no-backup`. Chat or
+  KyIdentity sign-in is down while the restore runs; the app's disk needs about twice the 17
+  data free. Removing the 17 data afterwards is a manual step (`docs/guided-setup.md`).
+  CloudNativePG clusters stay on 17.
 - Follow KyPost, KyCalendar and KyYard `0.6.1.1` with verified release image digests.
   KyPost includes the receiving accelerator and file-lock/fsync fixes; KyCalendar and
   KyYard refresh their Alpine base. **Upgrade impact:** the selected apps restart on

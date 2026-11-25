@@ -47,6 +47,7 @@ type composeService struct {
 	Environment map[string]string `yaml:"environment"`
 	Ports       []string          `yaml:"ports"`
 	Networks    any               `yaml:"networks"`
+	Volumes     any               `yaml:"volumes"`
 	Build       any               `yaml:"build"`
 }
 
@@ -112,7 +113,10 @@ func TestKyMessageEntry(t *testing.T) {
 	if !slices.Equal(a.Backup.Stop, []string{"app"}) {
 		t.Errorf("backup stops %v, want the console alone", a.Backup.Stop)
 	}
-	if !slices.Equal(a.Binds, []string{"backups", "data", "matrix", "media", "pgdata"}) || !slices.Contains(a.Nested, "./matrix/mas/config.yaml") || !slices.Contains(a.Nested, "./matrix/element/kymessages-guest.html") {
+	if !slices.Equal(a.Once, []string{"postgres-17-dump"}) || a.Upgrade.Move == nil || a.Upgrade.Move.To != "pgdata/18/docker/PG_VERSION" {
+		t.Errorf("once %v, move %+v", a.Once, a.Upgrade.Move)
+	}
+	if !slices.Equal(a.Binds, []string{"backups", "data", "matrix", "media", "pg-upgrade", "pgdata"}) || !slices.Contains(a.Nested, "./matrix/mas/config.yaml") || !slices.Contains(a.Nested, "./matrix/element/kymessages-guest.html") {
 		t.Errorf("binds %v nested %v", a.Binds, a.Nested)
 	}
 	b := a.Backup
@@ -125,9 +129,9 @@ func TestKyMessageEntry(t *testing.T) {
 }
 
 // AC5: hardened services, internal-only Postgres and MAS admin, no secret in environment,
-// within 3 GiB.
+// within 3 GiB beside the one-shots, which finish before the services that wait for them.
 func TestKyMessageComposeHygiene(t *testing.T) {
-	_, services, networks := messageCompose(t)
+	a, services, networks := messageCompose(t)
 	if !networks["matrix-db"]["internal"] || !networks["matrix-admin"]["internal"] {
 		t.Fatalf("networks = %v", networks)
 	}
@@ -137,14 +141,17 @@ func TestKyMessageComposeHygiene(t *testing.T) {
 			s.MemLimit == "" || s.MemLimit != s.MemSwap || s.PidsLimit == 0 || s.Privileged || len(s.CapAdd) > 0 || s.NetworkMode == "host" || s.Build != nil {
 			t.Errorf("service %s is not hardened: %+v", name, s)
 		}
-		if s.Healthcheck == nil && !slices.Equal(s.Profiles, []string{"init"}) {
+		once := slices.Contains(a.Once, name)
+		if s.Healthcheck == nil && !slices.Equal(s.Profiles, []string{"init"}) && !once {
 			t.Errorf("service %s has no healthcheck", name)
 		}
 		// Compose refuses start_interval without start_period.
 		if s.Healthcheck["start_interval"] != nil && s.Healthcheck["start_period"] == nil {
 			t.Errorf("service %s: start_interval without start_period", name)
 		}
-		total += memMiB(t, s.MemLimit)
+		if !once {
+			total += memMiB(t, s.MemLimit)
+		}
 		for k, v := range s.Environment {
 			if strings.HasPrefix(k, "KY_KYIDENTITY_") || k == "KY_SCIM_TOKEN" || k == "KY_ADMIN_PASSWORD" || k == "KY_BACKUP_KEEP" || k == "KY_BACKUP_DEPOSIT_INTERVAL" || k == "KY_SESSION_SECRET" ||
 				strings.HasPrefix(k, "KY_MATRIX_") && strings.HasSuffix(k, "SECRET") || strings.HasPrefix(k, "POSTGRES_PASSWORD") && k != "POSTGRES_PASSWORD_FILE" {
@@ -342,8 +349,8 @@ func TestRoutesRejects(t *testing.T) {
 	}
 }
 
-// AC1: the five stock images are exactly the digests KyMessage's docker-compose.matrix.yml
-// pins. The fixture is that file byte for byte (KyMessage-Server v0.4.4).
+// AC1: the six stock images are exactly the digests KyMessage's docker-compose.matrix.yml
+// pins. The fixture is that file byte for byte (KyMessage-Server fe88a59, PostgreSQL 18).
 func TestKyMessageStockImages(t *testing.T) {
 	b, err := os.ReadFile("testdata/kymessage-docker-compose.matrix.yml")
 	if err != nil {
@@ -364,7 +371,7 @@ func TestKyMessageStockImages(t *testing.T) {
 	}
 	sort.Strings(upstream)
 	sort.Strings(ours)
-	if len(upstream) != 5 || !slices.Equal(upstream, ours) {
+	if len(upstream) != 6 || !slices.Equal(upstream, ours) {
 		t.Fatalf("stock images %v, upstream %v", ours, upstream)
 	}
 }

@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path"
 	"slices"
 	"strings"
@@ -151,6 +152,33 @@ func TestRenderReplicas(t *testing.T) {
 	}
 	if strings.Contains(script, "SUPERUSER") || envOf(c)["POSTGRES_USER"].Value != "" {
 		t.Error("the app's role must not be the superuser")
+	}
+	// PostgreSQL 18 beside the 17 data on the same claim: the 17 image dumps pgdata/ once, the
+	// kit restores it, both from the vendored kit byte for byte (scripts/postgres-17-to-18.sh).
+	kit, err := os.ReadFile("../../scripts/postgres-17-to-18.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mounts := func(c corev1.Container) map[string]corev1.VolumeMount {
+		m := map[string]corev1.VolumeMount{}
+		for _, v := range c.VolumeMounts {
+			m[v.MountPath] = v
+		}
+		return m
+	}
+	if len(db.InitContainers) != 2 || db.InitContainers[0].Name != "private-volumes" {
+		t.Fatalf("init containers = %+v", db.InitContainers)
+	}
+	dump := db.InitContainers[1]
+	if dump.Name != "postgres-17-dump" || dump.Image != a.Catalog.Images["postgres_17"] || !strings.HasPrefix(a.Catalog.Images["postgres_17"], "postgres:17.") ||
+		!slices.Equal(dump.Command, []string{"bash", "-c", string(kit), "postgres-17-to-18.sh", "dump"}) || envOf(dump)["OLD"].Value != "/v/pgdata" || envOf(dump)["NEW"].Value != "/v" ||
+		mounts(dump)["/v"].SubPath != privateDir || mounts(dump)["/tmp"].Name != "tmp" || dump.SecurityContext != sc {
+		t.Fatalf("dump = %+v", dump)
+	}
+	if len(c.Command) != 5 || c.Command[4] != string(kit) || !strings.HasSuffix(script, `exec bash -c "$1" postgres-17-to-18.sh restore postgres`) ||
+		mounts(c)["/var/lib/postgresql"].SubPath != privateDir || mounts(c)["/var/lib/postgresql/data"].Name != "" || envOf(c)["PGDATA"].Value != "" ||
+		!strings.HasPrefix(c.Image, "postgres:18.") || *db.TerminationGracePeriodSeconds != 120 {
+		t.Fatalf("database = %+v", c)
 	}
 	p := o.DatabasePolicy.Spec
 	if len(p.PolicyTypes) != 2 || len(p.Egress) != 0 || len(p.Ingress) != 1 || p.Ingress[0].From[0].PodSelector.MatchLabels[servesLabel] != "kyidentity" ||

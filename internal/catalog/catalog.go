@@ -157,6 +157,18 @@ type Upgrade struct {
 	// unchanged, so an upgrade from it or later migrates nothing. Empty: every upgrade migrates.
 	DataSince string `yaml:"data_since"`
 	Note      string `yaml:"note"` // what the owner must check after upgrading to this version
+	// Move is a move of the data this catalog's deploy makes by itself, whatever the versions
+	// (PostgreSQL 17 to 18). Docker only.
+	Move *Move `yaml:"move"`
+}
+
+// Move names the move by two files below the app's directory, each inside a bind
+// directory: an app that holds From and lacks To has not moved yet. Its deploy is backed up
+// first where kyquickstart can back it up, and otherwise needs --acknowledge-no-backup.
+type Move struct {
+	From string `yaml:"from"`
+	To   string `yaml:"to"`
+	What string `yaml:"what"` // the move, for the operator: "PostgreSQL 17 to 18 ..."
 }
 
 type Health struct {
@@ -227,7 +239,10 @@ type Replicas struct {
 	// Since is the first release that runs as replicas; an older pin refuses the plan's.
 	Since         string `yaml:"since"`
 	DatabaseImage string `yaml:"database_image"` // a key of Images
-	DatabaseSize  string `yaml:"database_size"`
+	// DumpImage is PostgreSQL 17, whose init container dumps a 17 database once for the 18
+	// pod to restore (scripts/postgres-17-to-18.sh): a key of Images.
+	DumpImage    string `yaml:"dump_image"`
+	DatabaseSize string `yaml:"database_size"`
 	// ClusterImage is the Postgres of a plan's database_instances: a key of Images naming a
 	// CloudNativePG operand image, which the operator can run and the official image is not.
 	ClusterImage string `yaml:"cluster_image" json:",omitempty"`
@@ -278,6 +293,9 @@ type App struct {
 	Nested []string
 	// Init are the services in a Compose profile: one-shot runs, never part of up.
 	Init []string
+	// Once are the services up runs to completion before a service that waits for them
+	// (service_completed_successfully): never running, so health does not ask for them.
+	Once []string
 	// Files are the catalog's files/ beside the template, by path below the app's directory
 	// (rspamd/rspamd.conf). Deploy writes those its Compose file binds (Nested), readable by
 	// every uid: a sidecar running as its own user reads them through the bind.
@@ -290,8 +308,8 @@ type App struct {
 
 // rendering is one rendering of an app's Compose template.
 type rendering struct {
-	compose                       []byte
-	services, binds, nested, init []string
+	compose                             []byte
+	services, binds, nested, init, once []string
 }
 
 type Catalog map[string]App
@@ -521,6 +539,9 @@ func loadApp(fsys fs.FS, dir string) (App, error) {
 		if len(m.FromVolumes) > 0 {
 			return App{}, errors.New("manifest.yaml: from_volumes needs compose.yaml.tmpl")
 		}
+		if m.Upgrade.Move != nil {
+			return App{}, errors.New("manifest.yaml: upgrade: move needs compose.yaml.tmpl")
+		}
 		return App{Manifest: m, Operator: operator}, nil
 	case err != nil:
 		return App{}, err
@@ -547,7 +568,7 @@ func loadApp(fsys fs.FS, dir string) (App, error) {
 			return App{}, fmt.Errorf("compose.yaml.tmpl: %w", err)
 		}
 		if mode == "" {
-			app.Compose, app.Services, app.Binds, app.Nested, app.Init = r.compose, r.services, r.binds, r.nested, r.init
+			app.Compose, app.Services, app.Binds, app.Nested, app.Init, app.Once = r.compose, r.services, r.binds, r.nested, r.init, r.once
 			continue
 		}
 		if app.mail == nil {
@@ -569,8 +590,8 @@ type templateData struct {
 }
 
 // render executes t for mail mode and checks the result. Only a "receiver" rendering may
-// write the mail references or bind a file of files/, and every file of files/ must be bound
-// by some rendering.
+// write the mail references or, in a mail app, bind a file of files/; every file of files/
+// must be bound by the rendering that owns it.
 func (m Manifest) render(t *template.Template, mode string, files map[string][]byte) (rendering, error) {
 	var buf bytes.Buffer
 	if err := t.Execute(&buf, templateData{m, mode}); err != nil {
@@ -590,22 +611,36 @@ func (m Manifest) render(t *template.Template, mode string, files map[string][]b
 	if err := m.validateRoutes(b, c); err != nil {
 		return rendering{}, fmt.Errorf("manifest.yaml: %w", err)
 	}
+	if mv := m.Upgrade.Move; mv != nil {
+		inBind := func(p string) bool {
+			sub := bindRE.FindStringSubmatch("./" + p)
+			return sub != nil && sub[2] != "" && slices.Contains(c.binds, sub[1])
+		}
+		if !inBind(mv.From) || !inBind(mv.To) || mv.From == mv.To || mv.What == "" || m.Kubernetes != nil {
+			return rendering{}, errors.New("manifest.yaml: upgrade: move needs from and to, two files inside bind directories, and what, on a Docker-only app")
+		}
+	}
 	for _, ref := range mailRefs {
 		if bytes.Contains(b, []byte(ref)) != (mode == MailReceiver) {
 			return rendering{}, fmt.Errorf("%s belongs in the receiver rendering, which must write every mail reference", ref)
 		}
 	}
+	// A mail app's files are its receiver's; any other app's, its one rendering's.
+	owner := ""
+	if m.NativeMail != nil {
+		owner = MailReceiver
+	}
 	for name := range files {
-		if mode == MailReceiver && !slices.Contains(c.nested, "./"+name) {
+		if mode == owner && !slices.Contains(c.nested, "./"+name) {
 			return rendering{}, fmt.Errorf("files/%s is bound by no service", name)
 		}
 	}
 	for _, n := range c.nested {
-		if _, ok := files[strings.TrimPrefix(n, "./")]; ok && mode != MailReceiver {
+		if _, ok := files[strings.TrimPrefix(n, "./")]; ok && mode != owner {
 			return rendering{}, fmt.Errorf("only the receiver rendering binds files/%s", strings.TrimPrefix(n, "./"))
 		}
 	}
-	return rendering{b, c.services, c.binds, c.nested, c.init}, nil
+	return rendering{b, c.services, c.binds, c.nested, c.init, c.once}, nil
 }
 
 // loadFiles reads an app's files/ directory: regular files at most 64 KiB, by path below it.
@@ -652,7 +687,7 @@ func (a App) WithMail(mode string, r MailRefs) (App, error) {
 		return a, errors.New("only the receiver rendering takes mail references")
 	}
 	a.Compose = []byte(strings.NewReplacer(SMTPAddressRef, r.SMTPAddress, MailHostnameRef, r.Hostname, MaddyBinaryRef, r.MaddyBinary, ReceivingTLSRef, r.TLSDir).Replace(string(v.compose)))
-	a.Services, a.Binds, a.Nested, a.Init = v.services, v.binds, v.nested, v.init
+	a.Services, a.Binds, a.Nested, a.Init, a.Once = v.services, v.binds, v.nested, v.init, v.once
 	a.mail = nil
 	return a, nil
 }
@@ -923,6 +958,8 @@ func (k Kubernetes) validate(images map[string]string, baseline, edge bool) erro
 			return fmt.Errorf("replicas: database_image %q is not a key of images", r.DatabaseImage)
 		case images[r.ClusterImage] == "":
 			return fmt.Errorf("replicas: cluster_image %q is not a key of images", r.ClusterImage)
+		case images[r.DumpImage] == "":
+			return fmt.Errorf("replicas: dump_image %q is not a key of images", r.DumpImage)
 		case !versionRE.MatchString(r.Since):
 			return fmt.Errorf("replicas: since %q must be a release like 1.2.3 or 1.2.3.4", r.Since)
 		case !sizeRE.MatchString(r.DatabaseSize):
@@ -1201,6 +1238,7 @@ func compareVersions(a, b string) int {
 type composeFile struct {
 	services []string        // sorted, outside profiles
 	init     []string        // sorted, in a profile
+	once     []string        // sorted, outside profiles: run to completion before a dependant
 	volumes  map[string]bool // named volumes and bind directories
 	binds    []string        // sorted
 	nested   []string        // sorted
@@ -1225,6 +1263,9 @@ func checkCompose(b []byte, images map[string]string) (composeFile, error) {
 			Volumes  []any    `yaml:"volumes"`
 			Ports    []any    `yaml:"ports"`
 			Profiles []string `yaml:"profiles"`
+			Restart  string   `yaml:"restart"`
+			// A list, or a map whose long form names a condition.
+			DependsOn any `yaml:"depends_on"`
 		} `yaml:"services"`
 		Volumes map[string]any `yaml:"volumes"`
 	}
@@ -1242,6 +1283,16 @@ func checkCompose(b []byte, images map[string]string) (composeFile, error) {
 	for v := range c.Volumes {
 		out.volumes[v] = true
 	}
+	// A service another one waits for to complete runs once per up, never stays running.
+	once := map[string]bool{}
+	for _, s := range c.Services {
+		deps, _ := s.DependsOn.(map[string]any)
+		for dep, d := range deps {
+			if d, _ := d.(map[string]any); d["condition"] == "service_completed_successfully" {
+				once[dep] = true
+			}
+		}
+	}
 	for name, s := range c.Services {
 		if s.Build != nil {
 			return composeFile{}, fmt.Errorf("service %s: build is not allowed", name)
@@ -1249,9 +1300,15 @@ func checkCompose(b []byte, images map[string]string) (composeFile, error) {
 		if !pinned[s.Image] {
 			return composeFile{}, fmt.Errorf("service %s: image %q is not one of the manifest's pinned images", name, s.Image)
 		}
-		if len(s.Profiles) > 0 {
+		switch {
+		case len(s.Profiles) > 0:
 			out.init = append(out.init, name)
-		} else {
+		case once[name]:
+			if s.Restart != "no" {
+				return composeFile{}, fmt.Errorf(`service %s: a service others wait to complete needs restart: "no"`, name)
+			}
+			out.once = append(out.once, name)
+		default:
 			out.services = append(out.services, name)
 		}
 		for _, p := range s.Ports {
@@ -1288,7 +1345,7 @@ func checkCompose(b []byte, images map[string]string) (composeFile, error) {
 			}
 		}
 	}
-	for _, l := range [][]string{out.services, out.init, out.binds, out.nested} {
+	for _, l := range [][]string{out.services, out.init, out.once, out.binds, out.nested} {
 		sort.Strings(l)
 	}
 	if len(out.services) == 0 {

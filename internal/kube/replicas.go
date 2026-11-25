@@ -3,6 +3,7 @@ package kube
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"net/url"
@@ -46,16 +47,24 @@ const (
 	superuserKey = "superuser-password"
 )
 
-// databaseCommand writes the first start's init script, then starts Postgres as the image
-// does. The script gives the app a role that owns its database and nothing else, and keeps a
-// failing statement, which would carry the password, out of the server log.
+// postgresUpgrade is the suite's PostgreSQL 17 to 18 kit, scripts/postgres-17-to-18.sh byte
+// for byte: the database pod's init container dumps a 17 data directory once with it, and
+// its Postgres restores that dump before the image's entrypoint runs.
+//
+//go:embed postgres-17-to-18.sh
+var postgresUpgrade string
+
+// databaseCommand writes the first start's init script, then starts Postgres through the
+// kit, its $1, which runs the image's entrypoint. The script gives the app a role that owns
+// its database and nothing else, and keeps a failing statement, which would carry the
+// password, out of the server log. A restored 17 database brings its roles instead.
 const databaseCommand = `cat > /docker-entrypoint-initdb.d/10-app.sql <<'SQL'
 SET log_min_error_statement = panic;
 \set pw ` + "`cat /run/secrets/" + passwordKey + "`" + `
 CREATE ROLE ` + databaseUser + ` LOGIN PASSWORD :'pw';
 CREATE DATABASE ` + databaseUser + ` OWNER ` + databaseUser + ` ENCODING 'UTF8' LOCALE 'C' TEMPLATE template0;
 SQL
-exec docker-entrypoint.sh postgres`
+exec bash -c "$1" postgres-17-to-18.sh restore postgres`
 
 // replicaKeys are the four keys every replica must share: the variable that names each, and
 // its file in a single instance's data directory, which is also its key in the Secret.
@@ -198,6 +207,8 @@ func database(o *objects, a App, meta func(string) metav1.ObjectMeta) {
 					EnableServiceLinks:           ptr.To(false),
 					Affinity:                     spread,
 					Tolerations:                  leaveDeadNode,
+					// A clean stop removes postmaster.pid, without which a 17 dump refuses.
+					TerminationGracePeriodSeconds: ptr.To(int64(120)),
 					SecurityContext: &corev1.PodSecurityContext{
 						RunAsNonRoot:        ptr.To(true),
 						FSGroup:             ptr.To(int64(postgresUID)),
@@ -211,13 +222,25 @@ func database(o *objects, a App, meta func(string) metav1.ObjectMeta) {
 						Resources:       corev1.ResourceRequirements{Requests: initResources, Limits: initResources},
 						SecurityContext: restricted,
 						VolumeMounts:    []corev1.VolumeMount{{Name: claim, MountPath: "/volumes/" + databaseName}},
+					}, {
+						// PostgreSQL 17 kept its data in pgdata/; 18 keeps it in 18/docker beside it.
+						// This dumps the 17 data once for the restore and never writes it.
+						Name:            "postgres-17-dump",
+						Image:           c.Images[k.Replicas.DumpImage],
+						Command:         []string{"bash", "-c", postgresUpgrade, "postgres-17-to-18.sh", "dump"},
+						Env:             []corev1.EnvVar{{Name: "OLD", Value: "/v/pgdata"}, {Name: "NEW", Value: "/v"}},
+						Resources:       corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m"), corev1.ResourceMemory: databaseResources[corev1.ResourceMemory]}, Limits: databaseResources},
+						SecurityContext: restricted,
+						VolumeMounts: []corev1.VolumeMount{
+							{Name: claim, MountPath: "/v", SubPath: privateDir},
+							{Name: "tmp", MountPath: "/tmp"},
+						},
 					}},
 					Containers: []corev1.Container{{
 						Name:    databaseName,
 						Image:   c.Images[k.Replicas.DatabaseImage],
-						Command: []string{"/bin/sh", "-ec", databaseCommand},
+						Command: []string{"/bin/sh", "-ec", databaseCommand, "sh", postgresUpgrade},
 						Env: []corev1.EnvVar{
-							{Name: "PGDATA", Value: "/var/lib/postgresql/data/pgdata"},
 							{Name: "POSTGRES_INITDB_ARGS", Value: "--encoding=UTF8 --locale=C"},
 							{Name: "POSTGRES_PASSWORD_FILE", Value: "/run/secrets/" + superuserKey},
 						},
@@ -230,7 +253,7 @@ func database(o *objects, a App, meta func(string) metav1.ObjectMeta) {
 						StartupProbe:  &corev1.Probe{ProbeHandler: listening, PeriodSeconds: 10, FailureThreshold: 180},
 						LivenessProbe: &corev1.Probe{ProbeHandler: listening, PeriodSeconds: 10, FailureThreshold: 6},
 						VolumeMounts: []corev1.VolumeMount{
-							{Name: claim, MountPath: "/var/lib/postgresql/data", SubPath: privateDir},
+							{Name: claim, MountPath: "/var/lib/postgresql", SubPath: privateDir},
 							{Name: "tmp", MountPath: "/tmp"},
 							{Name: "run", MountPath: "/var/run/postgresql"},
 							{Name: "initdb", MountPath: "/docker-entrypoint-initdb.d"},

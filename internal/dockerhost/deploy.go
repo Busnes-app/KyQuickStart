@@ -48,11 +48,11 @@ type edgeNetwork struct {
 	Name     string `yaml:"name"`
 }
 
-// override is compose.kyq.yaml: labels on every service and, with an edge network, that
+// override is compose.kyq.yaml: labels on every service but the profiles' and, with an edge network, that
 // network for service "app" beside its default one.
 func (a App) override(labels map[string]string) []byte {
 	o := overrideFile{Services: map[string]overrideService{}}
-	for _, s := range a.Catalog.Services {
+	for _, s := range append(slices.Clone(a.Catalog.Services), a.Catalog.Once...) {
 		o.Services[s] = overrideService{Labels: labels}
 	}
 	if a.EdgeNetwork != "" {

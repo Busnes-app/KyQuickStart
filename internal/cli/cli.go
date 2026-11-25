@@ -967,9 +967,20 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 			return nil, fmt.Errorf("%s: %w", name, err)
 		}
 		t := s.placed[name]
-		note, backupFrom, err := gate(name, s.cat[name], deployed, s.o.ReleaseSet, s.ack, s.preUpgradeRefusal(name, t))
+		noBackup := s.preUpgradeRefusal(name, t)
+		note, backupFrom, err := gate(name, s.cat[name], deployed, s.o.ReleaseSet, s.ack, noBackup)
 		if err != nil {
 			return nil, err
+		}
+		if sd, ok := d.(sshDriver); ok && deployed.Found {
+			unmoved, err := dockerhost.Unmoved(ctx, sd.app(name, s.cat[name], s.o.ReleaseSet))
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", name, err)
+			}
+			from := installedVersion(deployed, s.cat[name], s.o.ReleaseSet)
+			if note, backupFrom, err = moveGate(name, s.cat[name], unmoved, from, note, backupFrom, s.ack, noBackup); err != nil {
+				return nil, err
+			}
 		}
 		if note != "" {
 			steps = append(steps, noteStep{id: name + ".upgrade", note: note})

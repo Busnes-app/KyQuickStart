@@ -691,6 +691,36 @@ func gate(name string, app catalog.App, d managed.Deployed, releaseSet string, a
 	return note, backupFrom, nil
 }
 
+// moveGate adds an app's upgrade.move to gate's decision when the app has not made it yet
+// (unmoved): the deploy that makes it is backed up first where kyquickstart can, one backup
+// for both, and otherwise needs ack. from is the installed version.
+func moveGate(name string, app catalog.App, unmoved bool, from, note, backupFrom string, ack bool, noBackup error) (string, string, error) {
+	mv := app.Upgrade.Move
+	if mv == nil || !unmoved {
+		return note, backupFrom, nil
+	}
+	join := func(s string) string {
+		if note == "" {
+			return s
+		}
+		return note + "; " + s
+	}
+	switch {
+	case backupFrom != "":
+		return join("it also moves " + mv.What), backupFrom, nil
+	case noBackup == nil:
+		return join(fmt.Sprintf("%s %s moves %s, after a verified pre-upgrade backup", name, app.Version, mv.What)), from, nil
+	case !ack:
+		var se *suite.Error
+		reason := noBackup.Error()
+		if errors.As(noBackup, &se) {
+			reason = se.Message
+		}
+		return "", "", suite.Errorf(suite.AckRequired, "deploying %s %s moves %s, and kyquickstart cannot back it up first here: %s. Give the target a backup destination, or pass --acknowledge-no-backup to proceed without one", name, app.Version, mv.What, reason)
+	}
+	return join(fmt.Sprintf("%s %s moves %s; operator acknowledged no pre-upgrade backup", name, app.Version, mv.What)), "", nil
+}
+
 // noteStep changes nothing; its ok result records the note.
 type noteStep struct{ id, note string }
 
