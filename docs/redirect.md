@@ -92,7 +92,7 @@ target markers from earlier builds stay valid.
 **Simplify.** Ongoing control is a set of thin verbs on the existing drivers; see
 [Lifecycle commands](#lifecycle-commands).
 
-**Retire** (branch `redirect/retire`, commit 29182ec)
+**Retire** (branch `redirect/retire`, commit 29182ec; KyMessages on 2026-11-25)
 
 | Item | Evidence | Callers |
 | --- | --- | --- |
@@ -101,6 +101,7 @@ target markers from earlier builds stay valid.
 | Immich `integrate-product` adapter | Needs a patched Immich, and only stock third-party apps may ship | `integrate-product --product immich` and `integrate-stack` selections naming Immich are now refused as unsupported |
 | Vaultwarden, Forgejo and BookStack as installable apps | Dropped by the owner, 2026-10-22; their admission notes stay in the catalog spec as history | KyQuickStart-AI no longer offers them; existing installations are untouched |
 | BookStack catalog entry (draft PR #67, branch `factory/010-bookstack-catalog`) | Closed unmerged by the owner: a catalog addition that needed the bridge | None; KyQuickStart-AI can still test-install BookStack |
+| KyMessages (`kymessage`, the Matrix stack) catalog entry, its setup steps, tests, e2e and catalog-follow source | Owner, 2026-11-25: KyMessage-Server is archived for KyMessages-Native, which has no release yet | A plan that still names it is refused until `unmanage kymessage` forgets it, touching nothing and releasing its routes ([guided setup](guided-setup.md#kymessages-left-the-catalog)) |
 | Roadmap and expansion plans in `docs/superpowers/plans/` (roadmap, phase 1, phase 2, phase 4 edge, all-product adapters, adapters handoff, deployment plan); `docs/offboarding.md`; the 2026-10-19 setup-gap report | Superseded by this record; git history keeps them | Docs only |
 
 **Preserve temporarily**
@@ -151,7 +152,7 @@ target markers from earlier builds stay valid.
   `apply` pairs KyPost itself once the owner confirms the recovery key (`recovery_key_id`),
   but only with a KyRecovery that reports its key (`kyrecovery status --json`, not in 0.4.3),
   so it pairs nothing yet. KyNotes needs a release that takes the pairing code on stdin, and
-  KyIdentity, KyCalendar, kyPulse, KyYard, KyDrive and KyMessages a release whose `apply-setup`
+  KyIdentity, KyCalendar, kyPulse, KyYard and KyDrive a release whose `apply-setup`
   accepts pairing at all. The upgrade gate does not yet accept a verified deposit as a
   pre-upgrade backup.
 - KyAuth push approval on a live install: KyIdentity 0.4.8 and later default to the Busnes.app
@@ -183,7 +184,7 @@ target markers from earlier builds stay valid.
 | Product | Docker | Kubernetes |
 | --- | --- | --- |
 | KyIdentity, KyRecovery, kyPulse, KyNotes, KyCalendar, KyYard | Yes | Yes |
-| KyDrive, KyPost, KyMessages | Yes | Refused |
+| KyDrive, KyPost | Yes | Refused |
 | KyDNS | Yes; its route must be on the catalog NPM on a cluster | Refused |
 | NPM (`npm`) | Refused (use an existing NPM) | Yes |
 | Euro-Office (`euro-office`, KyDrive's editor) | Refused | Yes (baseline) |
@@ -204,7 +205,7 @@ There are **no removal candidates**: no test shows an incompatibility.
   run 39680983040, plus the [K80 pilot](pilot/README.md).
 - **cloudflare-direct** (Docker only) is tested offline only (`TestCloudflaredDirectContainer`)
   and is Unverified for every product. Eligible: KyIdentity, KyCalendar, KyPost, KyDrive.
-  Refused: KyNotes, KyMessages, KyDNS, KyRecovery, kyPulse, KyYard ([edge](edge.md)).
+  Refused: KyNotes, KyDNS, KyRecovery, kyPulse, KyYard ([edge](edge.md)).
 - **frp and Cloudflare** have been tested with the demo app only ([edge](edge.md#test-scope)).
   For every product they are Unverified.
 - **Forwarded headers.** No product passes `verify-edge` in CI: on Kubernetes none trusts the
@@ -224,7 +225,6 @@ There are **no removal candidates**: no test shows an incompatibility.
 | KyCalendar | Verified: CI `calendarSignOn` | Kubernetes unset; Docker `egress_address` | CalDAV clients untested | Verified; CalDAV Unverified |
 | KyPost | Verified: CI `postSignOn` (asserts untrusted: the edge has no `egress_address` yet) | `egress_address`, empty without one | Webmail: no mail listener, IMAP/SMTP outbound only, private mail hosts refused. Native mail's receiver: SMTP on `smtp_address:25`, outside the edge | Verified; mail-host setting Fixable; native mail Unverified |
 | KyDrive | Verified: CI and pilot (hlwcdocker02 behind K80; SCIM through the edge) | `egress_address`, empty without one. WebDAV behind a proxy needs it (KyDrive README) | The published port is reachable on the LAN; firewall rule open | Verified; trust through an edge Unverified; Euro-Office `/healthcheck` and signed callback verified (`TestKubernetesEuroOffice`), editing Unverified |
-| KyMessages | Verified: CI (six routes, path blocks, MAS sign-in, encrypted sync, LiveKit `/rtc/validate` over HTTP) | `{{edge_address}}`; untrusted behind the CI Docker NAT | WebSocket upgrade enabled (`internal/edge/npm.go`) but never exercised; media 7881/tcp and 7882/udp go straight to `media_address`, no TURN | Verified (HTTP); WebSocket and media Unverified |
 | KyDNS | Fails closed in CI: KyDNS sees gateway 172.22.0.1, not the edge 172.18.0.2 | `egress_address` only; a gateway value is refused by `kydns.gate` | DNS over UDP and TCP 53 verified on the forward address; direct requests get 403 | Unverified (edge) |
 
 **KyDNS behaviour.** On a Docker host that hides client addresses, KyDNS refuses the edge, and
@@ -261,7 +261,7 @@ client secret) and anything a product logs itself are printed as they are.
   `TestKubernetesApply` (kind) run stop, status, the `app_stopped` refusal, start, restart,
   redacted logs and uninstall, with an unrelated workload that must survive. Product sign-in
   through the `lan` edge, the admin/everyday split, upgrades and Docker restore stay covered by
-  `TestKubernetesNPMEdge`, `TestKubernetesRestore` and `TestKubernetesKyMessage`.
+  `TestKubernetesNPMEdge` and `TestKubernetesRestore`.
 - **AI-led path:** one real KyQuickStart-AI session (Claude Code, non-interactive, hands-off
   rules passed as flags) through `kyqs-ai` against a disposable Debian sshd host (ECDSA,
   ED25519 and RSA host keys) and a kind cluster, with the demo app `hello` on each. It ran

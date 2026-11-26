@@ -14,6 +14,17 @@ state directory, target data and target-held credentials; do not reset them as a
 
 ## Unreleased
 
+- KyMessages (`kymessage`, the Matrix stack) leaves the catalog: KyMessage-Server is archived,
+  and KyMessages-Native has no release yet. `unmanage` now forgets an app the catalog no
+  longer has without touching it, and hands its edge routes to you still serving.
+  **Upgrade impact:** with KyMessages in `stack.yaml`, every command refuses the plan and
+  changes nothing until you run `kyquickstart unmanage kymessage`. That runs no command on
+  its target (nothing stopped, recreated or deleted). Its NPM hosts and nginx-edge files lose
+  this installation's marks but stay enabled, and its KyDNS records leave the installer's
+  ledger without being deleted. It refuses while a KyMessages route is on a `cloudflare`,
+  `frp` or `cloudflare-direct` edge; keep using an earlier release there. KyMessages is no
+  longer upgraded, backed up or restored by kyquickstart (`docs/guided-setup.md`,
+  "KyMessages left the catalog").
 - Follow KyPost, KyCalendar and KyYard `0.6.1.1` with verified release image digests.
   KyPost includes the receiving accelerator and file-lock/fsync fixes; KyCalendar and
   KyYard refresh their Alpine base. **Upgrade impact:** the selected apps restart on
