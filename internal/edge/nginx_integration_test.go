@@ -15,6 +15,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -126,6 +128,19 @@ func TestNginxContainer(t *testing.T) {
 		"-v", conf + ":" + NginxConfDir + ":ro", "-v", tlsDir + ":" + NginxTLSDir + "/wild:ro",
 		"-p", "127.0.0.1::443", "-p", "127.0.0.1::80", "--entrypoint", NginxCommand[0], image}, NginxCommand[1:]...)...)
 	https, plain := docker("port", name, "443/tcp"), docker("port", name, "80/tcp")
+	// ssl_ecdh_curve's X25519MLKEM768 needs the image's OpenSSL 3.5 or later.
+	version := docker("exec", name, "nginx", "-V")
+	t.Logf("pinned image %s: %s", image, version)
+	// "running with" (the library loaded) follows "built with" when they differ.
+	m := regexp.MustCompile(`(?:running|built) with OpenSSL (\d+)\.(\d+)`).FindAllStringSubmatch(version, -1)
+	if len(m) == 0 {
+		t.Fatalf("no OpenSSL version in nginx -V:\n%s", version)
+	}
+	major, _ := strconv.Atoi(m[len(m)-1][1])
+	minor, _ := strconv.Atoi(m[len(m)-1][2])
+	if major < 3 || major == 3 && minor < 5 {
+		t.Fatalf("image runs OpenSSL %d.%d; X25519MLKEM768 needs 3.5 or later", major, minor)
+	}
 
 	// request asks host through the published TLS port; "" is a refused handshake.
 	request := func(host, path string, headers ...string) (int, string) {
@@ -184,6 +199,26 @@ func TestNginxContainer(t *testing.T) {
 	if code != 200 || header(page, "X-Forwarded-For") != gateway || header(page, "X-Real-Ip") != gateway || header(page, "X-Forwarded-Proto") != "https" ||
 		header(page, "X-Forwarded-Port") != "8443" || header(page, "X-Forwarded-Host") != "one.example.test:8443" || strings.Contains(page, "198.51.100") || !strings.Contains(page, "GET /x?y=1 ") {
 		t.Fatalf("lan request: %d\n%s", code, page)
+	}
+	// Key exchange: a hybrid post-quantum client gets X25519MLKEM768, classical X25519 still
+	// connects, and a group outside the list is refused.
+	handshake := func(curves ...tls.CurveID) (tls.CurveID, error) {
+		conn, err := tls.Dial("tcp", https, &tls.Config{InsecureSkipVerify: true, ServerName: "one.example.test", CurvePreferences: curves})
+		if err != nil {
+			return 0, err
+		}
+		defer conn.Close()
+		return conn.ConnectionState().CurveID, nil
+	}
+	for _, c := range []struct{ offer, want []tls.CurveID }{
+		{nil, []tls.CurveID{tls.X25519MLKEM768}}, // Go's default offer
+		{[]tls.CurveID{tls.X25519MLKEM768}, []tls.CurveID{tls.X25519MLKEM768}},
+		{[]tls.CurveID{tls.X25519}, []tls.CurveID{tls.X25519}},
+		{[]tls.CurveID{tls.CurveP384}, nil}, // OpenSSL's default list would accept it
+	} {
+		if got, err := handshake(c.offer...); c.want == nil && err == nil || c.want != nil && (err != nil || got != c.want[0]) {
+			t.Fatalf("offering %v: negotiated %v, %v; want %v", c.offer, got, err, c.want)
+		}
 	}
 	// An unknown name gets no handshake, and a routed name asked for under another is refused.
 	if code, why := request("unknown.example.test", "/"); code != 0 {

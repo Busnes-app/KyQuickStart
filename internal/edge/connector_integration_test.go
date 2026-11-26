@@ -181,6 +181,18 @@ func TestCloudflaredIngressContainer(t *testing.T) {
 	if out, err := exec.CommandContext(ctx, "docker", run...).CombinedOutput(); err != nil {
 		t.Fatalf("cloudflared rejected generated ingress: %v\n%s", err, out)
 	}
+	// The tunnel itself, offline with a throwaway credential: cloudflared reads strict
+	// post-quantum and QUIC from the generated file before it fails to reach Cloudflare.
+	credential := filepath.Join(t.TempDir(), "credential")
+	if err := os.WriteFile(credential, []byte(`{"AccountTag":"a","TunnelSecret":"c2VjcmV0c2VjcmV0c2VjcmV0c2VjcmV0","TunnelID":"`+e.Connector.TunnelID+`"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run = append([]string{"run", "--rm", "--network", "none", "--user", "65532:65532", "--memory", "64m", "--pids-limit", "64",
+		"-v", file + ":/etc/kyq/connector.conf:ro", "-v", credential + ":/run/secrets/credential:ro", image}, args...)
+	out, _ := exec.CommandContext(ctx, "docker", run...).CombinedOutput()
+	if !strings.Contains(string(out), "post-quantum:true") || !strings.Contains(string(out), "protocol:quic") || !strings.Contains(string(out), "Initial protocol quic") {
+		t.Fatalf("cloudflared did not start strict post-quantum over QUIC:\n%s", out)
+	}
 }
 
 // TestCloudflaredDirectContainer checks a cloudflare-direct edge offline: the pinned

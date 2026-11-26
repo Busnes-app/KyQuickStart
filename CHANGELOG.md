@@ -25,6 +25,14 @@ state directory, target data and target-held credentials; do not reset them as a
   `frp` or `cloudflare-direct` edge; keep using an earlier release there. KyMessages is no
   longer upgraded, backed up or restored by kyquickstart (`docs/guided-setup.md`,
   "KyMessages left the catalog").
+- Post-quantum key exchange at the edge. The nginx edge sets `ssl_ecdh_curve
+  X25519MLKEM768:X25519:prime256v1`: hybrid X25519MLKEM768 for clients that offer it,
+  X25519 and P-256 for the rest, other groups refused. cloudflared (both Cloudflare edges)
+  runs strict post-quantum over QUIC and no longer falls back to http2. **Upgrade impact:**
+  the nginx edge reloads in place and cloudflared is recreated; a cloudflared that can reach
+  Cloudflare only over TCP (outbound UDP 7844 blocked) stays down instead of connecting
+  without post-quantum protection. Clients offering only P-384 or other groups are refused
+  by the nginx edge.
 - PostgreSQL 18 for the replicated KyIdentity's database pod (Kubernetes), with an automatic
   dump and restore from 17 on the same claim that keeps the 17 data.
   **Upgrade impact:** KyIdentity sign-in is down while the restore runs; the claim needs about
