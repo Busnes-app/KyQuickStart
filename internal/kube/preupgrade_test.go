@@ -110,7 +110,7 @@ func TestPreUpgradeCopy(t *testing.T) {
 			t.Errorf("%s: %+v", c.Name, c.ObjectMeta)
 		}
 	}
-	if len(*calls) != 1 || !slices.Equal((*calls)[0][3:], []string{"copy", "data", "cache"}) || (*calls)[0][2] != copyCommand {
+	if len(*calls) != 1 || !slices.Equal((*calls)[0][3:], []string{"copy", "data:private", "cache:private"}) || (*calls)[0][2] != copyCommand {
 		t.Fatalf("exec = %v", *calls)
 	}
 	if !slices.Equal(checked, []string{"n1 true", " false"}) {
@@ -200,7 +200,7 @@ func TestPreUpgradeCopyFailure(t *testing.T) {
 		*calls = append(*calls, args)
 		return nil, nil
 	}
-	if _, err := PreUpgradeCopy(ctx, a, "1.10.0"); err != nil || !slices.Equal((*calls)[len(*calls)-1][3:], []string{"copy", "cache"}) {
+	if _, err := PreUpgradeCopy(ctx, a, "1.10.0"); err != nil || !slices.Equal((*calls)[len(*calls)-1][3:], []string{"copy", "cache:private"}) {
 		t.Fatalf("partial rerun: %v %v", err, *calls)
 	}
 }

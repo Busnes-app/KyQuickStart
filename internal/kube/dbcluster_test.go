@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/kyquickstart/internal/engine"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -197,7 +198,7 @@ func TestDatabaseClusterLifecycle(t *testing.T) {
 	ctx := context.Background()
 	a, cs, dyn, healthy := clusteredApp(t, 3)
 	steps := Steps(a)
-	for _, s := range steps[:3] {
+	for _, s := range steps[:4] {
 		if err := s.Apply(ctx); err != nil {
 			t.Fatalf("%s: %v", s.ID(), err)
 		}
@@ -238,7 +239,7 @@ func TestDatabaseClusterLifecycle(t *testing.T) {
 
 	// Health and deploy wait for the instances, not only for the pods.
 	markReady(t, cs)
-	health := steps[3]
+	health := steps[4]
 	if err := health.Verify(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +248,7 @@ func TestDatabaseClusterLifecycle(t *testing.T) {
 		t.Fatalf("health with no instance ready = %v", err)
 	}
 	clusterTimeout = 20 * time.Millisecond
-	if err := steps[2].Apply(ctx); err == nil || !strings.Contains(err.Error(), "describe cluster") {
+	if err := steps[3].Apply(ctx); err == nil || !strings.Contains(err.Error(), "describe cluster") {
 		t.Fatalf("deploy with no instance ready = %v", err)
 	}
 	clusterTimeout = time.Minute
@@ -258,7 +259,7 @@ func TestDatabaseClusterLifecycle(t *testing.T) {
 	k := *a.Catalog.Kubernetes
 	k.DatabaseInstances = 5
 	more.Catalog.Kubernetes = &k
-	grow := Steps(more)[2]
+	grow := Steps(more)[3]
 	if done, _ := grow.Inspect(ctx); done {
 		t.Fatal("deploy accepts three instances for five")
 	}
@@ -268,7 +269,7 @@ func TestDatabaseClusterLifecycle(t *testing.T) {
 	if n, _, _ := unstructured.NestedInt64(clusterOf(t, dyn).Object, "spec", "instances"); n != 5 {
 		t.Fatalf("instances = %d", n)
 	}
-	if err := steps[2].Apply(ctx); err != nil {
+	if err := steps[3].Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -294,7 +295,7 @@ func TestDatabaseClusterLifecycle(t *testing.T) {
 	if s, _ := a.Client.State(ctx, a.Name); s != "stopped" {
 		t.Fatalf("state after stop = %s", s)
 	}
-	if done, _ := steps[2].Inspect(ctx); done {
+	if done, _ := steps[3].Inspect(ctx); done {
 		t.Fatal("deploy accepts a hibernated database")
 	}
 	go func() {
@@ -337,7 +338,7 @@ func TestDatabaseClusterLifecycle(t *testing.T) {
 		t.Fatalf("second uninstall: %v", err)
 	}
 	// A reinstall wakes it.
-	if err := steps[2].Apply(ctx); err != nil {
+	if err := steps[3].Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if clusterOf(t, dyn).GetAnnotations()[hibernation] == "on" {
@@ -372,7 +373,7 @@ func TestDatabaseClusterChangeRefused(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, s := range Steps(a)[1:3] {
+	for _, s := range []engine.Step{Steps(a)[1], Steps(a)[3]} {
 		if err := s.Apply(ctx); err == nil || !strings.Contains(err.Error(), "the installer's Postgres (Deployment database)") || !strings.Contains(err.Error(), "highly available") {
 			t.Fatalf("%s = %v", s.ID(), err)
 		}
@@ -383,7 +384,7 @@ func TestDatabaseClusterChangeRefused(t *testing.T) {
 
 	// A Cluster with no keys beside it is old data: no new keys are made.
 	b, cs2, _, _ := clusteredApp(t, 3)
-	for _, s := range Steps(b)[:3] {
+	for _, s := range Steps(b)[:4] {
 		if err := s.Apply(ctx); err != nil {
 			t.Fatal(err)
 		}

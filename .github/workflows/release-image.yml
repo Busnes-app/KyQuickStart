@@ -139,6 +139,7 @@ jobs:
             test (macos-latest, stable)
             vulncheck
             e2e
+            PostgreSQL 17 to 18 upgrade
             Runner image build & run
         run: |
           set -euo pipefail
