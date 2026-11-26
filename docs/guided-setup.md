@@ -2582,7 +2582,7 @@ orchestration and central identity composition remain acceptance gates.
 
 KyMessages console setup (`--product kymessage`, `/app/kymessages`) uses protected common
 inputs and one graceful activation. The catalog `kymessage` installs its whole Matrix stack
-([Catalog KyMessages on Docker](#catalog-kymessages-on-docker)). Product contract: [KyMessage `docs/INSTALLER_SETUP.md`](https://github.com/Busnes-app/KyMessage-Server/blob/master/docs/INSTALLER_SETUP.md).
+([Catalog KyMessages on Docker](#catalog-kymessages-on-docker)). Product contract: [KyMessages `docs/INSTALLER_SETUP.md`](https://github.com/Busnes-app/KyMessages-Native/blob/main/docs/INSTALLER_SETUP.md).
 
 KyCalendar setup (`--product kycalendar`, `/app/kycalendar`) uses the protected common
 contract, exact issuer-bound subjects and `kycalendar.admin`. Configuration activates through

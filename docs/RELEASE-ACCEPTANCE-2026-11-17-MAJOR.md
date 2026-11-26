@@ -29,8 +29,8 @@ within its own scope. Baseline coverage does not prove content migration or full
 | KyCalendar | Admin users API 200 / calendars 403; everyday users API 403 / calendars 200 | Old-image event preservation/candidate edit and native candidate capsule recovery with restored ordinary event/edit passed. Offboarding, installer resume, recurrence and meeting delivery remain untested. |
 | KyPost | Native Docker setup, pre-bind-volume layout copy, admin users API 200 / everyday 403, session-ending restart and cold backup | Native config/account upgrade passed in IMAP-proxy mode. Real mail migration/restored mail, offboarding and dedicated-admin ordinary-mail denial remain untested. This fixture disables native mail listeners; it does not qualify the workforce mail stack. |
 | KyDNS | Native setup, authoritative UDP/TCP DNS, forged-header rejection, unsafe-gateway trust refusal and fail-closed edge behavior; owner confirms an existing in-place upgrade to v0.6.1 is working | Owner report is successful operational upgrade evidence; its prior version and detailed checks were not supplied. Controlled previous-catalog zone/config retention, successful edge/admin sign-in on Major, offboarding and restore remain unqualified. Never broaden trust to force a pass. |
-| KyMessages | Real encrypted chat, offboarding and history restore; original device decrypts history and removals replay before Synapse starts. Dedicated admin chat sign-in receives KyIdentity access_denied and MAS has no admin account. | Previous0.6.0.1→0.6.1 upgrade with own verified snapshot, original keys/sessions and old/new encrypted events passed; later candidate offboarding/history restore passed. Upstream Matrix-version migration and direct authorization with an otherwise-valid admin token remain unproven. |
-| KyYard | Relay-corrected published primary0.6.0.3-to-0.6.1.1 Kubernetes CLI upgrade; observed exact image digests, selected key/setup hashes and original admin session retained; fresh native admin SSO/everyday denial plus existing runner ownership/recreation/revoke checks passed | Published runner artifact/source provenance, Docker upgrade, offboarding and restored management service remain unqualified. The resident runner was an explicit local fixture with a preflight-verified relay-isolated embedded catalog. |
+| KyMessages | Real encrypted chat, offboarding and history restore; original device decrypts history and removals replay before Synapse starts. Dedicated admin chat sign-in receives KyIdentity access_denied and MAS has no admin account. | Previous 0.6.0.1→0.6.1 upgrade with own verified snapshot, original keys/sessions and old/new encrypted events passed; later candidate offboarding/history restore passed. Upstream Matrix-version migration and direct authorization with an otherwise-valid admin token remain unproven. |
+| KyYard | Relay-corrected published primary 0.6.0.3-to-0.6.1.1 Kubernetes CLI upgrade; observed exact image digests, selected key/setup hashes and original admin session retained; fresh native admin SSO/everyday denial plus existing runner ownership/recreation/revoke checks passed | Published runner artifact/source provenance, Docker upgrade, offboarding and restored management service remain unqualified. The resident runner was an explicit local fixture with a preflight-verified relay-isolated embedded catalog. |
 | Nginx Proxy Manager | Both NPM shards: routing, ownership, administrative bootstrap, token refresh and reruns | No general upstream data migration/recovery claim. |
 | nginx edge | Both nginx shards plus node/pod failover, route reload/ownership and certificate assertions | Cluster topology/storage/network conditions beyond these fixtures. |
 | CloudNativePG | Pinned operator/database HA fixture: synchronous replication, TLS, primary/node loss, hibernation/reinstall and object ownership | Node return and production storage/topology behavior beyond kind. |
@@ -89,14 +89,14 @@ named issuing CA. No global trust or host DNS changes are required.
 ## Yard published-primary Kubernetes upgrade
 
 The relay-corrected `TestKubernetesKyYard` case **PASSED** on 2026-11-18. It used the
-exact published0.6.0.3 primary from installer0.6.0.8 and frozen candidate0.6.1.1.
+exact published 0.6.0.3 primary from installer 0.6.0.8 and frozen candidate 0.6.1.1.
 Both deployed repository/digest identities matched; the old exact-tag release-workflow
-attestation remains independently verified. Product runtime, dependencies and all14pins
+attestation remains independently verified. Product runtime, dependencies and all 14 pins
 are unchanged.
 
 | Check | Duration | Result |
 | --- | ---: | --- |
-| Actual unsafe cached-runner preflight | 6.788 s | Expected refusal, exit1; no container started |
+| Actual unsafe cached-runner preflight | 6.788 s | Expected refusal, exit 1; no container started |
 | Affected/source/relay/issuing-CA controls | 1.571 s | PASS |
 | Bounded static fixture build | 5.112 s | PASS |
 | Actual corrected cached-runner preflight | 1.641 s | PASS |
@@ -117,7 +117,7 @@ transition requires the explicit no-backup acknowledgement, which was observed; 
 required migration backup or disaster restore is claimed. Both image references are
 canonicalized using `catalog.PinnedImage`, retaining exact repository/digest equality.
 
-Earlier V4/publication commands exited0 (282.398 s/287.535 s), but later inspection found
+Earlier V4/publication commands exited 0 (282.398 s/287.535 s), but later inspection found
 their local runner embedded an unpatched Identity catalog and redeployed Identity. Those
 primary assertions remain historical evidence; they did not prove relay isolation through
 the runner phase. No production registration has been observed; no production service
