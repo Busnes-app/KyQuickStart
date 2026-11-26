@@ -708,14 +708,20 @@ func (s *session) edgeApps(target string) []string {
 	return out
 }
 
-// upstreams are the addresses the edge on target forwards to on other targets, sorted.
-// newSession has checked each is an IP.
+// upstreams are the addresses the edge on target forwards to on other targets, and its
+// released routes' upstreams, sorted. newSession has checked each is an IP.
 func (s *session) upstreams(target string) []netip.AddrPort {
 	var out []netip.AddrPort
 	for _, e := range s.edges {
 		for _, r := range e.Routes {
 			if e.Target == target && s.placed[r.App].Name != target {
 				out = append(out, netip.AddrPortFrom(netip.MustParseAddr(r.ForwardHost), uint16(r.ForwardPort)))
+			}
+		}
+		// A released route's upstream keeps its allowance (stack validation parsed it).
+		for _, r := range e.Released {
+			if e.Target == target && r.Upstream != "" {
+				out = append(out, netip.MustParseAddrPort(r.Upstream))
 			}
 		}
 	}

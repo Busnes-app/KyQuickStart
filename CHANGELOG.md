@@ -21,7 +21,9 @@ state directory, target data and target-held credentials; do not reset them as a
   changes nothing until you run `kyquickstart unmanage kymessage`. That runs no command on
   its target (nothing stopped, recreated or deleted). Its NPM hosts and nginx-edge files lose
   this installation's marks but stay enabled, and its KyDNS records leave the installer's
-  ledger without being deleted. It refuses while a KyMessages route is on a `cloudflare`,
+  ledger without being deleted. On a Kubernetes edge they are listed under the edge's
+  `released` in `stack.yaml`, which keeps each upstream in the edge's egress policy until you
+  delete the entry. It refuses while a KyMessages route is on a `cloudflare`,
   `frp` or `cloudflare-direct` edge; keep using an earlier release there. KyMessages is no
   longer upgraded, backed up or restored by kyquickstart (`docs/guided-setup.md`,
   "KyMessages left the catalog").

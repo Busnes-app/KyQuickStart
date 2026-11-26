@@ -2,12 +2,17 @@ package cli
 
 import (
 	"bytes"
+	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"go.yaml.in/yaml/v3"
+
 	"github.com/Busnes-app/kyquickstart/internal/managed"
+	"github.com/Busnes-app/kyquickstart/internal/stack"
 	"github.com/Busnes-app/kyquickstart/internal/suite"
 )
 
@@ -79,5 +84,92 @@ func TestRetiredAppIsForgottenNotRemoved(t *testing.T) {
 	}
 	if err := f.run("unmanage", "web"); code(err) != suite.UnknownApp {
 		t.Errorf("second unmanage: %v", err)
+	}
+}
+
+// A released route keeps exactly its upstream in the cluster edge's egress (session.upstreams,
+// which the edge's NetworkPolicy admits) after the app leaves the plan, and the edge stays in
+// the plan with no route of its own. An in-cluster route adds no address; a Docker edge
+// records nothing.
+func TestReleasedUpstreamKeepsEgress(t *testing.T) {
+	plan := `version: 1
+targets:
+  - name: k1
+    kubeconfig: /dev/null
+  - name: nas
+    host: 192.0.2.10
+    user: root
+    root: /srv/kyq
+  - name: nas2
+    host: 192.0.2.11
+    user: root
+    root: /srv/kyq
+apps:
+  - name: npm
+    target: k1
+  - name: hello
+    target: k1
+  - name: old
+    target: nas
+edges:
+  - target: k1
+    provider: lan
+    npm_url: kube://kyq-npm/app:81
+    allow_cidrs: [192.0.2.0/24]
+    routes:
+      - {app: old, hostname: old.example.com, forward_host: 192.0.2.10, forward_port: 18443, certificate_id: 1}
+      - {app: old, hostname: chat.example.com, forward_host: 192.0.2.10, forward_port: 18080, certificate_id: 1}
+      - {app: hello, hostname: hello.example.com, forward_host: app.kyq-hello.svc.cluster.local, forward_port: 8080, certificate_id: 1}
+  - target: nas2
+    provider: lan
+    npm_url: https://npm.test
+    allow_cidrs: [192.0.2.0/24]
+    routes:
+      - {app: old, hostname: old2.example.com, forward_host: 192.0.2.10, forward_port: 18443, certificate_id: 1}
+`
+	st, err := stack.Parse([]byte(plan))
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstreams := func(st *stack.Stack) []netip.AddrPort {
+		s := &session{edges: st.Edges, placed: map[string]stack.Target{}}
+		for _, a := range st.Apps {
+			s.placed[a.Name], _ = st.Target(a.Target)
+		}
+		return s.upstreams("k1")
+	}
+	want := []netip.AddrPort{netip.MustParseAddrPort("192.0.2.10:18080"), netip.MustParseAddrPort("192.0.2.10:18443")}
+	if got := upstreams(st); !slices.Equal(got, want) {
+		t.Fatalf("before: %v", got)
+	}
+	recordReleased(st, "old", "nas")
+	withoutApp(st, "old", "nas")
+	b, err := yaml.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st, err = stack.Parse(b); err != nil {
+		t.Fatalf("the forgotten plan does not load: %v\n%s", err, b)
+	}
+	if got := upstreams(st); !slices.Equal(got, want) {
+		t.Errorf("after forget, the edge admits %v, want %v", got, want)
+	}
+	if len(st.Edges) != 1 || len(st.Edges[0].Released) != 2 || st.Edges[0].Released[0] != (stack.Released{Hostname: "old.example.com", Upstream: "192.0.2.10:18443"}) {
+		t.Errorf("edges = %+v", st.Edges)
+	}
+
+	// hello was the edge's last route: the edge stays for its released routes; an in-cluster
+	// route released there adds no address.
+	recordReleased(st, "hello", "k1")
+	withoutApp(st, "hello", "k1")
+	if len(st.Edges) != 1 || st.Edges[0].Released[2] != (stack.Released{Hostname: "hello.example.com"}) {
+		t.Fatalf("edges = %+v", st.Edges)
+	}
+	if got := upstreams(st); !slices.Equal(got, want) {
+		t.Errorf("after the in-cluster release, the edge admits %v", got)
+	}
+	b, _ = yaml.Marshal(st)
+	if _, err := stack.Parse(b); err != nil {
+		t.Fatalf("an edge with only released routes does not load: %v", err)
 	}
 }

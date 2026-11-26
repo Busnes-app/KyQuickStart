@@ -1060,6 +1060,22 @@ being deleted. Every later apply treats them as foreign. Routes on a `cloudflare
 `cloudflare-direct` edge are refused: their connector configuration comes from `stack.yaml`, and
 on frp a released host keeps the frp listener ([guided setup](guided-setup.md#kymessages-left-the-catalog)).
 
+On a Kubernetes edge (NPM or the nginx edge on the cluster) the edge's NetworkPolicy admits
+only the upstreams off the cluster that the plan names, so `unmanage` records each released
+route under the edge's `released`:
+
+```yaml
+    released:
+      - hostname: chat.example.com
+        upstream: 192.168.1.91:18443   # absent for an app on the edge's cluster
+```
+
+Apply keeps exactly that `ip:port` in the edge's egress policy, as the route had it, and keeps
+the edge in the plan when it has no route left. A released hostname cannot be routed again
+while its entry is there. Once you have removed the hostname's NPM host or nginx-edge file
+yourself, delete its entry and run `apply`: that drops the allowance. Docker edges record
+nothing; nothing there is derived from the routes.
+
 ## Applying and verifying
 
 ```sh

@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"net/netip"
 	"path"
 	"slices"
 	"strings"
@@ -97,7 +98,10 @@ func forget(ctx context.Context, state string, st *stack.Stack, name string, r R
 		return err
 	}
 	defer s.close()
-	next, data, err := changePlan(state, s.revision, func(st *stack.Stack) { withoutApp(st, name, t.Name) })
+	next, data, err := changePlan(state, s.revision, func(st *stack.Stack) {
+		recordReleased(st, name, t.Name)
+		withoutApp(st, name, t.Name)
+	})
 	if err != nil {
 		return err
 	}
@@ -112,7 +116,13 @@ func forget(ctx context.Context, state string, st *stack.Stack, name string, r R
 	if err := s.connect(ctx, trust); err != nil {
 		return err
 	}
-	handover := forgetHandover(name, t, hostnames)
+	var kubeEdges []string
+	for _, e := range held {
+		if et, _ := st.Target(e.Target); et.Kubernetes() {
+			kubeEdges = append(kubeEdges, e.Target)
+		}
+	}
+	handover := forgetHandover(name, t, hostnames, kubeEdges)
 	note := strings.Join(strings.Fields(strings.TrimPrefix(strings.TrimSpace(handover), "## ")), " ")
 	return s.operate(ctx, r.Holder, func(context.Context) ([]engine.Step, error) {
 		var steps []engine.Step
@@ -128,6 +138,28 @@ func forget(ctx context.Context, state string, st *stack.Stack, name string, r R
 	})
 }
 
+// recordReleased lists app's routes on each Kubernetes edge under its released, so the edge's
+// egress policy keeps admitting exactly the upstreams off the cluster it admitted (session.
+// upstreams) and the edge stays in the plan once it has no route of its own.
+func recordReleased(st *stack.Stack, app, appTarget string) {
+	for i := range st.Edges {
+		e := &st.Edges[i]
+		if et, _ := st.Target(e.Target); !et.Kubernetes() {
+			continue
+		}
+		for _, r := range e.Routes {
+			if r.App != app {
+				continue
+			}
+			rel := stack.Released{Hostname: r.Hostname}
+			if ip, err := netip.ParseAddr(r.ForwardHost); err == nil && appTarget != e.Target {
+				rel.Upstream = netip.AddrPortFrom(ip, uint16(r.ForwardPort)).String()
+			}
+			e.Released = append(e.Released, rel)
+		}
+	}
+}
+
 func cloneEdges(edges []stack.Edge) []stack.Edge {
 	out := slices.Clone(edges)
 	for i := range out {
@@ -136,7 +168,7 @@ func cloneEdges(edges []stack.Edge) []stack.Edge {
 	return out
 }
 
-func forgetHandover(name string, t stack.Target, hostnames []string) string {
+func forgetHandover(name string, t stack.Target, hostnames, kubeEdges []string) string {
 	b := &strings.Builder{}
 	fmt.Fprintf(b, "\n## %s on %s is no longer managed: it left the catalog\n\n", name, t.Name)
 	fmt.Fprintf(b, "kyquickstart and KyYard no longer upgrade, back up, restore or remove %s. Nothing of it was stopped, recreated or deleted: its workload, data, secrets and backups stay as they were.\n", name)
@@ -147,6 +179,9 @@ func forgetHandover(name string, t stack.Target, hostnames []string) string {
 	}
 	if len(hostnames) > 0 {
 		fmt.Fprintf(b, "Its hostnames (%s) keep serving. Their proxy hosts and LAN DNS records no longer carry this installation's marks: they are yours, and kyquickstart never changes them again. Change or remove them in your proxy and DNS yourself.\n", strings.Join(hostnames, ", "))
+	}
+	if len(kubeEdges) > 0 {
+		fmt.Fprintf(b, "On edge %s, stack.yaml lists them under released: each upstream off the cluster stays in the edge's egress NetworkPolicy, so the hostnames keep reaching %s. Once you have removed a hostname's proxy host or file, delete its released entry and run apply to drop that allowance.\n", strings.Join(kubeEdges, ", "), name)
 	}
 	return b.String()
 }

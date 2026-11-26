@@ -2443,6 +2443,9 @@ It forgets KyMessages without touching it:
   `ky.*` meta), keeping their configuration and enabled state; on the nginx edge its files
   keep their names and content but the marker line; its KyDNS records leave the installer's
   ledger and are not deleted. From then on apply treats them as yours and never changes them.
+  On a Kubernetes edge, `stack.yaml` lists them under the edge's `released`, so its egress
+  policy keeps reaching each upstream off the cluster; delete an entry once you have retired
+  the hostname yourself, then apply ([edge](edge.md), "Released routes").
 - **A route on a `cloudflare` tunnel, `frp` or `cloudflare-direct` edge refuses**, and nothing
   changes: their connector configuration is rebuilt from `stack.yaml`, so the route would stop
   serving, and on frp a released host would keep the frp listener that later applies refuse.

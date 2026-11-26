@@ -21,6 +21,8 @@ straight to the apps, `cloudflare-direct`), and verify product proxy behavior.
   `release.go`. `NPM.Release` and `Nginx.Release` replace the marker line (and NPM's `ky.*`
   meta, set empty) and keep everything else, enabled state included; the LAN DNS step drops
   the app's ledger entries without calling KyDNS. Nothing is disabled, renamed or deleted.
+  A cluster edge's egress to a released upstream stays through the plan's edge `released`
+  (`internal/cli/forget.go`), not here.
 - Target-held connector credentials, pinned images and configuration: `connector.go`, including
   a `cloudflare-direct` edge's ingress (each hostname to its route's `Origin`, then 404) and its
   dedicated-network check.

@@ -731,3 +731,39 @@ func TestOperatorRoute(t *testing.T) {
 		t.Fatal("a catalog app's route accepted protect")
 	}
 }
+
+func TestReleasedRoutes(t *testing.T) {
+	kube := `version: 1
+targets:
+  - name: k8s
+    kubeconfig: /kc
+apps:
+  - name: npm
+    target: k8s
+edges:
+  - target: k8s
+    provider: lan
+    npm_url: kube://kyq-npm/app:81
+    allow_cidrs: [192.0.2.0/24]
+    routes: []
+    released:
+`
+	ok := kube + "      - {hostname: chat.example.com, upstream: '192.0.2.10:18443'}\n      - {hostname: in.example.com}\n      - {hostname: v6.example.com, upstream: '[2001:db8::1]:443'}\n"
+	if s, err := Parse([]byte(ok)); err != nil || len(s.Edges[0].Released) != 3 {
+		t.Fatalf("released only: %v", err)
+	}
+	for _, bad := range []string{"192.0.2.10", "192.0.2.10:0", "app:8080", "10.0.0.0/8:443", "[fe80::1%eth0]:443", "192.0.2.010:443"} {
+		if _, err := Parse([]byte(kube + "      - {hostname: chat.example.com, upstream: '" + bad + "'}\n")); err == nil || !strings.Contains(err.Error(), "upstream must be ip:port") {
+			t.Errorf("upstream %q accepted: %v", bad, err)
+		}
+	}
+	if _, err := Parse([]byte(kube + "      - {hostname: chat.example.com}\n      - {hostname: chat.example.com}\n")); err == nil || !strings.Contains(err.Error(), "unique") {
+		t.Errorf("duplicate released hostname accepted: %v", err)
+	}
+	if _, err := Parse([]byte(strings.Replace(edgeStack, "        certificate_id: 1\n", "        certificate_id: 1\n    released:\n      - {hostname: hello.example.com}\n", 1))); err == nil {
+		t.Error("a released hostname that a route serves, on a Docker edge, was accepted")
+	}
+	if _, err := Parse([]byte(strings.Replace(edgeStack, "        certificate_id: 1\n", "        certificate_id: 1\n    released:\n      - {hostname: old.example.com}\n", 1))); err == nil || !strings.Contains(err.Error(), "only on a Kubernetes edge") {
+		t.Errorf("released on a Docker edge: %v", err)
+	}
+}

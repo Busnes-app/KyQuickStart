@@ -402,7 +402,9 @@ edge compatibility: `docs/redirect.md`.
   an app the catalog lacks is refused by every command (`refuseMissing`, `internal/cli/forget.go`)
   until `unmanage` forgets it (`forget`): no command runs on the app's target, its `lan`-edge
   routes are released (`edge.Release`: NPM hosts and nginx-edge files lose this installation's
-  marks and keep serving, KyDNS records leave the ledger, nothing disabled or deleted), and a
+  marks and keep serving, KyDNS records leave the ledger, nothing disabled or deleted; on a
+  Kubernetes edge `recordReleased` lists them under the edge's `released`, whose upstreams
+  `session.upstreams` keeps in the edge's egress policy), and a
   route on a `cloudflare`, `frp` or `cloudflare-direct` edge refuses, since their connector
   configuration comes from the plan. KyMessages (`kymessage`) left on 2026-11-25.
 - Every installed app signs in through KyIdentity with native OIDC, uses *Assigned users only*,
@@ -792,8 +794,9 @@ calls and kind nodes must carry their own explicit bounds.
   KyIdentity and `euro-office` with KyDrive on an sshd target: baseline pod and its capabilities,
   seeded claims, the copied secret, `/healthcheck` through the edge, a signed KyDrive callback
   (200/401), egress through the edge only, a skipped rerun and a restart. Not part of `make e2e`.
-- `make e2e`: needs Docker (in CI split by `E2E_RUN`/`E2E_SKIP` over seven `e2e (<shard>)` jobs, summarised by the `e2e` job that `release-image.yml` requires; a new slow kind test should get a shard or join one); runs `apply` against an sshd container on the local Docker socket and
+- `make e2e`: needs Docker (in CI split by `E2E_RUN`/`E2E_SKIP` over nine `e2e (<shard>)` jobs, summarised by the `e2e` job that `release-image.yml` requires; a new slow kind test should get a shard or join one); runs `apply` against an sshd container on the local Docker socket and
   against a kind cluster (`go run sigs.k8s.io/kind@v0.33.0`), including drift and stale-lock cases.
+  `TestKubernetesNPMEdgeReleased` and `TestKubernetesNginxEdgeReleased` (shard `kube-released`) route a Docker app through each cluster edge, unmanage it once the catalog lacks it, apply the rest and request the released route through the edge.
   Also runs disposable NPM (`TestNPMContainer`, also a route released by `unmanage` that keeps serving, unmarked, through the next apply), nginx edge (`TestNginxContainer`, the catalog's pinned image), frpc/frps and cloudflared container tests in `internal/edge`, and
   `TestKubernetesNPMEdge`: catalog NPM on kind with claims, bootstrap, policy probes, a routed
   request through the NodePort as a cloudflare and then a lan edge, skipped reruns and token

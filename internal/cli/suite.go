@@ -440,7 +440,7 @@ func withoutApp(st *stack.Stack, name, target string) {
 			e.AllowCIDRs, e.ClientPort = nil, 0
 		}
 	}
-	st.Edges = slices.DeleteFunc(st.Edges, func(e stack.Edge) bool { return len(e.Routes) == 0 })
+	st.Edges = slices.DeleteFunc(st.Edges, func(e stack.Edge) bool { return len(e.Routes) == 0 && len(e.Released) == 0 })
 	st.Integrations = slices.DeleteFunc(st.Integrations, func(i stack.Integration) bool { return i.Product == name && i.Target == target })
 }
 
