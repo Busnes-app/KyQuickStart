@@ -39,11 +39,11 @@ func TestOverrideLabelsEveryService(t *testing.T) {
 		Services map[string]struct{ Labels map[string]string }
 	}
 	a := App{Name: "hello"}
-	a.Catalog.Services, a.Catalog.Once = []string{"web", "db"}, []string{"dump"}
+	a.Catalog.Services = []string{"web", "db"}
 	if err := yaml.Unmarshal(a.override(labels("rs-1", "1.2.3")), &o); err != nil {
 		t.Fatal(err)
 	}
-	for _, svc := range []string{"web", "db", "dump"} {
+	for _, svc := range []string{"web", "db"} {
 		l := o.Services[svc].Labels
 		if l[managed.Label] != managed.Value || l[managed.ReleaseSetLabel] != "rs-1" || l[managed.VersionLabel] != "1.2.3" {
 			t.Errorf("%s labels = %v", svc, l)
@@ -398,24 +398,4 @@ func TestFailedPullKeepsDeployedVersion(t *testing.T) {
 	if b, _ := os.ReadFile(filepath.Join(a.dir(), "compose.yaml")); string(b) != string(a.Catalog.Compose) {
 		t.Fatalf("compose.yaml = %q, want the new layout", b)
 	}
-}
-
-// Unmoved: the move's from file present and its to file absent, read on the target.
-func TestUnmoved(t *testing.T) {
-	root := t.TempDir()
-	a := App{Name: "chat", Root: root, Runner: remote.Local{}}
-	a.Catalog.Upgrade.Move = &catalog.Move{From: "pgdata/pgdata/PG_VERSION", To: "pgdata/18/docker/PG_VERSION", What: "x"}
-	check := func(want bool) {
-		t.Helper()
-		if got, err := Unmoved(context.Background(), a); err != nil || got != want {
-			t.Fatalf("unmoved = %v, %v; want %v", got, err, want)
-		}
-	}
-	check(false) // no app directory: a fresh install
-	os.MkdirAll(filepath.Join(root, "chat", "pgdata", "pgdata"), 0o700)
-	os.WriteFile(filepath.Join(root, "chat", "pgdata", "pgdata", "PG_VERSION"), []byte("17\n"), 0o600)
-	check(true)
-	os.MkdirAll(filepath.Join(root, "chat", "pgdata", "18", "docker"), 0o700)
-	os.WriteFile(filepath.Join(root, "chat", "pgdata", "18", "docker", "PG_VERSION"), []byte("18\n"), 0o600)
-	check(false)
 }

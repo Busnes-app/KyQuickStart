@@ -3,8 +3,8 @@ name: dumpdemo
 category: ky
 version: 1.0.0
 images:
-  # docker buildx imagetools inspect docker.io/library/postgres:18.7-alpine3.24 (index), 2026-11-25.
-  postgres: docker.io/library/postgres:18.7-alpine3.24@sha256:0115267ab5a509022df9319c77be365cef335adb71556c75f60f5360ee247e71
+  # docker buildx imagetools inspect docker.io/library/postgres:17.6-alpine (linux/amd64), 2026-10-19.
+  postgres: docker.io/library/postgres:17.6-alpine@sha256:747d5ed1fdeeb124b880fbe3d7c6557d2c4064ae41d6b6297d417882effce4be
   whoami: traefik/whoami:v1.11.0@sha256:200689790a0a0ea48ca45992e0450bc26ccab5307375b41c84dfc4f2475937ab
 secrets: [db_password]
 health:

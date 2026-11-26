@@ -2414,45 +2414,14 @@ integrations:
   secret, taken while the stack runs. Restore starts Postgres, loads the dump (without the dump's
   `DROP ROLE`/`CREATE ROLE postgres`, which Postgres refuses for the role restoring it), starts
   MAS and the console, replays KyIdentity's removals (`replay_after: app`), and only then starts
-  Synapse, Element and LiveKit. A dump of PostgreSQL 17 restores on 18.
-- **PostgreSQL 18.** The stack's Postgres is 18, with its data in `pgdata/18/docker` of the app's
-  directory. An install made by an earlier release (17, data in `pgdata/pgdata`) moves on the
-  next `apply`, `install` or `upgrade` that deploys it, whatever the versions:
-  - **Backup first.** With a backup destination on the target, a `kyquickstart backup`
-    snapshot is taken before anything changes (step `kymessage.pre-upgrade-backup`); if it
-    fails, nothing is deployed. Without a destination the command refuses (`ack_required`) until
-    you pass `--acknowledge-no-backup`; the 17 data is kept either way.
-  - **The move.** Compose stops the 17 Postgres, the one-shot `postgres-17-dump` (the 17 image,
-    no network) dumps `pgdata/pgdata` once into `pgdata/upgrade-from-17`, and Postgres restores
-    it into `pgdata/18/docker` before it starts, roles and passwords included. The suite's
-    script that does both is `pg-upgrade/postgres-17-to-18.sh` (`scripts/postgres-17-to-18.sh`).
-    The 17 data is only read. Chat is down while it runs, about as long as a restore of the
-    backup's dump; past the app's 10-minute health wait apply fails, and a rerun waits again
-    while the restore finishes.
-  - **Space.** About twice the 17 data free on the app's disk; with less, the one-shot refuses,
-    writes nothing, and the stack does not start until there is room. It refuses too while
-    `pgdata/pgdata/postmaster.pid` exists, which only a crashed 17 leaves: start the previous
-    release once and stop it cleanly.
-  - **Going back.** Deploy the previous release (or restore the pre-upgrade snapshot): its 17
-    starts on the untouched `pgdata/pgdata`.
-  - **Back to 18 after that.** Once 17 has run, the next deploy of this release refuses: 18
-    lacks what 17 wrote since, so `postgres-17-dump` exits with that message, which apply
-    shows, and PostgreSQL does not start. Your choice, as the target user in the app's
-    directory with the stack stopped: to move 17 again, rename `pgdata/18` (and
-    `pgdata/upgrade-from-17`, if it is there) with a suffix such as `.replaced` (nothing is
-    deleted); to keep 18 as it was, delete `pgdata/18/moved-from-17.checkpoint`. Then deploy
-    again.
-  - **Clean-up, your choice**, in the app's directory as the target user. `rm -r
-    pgdata/upgrade-from-17` (the dump) is safe once the move is done; 18 keeps starting, and a
-    later return from 17 is still refused as above. `rm -r pgdata/pgdata` (17, and any
-    `.replaced` copies) is separate, and ends the way back. Nothing removes them for you.
+  Synapse, Element and LiveKit.
 
 ### KyMessages: provenance, measurements and residuals
 
 - **Images.** The console image is KyMessage v0.4.4's, attested by `Busnes-app/KyMessage-Server`
-  `release-image.yml@refs/tags/v0.4.4` from commit `b0f2001e`. The Matrix images, PostgreSQL 18
-  and the 17 dump one-shot are the stock upstream builds KyMessage's `docker-compose.matrix.yml`
-  pins by digest; no attestation was found for them.
+  `release-image.yml@refs/tags/v0.4.4` from commit `b0f2001e`. The five Matrix images are the
+  stock upstream builds KyMessage's `docker-compose.matrix.yml` pins by digest; no attestation
+  was found for them.
 - **Measured in the end-to-end test.** A chat-only person was locked 0-3 s after their sign-in.
   Offboarding refused the open session and its refresh token 0.6-2.6 s after the disable, for
   the owner's everyday account and for a person added later. Removing "KyMessages chat" alone

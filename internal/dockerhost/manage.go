@@ -203,9 +203,7 @@ func (s unmanageStep) plan(ctx context.Context) (recreate, start []string, err e
 	}
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	valid := func(names []string) bool {
-		return !slices.ContainsFunc(names, func(n string) bool {
-			return !slices.Contains(s.a.Catalog.Services, n) && !slices.Contains(s.a.Catalog.Once, n)
-		})
+		return !slices.ContainsFunc(names, func(n string) bool { return !slices.Contains(s.a.Catalog.Services, n) })
 	}
 	if len(lines) != 2 || !strings.HasPrefix(lines[0], "recreate") || !strings.HasPrefix(lines[1], "start") {
 		return nil, nil, fmt.Errorf("%s is not an unmanage record; inspect it by hand", s.record())
