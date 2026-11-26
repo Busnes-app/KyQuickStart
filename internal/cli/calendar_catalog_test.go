@@ -571,12 +571,10 @@ func TestSuitePairingHandover(t *testing.T) {
 			}
 		}
 	}
-	all := &stack.Stack{Apps: []stack.App{{Name: "kypost"}, {Name: "kycalendar"}, {Name: "kydrive"}, {Name: "kymessage"}}}
+	all := &stack.Stack{Apps: []stack.App{{Name: "kypost"}, {Name: "kycalendar"}, {Name: "kydrive"}}}
 	for app, want := range map[string][]string{
-		"kypost":     {"KyIdentity pairs KyDrive and KyPost for mail files", "KyIdentity pairs KyMessages and KyPost for chat from mail"},
-		"kydrive":    {"KyIdentity pairs KyDrive and KyPost for mail files"},
-		"kycalendar": {"KyIdentity pairs KyCalendar and KyMessages for video meetings"},
-		"kymessage":  {"KyIdentity pairs KyCalendar and KyMessages for video meetings", "KyIdentity pairs KyMessages and KyPost for chat from mail"},
+		"kypost":  {"KyIdentity pairs KyDrive and KyPost for mail files"},
+		"kydrive": {"KyIdentity pairs KyDrive and KyPost for mail files"},
 	} {
 		got := suitePairing(all, app)
 		lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")

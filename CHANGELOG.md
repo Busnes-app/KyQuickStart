@@ -14,6 +14,19 @@ state directory, target data and target-held credentials; do not reset them as a
 
 ## Unreleased
 
+- KyMessages (`kymessage`, the Matrix stack) leaves the catalog: KyMessage-Server is archived,
+  and KyMessages-Native has no release yet. `unmanage` now forgets an app the catalog no
+  longer has without touching it, and hands its edge routes to you still serving.
+  **Upgrade impact:** with KyMessages in `stack.yaml`, every command refuses the plan and
+  changes nothing until you run `kyquickstart unmanage kymessage`. That runs no command on
+  its target (nothing stopped, recreated or deleted). Its NPM hosts and nginx-edge files lose
+  this installation's marks but stay enabled, and its KyDNS records leave the installer's
+  ledger without being deleted. On a Kubernetes edge they are listed under the edge's
+  `released` in `stack.yaml`, which keeps each upstream in the edge's egress policy until you
+  delete the entry. It refuses while a KyMessages route is on a `cloudflare`,
+  `frp` or `cloudflare-direct` edge; keep using an earlier release there. KyMessages is no
+  longer upgraded, backed up or restored by kyquickstart (`docs/guided-setup.md`,
+  "KyMessages left the catalog").
 - Post-quantum key exchange at the edge. The nginx edge sets `ssl_ecdh_curve
   X25519MLKEM768:X25519:prime256v1`: hybrid X25519MLKEM768 for clients that offer it,
   X25519 and P-256 for the rest, other groups refused. cloudflared (both Cloudflare edges)
@@ -22,14 +35,12 @@ state directory, target data and target-held credentials; do not reset them as a
   Cloudflare only over TCP (outbound UDP 7844 blocked) stays down instead of connecting
   without post-quantum protection. Clients offering only P-384 or other groups are refused
   by the nginx edge.
-
 - PostgreSQL 18 for the replicated KyIdentity's database pod (Kubernetes), with an automatic
   dump and restore from 17 on the same claim that keeps the 17 data.
   **Upgrade impact:** KyIdentity sign-in is down while the restore runs; the claim needs about
   twice the 17 data free. Removing the 17 data afterwards is a manual step
   (`docs/guided-setup.md`). After a rollback that ran 17, deploying 18 again refuses until you
   choose to move 17 again or keep 18 (same doc); apply's health wait shows the dump's message.
-  KyMessages' Matrix stack keeps PostgreSQL 17.
 - PostgreSQL 18 for the highly available KyIdentity database (`database_instances`). A
   CloudNativePG `Cluster` on 17 is hibernated, every instance's claim is copied and verified,
   and only then does CloudNativePG upgrade it in place; fresh Clusters start on 18.

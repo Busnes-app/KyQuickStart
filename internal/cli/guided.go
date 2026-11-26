@@ -215,6 +215,15 @@ func guided(ctx context.Context, args []string, o Options) error {
 		}
 	}
 	if previous != nil {
+		// A saved app this catalog lacks would leave the plan silently, and the next apply
+		// would disable its routes: refuse until unmanage forgets it.
+		cat, err := planCatalog(previous, o)
+		if err != nil {
+			return err
+		}
+		if err := refuseMissing(previous, cat); err != nil {
+			return err
+		}
 		if len(previous.Integrations) > 0 {
 			if _, err := integrationOrder(previous); err != nil {
 				return err
@@ -430,7 +439,6 @@ func guided(ctx context.Context, args []string, o Options) error {
 			return err
 		}
 	}
-	withChatClients(st, cat)
 	count, err = p.ask("existing", "Number of existing Ky products to record", "0", integer(0, 64))
 	if err != nil {
 		return err
@@ -512,6 +520,9 @@ func guided(ctx context.Context, args []string, o Options) error {
 }
 
 func validateSelection(st *stack.Stack, cat catalog.Catalog, o Options) error {
+	if err := refuseMissing(st, cat); err != nil {
+		return err
+	}
 	if err := yardPlan(st); err != nil {
 		return err
 	}
@@ -551,7 +562,7 @@ func validateSelection(st *stack.Stack, cat catalog.Catalog, o Options) error {
 	if err := calendarAccounts(st); err != nil {
 		return err
 	}
-	if err := messagePlan(st, cat); err != nil {
+	if err := chatClientPlan(st); err != nil {
 		return err
 	}
 	if _, err := plan.Order(names, cat); err != nil {
@@ -817,7 +828,8 @@ func review(args []string, o Options) error {
 
 // keepUnasked carries over from the saved plan what the wizard never asks: an app's stop intent,
 // node ports, LoadBalancer addresses and confirmed recovery key while it stays on its target,
-// an edge's egress_address and lan_dns while it keeps its provider, a setup's
+// an edge's egress_address and lan_dns while it keeps its provider, its released routes while
+// its target stays, a setup's
 // identity_amendment, and the plan's domains.
 func keepUnasked(st, previous *stack.Stack) {
 	if previous == nil {
@@ -843,6 +855,18 @@ func keepUnasked(st, previous *stack.Stack) {
 		if j := slices.IndexFunc(previous.Edges, func(p stack.Edge) bool { return p.Target == e.Target && p.Provider == e.Provider }); j >= 0 {
 			p := previous.Edges[j]
 			e.EgressAddress, e.LANDNS = p.EgressAddress, p.LANDNS
+		}
+	}
+	// Released routes stay on their edge's target, an edge with nothing else included.
+	for _, p := range previous.Edges {
+		if len(p.Released) == 0 {
+			continue
+		}
+		if i := slices.IndexFunc(st.Edges, func(e stack.Edge) bool { return e.Target == p.Target }); i >= 0 {
+			st.Edges[i].Released = p.Released
+		} else if _, ok := st.Target(p.Target); ok {
+			p.Routes = nil
+			st.Edges = append(st.Edges, p)
 		}
 	}
 }

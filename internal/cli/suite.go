@@ -440,7 +440,7 @@ func withoutApp(st *stack.Stack, name, target string) {
 			e.AllowCIDRs, e.ClientPort = nil, 0
 		}
 	}
-	st.Edges = slices.DeleteFunc(st.Edges, func(e stack.Edge) bool { return len(e.Routes) == 0 })
+	st.Edges = slices.DeleteFunc(st.Edges, func(e stack.Edge) bool { return len(e.Routes) == 0 && len(e.Released) == 0 })
 	st.Integrations = slices.DeleteFunc(st.Integrations, func(i stack.Integration) bool { return i.Product == name && i.Target == target })
 }
 
@@ -448,6 +448,20 @@ func remove(ctx context.Context, state string, r Request, trust trustFlag, o Opt
 	name, err := oneApp(r)
 	if err != nil {
 		return err
+	}
+	if unmanage {
+		// An app the catalog lacks is forgotten without touching it.
+		st, err := stack.Load(filepath.Join(state, "stack.yaml"))
+		if err != nil {
+			return err
+		}
+		cat, err := planCatalog(st, o)
+		if err != nil {
+			return err
+		}
+		if slices.Contains(missingApps(st, cat), name) {
+			return forget(ctx, state, st, name, r, trust, o)
+		}
 	}
 	s, err := load(state, trust, o)
 	if err != nil {

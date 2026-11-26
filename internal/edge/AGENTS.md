@@ -17,6 +17,12 @@ straight to the apps, `cloudflare-direct`), and verify product proxy behavior.
   and the nginx edge's server block both come from it.
 - Let's Encrypt DNS-01 certificates, their per-email NPM user and route name resolution: `certs.go`.
 - KyDNS LAN A records and their ownership ledger: `kydns.go`.
+- Releasing an app's routes to the operator (`unmanage` of an app the catalog lacks):
+  `release.go`. `NPM.Release` and `Nginx.Release` replace the marker line (and NPM's `ky.*`
+  meta, set empty) and keep everything else, enabled state included; the LAN DNS step drops
+  the app's ledger entries without calling KyDNS. Nothing is disabled, renamed or deleted.
+  A cluster edge's egress to a released upstream stays through the plan's edge `released`
+  (`internal/cli/forget.go`), not here.
 - Target-held connector credentials, pinned images and configuration: `connector.go`, including
   a `cloudflare-direct` edge's ingress (each hostname to its route's `Origin`, then 404) and its
   dedicated-network check.
@@ -45,7 +51,8 @@ straight to the apps, `cloudflare-direct`), and verify product proxy behavior.
   `kyq-edge/kyq-credentials` lists its ID, name and address. Save the ledger after every KyDNS
   change; refuse any name another record or service publishes. Show KyDNS error codes, never bodies.
 - Apply disables, never deletes, this target's owned hosts whose hostname left `routes`; verification
-  fails while one is enabled. Deletion is the operator's choice.
+  fails while one is enabled. Deletion is the operator's choice. A released host, file or record
+  is foreign from then on.
 - The nginx edge: a file is ours only with this installation's marker as its first line;
   write a route only after its TLS Secret holds an unexpired certificate covering it; report it
   only when every ready pod runs the written generation, and rename it `.disabled` when the

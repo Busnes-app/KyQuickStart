@@ -388,4 +388,19 @@ func TestGuidedKeepsUnaskedFields(t *testing.T) {
 	if keepUnasked(st, previous); st.Edges[0].EgressAddress != "" {
 		t.Error("a changed provider kept egress_address")
 	}
+	// Released routes stay with their edge's target, even when the wizard routes nothing there.
+	released := []stack.Released{{Hostname: "chat.example.com", Upstream: "192.0.2.10:18443"}}
+	previous.Edges[0].Released = released
+	st.Targets = []stack.Target{{Name: "k1", Kubeconfig: "/kc"}}
+	if keepUnasked(st, previous); !slices.Equal(st.Edges[0].Released, released) {
+		t.Errorf("edge = %+v", st.Edges[0])
+	}
+	st.Edges = nil
+	if keepUnasked(st, previous); len(st.Edges) != 1 || !slices.Equal(st.Edges[0].Released, released) || st.Edges[0].Routes != nil {
+		t.Errorf("edges = %+v", st.Edges)
+	}
+	st.Targets, st.Edges = nil, nil
+	if keepUnasked(st, previous); len(st.Edges) != 0 {
+		t.Errorf("released kept for a removed target: %+v", st.Edges)
+	}
 }

@@ -34,6 +34,16 @@ type Edge struct {
 	LANDNS       *LANDNS       `yaml:"lan_dns,omitempty"`
 	// The one address upstreams off the cluster see this edge's requests from.
 	EgressAddress string `yaml:"egress_address,omitempty"`
+	// Released are routes unmanage handed to the operator on a Kubernetes edge. The edge keeps
+	// each Upstream in its egress policy until the operator deletes the entry.
+	Released []Released `yaml:"released,omitempty" json:",omitempty"`
+}
+
+// Released is a route the operator now owns: its hostname, and the address off the cluster it
+// forwards to (empty for an app on the edge's cluster, which the policy already admits).
+type Released struct {
+	Hostname string `yaml:"hostname"`
+	Upstream string `yaml:"upstream,omitempty"`
 }
 
 // LANDNS publishes each route's hostname on the LAN as an A record for Address.
@@ -262,8 +272,11 @@ func (s *Stack) validateEdges() error {
 		if err != nil {
 			return err
 		}
-		if len(e.Routes) == 0 {
+		if len(e.Routes) == 0 && len(e.Released) == 0 {
 			return fmt.Errorf("edge %s: no routes", e.Target)
+		}
+		if err := validateReleased(*e, target, hosts); err != nil {
+			return err
 		}
 		certs, err := validateCertificates(*e, target)
 		if err != nil {
@@ -453,6 +466,23 @@ func validateDirect(e *Edge, target Target) error {
 }
 
 // validateLAN checks an edge LAN clients reach directly: NPM trusts no forwarding header.
+// validateReleased checks e's released routes, whose hostnames no route may serve again.
+func validateReleased(e Edge, target Target, hosts map[string]bool) error {
+	if len(e.Released) > 0 && !target.Kubernetes() {
+		return fmt.Errorf("edge %s: released is recorded only on a Kubernetes edge", e.Target)
+	}
+	for _, r := range e.Released {
+		if !Hostname(r.Hostname) || hosts[r.Hostname] {
+			return fmt.Errorf("edge %s: released hostname %q must be a unique lowercase DNS name", e.Target, r.Hostname)
+		}
+		hosts[r.Hostname] = true
+		if u, err := netip.ParseAddrPort(r.Upstream); r.Upstream != "" && (err != nil || u.Addr().Zone() != "" || u.Port() == 0 || u.String() != r.Upstream) {
+			return fmt.Errorf("edge %s: released %s: upstream must be ip:port", e.Target, r.Hostname)
+		}
+	}
+	return nil
+}
+
 func validateLAN(e *Edge) error {
 	if e.ConnectorCIDR != "" || e.Connector != nil || e.ProxyPort != 0 {
 		return fmt.Errorf("edge %s: lan takes no connector_cidr, connector or proxy_port; clients reach NPM directly", e.Target)

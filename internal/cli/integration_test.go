@@ -91,7 +91,7 @@ func TestGuidedResumePreservesPreparationAndDisclosesItsScope(t *testing.T) {
 
 func TestGuidedExplicitIntegrationResumeAndDecline(t *testing.T) {
 	dir := t.TempDir()
-	answers := "no\n1\nnas\ndocker\n192.0.2.1\nkyq\n22\n/opt/test\n\nskip\nskip\nskip\nskip\nskip\nskip\nskip\nskip\nskip\nskip\nskip\n1\nkypulse\nnas\nhttps://pulse.example.test\nyes\npulse\n/data/installer/setup.json\nyes\nfinish\n"
+	answers := "no\n1\nnas\ndocker\n192.0.2.1\nkyq\n22\n/opt/test\n\nskip\nskip\nskip\nskip\nskip\nskip\nskip\nskip\nskip\nskip\n1\nkypulse\nnas\nhttps://pulse.example.test\nyes\npulse\n/data/installer/setup.json\nyes\nfinish\n"
 	var out bytes.Buffer
 	o := Options{Catalog: catalog.Embedded(), In: strings.NewReader(answers), Out: &out}
 	if err := Run(context.Background(), []string{"plan", "--state", dir}, o); err != nil {
@@ -122,7 +122,7 @@ func TestGuidedExplicitIntegrationResumeAndDecline(t *testing.T) {
 	}
 	// Declining integration removes intent without deleting an existing installation.
 	out.Reset()
-	o.In = strings.NewReader(strings.Repeat("\n", 24) + "no\nyes\nfinish\n")
+	o.In = strings.NewReader(strings.Repeat("\n", 23) + "no\nyes\nfinish\n")
 	if err := Run(context.Background(), []string{"plan", "--state", dir}, o); err != nil {
 		t.Fatal(err, out.String())
 	}

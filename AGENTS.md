@@ -225,7 +225,7 @@ and retain their own identity, sealer label and collection adapters.
 
 - Web themes default to the Busnes.app cream/light and charcoal/dark palettes with orange accents, following the OS until a browser-local choice is saved. Preserve existing named themes and saved choices.
 
-- KyQuickStart places every catalog Ky product on Docker hosts, including a separate resident runner for KyYard, and on Kubernetes where the product has a manifest. Products keep their documented placement restrictions: KyDrive, KyPost, KyDNS and KyMessages are Docker only (`KyQuickStart/docs/redirect.md`). Euro-Office (`euro-office`, KyDrive's optional editor) is Kubernetes only.
+- KyQuickStart places every catalog Ky product on Docker hosts, including a separate resident runner for KyYard, and on Kubernetes where the product has a manifest. Products keep their documented placement restrictions: KyDrive, KyPost and KyDNS are Docker only (`KyQuickStart/docs/redirect.md`). KyMessages left the catalog on 2026-11-25 (KyMessage-Server archived). Euro-Office (`euro-office`, KyDrive's optional editor) is Kubernetes only.
 
 - KyPost owns the shared `kypost-net` Docker network; standalone consumers join it as external. Containerized Nginx Proxy Manager is supported with a fixed address trusted as one `/32` (IPv4) or `/128` (IPv6). Preserve existing manually owned networks as explicit legacy exceptions.
 
@@ -338,8 +338,7 @@ edge compatibility: `docs/redirect.md`.
   `apply` runs it after the app's health step against the app's one ready pod, and
   `integrate-stack` skips it. Today only KyIdentity (from its `identity` settings) and the
   installed Ky apps with a catalog `oidc` block and a product adapter: KyRecovery, kyPulse,
-  KyNotes, KyCalendar and KyYard on Docker or Kubernetes; KyDrive, KyPost and KyMessages (its
-  whole chat stack, with a second, everyday-only `chat_client` for MAS) on Docker, and KyDNS on Docker (its managed `app` service, through `docker exec` over SSH; KyDNS's shell-less image gets its setup files placed from the host). An installed KyNotes' entry is exactly `bundle: /data/installer/setup.json`
+  KyNotes, KyCalendar and KyYard on Docker or Kubernetes; KyDrive and KyPost on Docker, and KyDNS on Docker (its managed `app` service, through `docker exec` over SSH; KyDNS's shell-less image gets its setup files placed from the host). An installed KyNotes' entry is exactly `bundle: /data/installer/setup.json`
   and its `identity_client` (no `notes` block): apply derives its native preparation, and its
   setup runs after the edge routes KyIdentity and before KyNotes' own route; a routed KyNotes
   without that entry is refused. Apply adds each such app's client, derived from its `oidc`
@@ -399,7 +398,15 @@ edge compatibility: `docs/redirect.md`.
   Certificate through the dynamic client, cert-manager itself never installed; the operator's
   manifest through the dynamic client); cloudflared and the frp client also deploy to
   Docker hosts, NPM and the nginx edge do not. An app leaving the catalog stops taking new installs after
-  notice, and existing installs are handed to their owner with `unmanage`.
+  notice, and existing installs are handed to their owner with `unmanage`. A plan still naming
+  an app the catalog lacks is refused by every command (`refuseMissing`, `internal/cli/forget.go`)
+  until `unmanage` forgets it (`forget`): no command runs on the app's target, its `lan`-edge
+  routes are released (`edge.Release`: NPM hosts and nginx-edge files lose this installation's
+  marks and keep serving, KyDNS records leave the ledger, nothing disabled or deleted; on a
+  Kubernetes edge `recordReleased` lists them under the edge's `released`, whose upstreams
+  `session.upstreams` keeps in the edge's egress policy), and a
+  route on a `cloudflare`, `frp` or `cloudflare-direct` edge refuses, since their connector
+  configuration comes from the plan. KyMessages (`kymessage`) left on 2026-11-25.
 - Every installed app signs in through KyIdentity with native OIDC, uses *Assigned users only*,
   and offboards through KyIdentity's SCIM or signed directory webhook into the product's own
   handling. The installer never adopts a foreign account. Forward-auth (owner amendment,
@@ -458,7 +465,7 @@ edge compatibility: `docs/redirect.md`.
 - Bulk data goes to restic on an operator-run, append-only (`--append-only --private-repos`)
   TLS rest-server off the app's host, one repository (`<repository>/<app>`) and password per
   app. `kyquickstart backup APP` (Docker apps only, no schedule, no prune) snapshots the app's
-  dump and bind directories (with its `backup.stop` services stopped: KyMessages' console) or,
+  dump and bind directories (with its `backup.stop` services stopped) or,
   without a dump command, its stopped bind directories, plus its `capsule_secrets`,
   tagged with app and installation. The password (`restic_password`) is generated on the app's
   target, never leaves it through the installer and is never in a snapshot (excluded from
@@ -681,7 +688,7 @@ edge compatibility: `docs/redirect.md`.
   copies the edge's public chain (certificate blocks only, never a key) before the app's
   deploy into the app's `./tls` bind directory, by temporary file and rename, only when it
   changed; the edge apps deploy first, and the route's `certificates` entry is issued just before
-  the copy. The suite runner repeats it daily (`internal/runner/AGENTS.md`). An app whose manifest declares `routes` (KyMessages, Docker only)
+  the copy. The suite runner repeats it daily (`internal/runner/AGENTS.md`). An app whose manifest declares `routes` (Docker only; none since KyMessages left)
   takes one plan route per role, the primary without `role`, all on one `forward_host` (one LAN
   IPv4 of the target: no wildcard, loopback, link-local, multicast, IPv6 or name) and one
   `forward_port` per service port, and writes `{{host "<role>"}}`,
@@ -695,9 +702,7 @@ edge compatibility: `docs/redirect.md`.
   must exist before deploy starts the app.
   Compose runs with `KYQ_UID`/`KYQ_GID` set to the target user's; `./<name>` bind directories
   are created private by the driver before Compose, and no other relative bind source is
-  accepted. KyMessages' Synapse sets `PYTHONPATH=/config` to load matrix-init's
-  `ky_guests.py` from its read-only configuration bind; Element serves matrix-init's
-  `kymessages-guest.html` through a read-only file bind, on the chat origin.
+  accepted.
   A manifest's `from_volumes` names bind directories an earlier version kept in
   Compose named volumes of the same name (KyPost's, before #151): `<app>.volumes`, before
   deploy, stops the app and copies each such volume into its missing bind directory once (an
@@ -732,7 +737,7 @@ calls and kind nodes must carry their own explicit bounds.
 - CI's `release binaries are repeatable` step (`test`, ubuntu 1.26.x leg): `scripts/release-binaries.sh`
   from the checkout and from a `git archive` copy elsewhere must give identical bytes.
 - `make notes-check`: Python standard-library checks for the missing/compare-only release-note guard.
-- `make ci`: release-note guard, tidy check, gofmt, vet (including the `e2e,goolm` tags), race tests.
+- `make ci`: release-note guard, tidy check, gofmt, vet (including the `e2e` tag), race tests.
   Subprocess-heavy CLI race tests can exceed Go's default timeout on macOS; keep the Makefile's
   explicit deadline. Runner tests decode every answer with KyYard's client types (`internal/runner/kyyard_test.go`).
   `cmd/kyquickstart/release_test.go` runs `scripts/release-binaries.sh` (the stamp in all four
@@ -789,9 +794,10 @@ calls and kind nodes must carry their own explicit bounds.
   KyIdentity and `euro-office` with KyDrive on an sshd target: baseline pod and its capabilities,
   seeded claims, the copied secret, `/healthcheck` through the edge, a signed KyDrive callback
   (200/401), egress through the edge only, a skipped rerun and a restart. Not part of `make e2e`.
-- `make e2e`: needs Docker (in CI split by `E2E_RUN`/`E2E_SKIP` over seven `e2e (<shard>)` jobs, summarised by the `e2e` job that `release-image.yml` requires; a new slow kind test should get a shard or join one); runs `apply` against an sshd container on the local Docker socket and
+- `make e2e`: needs Docker (in CI split by `E2E_RUN`/`E2E_SKIP` over nine `e2e (<shard>)` jobs, summarised by the `e2e` job that `release-image.yml` requires; a new slow kind test should get a shard or join one); runs `apply` against an sshd container on the local Docker socket and
   against a kind cluster (`go run sigs.k8s.io/kind@v0.33.0`), including drift and stale-lock cases.
-  Also runs disposable NPM, nginx edge (`TestNginxContainer`, the catalog's pinned image), frpc/frps and cloudflared container tests in `internal/edge`, and
+  `TestKubernetesNPMEdgeReleased` and `TestKubernetesNginxEdgeReleased` (shard `kube-released`) route a Docker app through each cluster edge, unmanage it once the catalog lacks it, apply the rest and request the released route through the edge.
+  Also runs disposable NPM (`TestNPMContainer`, also a route released by `unmanage` that keeps serving, unmarked, through the next apply), nginx edge (`TestNginxContainer`, the catalog's pinned image), frpc/frps and cloudflared container tests in `internal/edge`, and
   `TestKubernetesNPMEdge`: catalog NPM on kind with claims, bootstrap, policy probes, a routed
   request through the NodePort as a cloudflare and then a lan edge, skipped reruns and token
   refresh. `TestKubernetesNginxEdge` and `TestKubernetesNginxEdgeJoins` run the same two suites
@@ -857,23 +863,6 @@ calls and kind nodes must carry their own explicit bounds.
   break-glass read and session-ending restart run verbatim on the target, `kypost.recovery-pair`
   passing with its pair-by-hand note (no confirmed key), a cold `kyquickstart backup kypost`
   that leaves it healthy, and a skipped rerun.
-  `TestKubernetesKyMessage` (`message_stack_test.go`, `message_chat_test.go`) installs the whole
-  KyMessages stack on a non-root sshd target in the host's network namespace by amendment, with
-  KyIdentity's first setup relaying mail through a test-only Mailpit (STARTTLS, AUTH, test CA)
-  at `smtp.mail.example.test`: Docker picks its kind address (CI's kind network refuses a fixed
-  `--ip`) and the cluster DNS's hosts block names it.
-  A test-only Matrix client (`matrix_client_test.go`: mautrix with pure-Go goolm, build tag
-  `goolm`, MAS OAuth with PKCE and dynamic registration) signs in by both verified-email paths,
-  exchanges encrypted messages, gets a LiveKit grant, measures offboarding (the owner's everyday
-  account and a person added later, each bounded at 60 s), proves a person assigned to the chat
-  client alone is locked by the sweep, that removing "KyMessages chat" alone leaves an open
-  session and removing "KyMessages" too ends it, that a person disabled while KyIdentity's
-  create to the console fails cleanly (the setup's directory secret unreadable: a 503, which
-  KyIdentity does not fence as uncertain) reaches the console's directory as inactive and
-  `resync-system` delivers (this fails on KyIdentity 0.4.5, which dropped that removal), and
-  backs the stack up and restores it through
-  `backup`/`restore`, the original device decrypting the history and the replay (before Synapse
-  starts) ending a session the snapshot still held before it ever reaches Synapse.
   Backups (`test/e2e/backup_test.go`) go to a disposable append-only TLS rest-server on its own
   network, published on the default bridge's gateway. `TestApply` backs up and restores the
   test-only `dumpdemo` (Postgres dump, a file volume with a `skip` path, a capsule secret) from
@@ -962,16 +951,6 @@ calls and kind nodes must carry their own explicit bounds.
   in its Deployment and pods before handoff and after runner upgrade, recreation and revoke.
   This does not qualify a published runner artifact, Docker placement, offboarding or
   disaster recovery.
-
-- With `KYQ_TEST_MESSAGE_UPGRADE_MANIFEST` naming an independently attested historical
-  KyMessages manifest and its sibling Compose template, `TestKubernetesKyMessage` starts
-  the complete old catalog entry with explicit fixture transport/CA plumbing, exchanges
-  encrypted messages, then restores the candidate entry for a CLI data-migration upgrade
-  with its own verified pre-upgrade snapshot. It checks selected session/directory/OIDC/
-  provider/signing keys, original device-token renewal, server-fetched encrypted history
-  and a new encrypted event. Auxiliary images stay unchanged. The existing candidate
-  offboarding/restore drill follows against a separate backup destination; this is not an
-  upstream Matrix-version migration.
 
 ## Child DOX Index
 

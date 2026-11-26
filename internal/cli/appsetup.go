@@ -92,9 +92,6 @@ func (s *session) composeClients(st *stack.Stack) error {
 			return err
 		}
 		wanted := []stack.IdentityClient{console}
-		if o := s.cat[i.Product].ChatOIDC; o != nil && i.ChatClient != "" {
-			wanted = append(wanted, chatClientFor(i.ChatClient, roleHost(st, i.Product, o.Role), providerID(st.InstallationID, i.Product), o))
-		}
 		for _, want := range wanted {
 			found := false
 			for _, c := range n.Clients {
@@ -156,8 +153,6 @@ func (s *session) composeClients(st *stack.Stack) error {
 				text = strings.Replace(text, noPairing, pairByApply, 1)
 			}
 			s.handover += strings.Replace(text, noCalendarPairing, calendarPairing(st, "kypost"), 1) + suitePairing(st, "kypost")
-		case "kymessage":
-			s.handover += messageHandover(st, i.Product, s.placed[i.Product], n.Admin.Username, n.Everyday.Username) + suitePairing(st, "kymessage")
 		case "kypulse":
 			var unwatched []string
 			s.pulseTargets, unwatched = pulseTargets(st, s.cat)
@@ -402,9 +397,8 @@ func calendarPairing(st *stack.Stack, app string) string {
 // (KyPost and KyCalendar have calendarPairing). KyIdentity issues the pair; only app
 // releases with the feature use it, so the line says no more than that.
 func suitePairing(st *stack.Stack, app string) string {
-	names := map[string]string{"kycalendar": "KyCalendar", "kydrive": "KyDrive", "kymessage": "KyMessages", "kypost": "KyPost"}
-	use := map[[2]string]string{{"kycalendar", "kymessage"}: "video meetings", {"kydrive", "kypost"}: "mail files",
-		{"kymessage", "kypost"}: "chat from mail"}
+	names := map[string]string{"kycalendar": "KyCalendar", "kydrive": "KyDrive", "kypost": "KyPost"}
+	use := map[[2]string]string{{"kydrive", "kypost"}: "mail files"}
 	out := ""
 	for _, peer := range suitePeers[app] {
 		pair := [2]string{min(app, peer), max(app, peer)}
@@ -541,7 +535,6 @@ type clientSetupStep struct {
 	setup     func(context.Context, identityExec, string, bool) ([]byte, error)
 	place     func(ctx context.Context, args []string, input []byte) error
 	native    func(clientCredentials, string) any // KyPost's own bundle from the export and secret file; nil for ky.product-setup/1
-	after     func(context.Context) error         // KyMessages' chat client recheck; nil for any other app
 	// mail is KyPost's plan mail block: its bundle names the domains, may be replaced as they
 	// change (it holds no secret) and report reads the setup's report. Nil for any other app.
 	mail   *stack.Mail
@@ -682,11 +675,6 @@ func (s clientSetupStep) run(ctx context.Context, check bool) error {
 	}
 	if s.report != nil {
 		if err := s.report(report); err != nil {
-			return err
-		}
-	}
-	if s.after != nil {
-		if err := s.after(ctx); err != nil {
 			return err
 		}
 	}

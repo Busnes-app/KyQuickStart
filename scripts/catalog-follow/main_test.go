@@ -272,7 +272,7 @@ func TestSourcesCoverCatalog(t *testing.T) {
 		}
 		return nil
 	})
-	if n < 10 {
+	if n < 9 {
 		t.Errorf("found %d Ky images in the catalog", n)
 	}
 }

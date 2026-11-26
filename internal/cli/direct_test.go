@@ -77,7 +77,7 @@ func TestDirectEdgeSession(t *testing.T) {
 		t.Fatalf("steps = %s", got)
 	}
 	// Admin-only, LAN-only, path-blocked and unassessed apps are refused before connecting.
-	for app, why := range map[string]string{"kyrecovery": "internet-facing", "kypulse": "internet-facing", "kyyard": "internet-facing", "kydns": "lan edge", "kymessage": "path", "kynotes": "first-run"} {
+	for app, why := range map[string]string{"kyrecovery": "internet-facing", "kypulse": "internet-facing", "kyyard": "internet-facing", "kydns": "lan edge", "kynotes": "first-run"} {
 		f.plan(t, strings.Replace(directPlan, "apps:\n", "apps:\n  - name: "+app+"\n    target: nas\n", 1)+"      - {app: "+app+", hostname: app.example.com, forward_host: 127.0.0.1, forward_port: 18080}\n")
 		if _, err := load(f.state, nil, f.o); err == nil || !strings.Contains(err.Error(), why) {
 			t.Errorf("%s: %v", app, err)

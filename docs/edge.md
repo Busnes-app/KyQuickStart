@@ -63,7 +63,7 @@ running NPM. It is not derived: if NPM moves node, set it again and rerun `apply
 `kube_vip_address` NPM's requests leave from that address on every node, and the edge must
 set `egress_address` to it.
 
-An app whose Compose file writes `{{edge_address}}` (catalog KyDNS, KyMessages and KyYard)
+An app whose Compose file writes `{{edge_address}}` (catalog KyDNS and KyYard)
 trusts forwarded headers from exactly that address. `plan`, `review` and `apply` refuse it until
 its route's edge sets the field. The other Docker Ky products write `{{edge_prefix}}`: the same
 address as a `/32` or `/128`, or nothing without the field, when they ignore forwarded headers
@@ -186,7 +186,6 @@ sources); through a real tunnel this is unverified.
 | KyIdentity | Allowed | Public sign-in is its job; through Cloudflare and NPM it is equally public |
 | KyCalendar, KyPost, KyDrive | Allowed | Sign in through KyIdentity; no admin-only origin |
 | KyNotes | Refused | Its first-run web setup must be closed by its setup before its route opens; one cloudflared opens every route at once |
-| KyMessages | Refused | Its routes rely on NPM's path allow-lists and admin-path blocks |
 | KyDNS | Refused | Its admin API belongs on the LAN; use a `lan` edge |
 | KyRecovery | Refused | Its admin UI and custodian ceremony would be internet-facing |
 | kyPulse | Refused | Admin-only monitoring console |
@@ -284,7 +283,7 @@ every route is internal is refused: use `lan`.
 ```yaml
 domains:                     # optional: keeps the two kinds of names apart
   internal: lan.example.com  # internal routes are names under it
-  external: example.com      # external routes are it (KyMessages' server_name) or names under it, outside the internal domain
+  external: example.com      # external routes are it or names under it, outside the internal domain
 edges:
   - target: k80
     provider: cloudflare
@@ -862,7 +861,7 @@ carry `ky.managed-by=kyquickstart`; the installer will not adopt foreign objects
 
 ## Apps with several hostnames
 
-An app whose catalog manifest declares `routes` (KyMessages) takes one route per role, all on
+An app whose catalog manifest declares `routes` (none does since KyMessages left the catalog) takes one route per role, all on
 one edge and one `forward_host`, with one `forward_port` per published service port (roles on the
 same service and port must share it). Docker publishes every routed port on `forward_host`, so it
 must be one LAN IPv4 address of the target: a wildcard, loopback, link-local, multicast or IPv6
@@ -871,8 +870,8 @@ name theirs:
 
 ```yaml
 routes:
-  - {app: kymessage, hostname: message.example.com, forward_host: 192.168.1.225, forward_port: 18080, certificate_id: 3}
-  - {app: kymessage, role: matrix, hostname: matrix.example.com, forward_host: 192.168.1.225, forward_port: 18008, certificate_id: 3}
+  - {app: chat, hostname: chat.example.com, forward_host: 192.168.1.225, forward_port: 18080, certificate_id: 3}
+  - {app: chat, role: matrix, hostname: matrix.example.com, forward_host: 192.168.1.225, forward_port: 18008, certificate_id: 3}
 ```
 
 The catalog, never the plan, sets a role's paths. `paths` are the only exact paths its host
@@ -1053,6 +1052,30 @@ not adopted, until you run `kyquickstart apply --adopt-edge-hosts` once: that cl
 host on the edge's target and rewrites it to the new marks, including disabled and removed ones.
 Use the flag only if no other installation shares that target name on the same NPM.
 
+**Released routes.** `unmanage` of an app the catalog no longer has (KyMessages) hands its
+routes to the operator instead of disabling them: on a `lan` edge its NPM hosts lose the
+marker line and the `ky.*` meta and keep their configuration and enabled state, its nginx-edge
+files lose the marker line and keep their names, and its KyDNS records leave the ledger without
+being deleted. Every later apply treats them as foreign. Routes on a `cloudflare`, `frp` or
+`cloudflare-direct` edge are refused: their connector configuration comes from `stack.yaml`, and
+on frp a released host keeps the frp listener ([guided setup](guided-setup.md#kymessages-left-the-catalog)).
+
+On a Kubernetes edge (NPM or the nginx edge on the cluster) the edge's NetworkPolicy admits
+only the upstreams off the cluster that the plan names, so `unmanage` records each released
+route under the edge's `released`:
+
+```yaml
+    released:
+      - hostname: chat.example.com
+        upstream: 192.168.1.91:18443   # absent for an app on the edge's cluster
+```
+
+Apply keeps exactly that `ip:port` in the edge's egress policy, as the route had it, and keeps
+the edge in the plan when it has no route left. A released hostname cannot be routed again
+while its entry is there. Once you have removed the hostname's NPM host or nginx-edge file
+yourself, delete its entry and run `apply`: that drops the allowance. Docker edges record
+nothing; nothing there is derived from the routes.
+
 ## Applying and verifying
 
 ```sh
@@ -1086,7 +1109,7 @@ These values must describe the current request after the product's own proxy han
 client address and HTTPS scheme. A missing G11 implementation fails verification. It checks
 every route and lists each one that failed. It skips, and names, the routes whose product
 reports no status: catalog apps without a `status_path` (KyIdentity, which does not trust the edge on Kubernetes, and NPM) and the
-non-primary routes of a multi-route app (KyMessages' Matrix and chat hosts). The check
+non-primary routes of a multi-route app. The check
 does not grant administrator access, verify SSO, or certify the complete installation.
 
 ## Test scope

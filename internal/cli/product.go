@@ -28,7 +28,6 @@ var productAdapters = map[string]productAdapter{
 	"kypost":     {"/usr/local/bin/kypost-server", "kypost", postSetup},
 	"kydns":      {"/usr/local/bin/kydns", "", dnsSetup},
 	"kyrecovery": {"/app/kyrecovery", "kyrecovery", recoverySetup},
-	"kymessage":  {"/app/kymessages", "", messageSetup},
 	"kycalendar": {"/app/kycalendar", "", calendarSetup},
 	"kyyard":     {"/app/kyyard-server", "", yardSetup},
 }
@@ -173,10 +172,6 @@ func dnsSetup(ctx context.Context, exec identityExec, bundle string, check bool)
 
 func recoverySetup(ctx context.Context, exec identityExec, bundle string, check bool) ([]byte, error) {
 	return commonProductSetup(ctx, exec, "kyrecovery", []string{"kyidentity-oidc", "exact-admin-subjects", "admin-only", "directory-webhook", "check"}, bundle, check)
-}
-
-func messageSetup(ctx context.Context, exec identityExec, bundle string, check bool) ([]byte, error) {
-	return commonProductSetup(ctx, exec, "kymessage", []string{"kyidentity-oidc", "directory-webhook", "dedicated-admin", "check", "restart"}, bundle, check)
 }
 
 func calendarSetup(ctx context.Context, exec identityExec, bundle string, check bool) ([]byte, error) {
