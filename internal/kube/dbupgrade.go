@@ -39,8 +39,9 @@ const (
 )
 
 // cnpgDirs is the directory each of a Cluster's claims keeps, by its role. A claim of any
-// other role (a tablespace's) is refused: the installer never makes one.
-var cnpgDirs = map[string]string{"PG_DATA": "pgdata", "PG_WAL": "pg_wal"}
+// other role is refused before anything stops: the installer never makes one. A WAL claim
+// (walStorage) would leave pgdata/pg_wal a link to a path the copy pod does not mount.
+var cnpgDirs = map[string]string{"PG_DATA": "pgdata"}
 
 // ClusterCopyClaim names the copy of a Cluster's claim taken before upgrading from major, by
 // the attempt that made it at stamp.
@@ -203,7 +204,7 @@ func (a App) clusterClaims(ctx context.Context, o *unstructured.Unstructured) ([
 			continue
 		}
 		if cnpgDirs[p.Labels[cnpgPVCRole]] == "" {
-			return nil, fmt.Errorf("claim %s of cluster %s has role %q, which the pre-upgrade copy does not cover", p.Name, databaseName, p.Labels[cnpgPVCRole])
+			return nil, fmt.Errorf("no upgrade: claim %s of cluster %s has role %q (a separate WAL or tablespace claim, which the installer never makes); the pre-upgrade copy does not cover it, and nothing was stopped", p.Name, databaseName, p.Labels[cnpgPVCRole])
 		}
 		out = append(out, p)
 	}

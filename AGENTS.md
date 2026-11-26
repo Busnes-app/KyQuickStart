@@ -632,7 +632,8 @@ edge compatibility: `docs/redirect.md`.
   deploy: create claim `pre-upgrade-pg<major>-<claim>-<UTC stamp>` for every claim the Cluster
   owns, a new set per attempt, and start each instance's copy pod once on its node while it runs
   (a refused or unprovisioned claim stops nothing), hibernate, copy and verify each
-  (`copyCommand`, uid 26, one pod per instance), then one patch sets the new `imageName` and wakes it for CloudNativePG's in-place
+  (`copyCommand`, uid 26, one pod per instance; only `PG_DATA` claims: a WAL or tablespace claim,
+  never the installer's, refuses first), then one patch sets the new `imageName` and wakes it for CloudNativePG's in-place
   `pg_upgrade --link` (operator 1.26+); then wait healthy and `vacuumdb --analyze-only
   --missing-stats-only`. Cluster patches never carry a resourceVersion (the operator writes its
   status constantly); the switch and the wake carry the Cluster's `metadata.uid`, and the switch

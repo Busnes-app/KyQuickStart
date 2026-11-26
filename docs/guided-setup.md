@@ -879,7 +879,8 @@ Debian trixie base (`18.7-minimal-trixie`, digest `c8caac98…88cc`). A fresh `C
 before anything else of KyIdentity changes:
 
 1. **Copies first, while it runs.** For every claim the `Cluster` owns (`database-1`,
-   `database-2`, …, and `database-N-wal` if it has WAL claims) the installer creates claim
+   `database-2`, …; a `Cluster` the installer made keeps its WAL inside them, and a separate
+   WAL or tablespace claim refuses the upgrade before anything stops) the installer creates claim
    `pre-upgrade-pg17-<claim>-<UTC yyyymmdd-hhmmss>`: the same size and StorageClass. Every
    attempt makes its own; a copy an earlier attempt left is never replaced or deleted. Then one
    pod per instance, on that instance's node, mounts its copies while the `Cluster` still
@@ -891,7 +892,7 @@ before anything else of KyIdentity changes:
 2. **Hibernate.** The `Cluster` is hibernated (CloudNativePG's declarative hibernation, a clean
    shutdown) and apply waits until no instance pod runs. Sign-in stops from here until step 4.
 3. **Copy and verify.** One pod per instance, as the instances' own user (uid 26), copies
-   `pgdata/` (and `pg_wal/`) of each claim into its copy and compares contents, modes, owners,
+   `pgdata/` of each claim into its copy and compares contents, modes, owners,
    sizes and times with the original, as other apps' pre-upgrade copies do
    ([Managing apps](#managing-apps)). Anything that fails from step 2 on, a copy that fails or
    does not fit included, wakes the `Cluster` on its PostgreSQL 17 image, unchanged, and apply
@@ -948,8 +949,6 @@ written on 18 since is lost. This was run end to end in
    kubectl -n kyq-kyidentity get pvc $COPY -o jsonpath='{.spec.storageClassName} {.spec.resources.requests.storage}{"\n"}'
    ```
 
-   If it has a `-wal` copy too, do steps 2, 4 and 5 for it as well (claim `database-1-wal`,
-   label `cnpg.io/pvcRole: PG_WAL`).
 2. Keep that volume when its claim goes: `kubectl patch pv $PV -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'`.
 3. Delete the 18 `Cluster`. **This deletes its claims, the 18 data.** Copy them first if you
    may want them. `kubectl -n kyq-kyidentity delete cluster database --wait`, then wait until

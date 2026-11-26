@@ -30,7 +30,7 @@ import (
 const cluster17 = "ghcr.io/cloudnative-pg/postgresql:17.12-minimal-trixie@sha256:4ae89311e5031155a139a5c6d31a80f6deb135443711e61ff7df41cb549fdcaa"
 
 // upgradeFixture is KyIdentity deployed by an earlier release on a Cluster of three 17
-// instances, database-1 the primary with a WAL claim, on nodes node-1 to node-3, and an
+// instances, database-1 the primary, on nodes node-1 to node-3, and an
 // operator that upgrades the data in place once the Cluster wakes with an image of a higher
 // major, unless fail is set. The operator writes the Cluster's status after every read, so a
 // write that carries the resourceVersion it read conflicts, as in CI run 45719982937.
@@ -140,7 +140,6 @@ func newUpgradeFixture(t *testing.T) *upgradeFixture {
 		}
 	}
 	claim("database-1", "database-1", "primary", "PG_DATA")
-	claim("database-1-wal", "database-1", "primary", "PG_WAL")
 	claim("database-2", "database-2", "replica", "PG_DATA")
 	claim("database-3", "database-3", "replica", "PG_DATA")
 	f.instances(true)
@@ -264,7 +263,7 @@ func (f *upgradeFixture) noClaimDeleted(t *testing.T) {
 // copiesOf are the copy names one attempt makes, at stamp.
 func copiesOf(stamp string) []string {
 	var out []string
-	for _, c := range []string{"database-1", "database-1-wal", "database-2", "database-3"} {
+	for _, c := range []string{"database-1", "database-2", "database-3"} {
 		out = append(out, ClusterCopyClaim(17, c, stamp))
 	}
 	return out
@@ -302,12 +301,12 @@ func TestClusterUpgrade(t *testing.T) {
 	// A storage check per instance on its node while it runs; then hibernated, every
 	// instance copied while it is, then the image and the wake together.
 	want := []string{
-		`pod [database-1 database-1-wal] on node-1 while hibernation ""`,
+		`pod [database-1] on node-1 while hibernation ""`,
 		`pod [database-2] on node-2 while hibernation ""`,
 		`pod [database-3] on node-3 while hibernation ""`,
 		"hibernation on",
-		`pod [database-1 database-1-wal] on any node while hibernation "on"`,
-		"copy [database-1:pgdata database-1-wal:pg_wal] while hibernation on",
+		`pod [database-1] on any node while hibernation "on"`,
+		"copy [database-1:pgdata] while hibernation on",
 		`pod [database-2] on any node while hibernation "on"`,
 		"copy [database-2:pgdata] while hibernation on",
 		`pod [database-3] on any node while hibernation "on"`,
@@ -345,7 +344,7 @@ func TestClusterUpgrade(t *testing.T) {
 			t.Errorf("copy pod runs as %d", *ct.SecurityContext.RunAsUser)
 		}
 		for _, m := range ct.VolumeMounts {
-			if strings.HasPrefix(m.Name, "src-") && (!m.ReadOnly || m.SubPath != "pgdata" && m.SubPath != "pg_wal") {
+			if strings.HasPrefix(m.Name, "src-") && (!m.ReadOnly || m.SubPath != "pgdata") {
 				t.Errorf("source mount %+v", m)
 			}
 		}
@@ -355,7 +354,7 @@ func TestClusterUpgrade(t *testing.T) {
 		t.Errorf("execs = %v", f.execs)
 	}
 	note := step.Note()
-	for _, s := range []string{"kubectl -n kyq-kyidentity delete pvc " + strings.Join(c, " "), "PostgreSQL 17 to 18", "ANALYZE ran on database-1", "of database-1-wal, verified"} {
+	for _, s := range []string{"kubectl -n kyq-kyidentity delete pvc " + strings.Join(c, " "), "PostgreSQL 17 to 18", "ANALYZE ran on database-1", "of database-2, verified"} {
 		if !strings.Contains(note, s) {
 			t.Errorf("note lacks %q: %s", s, note)
 		}
@@ -371,7 +370,7 @@ func TestClusterUpgrade(t *testing.T) {
 	if done, err := step.Inspect(ctx); err != nil || !done {
 		t.Fatalf("rerun: %v", err)
 	}
-	if len(f.copies(t)) != 4 {
+	if len(f.copies(t)) != 3 {
 		t.Fatal("copies went")
 	}
 	f.noClaimDeleted(t)
@@ -472,7 +471,7 @@ func TestClusterUpgradeFailsAfterHibernation(t *testing.T) {
 				t.Fatalf("apply = %v", err)
 			}
 			f.awakeOn17(t)
-			if len(f.copies(t)) != 4 {
+			if len(f.copies(t)) != 3 {
 				t.Fatalf("%d copies", len(f.copies(t)))
 			}
 			f.noClaimDeleted(t)
@@ -507,7 +506,7 @@ func TestClusterUpgradeClusterChangedDuringCopy(t *testing.T) {
 			} else {
 				f.awakeOn17(t)
 			}
-			if len(f.copies(t)) != 4 {
+			if len(f.copies(t)) != 3 {
 				t.Fatalf("%d copies", len(f.copies(t)))
 			}
 			f.noClaimDeleted(t)
@@ -579,7 +578,7 @@ func TestClusterUpgradeFailoverBeforeStop(t *testing.T) {
 		failed = true
 		// Through the tracker: this runs inside the clientset's reactor.
 		gvr := corev1.SchemeGroupVersion.WithResource("persistentvolumeclaims")
-		for name, role := range map[string]string{"database-1": "replica", "database-1-wal": "replica", "database-2": "primary"} {
+		for name, role := range map[string]string{"database-1": "replica", "database-2": "primary"} {
 			o, err := f.cs.Tracker().Get(gvr, "kyq-kyidentity", name)
 			if err != nil {
 				return err
@@ -596,7 +595,7 @@ func TestClusterUpgradeFailoverBeforeStop(t *testing.T) {
 		t.Fatal(err)
 	}
 	copies := f.copies(t)
-	for claim, role := range map[string]string{"database-1": "replica", "database-1-wal": "replica", "database-2": "primary", "database-3": "replica"} {
+	for claim, role := range map[string]string{"database-1": "replica", "database-2": "primary", "database-3": "replica"} {
 		if got := copies[ClusterCopyClaim(17, claim, stamp1)].Labels[copyRole]; got != role {
 			t.Errorf("copy of %s labelled %s, want %s", claim, got, role)
 		}
@@ -623,6 +622,26 @@ func (f *upgradeFixture) applied(t *testing.T, p k8stesting.PatchAction, err err
 		t.Fatal(uerr)
 	}
 	return true, nil, err
+}
+
+// A separate WAL claim, which the installer never makes, refuses before anything stops: its
+// pgdata/pg_wal links to a path the copy pod does not mount.
+func TestClusterUpgradeWALClaimRefused(t *testing.T) {
+	ctx := context.Background()
+	f := newUpgradeFixture(t)
+	p := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "database-1-wal", Namespace: "kyq-kyidentity",
+		Labels:          map[string]string{clusterLabel: databaseName, cnpgInstance: "database-1", cnpgRole: "primary", cnpgPVCRole: "PG_WAL"},
+		OwnerReferences: []metav1.OwnerReference{{APIVersion: clusterGroup + "/v1", Kind: "Cluster", Name: databaseName, UID: "cluster-uid"}}}}
+	if _, err := f.cs.CoreV1().PersistentVolumeClaims("kyq-kyidentity").Create(ctx, p, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	err := f.step().Apply(ctx)
+	if err == nil || !strings.Contains(err.Error(), `"PG_WAL"`) || !strings.Contains(err.Error(), "nothing was stopped") {
+		t.Fatalf("apply = %v", err)
+	}
+	if len(f.events) != 0 || len(f.copies(t)) != 0 || f.image(t) != cluster17 {
+		t.Fatalf("events %v, %d copies", f.events, len(f.copies(t)))
+	}
 }
 
 // A claim the storage refuses stops nothing.
@@ -674,7 +693,7 @@ func TestClusterUpgradeStorageCheckRefused(t *testing.T) {
 	if slices.ContainsFunc(f.events, func(e string) bool { return strings.HasPrefix(e, "hibernation") || strings.HasPrefix(e, "image") }) {
 		t.Fatalf("the Cluster was touched: %v", f.events)
 	}
-	if f.image(t) != cluster17 || len(f.copies(t)) != 9 {
+	if f.image(t) != cluster17 || len(f.copies(t)) != 7 {
 		t.Fatalf("image %s, %d copies", f.image(t), len(f.copies(t)))
 	}
 	f.noClaimDeleted(t)
@@ -694,7 +713,7 @@ func TestClusterUpgradeOperatorRefuses(t *testing.T) {
 		t.Fatalf("apply = %v", err)
 	}
 	f.awakeOn17(t)
-	if len(f.copies(t)) != 4 {
+	if len(f.copies(t)) != 3 {
 		t.Fatalf("after the refusal: %d copies", len(f.copies(t)))
 	}
 	f.noClaimDeleted(t)
@@ -714,7 +733,7 @@ func TestClusterUpgradeRollback(t *testing.T) {
 	if f.image(t) != cluster17 || imageMajor(f.data) != 17 || !slices.Equal(f.events[len(f.events)-1:], []string{"image 17"}) {
 		t.Fatalf("after the rollback: image %s, events %v", f.image(t), f.events)
 	}
-	if len(f.copies(t)) != 4 {
+	if len(f.copies(t)) != 3 {
 		t.Fatal("copies went")
 	}
 	f.noClaimDeleted(t)
