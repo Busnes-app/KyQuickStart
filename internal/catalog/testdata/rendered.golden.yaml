@@ -321,6 +321,7 @@ kyidentity:
         replicas:
             since: 0.6.0.2
             database_image: postgres
+            dump_image: postgres_17
             database_size: 2Gi
             cluster_image: postgres_cluster
 kynotes:

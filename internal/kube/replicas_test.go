@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path"
 	"slices"
 	"strings"
@@ -151,6 +152,33 @@ func TestRenderReplicas(t *testing.T) {
 	}
 	if strings.Contains(script, "SUPERUSER") || envOf(c)["POSTGRES_USER"].Value != "" {
 		t.Error("the app's role must not be the superuser")
+	}
+	// PostgreSQL 18 beside the 17 data on the same claim: the 17 image dumps pgdata/ once, the
+	// kit restores it, both from the vendored kit byte for byte (scripts/postgres-17-to-18.sh).
+	kit, err := os.ReadFile("../../scripts/postgres-17-to-18.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mounts := func(c corev1.Container) map[string]corev1.VolumeMount {
+		m := map[string]corev1.VolumeMount{}
+		for _, v := range c.VolumeMounts {
+			m[v.MountPath] = v
+		}
+		return m
+	}
+	if len(db.InitContainers) != 2 || db.InitContainers[0].Name != "private-volumes" {
+		t.Fatalf("init containers = %+v", db.InitContainers)
+	}
+	dump := db.InitContainers[1]
+	if dump.Name != "postgres-17-dump" || dump.Image != a.Catalog.Images["postgres_17"] || !strings.HasPrefix(a.Catalog.Images["postgres_17"], "postgres:17.") ||
+		!slices.Equal(dump.Command, []string{"bash", "-c", string(kit), "postgres-17-to-18.sh", "dump"}) || envOf(dump)["OLD"].Value != "/v/pgdata" || envOf(dump)["NEW"].Value != "/v" ||
+		mounts(dump)["/v"].SubPath != privateDir || mounts(dump)["/tmp"].Name != "tmp" || dump.SecurityContext != sc {
+		t.Fatalf("dump = %+v", dump)
+	}
+	if len(c.Command) != 5 || c.Command[4] != string(kit) || !strings.HasSuffix(script, `exec bash -c "$1" postgres-17-to-18.sh restore postgres`) ||
+		mounts(c)["/var/lib/postgresql"].SubPath != privateDir || mounts(c)["/var/lib/postgresql/data"].Name != "" || envOf(c)["PGDATA"].Value != "" ||
+		!strings.HasPrefix(c.Image, "postgres:18.") || *db.TerminationGracePeriodSeconds != 120 {
+		t.Fatalf("database = %+v", c)
 	}
 	p := o.DatabasePolicy.Spec
 	if len(p.PolicyTypes) != 2 || len(p.Egress) != 0 || len(p.Ingress) != 1 || p.Ingress[0].From[0].PodSelector.MatchLabels[servesLabel] != "kyidentity" ||
@@ -623,5 +651,49 @@ func TestReplicasCatalogValidation(t *testing.T) {
 	}
 	if image := c.Images[c.Kubernetes.Replicas.ClusterImage]; !catalog.Pinned(image) || !strings.HasPrefix(image, "ghcr.io/cloudnative-pg/postgresql:") {
 		t.Fatalf("cluster image = %q", image)
+	}
+}
+
+// A database pod held by its 17 dump exiting non-zero (a refusal) is not ready, and health
+// says so with the dump's message; one whose dump exited 0 is ready.
+func TestHealthReportsFailedDump(t *testing.T) {
+	ctx := context.Background()
+	a, cs, _ := replicatedApp(t, 3, "")
+	steps := Steps(a)
+	for _, s := range steps[:3] {
+		if err := s.Apply(ctx); err != nil {
+			t.Fatalf("%s: %v", s.ID(), err)
+		}
+	}
+	markReady(t, cs)
+	db, _ := cs.AppsV1().Deployments("kyq-kyidentity").Get(ctx, databaseName, metav1.GetOptions{})
+	if c := db.Spec.Template.Spec.InitContainers[1]; c.Name != "postgres-17-dump" || c.TerminationMessagePolicy != corev1.TerminationMessageFallbackToLogsOnError {
+		t.Fatalf("dump init container = %s %s", c.Name, c.TerminationMessagePolicy)
+	}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "database-x", Namespace: "kyq-kyidentity", Labels: db.Spec.Template.Labels}}
+	pod.Status.InitContainerStatuses = []corev1.ContainerStatus{
+		{Name: "private-volumes", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}},
+		{Name: "postgres-17-dump", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+			LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 1, Message: "postgres-17-to-18: PostgreSQL 17 has run on /v/pgdata since it was moved to 18\n"}}},
+	}
+	pod, err := cs.CoreV1().Pods("kyq-kyidentity").Create(ctx, pod, metav1.CreateOptions{}) // named by the fixture
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := steps[3].Verify(ctx); err != nil {
+		t.Fatalf("a ready database with an old failed pod: %v", err)
+	}
+	db.Status = appsv1.DeploymentStatus{ObservedGeneration: db.Generation, Replicas: 1}
+	cs.AppsV1().Deployments("kyq-kyidentity").UpdateStatus(ctx, db, metav1.UpdateOptions{})
+	err = steps[3].Verify(ctx)
+	if err == nil || !strings.Contains(err.Error(), "database: 0 of 1 replicas ready; init container postgres-17-dump exited 1: postgres-17-to-18: PostgreSQL 17 has run on") {
+		t.Fatalf("health = %v", err)
+	}
+	pod.Status.InitContainerStatuses[1] = corev1.ContainerStatus{Name: "postgres-17-dump", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}}
+	if _, err := cs.CoreV1().Pods("kyq-kyidentity").UpdateStatus(ctx, pod, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := steps[3].Verify(ctx); err == nil || strings.Contains(err.Error(), "init container") {
+		t.Fatalf("health with the dump done = %v", err)
 	}
 }

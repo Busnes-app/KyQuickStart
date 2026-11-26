@@ -794,7 +794,7 @@ In namespace `kyq-kyidentity`, Pod Security `restricted`:
 
 ### The database
 
-**The installer's (default).** Deployment `database`: one Postgres 17 pod on claim
+**The installer's (default).** Deployment `database`: one PostgreSQL 18 pod on claim
 `vol-database` (2 GiB), created UTF8 with the C locale as KyIdentity requires. KyIdentity
 connects as a role that owns its database and is not a superuser. Only KyIdentity's pods can
 reach it, and it can reach nothing. Read this before choosing it:
@@ -806,8 +806,27 @@ reach it, and it can reach nothing. Read this before choosing it:
 - **The connection is not encrypted.** It stays inside the cluster, between the pods the
   network policy names; a cluster whose network you do not trust needs your own Postgres with
   TLS.
-- **The installer does not back it up** and does not upgrade it. KyIdentity's own backups
-  (below) are its only backup.
+- **The installer does not back it up.** KyIdentity's own backups (below) are its only backup.
+- **PostgreSQL 17 to 18.** A pod made by an earlier release ran 17 with its data in
+  `pgdata/` of the claim. The first apply of this release moves it on the same claim: init
+  container `postgres-17-dump` (the 17 image) dumps `pgdata/` once into `upgrade-from-17/`,
+  and the 18 container restores that dump into `18/docker` beside it before it starts, roles
+  and passwords included. The 17 data is only read. The claim needs about twice the 17 data
+  free; with less, the dump refuses, writes nothing and the pod stays in its init container
+  until the claim grows (`kubectl -n kyq-kyidentity logs deploy/database -c
+  postgres-17-dump`). A dump refuses too while `pgdata/postmaster.pid` exists, which only a 17
+  that crashed leaves: start the previous release's pod once and let it stop. KyIdentity cannot
+  sign anyone in while the move runs, about as long as a restore of its data. To go back, apply
+  with the previous release: its 17 pod starts on the untouched `pgdata/`. Applying this
+  release again after 17 has run refuses: 18 lacks what 17 wrote since, so the dump stops the
+  pod in its init container, and the apply's health wait ends with the dump's message. Your
+  choice, from a debug pod mounting the claim, with the database scaled to 0: to move 17 again,
+  rename `18/` (and `upgrade-from-17/`, if it is there) with a suffix such as `.replaced`
+  (nothing is deleted); to keep 18 as it was, delete `18/moved-from-17.checkpoint`. Then apply
+  again. Once the move is done you may delete `upgrade-from-17/` (the dump) from the claim, for
+  example from a debug pod mounting it; 18 keeps starting. Deleting `pgdata/` (17) is separate,
+  and ends the way back. Nothing does either for you. No pre-upgrade backup is taken: there is
+  none of this database (above), and the 17 data stays as the way back.
 
 **The installer's, highly available (`database_instances`).** Owner amendment, 2026-11-13.
 `database_instances: 3` (3 to 5) replaces that one pod with a
@@ -848,7 +867,8 @@ The first apply takes several minutes: the instances start one after another, ea
 the one before, and KyIdentity's pods start once all are ready (15 minutes at most, then
 apply stops and names the `kubectl describe` to read). The installer still does not back the
 database up: KyIdentity's own backups (below) are its only backup. It does not upgrade
-Postgres across major versions.
+Postgres across major versions: a `Cluster` stays on PostgreSQL 17 (17.12), supported until
+November 2029, until the installer has a backup of it to take first.
 
 ### The CloudNativePG operator
 

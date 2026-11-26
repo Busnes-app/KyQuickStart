@@ -74,6 +74,24 @@ jobs:
       - run: make workflow-lint
       - run: scripts/check-no-binaries.sh
 
+  postgres-upgrade:
+    # The catalog's PostgreSQL 17 to 18 move on its real rendering: the replicated KyIdentity's
+    # database pod, seeded with the previous catalog's.
+    name: PostgreSQL 17 to 18 upgrade
+    if: github.event.pull_request.draft != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the scripts render the previous catalog from git
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: shellcheck scripts/postgres-17-to-18.sh scripts/test-postgres-17-to-18-pod.sh
+      - run: scripts/test-postgres-17-to-18-pod.sh
+
   e2e-shard:
     # sshd in a container on the runner's Docker socket; deploys the hello fixture. Each kind
     # test builds its own cluster, so the suite splits by test name into parallel jobs, balanced

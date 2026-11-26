@@ -14,8 +14,10 @@ version: 0.6.1
 # catalog-follow: v0.6.1 attested by Busnes-app/KyIdentity-server release-image.yml@refs/tags/v0.6.1
 images:
   kyidentity: ghcr.io/busnes-app/kyidentity-server:0.6.1@sha256:270a4b3223b7753b2e3bd2eb8895a3c73c3e9469b4f6333991ca2fa1944c3b65
-  # Kubernetes, with replicas and no database_secret in the plan: the Postgres they share.
-  postgres: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+  # Kubernetes, with replicas and no database_secret in the plan: the Postgres they share,
+  # and the 17 its init container runs once to dump a 17 database for 18 to restore.
+  postgres: postgres:18.7-alpine3.24@sha256:0115267ab5a509022df9319c77be365cef335adb71556c75f60f5360ee247e71
+  postgres_17: postgres:17.12-alpine3.24@sha256:f9cf3e1f0066f0eb0c48707d864f0ac5941e9ff454a072077d97a4d278d07d73
   # The same, with database_instances in the plan: the CloudNativePG community's Postgres 17
   # operand image (17.12 on Debian trixie, no extras), which the cluster's operator runs.
   postgres_cluster: ghcr.io/cloudnative-pg/postgresql:17.12-minimal-trixie@sha256:4ae89311e5031155a139a5c6d31a80f6deb135443711e61ff7df41cb549fdcaa
@@ -68,5 +70,6 @@ kubernetes:
   replicas:
     since: 0.6.0.2
     database_image: postgres
+    dump_image: postgres_17
     database_size: 2Gi
     cluster_image: postgres_cluster

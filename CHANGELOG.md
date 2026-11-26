@@ -14,6 +14,13 @@ state directory, target data and target-held credentials; do not reset them as a
 
 ## Unreleased
 
+- PostgreSQL 18 for the replicated KyIdentity's database pod (Kubernetes), with an automatic
+  dump and restore from 17 on the same claim that keeps the 17 data.
+  **Upgrade impact:** KyIdentity sign-in is down while the restore runs; the claim needs about
+  twice the 17 data free. Removing the 17 data afterwards is a manual step
+  (`docs/guided-setup.md`). After a rollback that ran 17, deploying 18 again refuses until you
+  choose to move 17 again or keep 18 (same doc); apply's health wait shows the dump's message.
+  CloudNativePG clusters stay on 17. KyMessages' Matrix stack keeps PostgreSQL 17.
 - Follow KyPost, KyCalendar and KyYard `0.6.1.1` with verified release image digests.
   KyPost includes the receiving accelerator and file-lock/fsync fixes; KyCalendar and
   KyYard refresh their Alpine base. **Upgrade impact:** the selected apps restart on
