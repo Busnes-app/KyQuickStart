@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -15,6 +16,7 @@ type container struct {
 	Service string `json:"Service"`
 	State   string `json:"State"`
 	Health  string `json:"Health"`
+	Exit    int    `json:"ExitCode"`
 }
 
 // parsePS reads `docker compose ps --format json`: one object per line (Compose 2.21+).
@@ -49,6 +51,17 @@ func notRunning(cs []container, services []string) string {
 	return ""
 }
 
+// failedOnce names the first one-shot (catalog Once) that exited non-zero, or "". One that
+// exited 0 is done: it never has to be running.
+func failedOnce(cs []container, once []string) string {
+	for _, c := range cs {
+		if c.State == "exited" && c.Exit != 0 && slices.Contains(once, c.Service) {
+			return c.Service
+		}
+	}
+	return ""
+}
+
 // unhealthy names the first service not running or not yet healthy, or "".
 // A container without a healthcheck counts as healthy once running.
 func unhealthy(cs []container, services []string) string {
@@ -76,7 +89,31 @@ func (h healthStep) state(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if s := failedOnce(cs, h.a.Catalog.Once); s != "" {
+		return "", h.a.onceFailed(ctx, s)
+	}
 	return unhealthy(cs, h.a.Catalog.Services), nil
+}
+
+// onceFailed is the error for one-shot service s that exited non-zero, with its last logs:
+// waiting will not change it, and its output says why (and what the operator can do).
+func (a App) onceFailed(ctx context.Context, s string) error {
+	logs, err := Logs(ctx, a, s, 40)
+	if err != nil {
+		return fmt.Errorf("service %s failed; its logs: %w", s, err)
+	}
+	return fmt.Errorf("service %s failed:\n%s", s, bytes.TrimSpace(logs))
+}
+
+// upFailed is the error of docker compose cmd: with the output of a one-shot that failed,
+// which stops up and says why.
+func (a App) upFailed(ctx context.Context, cmd string, err error) error {
+	if cs, perr := a.ps(ctx); perr == nil {
+		if s := failedOnce(cs, a.Catalog.Once); s != "" {
+			return fmt.Errorf("docker compose %s: %w: %w", cmd, err, a.onceFailed(ctx, s))
+		}
+	}
+	return fmt.Errorf("docker compose %s: %w", cmd, err)
 }
 
 func (h healthStep) Inspect(ctx context.Context) (bool, error) {

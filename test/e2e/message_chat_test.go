@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/kyquickstart/internal/catalog"
 	"github.com/Busnes-app/kyquickstart/internal/kube"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/event"
@@ -645,15 +646,33 @@ func (c *messageChat) connector(name string) string {
 	return ""
 }
 
-// stackHealthy waits until every KyMessages container is running and, with a healthcheck,
-// healthy.
+// stackHealthy waits until every KyMessages service is running and, with a healthcheck,
+// healthy, and every one-shot (the catalog's Once) has exited 0. A one-shot that exited
+// non-zero fails at once, with its logs.
 func stackHealthy(t *testing.T) {
 	t.Helper()
+	cat, err := catalog.Load(catalog.Embedded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := cat["kymessage"]
 	for deadline := time.Now().Add(3 * time.Minute); ; time.Sleep(2 * time.Second) {
-		out := docker(t, "ps", "-a", "--filter", "label=com.docker.compose.project=kyq-kymessage", "--format", "{{.Names}} {{.State}} {{.Status}}")
-		ready := strings.Count(out, "\n")+1 == 6
-		for _, line := range strings.Split(out, "\n") {
-			if f := strings.Fields(line); len(f) < 2 || f[1] != "running" || strings.Contains(line, "(health: starting)") || strings.Contains(line, "(unhealthy)") {
+		out := docker(t, "ps", "-a", "--filter", "label=com.docker.compose.project=kyq-kymessage", "--format", `{{.Label "com.docker.compose.service"}} {{.Names}} {{.State}} {{.Status}}`)
+		lines := strings.Split(out, "\n")
+		ready := len(lines) == len(app.Services)+len(app.Once)
+		for _, line := range lines {
+			f := strings.Fields(line)
+			switch {
+			case len(f) < 3:
+				ready = false
+			case slices.Contains(app.Once, f[0]):
+				if f[2] != "exited" {
+					ready = false
+				} else if !strings.Contains(line, "Exited (0)") {
+					logs, _ := exec.Command("docker", "logs", "--tail", "40", f[1]).CombinedOutput()
+					t.Fatalf("KyMessages one-shot %s failed:\n%s\n%s", f[0], out, logs)
+				}
+			case f[2] != "running" || strings.Contains(line, "(health: starting)") || strings.Contains(line, "(unhealthy)"):
 				ready = false
 			}
 		}

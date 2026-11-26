@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 var pollInterval = 2 * time.Second
@@ -50,7 +52,11 @@ func (h healthStep) state(ctx context.Context) (string, bool, error) {
 		case failed(d):
 			return e.Name + " rollout failed: " + reasons(d), true, nil
 		case replicas(d) != *e.Spec.Replicas || !ready(d):
-			return fmt.Sprintf("%s: %d of %d replicas ready", e.Name, d.Status.ReadyReplicas, *e.Spec.Replicas), false, nil
+			why := fmt.Sprintf("%s: %d of %d replicas ready", e.Name, d.Status.ReadyReplicas, *e.Spec.Replicas)
+			if f := h.a.Client.initFailure(ctx, d); f != "" {
+				why += "; " + f
+			}
+			return why, false, nil
 		}
 	}
 	if h.a.clustered() {
@@ -124,6 +130,28 @@ func transient(err error) bool {
 	}
 	code := status.Status().Code
 	return code == http.StatusTooManyRequests || code >= http.StatusInternalServerError
+}
+
+// initFailure says why a pod of d is held by an init container that exited non-zero (the
+// PostgreSQL 17 dump refusing): its exit code and termination message, or "". The kubelet
+// retries it, so the wait goes on and its timeout says why. Best effort: a read error is "".
+func (c *Client) initFailure(ctx context.Context, d *appsv1.Deployment) string {
+	pods, err := c.cs.CoreV1().Pods(d.Namespace).List(ctx, metav1.ListOptions{LabelSelector: metav1.FormatLabelSelector(d.Spec.Selector)})
+	if err != nil {
+		return ""
+	}
+	for _, p := range pods.Items {
+		for _, st := range p.Status.InitContainerStatuses {
+			t := st.State.Terminated
+			if t == nil {
+				t = st.LastTerminationState.Terminated
+			}
+			if t != nil && t.ExitCode != 0 && owned(&p) {
+				return fmt.Sprintf("init container %s exited %d: %s", st.Name, t.ExitCode, strings.TrimSpace(t.Message))
+			}
+		}
+	}
+	return ""
 }
 
 func ready(d *appsv1.Deployment) bool {

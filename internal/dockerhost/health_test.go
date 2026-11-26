@@ -2,6 +2,8 @@ package dockerhost
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -58,5 +60,54 @@ func TestHealthApplyTimesOut(t *testing.T) {
 	err := Steps(fakeApp(f))[1].Apply(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "not healthy after 1s: service web is unhealthy") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// A one-shot (catalog Once) that exited 0 is done; one that exited non-zero fails health at
+// once, with its logs, and so does the up it stopped. Lines as Compose 5.7 prints them.
+func TestOnceExitCode(t *testing.T) {
+	pollInterval = time.Millisecond
+	const db = `{"ExitCode":0,"Health":"healthy","Service":"postgres","State":"running","Status":"Up 9 seconds (healthy)"}` + "\n"
+	dump := func(code string) string {
+		return `{"ExitCode":` + code + `,"Health":"","Service":"postgres-17-dump","State":"exited","Status":"Exited (` + code + `) 10 seconds ago"}` + "\n"
+	}
+	run := func(ps string, upErr error) (*fakeRunner, App) {
+		f := &fakeRunner{reply: func(cmd string) ([]byte, error) {
+			switch {
+			case strings.Contains(cmd, " ps "):
+				return []byte(ps), nil
+			case strings.Contains(cmd, " logs "):
+				return []byte("postgres-17-dump-1  | postgres-17-to-18: PostgreSQL 17 has run on /v since it was moved to 18\n"), nil
+			case strings.Contains(cmd, " up "):
+				return nil, upErr
+			}
+			return nil, nil
+		}}
+		a := fakeApp(f)
+		a.Catalog.Services, a.Catalog.Once = []string{"postgres"}, []string{"postgres-17-dump"}
+		return f, a
+	}
+
+	_, a := run(db+dump("0"), nil)
+	if err := Steps(a)[1].Apply(context.Background()); err != nil {
+		t.Fatalf("an exited-0 one-shot is not healthy: %v", err)
+	}
+	if st, err := State(context.Background(), a); err != nil || st != "running" {
+		t.Fatalf("state = %q, %v; want running", st, err)
+	}
+
+	f, a := run(db+dump("1"), nil)
+	err := Steps(a)[1].Apply(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "service postgres-17-dump failed:") || !strings.Contains(err.Error(), "has run on /v since") {
+		t.Fatalf("health err = %v", err)
+	}
+	if n := strings.Count(fmt.Sprint(f.calls), " ps "); n != 1 {
+		t.Fatalf("health polled %d times on a failed one-shot, want 1", n)
+	}
+
+	_, a = run(dump("1"), errors.New("exit status 1"))
+	err = (lifecycleStep{a: a, op: "start"}).Apply(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "docker compose up -d: exit status 1: service postgres-17-dump failed:") || !strings.Contains(err.Error(), "has run on /v since") {
+		t.Fatalf("start err = %v", err)
 	}
 }

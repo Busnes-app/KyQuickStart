@@ -235,6 +235,8 @@ func database(o *objects, a App, meta func(string) metav1.ObjectMeta) {
 							{Name: claim, MountPath: "/v", SubPath: privateDir},
 							{Name: "tmp", MountPath: "/tmp"},
 						},
+						// A refusal's last lines become its status message, which health reports.
+						TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
 					}},
 					Containers: []corev1.Container{{
 						Name:    databaseName,

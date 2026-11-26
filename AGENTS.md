@@ -533,7 +533,7 @@ edge compatibility: `docs/redirect.md`.
   a deploy is backed up first where `kyquickstart backup` can (one snapshot when the version
   change takes one too) and otherwise refuses `ack_required` without `--acknowledge-no-backup`.
   The suite's PostgreSQL 17 to 18 kit is `scripts/postgres-17-to-18.sh`, kept byte for byte (kit
-  v2) in kymessage's `files/pg-upgrade/` and `internal/kube/` (`TestPostgresKitIsVendoredByteForByte`).
+  v4) in kymessage's `files/pg-upgrade/` and `internal/kube/` (`TestPostgresKitIsVendoredByteForByte`).
   Uninstall keeps data and secrets, and on Kubernetes ends only once the app's pods are gone;
   Docker deploys, backups and lifecycle steps refuse a Compose project `kyq-<app>` whose
   containers another root's directory made (another plan, or this one before its root moved),
@@ -753,9 +753,11 @@ calls and kind nodes must carry their own explicit bounds.
 - CI's `PostgreSQL 17 to 18 upgrade` job (in `release-image.yml`'s REQUIRED list):
   `scripts/test-postgres-17-to-18.sh` seeds a 17 install from the previous catalog's rendered
   kymessage Compose file and moves it with this one (`up -d` over the running 17, a refused dump
-  beside a live 17, passwords over the network, rollback, rerun, a bad dump, a fresh install, a 17
-  backup restored with the manifest's command); `scripts/test-postgres-17-to-18-pod.sh` runs the
-  previous and current database pod specs in Docker as a kubelet would (not Kubernetes itself).
+  beside a live 17, passwords over the network, rollback, a refused return to 18 after 17 ran and
+  the documented move-again and keep-18 ways out, rerun, a bad dump, a fresh install, a 17 backup
+  restored with the manifest's command); `scripts/test-postgres-17-to-18-pod.sh` runs the previous
+  and current database pod specs in Docker as a kubelet would, with the same rollback cases (not
+  Kubernetes itself).
 - CI's `e2e (kube-cluster-upgrade)` shard: `TestKubernetesIdentityDatabaseClusterUpgrade`
   (three kind workers, the catalog's KyIdentity and CloudNativePG) installs on a 17 `Cluster`,
   seeds rows and a password role, applies this release (rows, the role's password over the

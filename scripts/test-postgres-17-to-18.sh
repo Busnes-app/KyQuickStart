@@ -3,7 +3,9 @@
 # as deploy lays it out (bind directories owned by the target user, who runs Postgres): a 17
 # install made with the previous catalog (PREV, a commit) moves on `up -d` over the running
 # stack, rows, roles and passwords intact; a dump beside a live 17 refuses and writes nothing;
-# 17 still starts on its untouched data; a rerun is a no-op; a bad dump never yields a
+# 17 still starts on its untouched data; back to 18 after 17 ran refuses, and the documented
+# move-again and keep-18 ways out work, also after the dump alone is cleaned up; a rerun is a
+# no-op; a bad dump never yields a
 # cluster; a fresh install initialises; a 17 backup (the manifest's commands) restores on 18.
 # NEW_APPS renders the new side from another apps directory (mutation checks).
 # usage: scripts/test-postgres-17-to-18.sh   (from the repository; needs Docker, Go, git)
@@ -15,7 +17,7 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/kyq-pg18.XXXXXX")
 id=kyqpg18$$
 cleanup() {
   for d in app fresh restored; do
-    [ -f "$work/$d/compose.yaml" ] && docker compose -p "$id$d" --project-directory "$work/$d" -f "$work/$d/compose.yaml" down -t 30 >/dev/null 2>&1 || true
+    [ -f "$work/$d/compose.yaml" ] && compose "$d" down -t 30 >/dev/null 2>&1 || true
   done
   # Postgres wrote these as this user; nothing else to clean.
   rm -rf "$work"
@@ -101,14 +103,65 @@ compose app down -t 30 >/dev/null 2>&1
 use app old
 { compose app up -d postgres >/dev/null 2>&1 && healthy app; } || fail "17 no longer starts on its data"
 [ "$(compose app exec -T postgres psql -U synapse -d synapse -XAtc 'select count(*) from events')" = 20000 ] || fail "17 data changed"
+compose app exec -T postgres psql -U synapse -d synapse -XAtqc "insert into events(room) values ('written on 17 after the move')"
+compose app down -t 30 >/dev/null 2>&1
+
+# 4b. Back to 18 after 17 ran: the dump refuses and 18 does not start without that row.
+use app new
+compose app up -d postgres >/dev/null 2>&1 && fail "18 started after 17 ran since the move"
+out=$(compose app logs postgres-17-dump 2>&1)
+grep -q 'has run on .* since it was moved to 18' <<<"$out" || fail "no rollback message: $out"
+[ "$(docker inspect -f '{{.State.Running}}' "$(compose app ps -aq postgres)")" = false ] || fail "18 is running"
+echo "refused as documented: $(grep -o 'postgres-17-to-18: PostgreSQL 17 has run.*' <<<"$out" | head -1)"
+compose app down -t 30 >/dev/null 2>&1
+
+# 4c. The documented move again: rename 18 and the dump, deploy; 18 has the row, the old 18 is kept.
+in_app app 'mv /v/pgdata/18 /v/pgdata/18.replaced && mv /v/pgdata/upgrade-from-17 /v/pgdata/upgrade-from-17.replaced'
+{ compose app up -d postgres >/dev/null 2>&1 && healthy app; } || fail "18 did not start after the move again"
+[ "$(client app synapse-pw synapse synapse 'select count(*) from events')" = 20001 ] || fail "the move again lost the row written on 17"
+[ -s "$work/app/pgdata/18.replaced/docker/PG_VERSION" ] || fail "the replaced 18 cluster is gone"
 compose app down -t 30 >/dev/null 2>&1
 
 # 5. Rerun: nothing dumped or restored again.
-use app new
 { compose app up -d postgres >/dev/null 2>&1 && healthy app; } || fail "18 did not restart"
 grep -q 'already done' <<<"$(compose app logs postgres-17-dump 2>&1)" || fail "rerun dumped again"
 ! grep -q 'postgres-17-to-18: restored' <<<"$(compose app logs postgres 2>&1)" || fail "rerun restored again"
 compose app down -t 30 >/dev/null 2>&1
+
+# 5b. Keep 18 after 17 ran: delete source-checkpoint as documented; accepted, and it sticks.
+use app old
+{ compose app up -d postgres >/dev/null 2>&1 && healthy app; } || fail "17 did not start for the keep-18 check"
+compose app down -t 30 >/dev/null 2>&1
+use app new
+compose app up -d postgres >/dev/null 2>&1 && fail "18 started after 17 ran (keep-18 check)"
+# The file the refusal says to delete, as the dump sees it (/v is pgdata/).
+keep=$(compose app logs postgres-17-dump 2>&1 | sed -n 's|.*To keep 18 as it is: delete /v/\([^ ]*\), then start again.*|\1|p' | tail -1)
+[ -n "$keep" ] || fail "the refusal names no file to delete to keep 18"
+compose app down -t 30 >/dev/null 2>&1
+in_app app "rm /v/pgdata/$keep"
+for _ in 1 2; do
+  { compose app up -d postgres >/dev/null 2>&1 && healthy app; } || fail "keep 18 was not accepted"
+  grep -q 'already done' <<<"$(compose app logs postgres-17-dump 2>&1)" || fail "keep 18 did not stick"
+  compose app down -t 30 >/dev/null 2>&1
+done
+[ "$(compose app run --rm --no-deps -T postgres-17-dump 2>&1 | tail -1)" = "postgres-17-to-18: already done" ] || fail "keep 18 dump"
+
+# 5c. The documented clean-up of the dump alone (17 kept): later starts go on, and a rollback
+# that writes on 17 is still refused on the way back to 18.
+in_app app 'mv /v/pgdata/upgrade-from-17 /v/upgrade-from-17.saved'
+{ compose app up -d postgres >/dev/null 2>&1 && healthy app; } || fail "18 did not start after the dump was removed"
+grep -q 'already done' <<<"$(compose app logs postgres-17-dump 2>&1)" || fail "start after the clean-up"
+compose app down -t 30 >/dev/null 2>&1
+use app old
+{ compose app up -d postgres >/dev/null 2>&1 && healthy app; } || fail "17 did not start after the clean-up"
+compose app exec -T postgres psql -U synapse -d synapse -XAtqc "insert into events(room) values ('written on 17 after the clean-up')"
+compose app down -t 30 >/dev/null 2>&1
+use app new
+compose app up -d postgres >/dev/null 2>&1 && fail "18 started after 17 ran since the clean-up"
+grep -q 'has run on .* since it was moved to 18' <<<"$(compose app logs postgres-17-dump 2>&1)" || fail "no rollback message after the clean-up"
+compose app down -t 30 >/dev/null 2>&1
+# Keep 18 again, and put the dump back for step 6.
+in_app app "rm /v/pgdata/$keep && mv /v/upgrade-from-17.saved /v/pgdata/upgrade-from-17"
 
 # 6. A dump that fails to restore never yields a cluster, on any number of starts.
 in_app app 'mv /v/pgdata/18/docker /v/pgdata/18/docker.saved && cp /v/pgdata/upgrade-from-17/dump.sql /v/dump.good && echo "THIS IS NOT SQL;" >> /v/pgdata/upgrade-from-17/dump.sql'
@@ -139,4 +192,4 @@ appdir restored; use restored new
 { compose restored up -d postgres >/dev/null 2>&1 && healthy restored; } || fail "restore target did not start"
 eval "compose restored exec -T postgres $restore" < "$work/backup-17.sql" || fail "restore_command on 18"
 [ "$(client restored synapse-pw synapse synapse 'select count(*) from events')" = 20000 ] || fail "restored rows"
-echo "PASS: kymessage PostgreSQL 17 to 18 (up over running 17, live-17 refusal, passwords, rollback, rerun, bad dump, fresh, 17 backup on 18)"
+echo "PASS: kymessage PostgreSQL 17 to 18 (up over running 17, live-17 refusal, passwords, rollback, refused return after 17 ran, move again, keep 18, dump clean-up, rerun, bad dump, fresh, 17 backup on 18)"
