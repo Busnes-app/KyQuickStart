@@ -81,7 +81,10 @@ transport.proxyProtocolVersion = "v2"
 		})
 	}
 	ingress = append(ingress, map[string]any{"service": "http_status:404"})
-	b, err := yaml.Marshal(map[string]any{"tunnel": c.TunnelID, "credentials-file": "/run/secrets/credential", "ingress": ingress})
+	// Strict post-quantum key exchange to Cloudflare. It needs QUIC: pinning it removes the
+	// fallback to http2, which has no PQ mode (cloudflared 2026.10.0 does not refuse the pair).
+	b, err := yaml.Marshal(map[string]any{"tunnel": c.TunnelID, "credentials-file": "/run/secrets/credential", "ingress": ingress,
+		"post-quantum": true, "protocol": "quic"})
 	if err != nil {
 		panic(err)
 	}

@@ -29,7 +29,9 @@ const (
 )
 
 // NginxMain is the whole configuration but the routes. Timeouts, body size and TLS settings
-// are NPM 2.16's, so a route behaves the same behind either proxy. Port 80 serves nothing: it
+// are NPM 2.16's, so a route behaves the same behind either proxy, except the key-exchange
+// groups: hybrid post-quantum X25519MLKEM768 first, which needs the image's OpenSSL 3.5 or
+// later (nginx refuses the file below that). Port 80 serves nothing: it
 // redirects every request to the host it asked for (as NPM's forced HTTPS does) and answers the
 // readiness probe, and an
 // unknown TLS name gets no handshake. The loopback listener answers the generation the workers
@@ -62,6 +64,7 @@ http {
   server_names_hash_bucket_size 512;
   ssl_protocols TLSv1.2 TLSv1.3;
   ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+  ssl_ecdh_curve X25519MLKEM768:X25519:prime256v1;
   ssl_prefer_server_ciphers off;
   ssl_session_cache shared:SSL:10m;
   ssl_session_timeout 5m;

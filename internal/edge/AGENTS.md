@@ -52,7 +52,10 @@ straight to the apps, `cloudflare-direct`), and verify product proxy behavior.
   pods do not load it. `NginxGeneration` and the pod's shell hash the same files in the same
   order: change both together. The DNS token goes Secret to Secret (`SetACMEToken`), never into
   a spec, hash, file or error. Keep the main configuration's limits and TLS settings at NPM's
-  unless a change is meant for both.
+  unless a change is meant for both. The one exception is `ssl_ecdh_curve` (hybrid
+  X25519MLKEM768 first, OpenSSL 3.5 or later in the image).
+- cloudflared's generated configuration sets `post-quantum: true` and `protocol: quic`; never
+  add http2 or `auto`, which fall back to a classical tunnel.
 - An operator route (`Route.Operator`, no app; marker `operator:<hostname>`) renders KyIdentity's
   forward-auth locations in `serverConfig` from `Route.ForwardAuth`. Its edge secret is filled in
   memory by the CLI's `kyidentity.proxy-app.<hostname>` step and appears only in the internal
@@ -90,8 +93,10 @@ Use disposable fixtures for infrastructure tests. Preserve existing operator res
   preservation and cloudflared ingress parsing. The kind NPM test also covers a `lan` route.
   `TestNginxContainer` runs the catalog's nginx image as its pods run it under the rendered
   routes: forged headers, allow-lists, connector pinning, reload without restart, a rejected
-  configuration, a renewed certificate.
-  `TestCloudflaredDirectContainer` matches a direct ingress's hostnames with the pinned
+  configuration, a renewed certificate, the image's OpenSSL (3.5 or later) and the negotiated
+  key-exchange group (X25519MLKEM768 for a hybrid client, a group outside the list refused).
+  `TestCloudflaredIngressContainer` also starts the tunnel offline and checks cloudflared runs
+  strict post-quantum over QUIC. `TestCloudflaredDirectContainer` matches a direct ingress's hostnames with the pinned
   cloudflared and proves, on a real reserved network, the app sees exactly the connector's
   address and a foreign container is refused. The Cloudflare fixtures do not prove a live
   account connection.
