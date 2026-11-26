@@ -340,12 +340,12 @@ func loadManagement(state string, trust trustFlag, o Options) (*session, error) 
 }
 
 func managementSession(st *stack.Stack, state string, trust trustFlag, o Options) (*session, error) {
-	cat, err := catalog.Load(o.Catalog)
-	if st.Demo {
-		cat, err = catalog.Load(catalog.Demo())
-	}
+	cat, err := planCatalog(st, o)
 	if err != nil {
-		return nil, fmt.Errorf("catalog: %w", err)
+		return nil, err
+	}
+	if err := refuseMissing(st, cat); err != nil {
+		return nil, err
 	}
 	for name := range trust {
 		if _, ok := st.Target(name); !ok {
@@ -727,6 +727,7 @@ func (s *session) upstreams(target string) []netip.AddrPort {
 // configuration.
 type proxy interface {
 	Steps(stack.Edge) []engine.Step
+	Release(e stack.Edge, app string) []engine.Step
 	Preflight(context.Context, stack.Edge) error
 }
 

@@ -215,6 +215,15 @@ func guided(ctx context.Context, args []string, o Options) error {
 		}
 	}
 	if previous != nil {
+		// A saved app this catalog lacks would leave the plan silently, and the next apply
+		// would disable its routes: refuse until unmanage forgets it.
+		cat, err := planCatalog(previous, o)
+		if err != nil {
+			return err
+		}
+		if err := refuseMissing(previous, cat); err != nil {
+			return err
+		}
 		if len(previous.Integrations) > 0 {
 			if _, err := integrationOrder(previous); err != nil {
 				return err
@@ -512,6 +521,9 @@ func guided(ctx context.Context, args []string, o Options) error {
 }
 
 func validateSelection(st *stack.Stack, cat catalog.Catalog, o Options) error {
+	if err := refuseMissing(st, cat); err != nil {
+		return err
+	}
 	if err := yardPlan(st); err != nil {
 		return err
 	}

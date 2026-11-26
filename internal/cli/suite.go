@@ -449,6 +449,20 @@ func remove(ctx context.Context, state string, r Request, trust trustFlag, o Opt
 	if err != nil {
 		return err
 	}
+	if unmanage {
+		// An app the catalog lacks is forgotten without touching it.
+		st, err := stack.Load(filepath.Join(state, "stack.yaml"))
+		if err != nil {
+			return err
+		}
+		cat, err := planCatalog(st, o)
+		if err != nil {
+			return err
+		}
+		if slices.Contains(missingApps(st, cat), name) {
+			return forget(ctx, state, st, name, r, trust, o)
+		}
+	}
 	s, err := load(state, trust, o)
 	if err != nil {
 		return err

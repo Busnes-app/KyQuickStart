@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -403,6 +404,7 @@ func TestNPMContainer(t *testing.T) {
 	for _, route := range e.Routes {
 		checkRoute(address("443"), route.Hostname, false)
 	}
+	releaseOnNPM(t, ctx, n, en, e, certificate.ID, backend, request, func(hostname string) { checkRoute(address("443"), hostname, false) })
 	if err := filepath.WalkDir(state, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -493,4 +495,51 @@ func operatorRoute(t *testing.T, ctx context.Context, docker func(...string) str
 		t.Fatalf("a client header or the edge secret reached the app:\n%s", body)
 	}
 	e.Routes = e.Routes[:len(e.Routes)-1] // the later stages probe every route for whoami's 200
+}
+
+// releaseOnNPM forgets app "chat" on the real NPM (unmanage of an app the catalog lacks): its
+// host keeps serving with the same forward configuration and state, loses this installation's
+// marks, and the next apply without its route neither disables nor changes it.
+func releaseOnNPM(t *testing.T, ctx context.Context, n *NPM, en *engine.Engine, e stack.Edge, cert int, backend string, request func(method, path string, body io.Reader, contentType string, result any), serves func(hostname string)) {
+	t.Helper()
+	chat := stack.Route{App: "chat", Role: "matrix", Hostname: "chat.example.test", ForwardHost: backend, ForwardPort: 8080, ForwardScheme: "http", CertificateID: cert}
+	withChat := e
+	withChat.Routes = append(slices.Clone(e.Routes), chat)
+	if err := en.Run(ctx, n.Steps(withChat)); err != nil {
+		t.Fatal(err)
+	}
+	serves(chat.Hostname)
+	read := func() host {
+		var hosts []host
+		request("GET", hostPath, nil, "application/json", &hosts)
+		for _, h := range hosts {
+			if len(h.Domains) == 1 && h.Domains[0] == chat.Hostname {
+				return h
+			}
+		}
+		t.Fatal("chat's host is gone")
+		return host{}
+	}
+	before := read()
+	if err := en.Run(ctx, n.Release(withChat, "chat")); err != nil {
+		t.Fatal(err)
+	}
+	check := func(when string) {
+		t.Helper()
+		h := read()
+		_, want, _ := strings.Cut(before.Advanced, "\n")
+		_, have, _ := strings.Cut(h.Advanced, "\n")
+		switch {
+		case h.ID != before.ID || !h.Enabled || h.Host != before.Host || h.Port != before.Port || h.Scheme != before.Scheme || h.Certificate != before.Certificate || have != want:
+			t.Fatalf("%s: chat's host changed: %+v", when, h.hostConfig)
+		case n.claim(h, e, "") != foreign || h.Meta["ky.managed-by"] == "kyquickstart":
+			t.Fatalf("%s: chat's host is still this installation's: %v", when, h.Meta)
+		}
+		serves(chat.Hostname)
+	}
+	check("after release")
+	if err := en.Run(ctx, n.Steps(e)); err != nil {
+		t.Fatal(err)
+	}
+	check("after an apply without its route")
 }
