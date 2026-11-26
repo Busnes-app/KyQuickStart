@@ -154,9 +154,22 @@ func (s nginxRelease) pending(files map[string]string) []string {
 	return out
 }
 
-func (s nginxRelease) Inspect(ctx context.Context) (bool, error) {
+// state says why the release is not done, "" when it is: a file still marked, or a ready pod
+// not yet running the released files (a rerun after an interrupted reload waits again).
+func (s nginxRelease) state(ctx context.Context) (string, error) {
 	files, _, err := s.n.c.EdgeFiles(ctx)
-	return len(s.pending(files)) == 0, err
+	if err != nil {
+		return "", err
+	}
+	if left := s.pending(files); len(left) > 0 {
+		return "nginx edge file " + left[0] + " still carries this installation's marker", nil
+	}
+	return s.n.serving(ctx, files, false)
+}
+
+func (s nginxRelease) Inspect(ctx context.Context) (bool, error) {
+	why, err := s.state(ctx)
+	return why == "", err
 }
 
 // Apply replaces each file's first line and keeps its name, so an enabled route stays
@@ -168,7 +181,7 @@ func (s nginxRelease) Apply(ctx context.Context) error {
 	}
 	pending := s.pending(files)
 	if len(pending) == 0 {
-		return nil
+		return s.n.await(ctx, files)
 	}
 	for _, f := range pending {
 		_, rest, _ := strings.Cut(files[f], "\n")
@@ -181,14 +194,11 @@ func (s nginxRelease) Apply(ctx context.Context) error {
 }
 
 func (s nginxRelease) Verify(ctx context.Context) error {
-	files, _, err := s.n.c.EdgeFiles(ctx)
-	if err != nil {
-		return err
+	why, err := s.state(ctx)
+	if err == nil && why != "" {
+		err = errors.New(why)
 	}
-	if left := s.pending(files); len(left) > 0 {
-		return fmt.Errorf("nginx edge file %s still carries this installation's marker", left[0])
-	}
-	return nil
+	return err
 }
 
 // dnsRelease drops the app's records from the LAN DNS ledger; KyDNS itself is not called, so

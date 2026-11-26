@@ -79,6 +79,15 @@ func TestNginxReleaseKeepsFilesActive(t *testing.T) {
 	}
 	key := routeKey("other.example.test")
 	before := f.files[key+enabledExt]
+	// The pods do not load the release: it fails, and a rerun is not done until they have.
+	f.stale = true
+	if _, err := runSteps(t, n.Release(e, "other")); err == nil {
+		t.Fatal("release passed while no pod loaded it")
+	}
+	if done, err := n.Release(e, "other")[0].Inspect(context.Background()); done || err != nil {
+		t.Fatalf("rerun after an unloaded release reported done: %v", err)
+	}
+	f.stale = false
 	if out, err := runSteps(t, n.Release(e, "other")); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
