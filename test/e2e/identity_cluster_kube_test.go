@@ -183,6 +183,9 @@ func TestKubernetesIdentityDatabaseCluster(t *testing.T) {
 	if got := r.sql("show synchronous_standby_names"); !strings.HasPrefix(got, "ANY 1 (") {
 		t.Fatalf("synchronous_standby_names = %q", got)
 	}
+	if got := r.sql("show ssl_groups"); got != "X25519MLKEM768:X25519:prime256v1" {
+		t.Fatalf("ssl_groups = %q", got)
+	}
 	if got := r.sql("select count(*) from pg_stat_replication where sync_state = 'quorum'"); got != "2" {
 		t.Fatalf("%s standbys confirm commits", got)
 	}

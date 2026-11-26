@@ -43,6 +43,10 @@ const (
 	usernameKey      = "username"
 	// clusterCertificateYears is the life of the server certificate, which nothing renews.
 	clusterCertificateYears = 10
+	// clusterSSLGroups is PostgreSQL 18's TLS key-exchange group list: hybrid post-quantum
+	// X25519MLKEM768 first (needs OpenSSL 3.5+ in the operand image; Debian trixie ships 3.5),
+	// keeping classical X25519 and P-256 fallback and refusing other groups.
+	clusterSSLGroups = "X25519MLKEM768:X25519:prime256v1"
 )
 
 // clusterTimeout bounds a Cluster's first start: one instance at a time, each pulling the
@@ -90,14 +94,21 @@ func clusterURL(app string, password []byte) []byte {
 // portable policy can name.
 func databaseCluster(o *objects, a App, meta func(string) metav1.ObjectMeta) {
 	app, k := a.Name, a.Catalog.Kubernetes
+	image := a.Catalog.Images[k.Replicas.ClusterImage]
 	storage := map[string]any{"size": k.Replicas.DatabaseSize}
 	if a.StorageClass != "" {
 		storage["storageClass"] = a.StorageClass
 	}
 	memory := databaseResources.Memory().String()
+	postgresql := map[string]any{"synchronous": map[string]any{"method": "any", "number": int64(1)}}
+	// ssl_groups was added in PostgreSQL 18 (17 rejects it as an unknown parameter), so only
+	// set it for 18+: an earlier 17 Cluster gets it on the deploy after database-upgrade.
+	if imageMajor(image) >= 18 {
+		postgresql["parameters"] = map[string]any{"ssl_groups": clusterSSLGroups}
+	}
 	o.Cluster = map[string]any{
 		"instances": int64(k.DatabaseInstances),
-		"imageName": a.Catalog.Images[k.Replicas.ClusterImage],
+		"imageName": image,
 		// The same database a single pod gets: UTF8 with the C locale, owned by a role that
 		// is not a superuser. The operator keeps Postgres's own superuser without a password.
 		"bootstrap": map[string]any{"initdb": map[string]any{
@@ -108,7 +119,7 @@ func databaseCluster(o *objects, a App, meta func(string) metav1.ObjectMeta) {
 		// A commit waits for one standby, so a failover loses nothing that was acknowledged:
 		// KyIdentity relies on it for sign-outs and spent codes. With fewer than two
 		// instances up, writes wait.
-		"postgresql": map[string]any{"synchronous": map[string]any{"method": "any", "number": int64(1)}},
+		"postgresql": postgresql,
 		// Never two instances on one node: a node's loss must cost one of them.
 		"affinity": map[string]any{
 			"enablePodAntiAffinity": true, "topologyKey": "kubernetes.io/hostname", "podAntiAffinityType": "required",

@@ -84,6 +84,9 @@ func TestRenderDatabaseCluster(t *testing.T) {
 	if n, _, _ := unstructured.NestedInt64(spec, "postgresql", "synchronous", "number"); n != 1 || str("postgresql", "synchronous", "method") != "any" {
 		t.Error("a commit does not wait for a standby")
 	}
+	if got := str("postgresql", "parameters", "ssl_groups"); got != clusterSSLGroups || !strings.HasPrefix(got, "X25519MLKEM768:") {
+		t.Errorf("ssl_groups = %q, want %q", got, clusterSSLGroups)
+	}
 	if str("affinity", "podAntiAffinityType") != "required" || str("affinity", "topologyKey") != "kubernetes.io/hostname" {
 		t.Error("two instances may share a node")
 	}
@@ -105,6 +108,13 @@ func TestRenderDatabaseCluster(t *testing.T) {
 	}
 	if _, found, _ := unstructured.NestedFieldNoCopy(spec, "enableSuperuserAccess"); found {
 		t.Error("superuser access is asked for")
+	}
+
+	// PostgreSQL 17 does not recognize ssl_groups; omit parameters so 17->18 upgrades start cleanly.
+	old := a
+	old.Catalog.Images = map[string]string{"kyidentity": a.Catalog.Images["kyidentity"], "postgres_cluster": cluster17}
+	if _, found, _ := unstructured.NestedFieldNoCopy(render(old).Cluster, "postgresql", "parameters"); found {
+		t.Error("PostgreSQL 17 Cluster sets postgresql.parameters")
 	}
 
 	// Postgres from KyIdentity's pods; replication and the operator; nothing else.

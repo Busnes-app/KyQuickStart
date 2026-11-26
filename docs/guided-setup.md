@@ -852,7 +852,10 @@ What differs from the single pod:
   discards the authority's key. KyIdentity's pods mount the authority alone and refuse any
   other server. The certificate lasts ten years and nothing renews it; the operator's own
   authority is not used because it is replaced every 90 days, and KyIdentity reads the one it
-  trusts only when it starts.
+  trusts only when it starts. On PostgreSQL 18, the `Cluster` sets `ssl_groups` to
+  `X25519MLKEM768:X25519:prime256v1` (hybrid post-quantum key exchange first, classical X25519
+  and P-256 fallback, other groups refused; requires OpenSSL 3.5 or later in the operand image,
+  which the pinned Debian trixie image ships).
 - **Its pods can call out.** Each instance must reach the Kubernetes API server, which no
   portable network policy can name, so the policy limits who reaches the database (KyIdentity's
   pods, the other instances and the operator's pod, in any namespace) and not what the
