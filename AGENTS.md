@@ -637,7 +637,11 @@ edge compatibility: `docs/redirect.md`.
   --missing-stats-only`. Cluster patches never carry a resourceVersion (the operator writes its
   status constantly); the switch and the wake carry the Cluster's `metadata.uid`, and the switch
   first re-reads it (same uid, still hibernated on the old image). Anything failing after the hibernation is requested (its write may land
-  unanswered) gets one patch: hibernation off and the old `imageName`; an
+  unanswered) gets one patch: hibernation off and the old `imageName`, except a switch whose
+  answer is lost: re-read, it is left to the wait when the new image is set, and reported without
+  any write when the Cluster cannot be read. Copies' `instance-role` is taken from the claims as
+  the Cluster stopped (a failover before then moves the primary), and a changed claim set
+  refuses; an
   upgrade still on old data after `clusterTimeout` gets the old image back (CloudNativePG's
   rollback). Deploy's `applyCluster` refuses any major change itself. The copies (labels
   `kyquickstart/postgres`, `copy-of`, `instance`, `instance-role`; annotations `copied-at`,

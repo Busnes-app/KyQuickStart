@@ -450,16 +450,6 @@ func TestClusterUpgradeFailsAfterHibernation(t *testing.T) {
 				return false, nil, nil
 			}
 		},
-		// The image switch lands, its answer is lost: the Cluster must not wake on 18.
-		"switch answer lost": func(f *upgradeFixture) k8stesting.ReactionFunc {
-			return func(action k8stesting.Action) (bool, runtime.Object, error) {
-				p := action.(k8stesting.PatchAction)
-				if p.GetResource().Resource == "clusters" && strings.Contains(string(p.GetPatch()), f.want()) {
-					return f.applied(t, p, lost)
-				}
-				return false, nil, nil
-			}
-		},
 		"copy not marked verified": func(f *upgradeFixture) k8stesting.ReactionFunc {
 			return func(action k8stesting.Action) (bool, runtime.Object, error) {
 				p := action.(k8stesting.PatchAction)
@@ -522,6 +512,94 @@ func TestClusterUpgradeClusterChangedDuringCopy(t *testing.T) {
 			}
 			f.noClaimDeleted(t)
 		})
+	}
+}
+
+// A switch that landed with its answer lost is an upgrade under way: never set back to 17
+// then. One whose state cannot be read is reported, and nothing more is written.
+func TestClusterUpgradeSwitchAnswerLost(t *testing.T) {
+	lost := errors.New("connection reset")
+	timeout := clusterTimeout
+	clusterTimeout = time.Second
+	t.Cleanup(func() { clusterTimeout = timeout })
+	t.Run("landed", func(t *testing.T) {
+		f := newUpgradeFixture(t)
+		f.dyn.PrependReactor("patch", "clusters", func(action k8stesting.Action) (bool, runtime.Object, error) {
+			if p := action.(k8stesting.PatchAction); strings.Contains(string(p.GetPatch()), f.want()) {
+				return f.applied(t, p, lost)
+			}
+			return false, nil, nil
+		})
+		if err := f.step().Apply(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if f.image(t) != f.want() || imageMajor(f.data) != 18 || slices.Contains(f.events, "image 17") {
+			t.Fatalf("image %s, data %s, events %v", f.image(t), f.data, f.events)
+		}
+	})
+	t.Run("unknown", func(t *testing.T) {
+		f := newUpgradeFixture(t)
+		switched := false
+		f.dyn.PrependReactor("patch", "clusters", func(action k8stesting.Action) (bool, runtime.Object, error) {
+			if p := action.(k8stesting.PatchAction); strings.Contains(string(p.GetPatch()), f.want()) {
+				switched = true
+				return f.applied(t, p, lost)
+			}
+			return false, nil, nil
+		})
+		f.dyn.PrependReactor("get", "clusters", func(k8stesting.Action) (bool, runtime.Object, error) {
+			if switched {
+				return true, nil, lost
+			}
+			return false, nil, nil
+		})
+		f.events = nil
+		err := f.step().Apply(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "cannot be read") || strings.Contains(err.Error(), "started again") {
+			t.Fatalf("apply = %v", err)
+		}
+		// applied bypasses the recorder: any event about the Cluster is a later write.
+		if f.image(t) != f.want() || slices.ContainsFunc(f.events, func(e string) bool { return strings.HasPrefix(e, "image") || e == "hibernation off" }) {
+			t.Fatalf("written after the lost switch: image %s, events %v", f.image(t), f.events)
+		}
+		f.noClaimDeleted(t)
+	})
+}
+
+// A failover while the copies are provisioned moves the primary: the copies carry the roles
+// the instances had when the Cluster stopped.
+func TestClusterUpgradeFailoverBeforeStop(t *testing.T) {
+	ctx := context.Background()
+	f := newUpgradeFixture(t)
+	failed := false
+	f.podFn = func(*corev1.Pod) error {
+		if failed {
+			return nil
+		}
+		failed = true
+		// Through the tracker: this runs inside the clientset's reactor.
+		gvr := corev1.SchemeGroupVersion.WithResource("persistentvolumeclaims")
+		for name, role := range map[string]string{"database-1": "replica", "database-1-wal": "replica", "database-2": "primary"} {
+			o, err := f.cs.Tracker().Get(gvr, "kyq-kyidentity", name)
+			if err != nil {
+				return err
+			}
+			p := o.(*corev1.PersistentVolumeClaim).DeepCopy()
+			p.Labels[cnpgRole] = role
+			if err := f.cs.Tracker().Update(gvr, p, "kyq-kyidentity"); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := f.step().Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	copies := f.copies(t)
+	for claim, role := range map[string]string{"database-1": "replica", "database-1-wal": "replica", "database-2": "primary", "database-3": "replica"} {
+		if got := copies[ClusterCopyClaim(17, claim, stamp1)].Labels[copyRole]; got != role {
+			t.Errorf("copy of %s labelled %s, want %s", claim, got, role)
+		}
 	}
 }
 
@@ -626,8 +704,9 @@ func TestClusterUpgradeOperatorRefuses(t *testing.T) {
 func TestClusterUpgradeRollback(t *testing.T) {
 	f := newUpgradeFixture(t)
 	f.fail = true
+	timeout := clusterTimeout
 	clusterTimeout = 30 * time.Millisecond
-	t.Cleanup(func() { clusterTimeout = time.Minute })
+	t.Cleanup(func() { clusterTimeout = timeout })
 	err := f.step().Apply(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "set back to "+cluster17) || !strings.Contains(err.Error(), "They stay until you delete them") {
 		t.Fatalf("apply = %v", err)

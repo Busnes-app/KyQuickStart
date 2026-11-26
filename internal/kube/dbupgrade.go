@@ -265,12 +265,8 @@ func (a App) copyAndSwitch(ctx context.Context, o *unstructured.Unstructured, cl
 	// The claims first, while the Cluster runs: a quota or class refusal stops nothing.
 	for _, p := range claims {
 		name := ClusterCopyClaim(from, p.Name, stamp)
-		role := "replica"
-		if p.Labels[cnpgRole] == "primary" {
-			role = "primary"
-		}
 		labels := workloadLabels(a.ReleaseSet)
-		labels[copyOfLabel], labels[copyMajorLabel], labels[copyInstance], labels[copyRole] = p.Name, strconv.Itoa(from), p.Labels[cnpgInstance], role
+		labels[copyOfLabel], labels[copyMajorLabel], labels[copyInstance], labels[copyRole] = p.Name, strconv.Itoa(from), p.Labels[cnpgInstance], instanceRole(p)
 		c := &corev1.PersistentVolumeClaim{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: p.Namespace, Labels: labels, Annotations: map[string]string{copyClusterUID: string(o.GetUID())}},
 			Spec: corev1.PersistentVolumeClaimSpec{
@@ -307,10 +303,12 @@ func (a App) copyAndSwitch(ctx context.Context, o *unstructured.Unstructured, cl
 			return a.clusterStorageRefusal(ctx, names, start, err)
 		}
 	}
-	// From here on every way out but success wakes the Cluster on its old image. Registered
-	// before the hibernation, whose write may land even when its answer is lost.
+	// From here on every way out but success wakes the Cluster on its old image, unless the
+	// switch to the new one may have landed. Registered before the hibernation, whose write
+	// may land even when its answer is lost.
+	unknown := false
 	defer func() {
-		if err != nil {
+		if err != nil && !unknown {
 			wake := context.WithoutCancel(ctx)
 			werr := a.Client.patchCluster(wake, a.Name, map[string]any{
 				"metadata": map[string]any{"uid": o.GetUID(), "annotations": map[string]string{hibernation: "off"}},
@@ -339,6 +337,19 @@ func (a App) copyAndSwitch(ctx context.Context, o *unstructured.Unstructured, cl
 	}); err != nil {
 		return err
 	}
+	// The claims and their roles as the Cluster stopped: a failover since the list above moves
+	// the primary, and the rollback restores the copy labelled primary.
+	stopped, err := a.clusterClaims(ctx, o)
+	if err != nil {
+		return err
+	}
+	role := map[string]string{}
+	for _, p := range stopped {
+		role[p.Name] = instanceRole(p)
+	}
+	if !slices.EqualFunc(stopped, claims, func(x, y corev1.PersistentVolumeClaim) bool { return x.Name == y.Name }) {
+		return fmt.Errorf("the claims of cluster %s changed while it stopped (an instance was added or removed)", databaseName)
+	}
 	// One pod per instance: on node-local storage each instance's claims are on its own node.
 	for _, i := range instances {
 		if err := a.copyClaims(ctx, a.copyPod(byInstance[i], cnpgUID, sc), byInstance[i]); err != nil {
@@ -348,7 +359,10 @@ func (a App) copyAndSwitch(ctx context.Context, o *unstructured.Unstructured, cl
 	at := time.Now().UTC().Format(time.RFC3339)
 	for _, i := range instances {
 		for _, c := range byInstance[i] {
-			b, _ := json.Marshal(map[string]any{"metadata": map[string]any{"annotations": map[string]string{copiedAnnotation: "verified", copiedAt: at}}})
+			b, _ := json.Marshal(map[string]any{"metadata": map[string]any{
+				"labels":      map[string]string{copyRole: role[c.src]},
+				"annotations": map[string]string{copiedAnnotation: "verified", copiedAt: at},
+			}})
 			if _, err := pvcs.Patch(ctx, c.dst, types.MergePatchType, b, metav1.PatchOptions{}); err != nil {
 				return fmt.Errorf("mark %s verified: %w", c.dst, err)
 			}
@@ -371,9 +385,28 @@ func (a App) copyAndSwitch(ctx context.Context, o *unstructured.Unstructured, cl
 		"metadata": map[string]any{"uid": o.GetUID(), "annotations": map[string]string{hibernation: "off"}},
 		"spec":     map[string]any{"imageName": want},
 	}); err != nil {
+		// A switch that landed with its answer lost already woke the Cluster, and the operator
+		// may be upgrading it: never set 17 back then; the caller's wait decides.
+		now, rerr := a.Client.clusterObject(context.WithoutCancel(ctx), a.Name)
+		if rerr != nil || now == nil {
+			unknown = true
+			return fmt.Errorf("cluster %s: the switch to PostgreSQL %d failed (%w) and its state cannot be read (%v): if kubectl -n %s get cluster %s shows imageName %s, apply again to wait for the upgrade; if %s, annotate it %s=off",
+				databaseName, imageMajor(want), err, rerr, namespaceOf(a.Name), databaseName, want, image, hibernation)
+		}
+		if have, _, _ := unstructured.NestedString(now.Object, "spec", "imageName"); have == want && now.GetUID() == o.GetUID() {
+			return nil
+		}
 		return fmt.Errorf("cluster %s refused PostgreSQL %d (%w; in-place major upgrades need CloudNativePG 1.26 or later)", databaseName, imageMajor(want), err)
 	}
 	return nil
+}
+
+// instanceRole is a claim's instance role as the operator labels it: primary or replica.
+func instanceRole(p corev1.PersistentVolumeClaim) string {
+	if p.Labels[cnpgRole] == "primary" {
+		return "primary"
+	}
+	return "replica"
 }
 
 // clusterStorageRefusal explains copies the storage did not provide, before the Cluster was

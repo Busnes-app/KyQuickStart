@@ -896,12 +896,17 @@ before anything else of KyIdentity changes:
    ([Managing apps](#managing-apps)). Anything that fails from step 2 on, a copy that fails or
    does not fit included, wakes the `Cluster` on its PostgreSQL 17 image, unchanged, and apply
    fails with the reason and the list of copies. Fix the cause and apply again; the next run
-   makes new copies beside the earlier ones, which stay until you delete them.
+   makes new copies beside the earlier ones, which stay until you delete them. Each copy's
+   `kyquickstart/instance-role` is the instance's role as the `Cluster` stopped, so a
+   failover just before is accounted for.
 4. **Upgrade.** One write sets the 18 image and wakes the `Cluster`. CloudNativePG runs its
    [offline in-place major upgrade](https://cloudnative-pg.io/documentation/current/postgres_upgrades/)
    (`pg_upgrade --link` in a job on the primary's claim). On success it deletes the replicas'
    claims and clones them again from the primary. An operator older than 1.26 refuses the
-   image: the `Cluster` is woken on 17 and apply says so.
+   image: the `Cluster` is woken on 17 and apply says so. If that write's answer is lost,
+   apply reads the `Cluster` again: with the 18 image set, the upgrade is under way and apply
+   waits for it as below (never setting 17 back); if the `Cluster` cannot be read, apply writes
+   nothing more and tells you how to check `imageName` yourself.
 5. **Healthy, then `ANALYZE`.** Apply waits for every instance to be ready on 18 (15 minutes
    at most), then runs `vacuumdb --all --analyze-only --missing-stats-only` on the primary for
    the statistics `pg_upgrade` does not carry. If that fails, apply prints the command to run.
