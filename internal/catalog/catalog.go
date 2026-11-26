@@ -227,7 +227,10 @@ type Replicas struct {
 	// Since is the first release that runs as replicas; an older pin refuses the plan's.
 	Since         string `yaml:"since"`
 	DatabaseImage string `yaml:"database_image"` // a key of Images
-	DatabaseSize  string `yaml:"database_size"`
+	// DumpImage is PostgreSQL 17, whose init container dumps a 17 database once for the 18
+	// pod to restore (scripts/postgres-17-to-18.sh): a key of Images.
+	DumpImage    string `yaml:"dump_image"`
+	DatabaseSize string `yaml:"database_size"`
 	// ClusterImage is the Postgres of a plan's database_instances: a key of Images naming a
 	// CloudNativePG operand image, which the operator can run and the official image is not.
 	ClusterImage string `yaml:"cluster_image" json:",omitempty"`
@@ -923,6 +926,8 @@ func (k Kubernetes) validate(images map[string]string, baseline, edge bool) erro
 			return fmt.Errorf("replicas: database_image %q is not a key of images", r.DatabaseImage)
 		case images[r.ClusterImage] == "":
 			return fmt.Errorf("replicas: cluster_image %q is not a key of images", r.ClusterImage)
+		case images[r.DumpImage] == "":
+			return fmt.Errorf("replicas: dump_image %q is not a key of images", r.DumpImage)
 		case !versionRE.MatchString(r.Since):
 			return fmt.Errorf("replicas: since %q must be a release like 1.2.3 or 1.2.3.4", r.Since)
 		case !sizeRE.MatchString(r.DatabaseSize):

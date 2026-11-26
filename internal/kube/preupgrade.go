@@ -23,21 +23,28 @@ import (
 // copiedAnnotation marks a pre-upgrade claim whose copy was verified against the original.
 const copiedAnnotation = "kyquickstart/pre-upgrade"
 
-// copyCommand copies each named volume's private directory into its pre-upgrade claim,
-// replacing what an interrupted run left, then compares contents, modes, owners, sizes,
-// times and link targets with the original. A link's own time is left out: BusyBox cp -a
-// does not keep it.
+// copyCommand copies each name:dir argument's dir (mounted at /src/name) into dir of its copy
+// claim (at /dst/name), replacing what an interrupted run left, then compares contents, modes,
+// owners, sizes, times and link targets with the original. A link's own time is left out:
+// BusyBox cp -a does not keep it.
 const copyCommand = `exec 2>&1
 for v in "$@"; do
-  s=/src/$v d=/dst/$v/` + privateDir + `
+  n=${v%%:*}
+  s=/src/$n d=/dst/$n/${v#*:}
   rm -rf "$d"
   mkdir -m 700 "$d"
   cp -a "$s/." "$d/"
-  diff -r "$s" "$d" >/dev/null || { echo "$v: copied contents differ from the original"; exit 1; }
+  diff -r "$s" "$d" >/dev/null || { echo "$n: copied contents differ from the original"; exit 1; }
   l() { (cd "$1" && { find . ! -type l -exec stat -c '%n %f %u %g %s %Y' {} +; find . -type l -exec stat -c '%n %u %g %N' {} +; } | sort) > "$2"; }
   l "$s" /tmp/src; l "$d" /tmp/dst
-  cmp -s /tmp/src /tmp/dst || { echo "$v: copied modes, owners or times differ from the original:"; diff /tmp/src /tmp/dst | grep '^[-+][^-+]' | head -10; exit 1; }
+  cmp -s /tmp/src /tmp/dst || { echo "$n: copied modes, owners or times differ from the original:"; diff /tmp/src /tmp/dst | grep '^[-+][^-+]' | head -10; exit 1; }
 done`
+
+// claimCopy is one claim's copy: dir of claim src goes into dir of claim dst. name is its
+// argument and mount name in the copy pod.
+type claimCopy struct{ name, src, dir, dst string }
+
+func (c claimCopy) arg() string { return c.name + ":" + c.dir }
 
 // PreUpgradeClaim names volume's copy taken before upgrading from version.
 func PreUpgradeClaim(from, volume string) string { return "pre-upgrade-" + from + "-vol-" + volume }
@@ -134,13 +141,15 @@ func PreUpgradeCopy(ctx context.Context, a App, from string) (claims []string, e
 	// The copy pod, started once on the app's node while the app still runs: a claim the
 	// storage cannot provide fails here, and node-local storage provisions each copy beside
 	// its original.
-	check := a.copyPod(from, todo)
+	var copies []claimCopy
+	for _, v := range todo {
+		copies = append(copies, claimCopy{name: v, src: "vol-" + v, dir: privateDir, dst: PreUpgradeClaim(from, v)})
+	}
+	check := a.copyPod(copies, a.Catalog.Kubernetes.RunAs, podSecurityContext(a.Catalog.Kubernetes))
 	if node, err := a.appNode(ctx); err != nil {
 		return nil, err
 	} else if node != "" {
-		check.Spec.Affinity = &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
-			NodeSelectorTerms: []corev1.NodeSelectorTerm{{MatchFields: []corev1.NodeSelectorRequirement{{Key: "metadata.name", Operator: corev1.NodeSelectorOpIn, Values: []string{node}}}}},
-		}}}
+		pinTo(check, node)
 	}
 	start := time.Now()
 	if err := a.Client.podSession(ctx, check, "pre-upgrade storage check", func(string) error { return nil }); err != nil {
@@ -160,17 +169,7 @@ func PreUpgradeCopy(ctx context.Context, a App, from string) (claims []string, e
 	if err := stop.waitStopped(ctx); err != nil {
 		return nil, fmt.Errorf("stop for the pre-upgrade copy: %w", err)
 	}
-	err = a.Client.podSession(ctx, a.copyPod(from, todo), "pre-upgrade copy", func(pod string) error {
-		out, err := a.Client.ExecReport(ctx, ns, pod, "copy", append([]string{"/bin/sh", "-euc", copyCommand, "copy"}, todo...))
-		if err != nil {
-			if msg := strings.TrimSpace(string(out)); msg != "" {
-				return fmt.Errorf("pre-upgrade copy failed: %s", a.Redact.Redact(msg))
-			}
-			return fmt.Errorf("pre-upgrade copy failed: %w", err)
-		}
-		return nil
-	})
-	if err != nil {
+	if err := a.copyClaims(ctx, a.copyPod(copies, a.Catalog.Kubernetes.RunAs, podSecurityContext(a.Catalog.Kubernetes)), copies); err != nil {
 		return nil, err
 	}
 	for _, v := range todo {
@@ -187,38 +186,11 @@ func PreUpgradeCopy(ctx context.Context, a App, from string) (claims []string, e
 // claim list need list permissions preflight does not require; without them those parts are
 // left out.
 func (a App) storageRefusal(ctx context.Context, from string, volumes []string, start time.Time, cause error) error {
-	ns := namespaceOf(a.Name)
 	var names []string
 	for _, v := range volumes {
 		names = append(names, PreUpgradeClaim(from, v))
 	}
-	msg := fmt.Sprintf("the target storage did not provide the pre-upgrade copies %s (%v); %s was not stopped", strings.Join(names, ", "), cause, a.Name)
-	if events, err := a.Client.cs.CoreV1().Events(ns).List(ctx, metav1.ListOptions{}); err == nil {
-		var seen []string
-		for _, e := range events.Items {
-			at := e.LastTimestamp.Time
-			if at.IsZero() {
-				at = e.EventTime.Time
-			}
-			ours := slices.Contains(names, e.InvolvedObject.Name) || e.InvolvedObject.Kind == "Pod" && strings.HasPrefix(e.InvolvedObject.Name, "kyq-pre-upgrade-")
-			text := strings.Join(strings.Fields(e.Reason+": "+e.Message), " ")
-			if e.Type != corev1.EventTypeWarning || !ours || at.Before(start.Add(-time.Second)) || slices.Contains(seen, text) {
-				continue
-			}
-			seen = append(seen, text)
-		}
-		if n := len(seen); n > 5 {
-			seen = seen[n-5:]
-		}
-		for i, t := range seen {
-			if len(t) > 300 {
-				seen[i] = t[:300] + "..."
-			}
-		}
-		if len(seen) > 0 {
-			msg += "; the cluster reports: " + strings.Join(seen, "; ")
-		}
-	}
+	msg := fmt.Sprintf("the target storage did not provide the pre-upgrade copies %s (%v); %s was not stopped%s", strings.Join(names, ", "), cause, a.Name, a.warnings(ctx, names, start))
 	if copies, err := PreUpgradeCopies(ctx, a); err == nil {
 		var older []string
 		for _, c := range copies {
@@ -235,6 +207,47 @@ func (a App) storageRefusal(ctx context.Context, from string, volumes []string, 
 		msg = a.Redact.Redact(msg)
 	}
 	return errors.New(msg)
+}
+
+// pinTo schedules pod on node only.
+func pinTo(pod *corev1.Pod, node string) {
+	pod.Spec.Affinity = &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+		NodeSelectorTerms: []corev1.NodeSelectorTerm{{MatchFields: []corev1.NodeSelectorRequirement{{Key: "metadata.name", Operator: corev1.NodeSelectorOpIn, Values: []string{node}}}}},
+	}}}
+}
+
+// warnings are the cluster's warnings since start about the claims names and the copy pods,
+// as "; the cluster reports: ...", or "" when there are none or events cannot be listed.
+func (a App) warnings(ctx context.Context, names []string, start time.Time) string {
+	events, err := a.Client.cs.CoreV1().Events(namespaceOf(a.Name)).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return ""
+	}
+	var seen []string
+	for _, e := range events.Items {
+		at := e.LastTimestamp.Time
+		if at.IsZero() {
+			at = e.EventTime.Time
+		}
+		ours := slices.Contains(names, e.InvolvedObject.Name) || e.InvolvedObject.Kind == "Pod" && strings.HasPrefix(e.InvolvedObject.Name, "kyq-pre-upgrade-")
+		text := strings.Join(strings.Fields(e.Reason+": "+e.Message), " ")
+		if e.Type != corev1.EventTypeWarning || !ours || at.Before(start.Add(-time.Second)) || slices.Contains(seen, text) {
+			continue
+		}
+		seen = append(seen, text)
+	}
+	if n := len(seen); n > 5 {
+		seen = seen[n-5:]
+	}
+	for i, t := range seen {
+		if len(t) > 300 {
+			seen[i] = t[:300] + "..."
+		}
+	}
+	if len(seen) == 0 {
+		return ""
+	}
+	return "; the cluster reports: " + strings.Join(seen, "; ")
 }
 
 // preUpgradeClaim creates volume's copy claim with the original's class and size.
@@ -283,20 +296,37 @@ func (a App) appNode(ctx context.Context) (string, error) {
 	return nodes[0], nil
 }
 
-// copyPod mounts each volume's private directory read-only and its copy claim, as the app's
-// uid under the app's pod security, with no service token and nothing else.
-func (a App) copyPod(from string, volumes []string) *corev1.Pod {
-	k := a.Catalog.Kubernetes
+// copyClaims runs copyCommand for copies in pod, a copyPod.
+func (a App) copyClaims(ctx context.Context, pod *corev1.Pod, copies []claimCopy) error {
+	args := []string{"/bin/sh", "-euc", copyCommand, "copy"}
+	for _, c := range copies {
+		args = append(args, c.arg())
+	}
+	return a.Client.podSession(ctx, pod, "pre-upgrade copy", func(name string) error {
+		out, err := a.Client.ExecReport(ctx, pod.Namespace, name, "copy", args)
+		if err != nil {
+			if msg := strings.TrimSpace(string(out)); msg != "" {
+				return fmt.Errorf("pre-upgrade copy failed: %s", a.Redact.Redact(msg))
+			}
+			return fmt.Errorf("pre-upgrade copy failed: %w", err)
+		}
+		return nil
+	})
+}
+
+// copyPod mounts each copy's source directory read-only and its copy claim, as uid under the
+// pod security sc, with no service token and nothing else.
+func (a App) copyPod(copies []claimCopy, uid int64, sc *corev1.PodSecurityContext) *corev1.Pod {
 	res := corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("500m"), corev1.ResourceMemory: resource.MustParse("256Mi")}
 	mounts := []corev1.VolumeMount{{Name: "tmp", MountPath: "/tmp"}}
 	vols := []corev1.Volume{{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}
-	for _, v := range volumes {
+	for _, c := range copies {
 		vols = append(vols,
-			corev1.Volume{Name: "src-" + v, VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "vol-" + v, ReadOnly: true}}},
-			corev1.Volume{Name: "dst-" + v, VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: PreUpgradeClaim(from, v)}}})
+			corev1.Volume{Name: "src-" + c.name, VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: c.src, ReadOnly: true}}},
+			corev1.Volume{Name: "dst-" + c.name, VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: c.dst}}})
 		mounts = append(mounts,
-			corev1.VolumeMount{Name: "src-" + v, MountPath: "/src/" + v, SubPath: privateDir, ReadOnly: true},
-			corev1.VolumeMount{Name: "dst-" + v, MountPath: "/dst/" + v})
+			corev1.VolumeMount{Name: "src-" + c.name, MountPath: "/src/" + c.name, SubPath: c.dir, ReadOnly: true},
+			corev1.VolumeMount{Name: "dst-" + c.name, MountPath: "/dst/" + c.name})
 	}
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{GenerateName: "kyq-pre-upgrade-", Namespace: namespaceOf(a.Name), Labels: workloadLabels(a.ReleaseSet)},
@@ -305,13 +335,13 @@ func (a App) copyPod(from string, volumes []string) *corev1.Pod {
 			ActiveDeadlineSeconds:         ptr.To(int64(6 * 3600)),
 			TerminationGracePeriodSeconds: ptr.To(int64(0)),
 			AutomountServiceAccountToken:  ptr.To(false), EnableServiceLinks: ptr.To(false),
-			SecurityContext: podSecurityContext(k),
+			SecurityContext: sc,
 			Containers: []corev1.Container{{Name: "copy", Image: CredentialGeneratorImage, ImagePullPolicy: corev1.PullIfNotPresent,
 				Command:   []string{"/bin/sleep", "21600"},
 				Resources: corev1.ResourceRequirements{Requests: res, Limits: res},
 				SecurityContext: &corev1.SecurityContext{
 					AllowPrivilegeEscalation: ptr.To(false), ReadOnlyRootFilesystem: ptr.To(true),
-					RunAsNonRoot: ptr.To(true), RunAsUser: ptr.To(k.RunAs), RunAsGroup: ptr.To(k.RunAs),
+					RunAsNonRoot: ptr.To(true), RunAsUser: ptr.To(uid), RunAsGroup: ptr.To(uid),
 					Capabilities:   &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 					SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 				},

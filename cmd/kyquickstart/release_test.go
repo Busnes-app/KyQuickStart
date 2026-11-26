@@ -225,7 +225,7 @@ func TestReleaseWorkflow(t *testing.T) {
 			}
 		}
 	}
-	for _, job := range []string{"test (ubuntu-latest, 1.26.x)", "test (macos-latest, stable)", "vulncheck", "e2e", "Runner image build & run"} {
+	for _, job := range []string{"test (ubuntu-latest, 1.26.x)", "test (macos-latest, stable)", "vulncheck", "e2e", "Runner image build & run", "PostgreSQL 17 to 18 upgrade"} {
 		if !slices.Contains(strings.Split(required, "\n"), job) {
 			t.Errorf("publish's REQUIRED list lacks %q", job)
 		}

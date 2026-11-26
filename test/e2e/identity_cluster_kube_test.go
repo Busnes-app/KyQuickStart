@@ -309,7 +309,7 @@ func TestKubernetesIdentityDatabaseCluster(t *testing.T) {
 				ready++
 			}
 		}
-		return ready == 3 && r.primary() != "" && kube.Steps(a)[3].Verify(ctx) == nil && slices.Equal(r.pods(), pods) &&
+		return ready == 3 && r.primary() != "" && kube.Steps(a)[4].Verify(ctx) == nil && slices.Equal(r.pods(), pods) &&
 			!slices.ContainsFunc(pods, func(pod string) bool { return !r.signedIn(pod, sessions[pods[1]]) })
 	})
 	if got := r.sql("select count(*) from users"); got != "1" {
