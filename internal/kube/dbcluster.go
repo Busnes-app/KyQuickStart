@@ -258,7 +258,9 @@ func clusterState(o *unstructured.Unstructured) string {
 }
 
 // hibernate stops the Cluster's pods and keeps its claims, or with on false starts them
-// again. Deleting the Cluster instead would delete every claim it owns.
+// again. Deleting the Cluster instead would delete every claim it owns. The patch carries no
+// resourceVersion: the operator writes the Cluster's status all the time, and the annotation
+// is the installer's alone.
 func (c *Client) hibernate(ctx context.Context, app string, on bool) error {
 	o, err := c.clusterObject(ctx, app)
 	if err != nil || o == nil || (o.GetAnnotations()[hibernation] == "on") == on {
@@ -268,11 +270,7 @@ func (c *Client) hibernate(ctx context.Context, app string, on bool) error {
 	if on {
 		value = "on"
 	}
-	patch := fmt.Sprintf(`{"metadata":{"resourceVersion":%q,"annotations":{%q:%q}}}`, o.GetResourceVersion(), hibernation, value)
-	if _, err := c.dyn.Resource(clusterResource).Namespace(namespaceOf(app)).Patch(ctx, databaseName, types.MergePatchType, []byte(patch), metav1.PatchOptions{}); err != nil {
-		return fmt.Errorf("cluster %s: %w", databaseName, err)
-	}
-	return nil
+	return c.patchCluster(ctx, app, map[string]any{"metadata": map[string]any{"annotations": map[string]string{hibernation: value}}})
 }
 
 // waitCluster waits until every instance of the app's Cluster is ready.

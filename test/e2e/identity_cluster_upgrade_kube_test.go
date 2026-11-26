@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -154,7 +155,8 @@ func TestKubernetesIdentityDatabaseClusterUpgrade(t *testing.T) {
 			primaryCopy = c.Name
 		}
 	}
-	if primaryCopy != "pre-upgrade-pg17-"+primary {
+	// Named for the claim and the attempt: pre-upgrade-pg17-<claim>-<UTC yyyymmdd-hhmmss>.
+	if !regexp.MustCompile(`^pre-upgrade-pg17-` + primary + `-[0-9]{8}-[0-9]{6}$`).MatchString(primaryCopy) {
 		t.Fatalf("the primary's copy is %q, the primary was %s", primaryCopy, primary)
 	}
 	if applied, err := r.run(kube.Steps(a)); err != nil || len(applied) != 0 {

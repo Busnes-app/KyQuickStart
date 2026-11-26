@@ -12,7 +12,6 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
@@ -43,9 +42,10 @@ const (
 // other role (a tablespace's) is refused: the installer never makes one.
 var cnpgDirs = map[string]string{"PG_DATA": "pgdata", "PG_WAL": "pg_wal"}
 
-// ClusterCopyClaim names the copy of a Cluster's claim taken before upgrading from major.
-func ClusterCopyClaim(major int, claim string) string {
-	return fmt.Sprintf("pre-upgrade-pg%d-%s", major, claim)
+// ClusterCopyClaim names the copy of a Cluster's claim taken before upgrading from major, by
+// the attempt that made it at stamp.
+func ClusterCopyClaim(major int, claim, stamp string) string {
+	return fmt.Sprintf("pre-upgrade-pg%d-%s-%s", major, claim, stamp)
 }
 
 // imageMajor is the PostgreSQL major of an operand image reference, from its tag as
@@ -115,34 +115,18 @@ func (s clusterUpgradeStep) Apply(ctx context.Context) error {
 	if err != nil || o == nil {
 		return err
 	}
-	from, to := dataMajor(o), imageMajor(want)
+	from, to, uid := dataMajor(o), imageMajor(want), o.GetUID()
 	if from >= to {
 		return nil
 	}
-	claims, err := a.clusterClaims(ctx, o)
-	if err != nil {
-		return err
-	}
-	ns := namespaceOf(a.Name)
-	var names []string
-	for _, p := range claims {
-		names = append(names, ClusterCopyClaim(from, p.Name))
-	}
-	copies := fmt.Sprintf("copies %s of claims %s in namespace %s", strings.Join(names, ", "), strings.Join(claimNames(claims), ", "), ns)
-	keep := fmt.Sprintf("The copies stay until you delete them: kubectl -n %s delete pvc %s. Rollback from them: %s", ns, strings.Join(names, " "), upgradeDocument)
 	// A run that stopped after the switch below finds the new image set: the copies are made.
 	if image, _, _ := unstructured.NestedString(o.Object, "spec", "imageName"); imageMajor(image) == from {
-		if err := a.copyCluster(ctx, o, claims, from); err != nil {
+		claims, err := a.clusterClaims(ctx, o)
+		if err != nil {
 			return err
 		}
-		// One write sets the image and wakes the Cluster: the operator upgrades it on waking.
-		patch := map[string]any{
-			"metadata": map[string]any{"resourceVersion": o.GetResourceVersion(), "annotations": map[string]string{hibernation: "off"}},
-			"spec":     map[string]any{"imageName": want},
-		}
-		if err := c.patchCluster(ctx, a.Name, patch); err != nil {
-			werr := errors.Join(c.hibernate(ctx, a.Name, false), c.waitCluster(ctx, a.Name))
-			return errors.Join(fmt.Errorf("cluster %s refused PostgreSQL %d (%w; in-place major upgrades need CloudNativePG 1.26 or later): it was started again on PostgreSQL %d, unchanged. %s", databaseName, to, err, from, keep), werr)
+		if err := a.copyAndSwitch(ctx, o, claims, from, image, want); err != nil {
+			return fmt.Errorf("%w. %s", err, a.keepCopies(ctx, uid))
 		}
 	}
 	upgraded := func(o *unstructured.Unstructured) string {
@@ -157,21 +141,21 @@ func (s clusterUpgradeStep) Apply(ctx context.Context) error {
 	if err := c.waitClusterFor(ctx, a.Name, upgraded); err != nil {
 		o, gerr := c.clusterObject(ctx, a.Name)
 		if gerr != nil || o == nil || dataMajor(o) >= to {
-			return fmt.Errorf("the upgrade to PostgreSQL %d ran but the Cluster is not healthy yet (%w); apply again to wait for it. %s", to, err, keep)
+			return fmt.Errorf("the upgrade to PostgreSQL %d ran but the Cluster is not healthy yet (%w); apply again to wait for it. %s", to, err, a.keepCopies(ctx, uid))
 		}
 		// CloudNativePG's documented rollback of a failed upgrade: the previous image again,
 		// and the operator deletes the upgrade's job and starts the unchanged data.
 		previous, _, _ := unstructured.NestedString(o.Object, "status", "pgDataImageInfo", "image")
 		if previous == "" {
-			return fmt.Errorf("the upgrade to PostgreSQL %d did not finish (%w), and the Cluster records no previous image to go back to. %s", to, err, keep)
+			return fmt.Errorf("the upgrade to PostgreSQL %d did not finish (%w), and the Cluster records no previous image to go back to. %s", to, err, a.keepCopies(ctx, uid))
 		}
 		rerr := c.patchCluster(ctx, a.Name, map[string]any{"spec": map[string]any{"imageName": previous}})
 		if rerr == nil {
 			rerr = c.waitCluster(ctx, a.Name)
 		}
-		return errors.Join(fmt.Errorf("the upgrade to PostgreSQL %d did not finish (%w): the image was set back to %s, as CloudNativePG documents for a failed upgrade, and the Cluster runs PostgreSQL %d on its unchanged data. %s", to, err, previous, from, keep), rerr)
+		return errors.Join(fmt.Errorf("the upgrade to PostgreSQL %d did not finish (%w): the image was set back to %s, as CloudNativePG documents for a failed upgrade, and the Cluster runs PostgreSQL %d on its unchanged data. %s", to, err, previous, from, a.keepCopies(ctx, uid)), rerr)
 	}
-	*s.note = fmt.Sprintf("PostgreSQL %d to %d: %s (verified against the originals before the upgrade). %s", from, to, copies, keep)
+	*s.note = fmt.Sprintf("PostgreSQL %d to %d (copies verified against the originals before the upgrade). %s", from, to, a.keepCopies(ctx, uid))
 	if msg := a.analyze(ctx); msg != "" {
 		*s.note += ". " + msg
 	}
@@ -205,14 +189,6 @@ func (c *Client) patchCluster(ctx context.Context, app string, patch map[string]
 	return nil
 }
 
-func claimNames(claims []corev1.PersistentVolumeClaim) []string {
-	var out []string
-	for _, p := range claims {
-		out = append(out, p.Name)
-	}
-	return out
-}
-
 // clusterClaims are the claims the Cluster owns, by name. Listing them needs list on claims,
 // which a plan with database_instances asks for.
 func (a App) clusterClaims(ctx context.Context, o *unstructured.Unstructured) ([]corev1.PersistentVolumeClaim, error) {
@@ -238,55 +214,122 @@ func (a App) clusterClaims(ctx context.Context, o *unstructured.Unstructured) ([
 	return out, nil
 }
 
-// copyCluster makes a verified copy of each of the Cluster's claims while it is hibernated,
-// and wakes it again on its old major, unchanged, if any copy fails. A copy from an earlier
-// attempt on this Cluster is replaced: the data it copied has not changed since but has taken
-// writes. A copy of another Cluster (one recreated from the copies) is never touched.
-func (a App) copyCluster(ctx context.Context, o *unstructured.Unstructured, claims []corev1.PersistentVolumeClaim, from int) (err error) {
+// copyStamp is the UTC time in a copy's name: every attempt makes copies of its own.
+var copyStamp = func() string { return time.Now().UTC().Format("20060102-150405") }
+
+// clusterCopies are the installer's copies in the app's namespace, by name: of the Cluster
+// with uid, or of any Cluster when uid is "".
+func (a App) clusterCopies(ctx context.Context, uid types.UID) ([]corev1.PersistentVolumeClaim, error) {
+	list, err := a.Client.cs.CoreV1().PersistentVolumeClaims(namespaceOf(a.Name)).List(ctx, metav1.ListOptions{LabelSelector: copyOfLabel})
+	if err != nil {
+		return nil, fmt.Errorf("list the copies in %s: %w", namespaceOf(a.Name), err)
+	}
+	out := slices.DeleteFunc(list.Items, func(p corev1.PersistentVolumeClaim) bool {
+		return !owned(&p) || uid != "" && p.Annotations[copyClusterUID] != string(uid)
+	})
+	slices.SortFunc(out, func(x, y corev1.PersistentVolumeClaim) int { return strings.Compare(x.Name, y.Name) })
+	return out, nil
+}
+
+// keepCopies lists the Cluster's copies and how to remove them, which only the operator does.
+func (a App) keepCopies(ctx context.Context, uid types.UID) string {
+	ns := namespaceOf(a.Name)
+	copies, err := a.clusterCopies(ctx, uid)
+	if err != nil {
+		return fmt.Sprintf("Its copies could not be listed (%v): kubectl -n %s get pvc -l %s", err, ns, copyOfLabel)
+	}
+	if len(copies) == 0 {
+		return "No copies were made"
+	}
+	var names, list []string
+	for _, p := range copies {
+		state := "unverified"
+		if p.Annotations[copiedAnnotation] == "verified" {
+			state = "verified " + p.Annotations[copiedAt]
+		}
+		names = append(names, p.Name)
+		list = append(list, fmt.Sprintf("%s (of %s, %s)", p.Name, p.Labels[copyOfLabel], state))
+	}
+	return fmt.Sprintf("Copies of cluster %s in namespace %s: %s. They stay until you delete them: kubectl -n %s delete pvc %s. Rollback from a verified one: %s",
+		databaseName, ns, strings.Join(list, ", "), ns, strings.Join(names, " "), upgradeDocument)
+}
+
+// copyAndSwitch makes a verified copy of each of the Cluster's claims while it is hibernated,
+// then sets image want and wakes it in one patch. Anything that fails once it is hibernated
+// wakes it on its old image, unchanged. Each attempt makes new copies, beside any an earlier
+// one left: none is ever replaced or deleted.
+func (a App) copyAndSwitch(ctx context.Context, o *unstructured.Unstructured, claims []corev1.PersistentVolumeClaim, from int, image, want string) (err error) {
 	pvcs := a.Client.cs.CoreV1().PersistentVolumeClaims(namespaceOf(a.Name))
+	stamp := copyStamp()
+	byInstance := map[string][]claimCopy{}
 	// The claims first, while the Cluster runs: a quota or class refusal stops nothing.
 	for _, p := range claims {
-		name := ClusterCopyClaim(from, p.Name)
-		have, err := pvcs.Get(ctx, name, metav1.GetOptions{})
-		switch {
-		case apierrors.IsNotFound(err):
-			role := "replica"
-			if p.Labels[cnpgRole] == "primary" {
-				role = "primary"
-			}
-			labels := workloadLabels(a.ReleaseSet)
-			labels[copyOfLabel], labels[copyMajorLabel], labels[copyInstance], labels[copyRole] = p.Name, strconv.Itoa(from), p.Labels[cnpgInstance], role
-			c := &corev1.PersistentVolumeClaim{
-				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: p.Namespace, Labels: labels, Annotations: map[string]string{copyClusterUID: string(o.GetUID())}},
-				Spec: corev1.PersistentVolumeClaimSpec{
-					AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
-					Resources:        corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: p.Spec.Resources.Requests[corev1.ResourceStorage]}},
-					StorageClassName: p.Spec.StorageClassName,
-				},
-			}
-			if _, err := pvcs.Create(ctx, c, metav1.CreateOptions{}); err != nil {
-				return fmt.Errorf("no upgrade: create claim %s: %w; cluster %s was not stopped", name, err, databaseName)
-			}
-		case err != nil:
-			return fmt.Errorf("claim %s: %w", name, err)
-		case !owned(have) || have.Annotations[copyClusterUID] != string(o.GetUID()):
-			return fmt.Errorf("no upgrade: claim %s exists and is not this Cluster's copy (perhaps an earlier Cluster's, see %s); keep or delete it by hand, then apply again; cluster %s was not stopped", name, upgradeDocument, databaseName)
+		name := ClusterCopyClaim(from, p.Name, stamp)
+		role := "replica"
+		if p.Labels[cnpgRole] == "primary" {
+			role = "primary"
 		}
-		// Unverified until this run's copy is.
-		if _, err := pvcs.Patch(ctx, name, types.MergePatchType, []byte(`{"metadata":{"annotations":{"`+copiedAnnotation+`":null}}}`), metav1.PatchOptions{}); err != nil {
-			return fmt.Errorf("claim %s: %w", name, err)
+		labels := workloadLabels(a.ReleaseSet)
+		labels[copyOfLabel], labels[copyMajorLabel], labels[copyInstance], labels[copyRole] = p.Name, strconv.Itoa(from), p.Labels[cnpgInstance], role
+		c := &corev1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: p.Namespace, Labels: labels, Annotations: map[string]string{copyClusterUID: string(o.GetUID())}},
+			Spec: corev1.PersistentVolumeClaimSpec{
+				AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+				Resources:        corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: p.Spec.Resources.Requests[corev1.ResourceStorage]}},
+				StorageClassName: p.Spec.StorageClassName,
+			},
+		}
+		if _, err := pvcs.Create(ctx, c, metav1.CreateOptions{}); err != nil {
+			return a.clusterStorageRefusal(ctx, []string{name}, time.Now(), fmt.Errorf("create claim %s: %w", name, err))
+		}
+		i := p.Labels[cnpgInstance]
+		byInstance[i] = append(byInstance[i], claimCopy{name: p.Name, src: p.Name, dir: cnpgDirs[p.Labels[cnpgPVCRole]], dst: name})
+	}
+	instances := slices.Sorted(maps.Keys(byInstance))
+	sc := &corev1.PodSecurityContext{
+		RunAsNonRoot: ptr.To(true), FSGroup: ptr.To(int64(cnpgUID)), FSGroupChangePolicy: ptr.To(corev1.FSGroupChangeOnRootMismatch),
+		SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+	}
+	// The storage check: each instance's copy pod, started once on that instance's node while
+	// it still runs, so the storage provisions every copy (beside its original on node-local
+	// storage) before sign-in stops. A copy the storage cannot provide refuses here.
+	for _, i := range instances {
+		check := a.copyPod(byInstance[i], cnpgUID, sc)
+		if pod, err := a.Client.cs.CoreV1().Pods(namespaceOf(a.Name)).Get(ctx, i, metav1.GetOptions{}); err == nil && pod.Spec.NodeName != "" {
+			pinTo(check, pod.Spec.NodeName)
+		}
+		start := time.Now()
+		if err := a.Client.podSession(ctx, check, "pre-upgrade storage check", func(string) error { return nil }); err != nil {
+			var names []string
+			for _, c := range byInstance[i] {
+				names = append(names, c.dst)
+			}
+			return a.clusterStorageRefusal(ctx, names, start, err)
 		}
 	}
-	if err := a.Client.hibernate(ctx, a.Name, true); err != nil {
-		return err
-	}
+	// From here on every way out but success wakes the Cluster on its old image. Registered
+	// before the hibernation, whose write may land even when its answer is lost.
 	defer func() {
 		if err != nil {
 			wake := context.WithoutCancel(ctx)
-			err = errors.Join(fmt.Errorf("no upgrade: %w; cluster %s was started again on PostgreSQL %d, unchanged, and its image was not changed", err, databaseName, from),
-				a.Client.hibernate(wake, a.Name, false), a.Client.waitCluster(wake, a.Name))
+			werr := a.Client.patchCluster(wake, a.Name, map[string]any{
+				"metadata": map[string]any{"uid": o.GetUID(), "annotations": map[string]string{hibernation: "off"}},
+				"spec":     map[string]any{"imageName": image},
+			})
+			if werr == nil {
+				werr = a.Client.waitCluster(wake, a.Name)
+			}
+			if werr != nil {
+				err = fmt.Errorf("no upgrade: %w; then starting cluster %s again on PostgreSQL %d failed (%w): check with kubectl -n %s get cluster %s -o yaml that imageName is %s and annotation %s is off, and set them so",
+					err, databaseName, from, werr, namespaceOf(a.Name), databaseName, image, hibernation)
+				return
+			}
+			err = fmt.Errorf("no upgrade: %w; cluster %s was started again on PostgreSQL %d, unchanged", err, databaseName, from)
 		}
 	}()
+	if err := a.Client.hibernate(ctx, a.Name, true); err != nil {
+		return err
+	}
 	if err := waitGone(ctx, a, func(ctx context.Context) error {
 		left, err := a.Client.podsLeft(ctx, a.Name, clusterPods)
 		if err == nil && left {
@@ -297,27 +340,62 @@ func (a App) copyCluster(ctx context.Context, o *unstructured.Unstructured, clai
 		return err
 	}
 	// One pod per instance: on node-local storage each instance's claims are on its own node.
-	byInstance := map[string][]claimCopy{}
-	for _, p := range claims {
-		i := p.Labels[cnpgInstance]
-		byInstance[i] = append(byInstance[i], claimCopy{name: p.Name, src: p.Name, dir: cnpgDirs[p.Labels[cnpgPVCRole]], dst: ClusterCopyClaim(from, p.Name)})
-	}
-	sc := &corev1.PodSecurityContext{
-		RunAsNonRoot: ptr.To(true), FSGroup: ptr.To(int64(cnpgUID)), FSGroupChangePolicy: ptr.To(corev1.FSGroupChangeOnRootMismatch),
-		SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
-	}
-	for _, i := range slices.Sorted(maps.Keys(byInstance)) {
+	for _, i := range instances {
 		if err := a.copyClaims(ctx, a.copyPod(byInstance[i], cnpgUID, sc), byInstance[i]); err != nil {
 			return err
 		}
 	}
 	at := time.Now().UTC().Format(time.RFC3339)
-	for _, p := range claims {
-		name := ClusterCopyClaim(from, p.Name)
-		b, _ := json.Marshal(map[string]any{"metadata": map[string]any{"annotations": map[string]string{copiedAnnotation: "verified", copiedAt: at}}})
-		if _, err := pvcs.Patch(ctx, name, types.MergePatchType, b, metav1.PatchOptions{}); err != nil {
-			return fmt.Errorf("mark %s verified: %w", name, err)
+	for _, i := range instances {
+		for _, c := range byInstance[i] {
+			b, _ := json.Marshal(map[string]any{"metadata": map[string]any{"annotations": map[string]string{copiedAnnotation: "verified", copiedAt: at}}})
+			if _, err := pvcs.Patch(ctx, c.dst, types.MergePatchType, b, metav1.PatchOptions{}); err != nil {
+				return fmt.Errorf("mark %s verified: %w", c.dst, err)
+			}
 		}
 	}
+	// Still the Cluster that was copied, as it was copied. The patches name its uid, so a
+	// Cluster recreated since is refused by the API server, never changed.
+	now, err := a.Client.clusterObject(ctx, a.Name)
+	if err != nil {
+		return err
+	}
+	if now == nil || now.GetUID() != o.GetUID() {
+		return fmt.Errorf("cluster %s was deleted or recreated during the copy", databaseName)
+	}
+	if have, _, _ := unstructured.NestedString(now.Object, "spec", "imageName"); have != image || now.GetAnnotations()[hibernation] != "on" {
+		return fmt.Errorf("cluster %s changed during the copy (image %s, hibernation %q)", databaseName, have, now.GetAnnotations()[hibernation])
+	}
+	// One write sets the image and wakes the Cluster: the operator upgrades it on waking.
+	if err := a.Client.patchCluster(ctx, a.Name, map[string]any{
+		"metadata": map[string]any{"uid": o.GetUID(), "annotations": map[string]string{hibernation: "off"}},
+		"spec":     map[string]any{"imageName": want},
+	}); err != nil {
+		return fmt.Errorf("cluster %s refused PostgreSQL %d (%w; in-place major upgrades need CloudNativePG 1.26 or later)", databaseName, imageMajor(want), err)
+	}
 	return nil
+}
+
+// clusterStorageRefusal explains copies the storage did not provide, before the Cluster was
+// stopped, naming every earlier copy that takes space; the operator may delete those.
+func (a App) clusterStorageRefusal(ctx context.Context, names []string, start time.Time, cause error) error {
+	ns := namespaceOf(a.Name)
+	msg := fmt.Sprintf("no upgrade: the storage did not provide the pre-upgrade copies %s (%v); cluster %s was not stopped%s", strings.Join(names, ", "), cause, databaseName, a.warnings(ctx, names, start))
+	if copies, err := a.clusterCopies(ctx, ""); err == nil {
+		var older []string
+		for _, p := range copies {
+			if slices.Contains(names, p.Name) {
+				continue
+			}
+			q := p.Spec.Resources.Requests[corev1.ResourceStorage]
+			older = append(older, fmt.Sprintf("%s (%s, %s)", p.Name, q.String(), map[bool]string{true: "verified", false: "unverified"}[p.Annotations[copiedAnnotation] == "verified"]))
+		}
+		if len(older) > 0 {
+			msg += fmt.Sprintf("; earlier copies take space: %s. Delete those you no longer need yourself (kubectl -n %s delete pvc <name>) and apply again", strings.Join(older, ", "), ns)
+		}
+	}
+	if a.Redact != nil {
+		msg = a.Redact.Redact(msg)
+	}
+	return errors.New(msg)
 }

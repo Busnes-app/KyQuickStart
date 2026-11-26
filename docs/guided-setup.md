@@ -874,16 +874,23 @@ before anything else of KyIdentity changes:
 
 1. **Copies first, while it runs.** For every claim the `Cluster` owns (`database-1`,
    `database-2`, …, and `database-N-wal` if it has WAL claims) the installer creates claim
-   `pre-upgrade-pg17-<claim>`: the same size and StorageClass. If the cluster refuses one (quota,
-   class), apply stops there and nothing was stopped.
+   `pre-upgrade-pg17-<claim>-<UTC yyyymmdd-hhmmss>`: the same size and StorageClass. Every
+   attempt makes its own; a copy an earlier attempt left is never replaced or deleted. Then one
+   pod per instance, on that instance's node, mounts its copies while the `Cluster` still
+   runs, so the storage provisions them before sign-in stops. If the cluster refuses a claim
+   (quota, class) or cannot provide it, apply stops there: nothing was stopped, and the message
+   names every earlier copy taking space, which you may delete. Storage that provisions more
+   than it has (thin, or node-local such as `local-path`) can still pass this and fill up
+   during step 3.
 2. **Hibernate.** The `Cluster` is hibernated (CloudNativePG's declarative hibernation, a clean
    shutdown) and apply waits until no instance pod runs. Sign-in stops from here until step 4.
 3. **Copy and verify.** One pod per instance, as the instances' own user (uid 26), copies
    `pgdata/` (and `pg_wal/`) of each claim into its copy and compares contents, modes, owners,
    sizes and times with the original, as other apps' pre-upgrade copies do
-   ([Managing apps](#managing-apps)). A copy that fails, or does not fit, wakes the `Cluster` on PostgreSQL 17, unchanged, and
-   apply fails with the reason: its image is not changed. Fix the cause and apply again; the
-   next run copies every claim afresh.
+   ([Managing apps](#managing-apps)). Anything that fails from step 2 on, a copy that fails or
+   does not fit included, wakes the `Cluster` on its PostgreSQL 17 image, unchanged, and apply
+   fails with the reason and the list of copies. Fix the cause and apply again; the next run
+   makes new copies beside the earlier ones, which stay until you delete them.
 4. **Upgrade.** One write sets the 18 image and wakes the `Cluster`. CloudNativePG runs its
    [offline in-place major upgrade](https://cloudnative-pg.io/documentation/current/postgres_upgrades/)
    (`pg_upgrade --link` in a job on the primary's claim). On success it deletes the replicas'
@@ -904,7 +911,8 @@ instances, three times the database), from the same StorageClass. On node-local 
 copy is made on its instance's node. Sign-in is down for the copy plus the upgrade: for
 KyIdentity's database, usually a few minutes.
 
-**The copies stay.** Apply's note for the step names them. They carry the labels
+**The copies stay.** Apply's note for the step names them, verified or not, with the
+`kubectl delete pvc` command that removes them. They carry the labels
 `kyquickstart/postgres=17`, `kyquickstart/copy-of=<claim>`, `kyquickstart/instance=<instance>`
 and `kyquickstart/instance-role=primary|replica`, and the annotations `kyquickstart/copied-at`
 (UTC) and `kyquickstart/pre-upgrade: verified`. List them with
@@ -924,7 +932,7 @@ written on 18 since is lost. This was run end to end in
 
    ```sh
    kubectl -n kyq-kyidentity get pvc -l kyquickstart/postgres=17,kyquickstart/instance-role=primary
-   COPY=pre-upgrade-pg17-database-1    # the name printed above
+   COPY=pre-upgrade-pg17-database-1-20261125-231556    # the verified name printed above
    PV=$(kubectl -n kyq-kyidentity get pvc $COPY -o jsonpath='{.spec.volumeName}')
    kubectl -n kyq-kyidentity get pvc $COPY -o jsonpath='{.spec.storageClassName} {.spec.resources.requests.storage}{"\n"}'
    ```
@@ -971,8 +979,8 @@ written on 18 since is lost. This was run end to end in
    KyIdentity's Secrets were never removed, so its pods sign in with the same password.
 
 The other copies stay until you delete them. An apply with this release afterwards moves the
-`Cluster` to 18 again; it refuses while a copy named like one it would make belongs to the
-earlier `Cluster` (annotation `kyquickstart/cluster-uid`): delete or keep those copies first.
+`Cluster` to 18 again with new copies; the earlier `Cluster`'s (annotation
+`kyquickstart/cluster-uid`) are left alone and only named when space runs short.
 
 ### The CloudNativePG operator
 

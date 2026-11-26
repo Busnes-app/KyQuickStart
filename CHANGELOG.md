@@ -25,8 +25,10 @@ state directory, target data and target-held credentials; do not reset them as a
   and only then does CloudNativePG upgrade it in place; fresh Clusters start on 18.
   **Upgrade impact:** sign-in is down for the copy and the upgrade; the copies need as much
   storage as the Cluster's claims and are never deleted for you; CloudNativePG 1.26 or later is
-  required, and the plan's kubeconfig needs list on persistentvolumeclaims. A failed copy leaves
-  the Cluster on 17 unchanged. Going back to 17 is by hand from the copies
+  required, and the plan's kubeconfig needs list on persistentvolumeclaims. Storage that cannot
+  hold the copies is refused before the Cluster stops; anything that fails once it is
+  hibernated starts it again on 17, unchanged. Each attempt makes its own timestamped copies,
+  beside any an earlier attempt left. Going back to 17 is by hand from the copies
   (`docs/guided-setup.md`, "Going back to PostgreSQL 17").
 - Follow KyPost, KyCalendar and KyYard `0.6.1.1` with verified release image digests.
   KyPost includes the receiving accelerator and file-lock/fsync fixes; KyCalendar and

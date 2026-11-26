@@ -149,9 +149,7 @@ func PreUpgradeCopy(ctx context.Context, a App, from string) (claims []string, e
 	if node, err := a.appNode(ctx); err != nil {
 		return nil, err
 	} else if node != "" {
-		check.Spec.Affinity = &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
-			NodeSelectorTerms: []corev1.NodeSelectorTerm{{MatchFields: []corev1.NodeSelectorRequirement{{Key: "metadata.name", Operator: corev1.NodeSelectorOpIn, Values: []string{node}}}}},
-		}}}
+		pinTo(check, node)
 	}
 	start := time.Now()
 	if err := a.Client.podSession(ctx, check, "pre-upgrade storage check", func(string) error { return nil }); err != nil {
@@ -188,38 +186,11 @@ func PreUpgradeCopy(ctx context.Context, a App, from string) (claims []string, e
 // claim list need list permissions preflight does not require; without them those parts are
 // left out.
 func (a App) storageRefusal(ctx context.Context, from string, volumes []string, start time.Time, cause error) error {
-	ns := namespaceOf(a.Name)
 	var names []string
 	for _, v := range volumes {
 		names = append(names, PreUpgradeClaim(from, v))
 	}
-	msg := fmt.Sprintf("the target storage did not provide the pre-upgrade copies %s (%v); %s was not stopped", strings.Join(names, ", "), cause, a.Name)
-	if events, err := a.Client.cs.CoreV1().Events(ns).List(ctx, metav1.ListOptions{}); err == nil {
-		var seen []string
-		for _, e := range events.Items {
-			at := e.LastTimestamp.Time
-			if at.IsZero() {
-				at = e.EventTime.Time
-			}
-			ours := slices.Contains(names, e.InvolvedObject.Name) || e.InvolvedObject.Kind == "Pod" && strings.HasPrefix(e.InvolvedObject.Name, "kyq-pre-upgrade-")
-			text := strings.Join(strings.Fields(e.Reason+": "+e.Message), " ")
-			if e.Type != corev1.EventTypeWarning || !ours || at.Before(start.Add(-time.Second)) || slices.Contains(seen, text) {
-				continue
-			}
-			seen = append(seen, text)
-		}
-		if n := len(seen); n > 5 {
-			seen = seen[n-5:]
-		}
-		for i, t := range seen {
-			if len(t) > 300 {
-				seen[i] = t[:300] + "..."
-			}
-		}
-		if len(seen) > 0 {
-			msg += "; the cluster reports: " + strings.Join(seen, "; ")
-		}
-	}
+	msg := fmt.Sprintf("the target storage did not provide the pre-upgrade copies %s (%v); %s was not stopped%s", strings.Join(names, ", "), cause, a.Name, a.warnings(ctx, names, start))
 	if copies, err := PreUpgradeCopies(ctx, a); err == nil {
 		var older []string
 		for _, c := range copies {
@@ -236,6 +207,47 @@ func (a App) storageRefusal(ctx context.Context, from string, volumes []string, 
 		msg = a.Redact.Redact(msg)
 	}
 	return errors.New(msg)
+}
+
+// pinTo schedules pod on node only.
+func pinTo(pod *corev1.Pod, node string) {
+	pod.Spec.Affinity = &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+		NodeSelectorTerms: []corev1.NodeSelectorTerm{{MatchFields: []corev1.NodeSelectorRequirement{{Key: "metadata.name", Operator: corev1.NodeSelectorOpIn, Values: []string{node}}}}},
+	}}}
+}
+
+// warnings are the cluster's warnings since start about the claims names and the copy pods,
+// as "; the cluster reports: ...", or "" when there are none or events cannot be listed.
+func (a App) warnings(ctx context.Context, names []string, start time.Time) string {
+	events, err := a.Client.cs.CoreV1().Events(namespaceOf(a.Name)).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return ""
+	}
+	var seen []string
+	for _, e := range events.Items {
+		at := e.LastTimestamp.Time
+		if at.IsZero() {
+			at = e.EventTime.Time
+		}
+		ours := slices.Contains(names, e.InvolvedObject.Name) || e.InvolvedObject.Kind == "Pod" && strings.HasPrefix(e.InvolvedObject.Name, "kyq-pre-upgrade-")
+		text := strings.Join(strings.Fields(e.Reason+": "+e.Message), " ")
+		if e.Type != corev1.EventTypeWarning || !ours || at.Before(start.Add(-time.Second)) || slices.Contains(seen, text) {
+			continue
+		}
+		seen = append(seen, text)
+	}
+	if n := len(seen); n > 5 {
+		seen = seen[n-5:]
+	}
+	for i, t := range seen {
+		if len(t) > 300 {
+			seen[i] = t[:300] + "..."
+		}
+	}
+	if len(seen) == 0 {
+		return ""
+	}
+	return "; the cluster reports: " + strings.Join(seen, "; ")
 }
 
 // preUpgradeClaim creates volume's copy claim with the original's class and size.

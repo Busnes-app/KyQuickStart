@@ -629,16 +629,19 @@ edge compatibility: `docs/redirect.md`.
   like any other (`kyquickstart/database` is `cluster`).
   A `Cluster` whose data is an older major (17, from earlier releases; owner decision
   2026-11-25, `internal/kube/dbupgrade.go`) moves only in step `<app>.database-upgrade`, before
-  deploy: create claim `pre-upgrade-pg<major>-<claim>` for every claim the Cluster owns (refused
-  claims stop nothing), hibernate, copy and verify each (`copyCommand`, uid 26, one pod per
-  instance), then one patch sets the new `imageName` and wakes it for CloudNativePG's in-place
+  deploy: create claim `pre-upgrade-pg<major>-<claim>-<UTC stamp>` for every claim the Cluster
+  owns, a new set per attempt, and start each instance's copy pod once on its node while it runs
+  (a refused or unprovisioned claim stops nothing), hibernate, copy and verify each
+  (`copyCommand`, uid 26, one pod per instance), then one patch sets the new `imageName` and wakes it for CloudNativePG's in-place
   `pg_upgrade --link` (operator 1.26+); then wait healthy and `vacuumdb --analyze-only
-  --missing-stats-only`. A failed copy or a refused image wakes it on the old major unchanged; an
+  --missing-stats-only`. Cluster patches never carry a resourceVersion (the operator writes its
+  status constantly); the switch and the wake carry the Cluster's `metadata.uid`, and the switch
+  first re-reads it (same uid, still hibernated on the old image). Anything failing after the hibernation is requested (its write may land
+  unanswered) gets one patch: hibernation off and the old `imageName`; an
   upgrade still on old data after `clusterTimeout` gets the old image back (CloudNativePG's
   rollback). Deploy's `applyCluster` refuses any major change itself. The copies (labels
   `kyquickstart/postgres`, `copy-of`, `instance`, `instance-role`; annotations `copied-at`,
-  `cluster-uid`) are never deleted, by `prune-copies` either; a same-named copy of another
-  Cluster is refused, never overwritten. Rollback is by hand from the primary's copy
+  `cluster-uid`) are never deleted or replaced, by `prune-copies` either. Rollback is by hand from the primary's copy
   (`docs/guided-setup.md`, "Going back to PostgreSQL 17"). The plan's permissions add list on
   claims.
 - The database operator (owner amendment, 2026-11-14; `internal/kube/operator.go`,
