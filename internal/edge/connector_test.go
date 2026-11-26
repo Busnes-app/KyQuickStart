@@ -152,6 +152,23 @@ func TestCloudflareDirectIngress(t *testing.T) {
 	}
 }
 
+// Both cloudflared edges run strict post-quantum over QUIC, never http2, which has no PQ mode.
+func TestCloudflaredPostQuantum(t *testing.T) {
+	tunnel := testEdge()
+	tunnel.Provider = "cloudflare"
+	tunnel.Connector = &stack.Connector{Network: "npm-net", NPMHost: "npm", TunnelID: "12345678-1234-1234-1234-123456789012"}
+	for _, e := range []stack.Edge{tunnel, directEdge()} {
+		b, _, args := connectorConfig(e)
+		var conf map[string]any
+		if err := yaml.Unmarshal(b, &conf); err != nil {
+			t.Fatal(err)
+		}
+		if conf["post-quantum"] != true || conf["protocol"] != "quic" || strings.Contains(string(b)+strings.Join(args, " "), "http2") {
+			t.Fatalf("%s: connector is not strict post-quantum over QUIC: %s %v", e.Provider, b, args)
+		}
+	}
+}
+
 // A direct edge reads the same target-held tunnel credential as cloudflare, never into its config.
 func TestCloudflareDirectCredential(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())

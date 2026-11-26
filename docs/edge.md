@@ -111,6 +111,10 @@ on an ipvlan network) avoids that.
 For Cloudflare set `provider: cloudflare`, omit `proxy_port` and replace the frp connector
 fields with `tunnel_id: <existing-tunnel-UUID>`. The generated ingress configuration routes
 only the listed hostnames, verifies origin TLS using each hostname and ends with a 404 rule.
+cloudflared (both Cloudflare edges) runs strict post-quantum key exchange to Cloudflare
+(`post-quantum: true`) over QUIC only (`protocol: quic`), so it never falls back to http2, which
+has no post-quantum mode. A network that blocks outbound UDP 7844 keeps the tunnel down rather
+than downgrading it.
 Use dedicated tunnel credentials: an existing tunnel may have connectors with different
 ingress configuration, and this build does not reconcile those other connectors.
 
@@ -564,7 +568,10 @@ forwarding header from the connection and clears `Forwarded`, `CF-Connecting-IP`
 `True-Client-IP`, catalog `paths` and `deny_paths`. Only the listeners, the certificate paths
 and the upstream differ: NPM's template variables become the route's
 `forward_scheme://forward_host:forward_port`, resolved at request time through the pod's own
-resolver, as NPM does. Body size, timeouts and TLS protocols and ciphers are NPM 2.16's. Port
+resolver, as NPM does. Body size, timeouts and TLS protocols and ciphers are NPM 2.16's. Key
+exchange is not: `ssl_ecdh_curve X25519MLKEM768:X25519:prime256v1` offers hybrid post-quantum
+X25519MLKEM768, keeps classical X25519 and P-256 for older clients and refuses other groups; it
+needs the image's OpenSSL 3.5 or later (the pinned image has it, `TestNginxContainer` checks). Port
 80 serves nothing: every request is redirected to the same host over HTTPS. A TLS name no
 route has gets no handshake (`ssl_reject_handshake`), where NPM answers with a default page.
 

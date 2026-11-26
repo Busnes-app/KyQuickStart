@@ -14,6 +14,15 @@ state directory, target data and target-held credentials; do not reset them as a
 
 ## Unreleased
 
+- Post-quantum key exchange at the edge. The nginx edge sets `ssl_ecdh_curve
+  X25519MLKEM768:X25519:prime256v1`: hybrid X25519MLKEM768 for clients that offer it,
+  X25519 and P-256 for the rest, other groups refused. cloudflared (both Cloudflare edges)
+  runs strict post-quantum over QUIC and no longer falls back to http2. **Upgrade impact:**
+  the nginx edge reloads in place and cloudflared is recreated; a cloudflared that can reach
+  Cloudflare only over TCP (outbound UDP 7844 blocked) stays down instead of connecting
+  without post-quantum protection. Clients offering only P-384 or other groups are refused
+  by the nginx edge.
+
 - Follow KyPost, KyCalendar and KyYard `0.6.1.1` with verified release image digests.
   KyPost includes the receiving accelerator and file-lock/fsync fixes; KyCalendar and
   KyYard refresh their Alpine base. **Upgrade impact:** the selected apps restart on
