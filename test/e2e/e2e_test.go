@@ -207,7 +207,6 @@ func TestApply(t *testing.T) {
 	testPulseIntegration(t, ctx, state, hostFP)
 	testDNSIntegration(t, ctx, state, hostFP)
 	testRecoveryIntegration(t, ctx, state, hostFP)
-	testMessageIntegration(t, ctx, state, hostFP)
 	testCalendarIntegration(t, ctx, state, hostFP)
 	testYardIntegration(t, ctx, state, hostFP)
 

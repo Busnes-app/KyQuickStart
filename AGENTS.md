@@ -706,7 +706,7 @@ calls and kind nodes must carry their own explicit bounds.
 - CI's `release binaries are repeatable` step (`test`, ubuntu 1.26.x leg): `scripts/release-binaries.sh`
   from the checkout and from a `git archive` copy elsewhere must give identical bytes.
 - `make notes-check`: Python standard-library checks for the missing/compare-only release-note guard.
-- `make ci`: release-note guard, tidy check, gofmt, vet (including the `e2e,goolm` tags), race tests.
+- `make ci`: release-note guard, tidy check, gofmt, vet (including the `e2e` tag), race tests.
   Subprocess-heavy CLI race tests can exceed Go's default timeout on macOS; keep the Makefile's
   explicit deadline. Runner tests decode every answer with KyYard's client types (`internal/runner/kyyard_test.go`).
   `cmd/kyquickstart/release_test.go` runs `scripts/release-binaries.sh` (the stamp in all four

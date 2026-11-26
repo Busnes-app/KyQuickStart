@@ -217,7 +217,7 @@ operator's job ([README](../README.md#targets)).
 - **Backup TLS:** `TestResticTLSKeyFloor` drives `dockerhost.Store.Snapshots` and the pinned restic image against real disposable TLS chains; weak leaf/intermediate/root controls and strong RSA/P-256 cases run in the default e2e shard. Its fixture uses host networking solely to reach the owned host server; existing backup/restore acceptance retains the production bridge network. This does not establish whole-installer key-length compliance.
 - **TLS profile qualification:** actual-client local Go1.26.10 race probes cover132 Kubernetes REST/exec/port-forward and NPM/KyDNS/route outcomes. Six local-mTLS outcomes establish that client credential selection remains a separate condition; no claim of automatic weak-client-key rejection. [STRONG-CRYPTO.md](STRONG-CRYPTO.md) records scope and primary runtime sources.
 - **Static analysis:** CodeQL (GitHub default setup, Go, Python and Actions) on every push and pull
-  request, `go vet` (with and without the `e2e,goolm` tags), `govulncheck`, and `actionlint`
+  request, `go vet` (with and without the `e2e` tag), `govulncheck`, and `actionlint`
   and `zizmor` on the workflows (`make workflow-lint`).
 - **Dynamic analysis:** the race detector on the full suite and the e2e suite against real
   targets.

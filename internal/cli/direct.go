@@ -16,7 +16,6 @@ var directApps = map[string]int{"kyidentity": 5867, "kycalendar": 8080, "kypost"
 
 // directRefused says why an assessed app may not; any other app is refused as unassessed.
 var directRefused = map[string]string{
-	"kymessage":  "its routes rely on NPM's path allow-lists and admin-path blocks",
 	"kydns":      "its admin API belongs on the LAN; use a lan edge",
 	"kyrecovery": "its admin UI and custodian ceremony would be internet-facing",
 	"kypulse":    "its admin-only monitoring console would be internet-facing",

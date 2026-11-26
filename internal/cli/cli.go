@@ -516,7 +516,7 @@ func managementSession(st *stack.Stack, state string, trust trustFlag, o Options
 	if err := calendarAccounts(st); err != nil {
 		return nil, err
 	}
-	if err := messagePlan(st, cat); err != nil {
+	if err := chatClientPlan(st); err != nil {
 		return nil, err
 	}
 	if err := mailPlan(st); err != nil {
@@ -945,9 +945,6 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 	if err := s.refuseMovedSetup(ctx); err != nil {
 		return nil, err
 	}
-	if err := s.refuseMovedServerName(ctx); err != nil {
-		return nil, err
-	}
 	if err := s.refuseMailChange(ctx); err != nil {
 		return nil, err
 	}
@@ -989,18 +986,6 @@ func (s *session) deploySteps(ctx context.Context) ([]engine.Step, error) {
 		}
 		if k, ok := d.(kubeDriver); ok && name == euroOffice {
 			app = s.editorSteps(k)
-		}
-		for _, i := range s.integrations {
-			if i.Product == name && i.Target == s.placed[name].Name && i.ChatClient != "" {
-				before, setup, err := s.messageSteps(d, i)
-				if err != nil {
-					return nil, err
-				}
-				// Before its deploy: Compose refuses MAS without the configuration they write.
-				k := slices.IndexFunc(app, func(st engine.Step) bool { return st.ID() == name+".deploy" })
-				app = append(append(append(append([]engine.Step{}, app[:k]...), before...), app[k:]...), setup)
-				connectors = append(connectors, directoryStep{app: name, sync: func(ctx context.Context) (string, string) { return s.resync(ctx, name) }})
-			}
 		}
 		steps = append(steps, app...)
 		if st := bulkInit(d, s.placed[name]); name == "kydrive" && st != nil {
@@ -1222,10 +1207,9 @@ func privateRecovery(st *stack.Stack) bool {
 // suitePeers are the pairs KyIdentity's suite directory pairs on its own (/api/suite/peer),
 // each app to its peers. Keep it in step with KyIdentity-server's suitePeers.
 var suitePeers = map[string][]string{
-	"kypost":     {"kycalendar", "kydrive", "kymessage"},
-	"kycalendar": {"kypost", "kymessage"},
+	"kypost":     {"kycalendar", "kydrive"},
+	"kycalendar": {"kypost"},
 	"kydrive":    {"kypost"},
-	"kymessage":  {"kycalendar", "kypost"},
 }
 
 // inPlan reports whether the plan installs app.

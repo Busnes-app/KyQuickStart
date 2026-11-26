@@ -58,7 +58,7 @@ func TestBackupDestinationRefusedBeforeConnecting(t *testing.T) {
 // The guided plan asks for a Docker target's destination, blank for none, and resumes it.
 func TestGuidedBackupDestination(t *testing.T) {
 	dir := t.TempDir()
-	answers := "no\n1\nnas\ndocker\n192.0.2.1\nkyq\n22\n/opt/test\nrest:http://b.lan/nas\nrest:https://b.lan/nas\nrel\n/home/kyq/pw\n/home/kyq/ca.pem\n" + strings.Repeat("skip\n", 11) + "0\nyes\nfinish\n"
+	answers := "no\n1\nnas\ndocker\n192.0.2.1\nkyq\n22\n/opt/test\nrest:http://b.lan/nas\nrest:https://b.lan/nas\nrel\n/home/kyq/pw\n/home/kyq/ca.pem\n" + strings.Repeat("skip\n", 10) + "0\nyes\nfinish\n"
 	var out bytes.Buffer
 	o := Options{Catalog: catalog.Embedded(), In: strings.NewReader(answers), Out: &out}
 	if err := Run(context.Background(), []string{"plan", "--state", dir}, o); err != nil {

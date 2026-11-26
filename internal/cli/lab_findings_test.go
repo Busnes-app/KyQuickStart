@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -26,34 +25,6 @@ func TestRecoverySetupOnKubernetes(t *testing.T) {
 	if _, err := integrationOrder(st); err == nil || !strings.Contains(err.Error(), "kyrecovery's setup must run as its service user kyrecovery") {
 		t.Fatalf("existing KyRecovery on a cluster: %v", err)
 	}
-}
-
-// Without installation_id, KyMessages' refusal hands an unattended author a fresh one to add.
-func TestMessagePlanSuggestsInstallationID(t *testing.T) {
-	cat, err := catalog.Load(catalog.Embedded())
-	if err != nil {
-		t.Fatal(err)
-	}
-	st := &stack.Stack{
-		Targets:      []stack.Target{{Name: "nas", Host: "192.0.2.1"}},
-		Apps:         []stack.App{{Name: "kymessage", Target: "nas"}},
-		Integrations: []stack.Integration{{Product: "kymessage", Target: "nas", ChatClient: "kymessage-" + cat["kymessage"].ChatOIDC.ClientSuffix}},
-	}
-	err = messagePlan(st, cat)
-	m := regexp.MustCompile(`add the line installation_id: (\S+) to stack.yaml`).FindStringSubmatch(errString(err))
-	if m == nil {
-		t.Fatalf("no installation_id to add: %v", err)
-	}
-	if st.InstallationID = m[1]; messagePlan(st, cat) != nil {
-		t.Fatalf("suggested installation_id %q refused: %v", m[1], messagePlan(st, cat))
-	}
-}
-
-func errString(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
 }
 
 // The handover says where KyIdentity's setup left the two owner passwords.

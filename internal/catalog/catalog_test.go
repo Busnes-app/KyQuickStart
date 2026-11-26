@@ -869,7 +869,7 @@ func TestWithPrivateRecovery(t *testing.T) {
 		"kyidentity": "KYIDENTITY_BACKUP_ALLOW_PRIVATE_RECOVERY", "kycalendar": "KYCALENDAR_BACKUP_ALLOW_PRIVATE_RECOVERY",
 		"kynotes": "KYNOTES_BACKUP_ALLOW_PRIVATE_RECOVERY", "kypulse": "KYPULSE_BACKUP_ALLOW_PRIVATE_RECOVERY",
 		"kypost": "KYPOST_BACKUP_ALLOW_PRIVATE_RECOVERY", "kyyard": "KY_BACKUP_ALLOW_PRIVATE_RECOVERY",
-		"kydrive": "KY_BACKUP_ALLOW_PRIVATE_RECOVERY", "kymessage": "KY_BACKUP_ALLOW_PRIVATE_RECOVERY",
+		"kydrive": "KY_BACKUP_ALLOW_PRIVATE_RECOVERY",
 	}
 	for name, env := range names {
 		a := cat[name]

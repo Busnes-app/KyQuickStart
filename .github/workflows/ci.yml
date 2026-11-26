@@ -97,8 +97,8 @@ jobs:
           - shard: kube-npm-joins # about 12 min, estimated
             run: ^TestKubernetesNPMEdgeJoins$
             pkgs: ./test/e2e/
-          - shard: kube-message-apply # 10.3 min
-            run: ^(TestKubernetesKyMessage|TestKubernetesApply)$
+          - shard: kube-apply
+            run: ^TestKubernetesApply$
             pkgs: ./test/e2e/
           - shard: kube-restore-yard # 8.1 min
             run: ^(TestKubernetesRestore|TestKubernetesKyYard)$
@@ -110,7 +110,7 @@ jobs:
             run: ^TestKubernetesNginxEdgeJoins$
             pkgs: ./test/e2e/
           - shard: rest # 3.5 min
-            skip: ^(TestKubernetesNPMEdge|TestKubernetesNPMEdgeJoins|TestKubernetesNginxEdge|TestKubernetesNginxEdgeJoins|TestKubernetesNginxEdgeFailover|TestKubernetesKyMessage|TestKubernetesApply|TestKubernetesRestore|TestKubernetesKyYard)$
+            skip: ^(TestKubernetesNPMEdge|TestKubernetesNPMEdgeJoins|TestKubernetesNginxEdge|TestKubernetesNginxEdgeJoins|TestKubernetesNginxEdgeFailover|TestKubernetesApply|TestKubernetesRestore|TestKubernetesKyYard)$
             pkgs: ./test/e2e/ ./internal/edge/
     runs-on: ubuntu-latest
     timeout-minutes: 45

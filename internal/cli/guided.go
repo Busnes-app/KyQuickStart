@@ -439,7 +439,6 @@ func guided(ctx context.Context, args []string, o Options) error {
 			return err
 		}
 	}
-	withChatClients(st, cat)
 	count, err = p.ask("existing", "Number of existing Ky products to record", "0", integer(0, 64))
 	if err != nil {
 		return err
@@ -563,7 +562,7 @@ func validateSelection(st *stack.Stack, cat catalog.Catalog, o Options) error {
 	if err := calendarAccounts(st); err != nil {
 		return err
 	}
-	if err := messagePlan(st, cat); err != nil {
+	if err := chatClientPlan(st); err != nil {
 		return err
 	}
 	if _, err := plan.Order(names, cat); err != nil {

@@ -55,7 +55,6 @@ var sources = map[string]source{
 	"kydns-server":      {"Busnes-app/KyDNS-server", "release.yml", []string{"internal/store/store.go"}},
 	"kydrive-server":    {"Busnes-app/kydrive-server", "release-image.yml", []string{"internal/store/migrations", "internal/drive/schema.go"}},
 	"kyidentity-server": {"Busnes-app/KyIdentity-server", "release-image.yml", nil},
-	"kymessage-server":  {"Busnes-app/KyMessage-Server", "release-image.yml", []string{"internal/store/migrations"}},
 	"kynotes-server":    {"Busnes-app/KyNotes-server", "release-image.yml", []string{"internal/storage/migrations"}},
 	"kypost-server":     {"Busnes-app/KyPost-Server", "release-image.yml", nil},
 	"kypulse-server":    {"Busnes-app/KyPulse-server", "release-image.yml", []string{"internal/store/migrations"}},
