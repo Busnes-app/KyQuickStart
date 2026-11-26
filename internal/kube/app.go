@@ -46,7 +46,8 @@ func hashOf(parts ...string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// Steps returns the app's install steps: secrets, deploy, health, and for NPM its bootstrap.
+// Steps returns the app's install steps: secrets, a Cluster's major upgrade, deploy, health,
+// and for NPM its bootstrap.
 func Steps(a App) []engine.Step {
 	if a.operator() {
 		step := operatorStep{a}
@@ -56,6 +57,9 @@ func Steps(a App) []engine.Step {
 	steps := []engine.Step{secretsStep{a}}
 	if a.replicated() {
 		steps = append(steps, replicaSecretsStep{a})
+	}
+	if a.clustered() {
+		steps = append(steps, clusterUpgradeStep{a: a, note: new(string)})
 	}
 	steps = append(steps, deployStep{a: a, hash: hash}, healthStep{a: a, hash: hash})
 	if a.Name == "npm" && a.Catalog.Category == "edge" {

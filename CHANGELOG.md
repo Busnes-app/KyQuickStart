@@ -20,7 +20,17 @@ state directory, target data and target-held credentials; do not reset them as a
   twice the 17 data free. Removing the 17 data afterwards is a manual step
   (`docs/guided-setup.md`). After a rollback that ran 17, deploying 18 again refuses until you
   choose to move 17 again or keep 18 (same doc); apply's health wait shows the dump's message.
-  CloudNativePG clusters stay on 17. KyMessages' Matrix stack keeps PostgreSQL 17.
+  KyMessages' Matrix stack keeps PostgreSQL 17.
+- PostgreSQL 18 for the highly available KyIdentity database (`database_instances`). A
+  CloudNativePG `Cluster` on 17 is hibernated, every instance's claim is copied and verified,
+  and only then does CloudNativePG upgrade it in place; fresh Clusters start on 18.
+  **Upgrade impact:** sign-in is down for the copy and the upgrade; the copies need as much
+  storage as the Cluster's claims and are never deleted for you; CloudNativePG 1.26 or later is
+  required, and the plan's kubeconfig needs list on persistentvolumeclaims. Storage that cannot
+  hold the copies is refused before the Cluster stops; anything that fails once it is
+  hibernated starts it again on 17, unchanged. Each attempt makes its own timestamped copies,
+  beside any an earlier attempt left. Going back to 17 is by hand from the copies
+  (`docs/guided-setup.md`, "Going back to PostgreSQL 17").
 - Follow KyPost, KyCalendar and KyYard `0.6.1.1` with verified release image digests.
   KyPost includes the receiving accelerator and file-lock/fsync fixes; KyCalendar and
   KyYard refresh their Alpine base. **Upgrade impact:** the selected apps restart on

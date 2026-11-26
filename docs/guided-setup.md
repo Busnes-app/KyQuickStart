@@ -830,20 +830,22 @@ reach it, and it can reach nothing. Read this before choosing it:
 
 **The installer's, highly available (`database_instances`).** Owner amendment, 2026-11-13.
 `database_instances: 3` (3 to 5) replaces that one pod with a
-[CloudNativePG](https://cloudnative-pg.io/) `Cluster` named `database`: that many Postgres 17
+[CloudNativePG](https://cloudnative-pg.io/) `Cluster` named `database`: that many PostgreSQL 18
 instances, each on its own claim (2 GiB) and never two on one node. One is the primary. A
 write is acknowledged once a second instance has it, so a failover loses nothing KyIdentity
 was told is saved, and the operator promotes a standby when the primary's node is lost. With
 three instances, sign-in survives the loss of any one node. It needs:
 
-- **The CloudNativePG operator** (1.24 or later; tested against 1.30.1): the catalog's
+- **The CloudNativePG operator** (1.24 or later, 1.26 or later to move a Cluster from
+  PostgreSQL 17; tested against 1.30.1): the catalog's
   `cloudnative-pg` app in the same plan ([below](#the-cloudnative-pg-operator)), or one the
   cluster's owner installed. Preflight and apply refuse the plan on a cluster that does not
   serve `postgresql.cnpg.io/v1` Clusters.
 - **As many schedulable nodes as instances.** An instance with no node of its own stays
   pending, and apply reports how many are ready.
 - **Permission on Clusters**: get, create, update and patch on `postgresql.cnpg.io`
-  `clusters`, asked only of a plan with `database_instances`.
+  `clusters`, and list on `persistentvolumeclaims` (the move from 17 finds the Cluster's
+  claims), asked only of a plan with `database_instances`.
 
 What differs from the single pod:
 
@@ -866,9 +868,129 @@ What differs from the single pod:
 The first apply takes several minutes: the instances start one after another, each copying
 the one before, and KyIdentity's pods start once all are ready (15 minutes at most, then
 apply stops and names the `kubectl describe` to read). The installer still does not back the
-database up: KyIdentity's own backups (below) are its only backup. It does not upgrade
-Postgres across major versions: a `Cluster` stays on PostgreSQL 17 (17.12), supported until
-November 2029, until the installer has a backup of it to take first.
+database up: KyIdentity's own backups (below) are its only backup.
+
+#### PostgreSQL 17 to 18
+
+Owner decision, 2026-11-25. A `Cluster` made by an earlier release runs PostgreSQL 17 (operand
+`ghcr.io/cloudnative-pg/postgresql:17.12-minimal-trixie`). This release's is 18.7 on the same
+Debian trixie base (`18.7-minimal-trixie`, digest `c8caac98…88cc`). A fresh `Cluster` starts on
+18. An existing one moves on the next `apply` or `upgrade`, in step `kyidentity.database-upgrade`,
+before anything else of KyIdentity changes:
+
+1. **Copies first, while it runs.** For every claim the `Cluster` owns (`database-1`,
+   `database-2`, …; a `Cluster` the installer made keeps its WAL inside them, and a separate
+   WAL or tablespace claim refuses the upgrade before anything stops) the installer creates claim
+   `pre-upgrade-pg17-<claim>-<UTC yyyymmdd-hhmmss>`: the same size and StorageClass. Every
+   attempt makes its own; a copy an earlier attempt left is never replaced or deleted. Then one
+   pod per instance, on that instance's node, mounts its copies while the `Cluster` still
+   runs, so the storage provisions them before sign-in stops. If the cluster refuses a claim
+   (quota, class) or cannot provide it, apply stops there: nothing was stopped, and the message
+   names every earlier copy taking space, which you may delete. Storage that provisions more
+   than it has (thin, or node-local such as `local-path`) can still pass this and fill up
+   during step 3.
+2. **Hibernate.** The `Cluster` is hibernated (CloudNativePG's declarative hibernation, a clean
+   shutdown) and apply waits until no instance pod runs. Sign-in stops from here until step 4.
+3. **Copy and verify.** One pod per instance, as the instances' own user (uid 26), copies
+   `pgdata/` of each claim into its copy and compares contents, modes, owners,
+   sizes and times with the original, as other apps' pre-upgrade copies do
+   ([Managing apps](#managing-apps)). Anything that fails from step 2 on, a copy that fails or
+   does not fit included, wakes the `Cluster` on its PostgreSQL 17 image, unchanged, and apply
+   fails with the reason and the list of copies. Fix the cause and apply again; the next run
+   makes new copies beside the earlier ones, which stay until you delete them. Each copy's
+   `kyquickstart/instance-role` is the instance's role as the `Cluster` stopped, so a
+   failover just before is accounted for.
+4. **Upgrade.** One write sets the 18 image and wakes the `Cluster`. CloudNativePG runs its
+   [offline in-place major upgrade](https://cloudnative-pg.io/documentation/current/postgres_upgrades/)
+   (`pg_upgrade --link` in a job on the primary's claim). On success it deletes the replicas'
+   claims and clones them again from the primary. An operator older than 1.26 refuses the
+   image: the `Cluster` is woken on 17 and apply says so. If that write's answer is lost,
+   apply reads the `Cluster` again: with the 18 image set, the upgrade is under way and apply
+   waits for it as below (never setting 17 back); if the `Cluster` cannot be read, apply writes
+   nothing more and tells you how to check `imageName` yourself.
+5. **Healthy, then `ANALYZE`.** Apply waits for every instance to be ready on 18 (15 minutes
+   at most), then runs `vacuumdb --all --analyze-only --missing-stats-only` on the primary for
+   the statistics `pg_upgrade` does not carry. If that fails, apply prints the command to run.
+
+If the upgrade has not finished after 15 minutes and the data is still 17, apply does what
+CloudNativePG documents for a failed upgrade: it sets the 17 image back, the operator deletes
+the upgrade's job and the `Cluster` starts on its unchanged 17 data. Apply fails and says so.
+If the data is already 18 and only the replicas are still cloning, apply fails asking you to
+apply again, which waits for them.
+
+**Space and time.** The copies need as much storage as the `Cluster`'s claims (with three
+instances, three times the database), from the same StorageClass. On node-local storage each
+copy is made on its instance's node. Sign-in is down for the copy plus the upgrade: for
+KyIdentity's database, usually a few minutes.
+
+**The copies stay.** Apply's note for the step names them, verified or not, with the
+`kubectl delete pvc` command that removes them. They carry the labels
+`kyquickstart/postgres=17`, `kyquickstart/copy-of=<claim>`, `kyquickstart/instance=<instance>`
+and `kyquickstart/instance-role=primary|replica`, and the annotations `kyquickstart/copied-at`
+(UTC) and `kyquickstart/pre-upgrade: verified`. List them with
+`kubectl -n kyq-kyidentity get pvc -l kyquickstart/postgres=17 -L kyquickstart/instance-role`.
+Nothing deletes them, `prune-copies` included. Once you are satisfied with 18, deleting them is
+your choice: `kubectl -n kyq-kyidentity delete pvc -l kyquickstart/postgres=17`.
+
+#### Going back to PostgreSQL 17
+
+CloudNativePG cannot move a `Cluster` back to an older major. Going back means recreating the
+`Cluster` from the primary's copy, which holds the data as it was when the move began; anything
+written on 18 since is lost. This was run end to end in
+`TestKubernetesIdentityDatabaseClusterUpgrade` (`test/e2e`). With `kubectl` on namespace
+`kyq-kyidentity`:
+
+1. Find the primary's copy, its volume, class and size:
+
+   ```sh
+   kubectl -n kyq-kyidentity get pvc -l kyquickstart/postgres=17,kyquickstart/instance-role=primary
+   COPY=pre-upgrade-pg17-database-1-20261125-231556    # the verified name printed above
+   PV=$(kubectl -n kyq-kyidentity get pvc $COPY -o jsonpath='{.spec.volumeName}')
+   kubectl -n kyq-kyidentity get pvc $COPY -o jsonpath='{.spec.storageClassName} {.spec.resources.requests.storage}{"\n"}'
+   ```
+
+2. Keep that volume when its claim goes: `kubectl patch pv $PV -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'`.
+3. Delete the 18 `Cluster`. **This deletes its claims, the 18 data.** Copy them first if you
+   may want them. `kubectl -n kyq-kyidentity delete cluster database --wait`, then wait until
+   `kubectl -n kyq-kyidentity get pvc -l cnpg.io/cluster=database` lists none.
+4. Free the volume: `kubectl -n kyq-kyidentity delete pvc $COPY`, then
+   `kubectl patch pv $PV --type json -p '[{"op":"remove","path":"/spec/claimRef"}]'`.
+5. Give it to the new `Cluster`'s first instance, as CloudNativePG labels its claims (fill in
+   the class, size and volume from step 1):
+
+   ```yaml
+   apiVersion: v1
+   kind: PersistentVolumeClaim
+   metadata:
+     name: database-1
+     namespace: kyq-kyidentity
+     labels:
+       cnpg.io/cluster: database
+       cnpg.io/instanceName: database-1
+       cnpg.io/instanceRole: primary
+       role: primary
+       cnpg.io/pvcRole: PG_DATA
+     annotations:
+       cnpg.io/nodeSerial: "1"
+       cnpg.io/pvcStatus: ready
+   spec:
+     accessModes: [ReadWriteOnce]
+     storageClassName: <class>
+     volumeName: <PV>
+     resources:
+       requests:
+         storage: <size>
+   ```
+
+   `kubectl apply -f` it.
+6. `apply` with the previous KyQuickStart release, whose image is 17.12. It creates the
+   `Cluster` again; CloudNativePG finds the claim without an owner and starts the primary on it
+   (its restore of a `Cluster` from existing claims), then clones the other instances.
+   KyIdentity's Secrets were never removed, so its pods sign in with the same password.
+
+The other copies stay until you delete them. An apply with this release afterwards moves the
+`Cluster` to 18 again with new copies; the earlier `Cluster`'s (annotation
+`kyquickstart/cluster-uid`) are left alone and only named when space runs short.
 
 ### The CloudNativePG operator
 
@@ -953,7 +1075,9 @@ choose who can open a backup:
 
 Apply prints this as an outstanding step after every run, and says plainly when no key is set
 that KyIdentity has no backup. Pre-upgrade copies of claims do not cover a replicated
-KyIdentity, and `kyquickstart backup` covers Docker apps only.
+KyIdentity's upgrades, and `kyquickstart backup` covers Docker apps only. The copies of a
+`Cluster`'s claims made for [its move to PostgreSQL 18](#postgresql-17-to-18) are no backup
+either: they hold the data as it was then.
 
 ### What it does not do
 

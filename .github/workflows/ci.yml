@@ -127,8 +127,11 @@ jobs:
           - shard: kube-nginx-joins # the NPM joins suite behind the nginx edge
             run: ^TestKubernetesNginxEdgeJoins$
             pkgs: ./test/e2e/
+          - shard: kube-cluster-upgrade # CloudNativePG 17 to 18, copies and the rollback from them
+            run: ^TestKubernetesIdentityDatabaseClusterUpgrade$
+            pkgs: ./test/e2e/
           - shard: rest # 3.5 min
-            skip: ^(TestKubernetesNPMEdge|TestKubernetesNPMEdgeJoins|TestKubernetesNginxEdge|TestKubernetesNginxEdgeJoins|TestKubernetesNginxEdgeFailover|TestKubernetesKyMessage|TestKubernetesApply|TestKubernetesRestore|TestKubernetesKyYard)$
+            skip: ^(TestKubernetesIdentityDatabaseClusterUpgrade|TestKubernetesNPMEdge|TestKubernetesNPMEdgeJoins|TestKubernetesNginxEdge|TestKubernetesNginxEdgeJoins|TestKubernetesNginxEdgeFailover|TestKubernetesKyMessage|TestKubernetesApply|TestKubernetesRestore|TestKubernetesKyYard)$
             pkgs: ./test/e2e/ ./internal/edge/
     runs-on: ubuntu-latest
     timeout-minutes: 45
