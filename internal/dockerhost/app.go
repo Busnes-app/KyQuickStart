@@ -114,18 +114,3 @@ func (a App) ps(ctx context.Context) ([]container, error) {
 	}
 	return parsePS(out)
 }
-
-// Unmoved reports whether the app still has to make its catalog's upgrade.move: its
-// directory holds the move's from file and lacks its to file.
-func Unmoved(ctx context.Context, a App) (bool, error) {
-	mv := a.Catalog.Upgrade.Move
-	if mv == nil {
-		return false, nil
-	}
-	cmd := "cd " + remote.Quote(a.dir()) + " 2>/dev/null || exit 0; if [ -s " + remote.Quote(mv.From) + " ] && [ ! -s " + remote.Quote(mv.To) + " ]; then echo unmoved; fi"
-	out, err := a.Runner.Run(ctx, cmd, nil)
-	if err != nil {
-		return false, fmt.Errorf("read %s's data layout: %w", a.Name, err)
-	}
-	return strings.TrimSpace(string(out)) == "unmoved", nil
-}

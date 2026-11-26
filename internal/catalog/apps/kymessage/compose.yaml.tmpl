@@ -118,42 +118,10 @@ services:
       KY_MATRIX_MEDIA_IP: "{{media_address}}"
     volumes: [./matrix:/matrix]
 
-  # PostgreSQL 18 keeps its data in pgdata/18/docker, beside the 17 data in pgdata/pgdata,
-  # which stays untouched. A 17 install moves on its next deploy: this one-shot dumps
-  # pgdata/pgdata once into pgdata/upgrade-from-17, then postgres restores that dump before it
-  # starts (KyMessage-Server's docker-compose.matrix.yml; pg-upgrade/postgres-17-to-18.sh is
-  # the suite's kit, scripts/postgres-17-to-18.sh). Without 17 data it does nothing.
-  postgres-17-dump:
-    image: {{ .Images.postgres_17 }}
-    user: "${KYQ_UID:?}:${KYQ_GID:?}"
-    entrypoint: ["bash", "/ky/postgres-17-to-18.sh", "dump"]
-    environment:
-      OLD: /v/pgdata
-      NEW: /v
-    network_mode: none
-    restart: "no"
-    # A clean stop removes postmaster.pid, without which the next dump refuses.
-    stop_grace_period: 2m
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
-    read_only: true
-    tmpfs: [/tmp]
-    shm_size: 128m
-    mem_limit: 512m
-    memswap_limit: 512m
-    cpus: 1
-    pids_limit: 256
-    volumes:
-      - ./pgdata:/v
-      - ./pg-upgrade/postgres-17-to-18.sh:/ky/postgres-17-to-18.sh:ro
-
   postgres:
     image: {{ .Images.postgres }}
     user: "${KYQ_UID:?}:${KYQ_GID:?}"
     restart: unless-stopped
-    # Restores postgres-17-dump's dump once, then runs the image's own entrypoint.
-    entrypoint: ["bash", "/ky/postgres-17-to-18.sh", "restore"]
-    command: [postgres]
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     read_only: true
@@ -166,22 +134,20 @@ services:
     stop_grace_period: 2m
     environment:
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      # A subdirectory: initdb must own its directory.
+      PGDATA: /var/lib/postgresql/data/pgdata
     secrets: [postgres_password]
     networks: [matrix-db]
     volumes:
-      - ./pgdata:/var/lib/postgresql
+      - ./pgdata:/var/lib/postgresql/data
       - ./matrix/postgres:/docker-entrypoint-initdb.d:ro
-      - ./pg-upgrade/postgres-17-to-18.sh:/ky/postgres-17-to-18.sh:ro
-    depends_on:
-      postgres-17-dump: {condition: service_completed_successfully}
-    # TCP, not the socket: during first-run init or the restore the temporary server listens on
-    # the socket only. The restore takes about as long as a restore of the backup's dump.
+    # TCP, not the socket: during first-run init the temporary server listens on the socket only.
     healthcheck:
       test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres"]
       interval: 10s
       timeout: 5s
       retries: 30
-      start_period: 1h
+      start_period: 60s
       start_interval: 2s
 
   synapse:

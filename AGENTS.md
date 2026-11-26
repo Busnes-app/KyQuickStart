@@ -528,12 +528,8 @@ edge compatibility: `docs/redirect.md`.
   typed confirmation, never the app's `vol-<name>` claims. It is
   `backup_required` where neither can run (no destination, named volumes, a root app on
   Kubernetes); any other upgrade needs an explicit, recorded acknowledgement. The manifest's `upgrade.note` is printed and recorded with it.
-  `upgrade.move` (Docker only; kymessage's PostgreSQL 17 to 18, owner decision 2026-11-25)
-  gates on the target, not the versions: while the app's directory holds `from` and lacks `to`,
-  a deploy is backed up first where `kyquickstart backup` can (one snapshot when the version
-  change takes one too) and otherwise refuses `ack_required` without `--acknowledge-no-backup`.
   The suite's PostgreSQL 17 to 18 kit is `scripts/postgres-17-to-18.sh`, kept byte for byte (kit
-  v4) in kymessage's `files/pg-upgrade/` and `internal/kube/` (`TestPostgresKitIsVendoredByteForByte`).
+  v4) in `internal/kube/` (`TestPostgresKitIsVendoredByteForByte`, `TestRenderReplicas`).
   Uninstall keeps data and secrets, and on Kubernetes ends only once the app's pods are gone;
   Docker deploys, backups and lifecycle steps refuse a Compose project `kyq-<app>` whose
   containers another root's directory made (another plan, or this one before its root moved),
@@ -694,12 +690,9 @@ edge compatibility: `docs/redirect.md`.
   `ports:` entry starts with `{{forward…}}`, `{{forward_addr}}`, `{{media_address}}`,
   `{{smtp_address}}` (a `receiver` rendering's alone) or `127.0.0.1`: no bare or wildcard
   publication. Files in an app's catalog `files/` are written mode 0644 by deploy where its
-  Compose file binds them inside a bind directory (a mail app's in its receiver rendering
-  only), and are part of the deploy's input. A service in a Compose profile is a one-shot run
-  (`compose run --rm`), never part of `up` or health. A service another waits for with
-  `service_completed_successfully` (`Once`, `restart: "no"`; kymessage's `postgres-17-dump`)
-  runs to completion in every `up`, carries the managed labels and is never asked to be running
-  or healthy. A bind source inside a bind directory must exist before deploy starts the app.
+  Compose file binds them inside a bind directory, and are part of the deploy's input. A service in a Compose profile is a one-shot run
+  (`compose run --rm`), never part of `up` or health; a bind source inside a bind directory
+  must exist before deploy starts the app.
   Compose runs with `KYQ_UID`/`KYQ_GID` set to the target user's; `./<name>` bind directories
   are created private by the driver before Compose, and no other relative bind source is
   accepted. KyMessages' Synapse sets `PYTHONPATH=/config` to load matrix-init's
@@ -756,13 +749,10 @@ calls and kind nodes must carry their own explicit bounds.
   fixed execution count after `make ci`; a crasher found later goes under the package's
   `testdata/fuzz/<Target>/`.
 - CI's `PostgreSQL 17 to 18 upgrade` job (in `release-image.yml`'s REQUIRED list):
-  `scripts/test-postgres-17-to-18.sh` seeds a 17 install from the previous catalog's rendered
-  kymessage Compose file and moves it with this one (`up -d` over the running 17, a refused dump
-  beside a live 17, passwords over the network, rollback, a refused return to 18 after 17 ran and
-  the documented move-again and keep-18 ways out, rerun, a bad dump, a fresh install, a 17 backup
-  restored with the manifest's command); `scripts/test-postgres-17-to-18-pod.sh` runs the previous
-  and current database pod specs in Docker as a kubelet would, with the same rollback cases (not
-  Kubernetes itself).
+  `scripts/test-postgres-17-to-18-pod.sh` runs the previous and current replicated KyIdentity
+  database pod specs in Docker as a kubelet would (not Kubernetes itself): the move, passwords
+  over the network, rollback, a refused return to 18 after 17 ran and the documented move-again
+  and keep-18 ways out, a dump beside a live 17, the `upgrade-from-17` clean-up, rerun and a fresh claim.
 - CI's `e2e (kube-cluster-upgrade)` shard: `TestKubernetesIdentityDatabaseClusterUpgrade`
   (three kind workers, the catalog's KyIdentity and CloudNativePG) installs on a 17 `Cluster`,
   seeds rows and a password role, applies this release (rows, the role's password over the
