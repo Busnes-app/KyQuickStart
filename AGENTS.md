@@ -624,7 +624,9 @@ edge compatibility: `docs/redirect.md`.
   to such a plan. KyIdentity connects to `database-rw` with `sslmode=verify-full` against the
   authority in `kyq-database-tls`, which the installer makes once with a ten-year server
   certificate and whose key it discards; never the operator's own authority, which rotates
-  under a running KyIdentity. Policy `database` admits KyIdentity's pods, the instances and
+  under a running KyIdentity. PostgreSQL 18 `Cluster`s set `postgresql.parameters.ssl_groups`
+  to `X25519MLKEM768:X25519:prime256v1` (hybrid post-quantum first, needs OpenSSL 3.5+ in the
+  operand image; omitted for 17 so major upgrades start cleanly). Policy `database` admits KyIdentity's pods, the instances and
   the operator's pod (any namespace); the instances' egress is open, since they need the API
   server. Deploy waits for every instance before it starts KyIdentity (`clusterTimeout`).
   `stop` and `uninstall` hibernate the `Cluster` (`cnpg.io/hibernation`) and never delete

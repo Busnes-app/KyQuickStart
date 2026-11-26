@@ -14,6 +14,11 @@ state directory, target data and target-held credentials; do not reset them as a
 
 ## Unreleased
 
+- Post-quantum key exchange on the highly available KyIdentity database (`database_instances`).
+  PostgreSQL 18 CloudNativePG `Cluster`s set `ssl_groups` to `X25519MLKEM768:X25519:prime256v1`:
+  hybrid X25519MLKEM768 first, classical X25519 and P-256 fallback, other groups refused.
+  **Upgrade impact:** an existing PostgreSQL 18 `Cluster` reloads its configuration in place; a
+  PostgreSQL 17 `Cluster` receives the setting after upgrading to 18.
 - KyMessages (`kymessage`, the Matrix stack) leaves the catalog: KyMessage-Server is archived,
   and KyMessages-Native has no release yet. `unmanage` now forgets an app the catalog no
   longer has without touching it, and hands its edge routes to you still serving.
