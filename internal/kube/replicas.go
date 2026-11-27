@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/Busnes-app/kyquickstart/internal/engine"
 	"github.com/Busnes-app/kyquickstart/internal/managed"
@@ -407,6 +406,9 @@ func (s replicaSecretsStep) check(ctx context.Context) (string, error) {
 				return "secret " + clusterTLSSecret + " is incomplete", nil
 			}
 		}
+		if clusterCertNeedsRenewal(tls, clusterHost(s.a.Name), clusterNow()) {
+			return "secret " + clusterTLSSecret + " needs renewal", nil
+		}
 		return "", nil
 	}
 	// The URL carries the password: an error names the Secret, never its contents.
@@ -490,18 +492,60 @@ func (s replicaSecretsStep) Apply(ctx context.Context) error {
 	}); err != nil || !s.a.clustered() {
 		return err
 	}
-	// The certificate and its authority are made together, so the Secret holds all or none.
-	return s.fill(ctx, clusterTLSSecret, corev1.SecretTypeTLS, clusterTLSKeys, func(sec *corev1.Secret) error {
-		ca, cert, key, err := serverCertificate(clusterHost(s.a.Name), time.Now())
-		if err != nil {
-			return errors.New("the database's server certificate could not be made")
-		}
-		sec.Data = map[string][]byte{clusterCAKey: ca, corev1.TLSCertKey: cert, corev1.TLSPrivateKeyKey: key}
-		return nil
-	})
+	// The certificate and its authority are made together, and renewed before expiry or on demand.
+	return s.ensureClusterTLS(ctx)
 }
 
 var clusterTLSKeys = []string{clusterCAKey, corev1.TLSCertKey, corev1.TLSPrivateKeyKey}
+
+// ensureClusterTLS creates or renews kyq-database-tls when missing, incomplete, invalid,
+// within clusterCertificateRenewBefore of expiry, or annotated with clusterReissueAnnotation=true.
+// On renewal, any still-valid signing CA of the outgoing leaf is bundled into ca.crt so pods
+// trust both leaves during rollout.
+func (s replicaSecretsStep) ensureClusterTLS(ctx context.Context) error {
+	host := clusterHost(s.a.Name)
+	now := clusterNow()
+	sec, found, err := getOwned(ctx, s.secrets(), "secret", clusterTLSSecret)
+	if err != nil {
+		return err
+	}
+	if found && !clusterCertNeedsRenewal(sec, host, now) {
+		return nil
+	}
+	var prev *corev1.Secret
+	if found {
+		prev = sec
+	} else {
+		sec = &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: clusterTLSSecret, Namespace: namespaceOf(s.a.Name)},
+			Type:       corev1.SecretTypeTLS,
+		}
+	}
+	ca, cert, key, err := renewServerCertificate(host, prev, now)
+	if err != nil {
+		return errors.New("the database's server certificate could not be made")
+	}
+	sec.Labels = workloadLabels(s.a.ReleaseSet)
+	if sec.Annotations != nil {
+		delete(sec.Annotations, clusterReissueAnnotation)
+	}
+	sec.Data = map[string][]byte{clusterCAKey: ca, corev1.TLSCertKey: cert, corev1.TLSPrivateKeyKey: key}
+	for _, k := range clusterTLSKeys {
+		s.a.Redact.Add(string(sec.Data[k]))
+	}
+	if found {
+		_, err = s.secrets().Update(ctx, sec, metav1.UpdateOptions{})
+	} else {
+		_, err = s.secrets().Create(ctx, sec, metav1.CreateOptions{})
+	}
+	switch {
+	case apierrors.IsConflict(err) || apierrors.IsAlreadyExists(err):
+		return fmt.Errorf("secret %s: %w", clusterTLSSecret, engine.ErrTransient)
+	case err != nil:
+		return fmt.Errorf("secret %s: cluster refused credential publication", clusterTLSSecret)
+	}
+	return nil
+}
 
 // fill writes name once every one of keys has a value, leaving a complete Secret alone. The
 // four keys are generated together, so a Secret holds all of them or none.

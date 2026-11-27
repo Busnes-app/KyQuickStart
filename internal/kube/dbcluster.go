@@ -1,12 +1,16 @@
 package kube
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -41,13 +45,26 @@ const (
 	clusterHealthy   = "Cluster in healthy state"
 	clusterStatus    = 8000 // each instance's status port, which the operator polls
 	usernameKey      = "username"
-	// clusterCertificateYears is the life of the server certificate, which nothing renews.
+	// clusterCertificateYears is the life of the Cluster's database server certificate.
+	// Renewed automatically on apply once within clusterCertificateRenewBefore of expiry,
+	// or on demand via clusterReissueAnnotation.
 	clusterCertificateYears = 10
+	// clusterCertificateRenewBefore is how far before expiry apply re-issues kyq-database-tls.
+	clusterCertificateRenewBefore = 180 * 24 * time.Hour
+	// clusterReissueAnnotation, when set to "true" on kyq-database-tls, forces a fresh CA and
+	// server certificate on the next apply (and is cleared once re-issued).
+	clusterReissueAnnotation = "kyquickstart.busnes.app/reissue"
+	// clusterCAAnnotation records the SHA-256 digest of kyq-database-tls's ca.crt on the app
+	// Deployments' pod templates so a CA renewal rolls the pods that read ca.crt at startup.
+	clusterCAAnnotation = "kyquickstart.busnes.app/database-ca-sha256"
 	// clusterSSLGroups is PostgreSQL 18's TLS key-exchange group list: hybrid post-quantum
 	// X25519MLKEM768 first (needs OpenSSL 3.5+ in the operand image; Debian trixie ships 3.5),
 	// keeping classical X25519 and P-256 fallback and refusing other groups.
 	clusterSSLGroups = "X25519MLKEM768:X25519:prime256v1"
 )
+
+// clusterNow returns the current time for database certificate issuance and renewal checks.
+var clusterNow = time.Now
 
 // clusterTimeout bounds a Cluster's first start: one instance at a time, each pulling the
 // image on its node and copying the instance before it.
@@ -200,6 +217,115 @@ func serverCertificate(host string, now time.Time) (ca, cert, key []byte, err er
 	}
 	block := func(kind string, der []byte) []byte { return pem.EncodeToMemory(&pem.Block{Type: kind, Bytes: der}) }
 	return block("CERTIFICATE", caDER), block("CERTIFICATE", certDER), block("EC PRIVATE KEY", keyDER), nil
+}
+
+// parsePEMCertificates decodes all CERTIFICATE PEM blocks in raw.
+func parsePEMCertificates(raw []byte) []*x509.Certificate {
+	var out []*x509.Certificate
+	for rest := raw; len(rest) > 0; {
+		block, next := pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		rest = next
+		if block.Type != "CERTIFICATE" {
+			continue
+		}
+		if cert, err := x509.ParseCertificate(block.Bytes); err == nil {
+			out = append(out, cert)
+		}
+	}
+	return out
+}
+
+// clusterCertNeedsRenewal reports whether sec lacks a healthy, non-expiring database server
+// certificate for host (or was explicitly marked for re-issue via clusterReissueAnnotation).
+func clusterCertNeedsRenewal(sec *corev1.Secret, host string, now time.Time) bool {
+	if sec == nil {
+		return true
+	}
+	if sec.Annotations[clusterReissueAnnotation] == "true" {
+		return true
+	}
+	caPEM := sec.Data[clusterCAKey]
+	certPEM := sec.Data[corev1.TLSCertKey]
+	keyPEM := sec.Data[corev1.TLSPrivateKeyKey]
+	if len(caPEM) == 0 || len(certPEM) == 0 || len(keyPEM) == 0 {
+		return true
+	}
+	if _, err := tls.X509KeyPair(certPEM, keyPEM); err != nil {
+		return true
+	}
+	leaves := parsePEMCertificates(certPEM)
+	if len(leaves) == 0 {
+		return true
+	}
+	leaf := leaves[0]
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(caPEM) {
+		return true
+	}
+	// Require the leaf and its verifying CA to be valid both now and throughout the renewal window.
+	horizon := now.Add(clusterCertificateRenewBefore)
+	for _, checkTime := range []time.Time{now, horizon} {
+		for _, dnsName := range []string{host, host + ".cluster.local"} {
+			if _, err := leaf.Verify(x509.VerifyOptions{
+				Roots:       roots,
+				DNSName:     dnsName,
+				CurrentTime: checkTime,
+			}); err != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// renewServerCertificate mints a fresh CA and server certificate for host. When prev holds a
+// currently valid leaf signed by a still-valid CA in prev[ca.crt], that signing CA is appended
+// after the new CA in the returned ca.crt bundle so app pods reloading ca.crt trust both the
+// outgoing and incoming database leaves during rollout. Expired or unrelated CAs are dropped,
+// bounding ca.crt to at most two certificates.
+func renewServerCertificate(host string, prev *corev1.Secret, now time.Time) (caBundle, cert, key []byte, err error) {
+	newCA, cert, key, err := serverCertificate(host, now)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if prev == nil {
+		return newCA, cert, key, nil
+	}
+	leaves := parsePEMCertificates(prev.Data[corev1.TLSCertKey])
+	if len(leaves) == 0 {
+		return newCA, cert, key, nil
+	}
+	oldLeaf := leaves[0]
+	newCAs := parsePEMCertificates(newCA)
+	for _, oldCA := range parsePEMCertificates(prev.Data[clusterCAKey]) {
+		if !oldCA.IsCA || !now.Before(oldCA.NotAfter) || now.Before(oldCA.NotBefore) {
+			continue
+		}
+		if len(newCAs) > 0 && bytes.Equal(oldCA.Raw, newCAs[0].Raw) {
+			continue
+		}
+		pool := x509.NewCertPool()
+		pool.AddCert(oldCA)
+		if _, err := oldLeaf.Verify(x509.VerifyOptions{
+			Roots:       pool,
+			DNSName:     host,
+			CurrentTime: now,
+		}); err != nil {
+			continue
+		}
+		oldPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: oldCA.Raw})
+		return append(newCA, oldPEM...), cert, key, nil
+	}
+	return newCA, cert, key, nil
+}
+
+// clusterCAHash returns the SHA-256 hex digest of a ca.crt bundle.
+func clusterCAHash(ca []byte) string {
+	sum := sha256.Sum256(ca)
+	return hex.EncodeToString(sum[:])
 }
 
 // clusterObject reads the app's Cluster; nil when absent, or when this cluster serves none.

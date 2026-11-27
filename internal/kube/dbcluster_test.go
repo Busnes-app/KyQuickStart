@@ -436,3 +436,130 @@ func TestDatabaseOperatorCheck(t *testing.T) {
 		t.Fatalf("clustered plan: %+v", f)
 	}
 }
+
+func TestDatabaseClusterCertificateRenewal(t *testing.T) {
+	pollInterval = time.Millisecond
+	ctx := context.Background()
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	origNow := clusterNow
+	clusterNow = func() time.Time { return now }
+	t.Cleanup(func() { clusterNow = origNow })
+
+	a, cs, _, _ := clusteredApp(t, 3)
+	steps := Steps(a)
+	secretsStep, deploy := steps[1], steps[3]
+	for _, s := range steps[:4] {
+		if err := s.Apply(ctx); err != nil {
+			t.Fatalf("%s: %v", s.ID(), err)
+		}
+	}
+
+	host := clusterHost(a.Name)
+	initial := secretOf(t, cs, clusterTLSSecret)
+	initialCAHash := clusterCAHash(initial[clusterCAKey])
+	for _, depName := range []string{appName, replicaName} {
+		dep, err := cs.AppsV1().Deployments("kyq-kyidentity").Get(ctx, depName, metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := dep.Spec.Template.Annotations[clusterCAAnnotation]; got != initialCAHash {
+			t.Fatalf("deployment %s CA hash = %q, want %q", depName, got, initialCAHash)
+		}
+	}
+
+	// 1. Well before expiry, Inspect is satisfied and Apply is a no-op.
+	now = now.AddDate(9, 0, 0)
+	if ok, err := secretsStep.Inspect(ctx); err != nil || !ok {
+		t.Fatalf("healthy cert inspect = (%v, %v), want (true, nil)", ok, err)
+	}
+	if ok, err := deploy.Inspect(ctx); err != nil || !ok {
+		t.Fatalf("deploy inspect before renewal = (%v, %v), want (true, nil)", ok, err)
+	}
+
+	// 2. Within clusterCertificateRenewBefore (9y8m), Inspect flags renewal; Apply re-issues
+	// with a 2-CA transition bundle (new CA + outgoing still-valid CA), and deploy detects CA drift.
+	now = time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC).AddDate(9, 8, 0)
+	if ok, err := secretsStep.Inspect(ctx); err != nil || ok {
+		t.Fatalf("expiring cert inspect = (%v, %v), want (false, nil)", ok, err)
+	}
+	if err := secretsStep.Apply(ctx); err != nil {
+		t.Fatalf("renewal apply: %v", err)
+	}
+	renewed := secretOf(t, cs, clusterTLSSecret)
+	if string(renewed[corev1.TLSCertKey]) == string(initial[corev1.TLSCertKey]) {
+		t.Fatal("expiring leaf certificate was not replaced")
+	}
+	bundleCAs := parsePEMCertificates(renewed[clusterCAKey])
+	if len(bundleCAs) != 2 {
+		t.Fatalf("renewed ca.crt has %d CAs, want 2 (new + outgoing)", len(bundleCAs))
+	}
+	// Both the outgoing leaf and the newly issued leaf verify against the transition bundle.
+	bundleRoots := x509.NewCertPool()
+	bundleRoots.AppendCertsFromPEM(renewed[clusterCAKey])
+	for label, pemBytes := range map[string][]byte{"old": initial[corev1.TLSCertKey], "new": renewed[corev1.TLSCertKey]} {
+		leaf := parsePEMCertificates(pemBytes)[0]
+		if _, err := leaf.Verify(x509.VerifyOptions{Roots: bundleRoots, DNSName: host, CurrentTime: now}); err != nil {
+			t.Fatalf("%s leaf failed verification against transition bundle: %v", label, err)
+		}
+	}
+	// Deploy detects the CA change and stamps the new CA digest onto both Deployments.
+	if ok, err := deploy.Inspect(ctx); err != nil || ok {
+		t.Fatalf("deploy inspect after CA renewal = (%v, %v), want (false, nil)", ok, err)
+	}
+	if err := deploy.Apply(ctx); err != nil {
+		t.Fatalf("deploy apply after renewal: %v", err)
+	}
+	renewedCAHash := clusterCAHash(renewed[clusterCAKey])
+	for _, depName := range []string{appName, replicaName} {
+		dep, err := cs.AppsV1().Deployments("kyq-kyidentity").Get(ctx, depName, metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := dep.Spec.Template.Annotations[clusterCAAnnotation]; got != renewedCAHash {
+			t.Fatalf("deployment %s CA hash after renewal = %q, want %q", depName, got, renewedCAHash)
+		}
+	}
+	if ok, err := deploy.Inspect(ctx); err != nil || !ok {
+		t.Fatalf("deploy inspect after rollout = (%v, %v), want (true, nil)", ok, err)
+	}
+
+	// 3. On-demand re-issue via annotation rotates immediately, clears the annotation,
+	// and bounds ca.crt to 2 CAs (dropping the oldest CA).
+	sec, err := cs.CoreV1().Secrets("kyq-kyidentity").Get(ctx, clusterTLSSecret, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sec.Annotations = map[string]string{clusterReissueAnnotation: "true"}
+	if _, err := cs.CoreV1().Secrets("kyq-kyidentity").Update(ctx, sec, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := secretsStep.Inspect(ctx); err != nil || ok {
+		t.Fatalf("annotated reissue inspect = (%v, %v), want (false, nil)", ok, err)
+	}
+	if err := secretsStep.Apply(ctx); err != nil {
+		t.Fatalf("annotated reissue apply: %v", err)
+	}
+	sec, err = cs.CoreV1().Secrets("kyq-kyidentity").Get(ctx, clusterTLSSecret, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sec.Annotations[clusterReissueAnnotation] != "" {
+		t.Fatalf("reissue annotation was not cleared: %v", sec.Annotations)
+	}
+	if string(sec.Data[corev1.TLSCertKey]) == string(renewed[corev1.TLSCertKey]) {
+		t.Fatal("annotated reissue did not replace leaf certificate")
+	}
+	if n := len(parsePEMCertificates(sec.Data[clusterCAKey])); n != 2 {
+		t.Fatalf("ca.crt after second rotation has %d CAs, want 2 (bounded)", n)
+	}
+
+	// 4. After expiry, expired outgoing CAs are dropped (only the fresh CA remains).
+	now = now.AddDate(11, 0, 0)
+	if err := secretsStep.Apply(ctx); err != nil {
+		t.Fatalf("post-expiry renewal apply: %v", err)
+	}
+	postExpiry := secretOf(t, cs, clusterTLSSecret)
+	if n := len(parsePEMCertificates(postExpiry[clusterCAKey])); n != 1 {
+		t.Fatalf("ca.crt after expiry has %d CAs, want 1", n)
+	}
+}
