@@ -37,7 +37,7 @@ import (
 // primary, every commit confirmed by a standby before it is acknowledged. The operator fails
 // over to a standby when the primary's node is lost.
 const (
-	clusterGroup     = "postgresql.cnpg.io"
+	clusterGroup          = "postgresql.cnpg.io"
 	clusterTLSSecret      = "kyq-database-tls"
 	clusterCADir          = "/run/kyq-database-ca"
 	clusterCAKey          = "ca.crt"
