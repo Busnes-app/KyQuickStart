@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/Busnes-app/kyquickstart/internal/engine"
 	"github.com/Busnes-app/kyquickstart/internal/managed"
@@ -402,10 +401,20 @@ func (s replicaSecretsStep) check(ctx context.Context) (string, error) {
 			return "secret " + clusterTLSSecret + " missing", err
 		}
 		s.a.Redact.Add(string(tls.Data[corev1.TLSPrivateKeyKey]))
+		if len(tls.Data[clusterPendingKeyKey]) > 0 {
+			s.a.Redact.Add(string(tls.Data[clusterPendingKeyKey]))
+		}
 		for _, key := range clusterTLSKeys {
 			if len(tls.Data[key]) == 0 {
 				return "secret " + clusterTLSSecret + " is incomplete", nil
 			}
+		}
+		host, now := clusterHost(s.a.Name), clusterNow()
+		if clusterCertNeedsRenewal(tls, host, now) {
+			return "secret " + clusterTLSSecret + " needs renewal", nil
+		}
+		if _, retire := clusterCAShouldRetire(tls, host, now); retire {
+			return "secret " + clusterTLSSecret + " has outgoing CA to retire", nil
 		}
 		return "", nil
 	}
@@ -490,18 +499,91 @@ func (s replicaSecretsStep) Apply(ctx context.Context) error {
 	}); err != nil || !s.a.clustered() {
 		return err
 	}
-	// The certificate and its authority are made together, so the Secret holds all or none.
-	return s.fill(ctx, clusterTLSSecret, corev1.SecretTypeTLS, clusterTLSKeys, func(sec *corev1.Secret) error {
-		ca, cert, key, err := serverCertificate(clusterHost(s.a.Name), time.Now())
-		if err != nil {
-			return errors.New("the database's server certificate could not be made")
-		}
-		sec.Data = map[string][]byte{clusterCAKey: ca, corev1.TLSCertKey: cert, corev1.TLSPrivateKeyKey: key}
-		return nil
-	})
+	// The certificate and its authority are made together, and renewed before expiry or on demand.
+	return s.ensureClusterTLS(ctx)
 }
 
 var clusterTLSKeys = []string{clusterCAKey, corev1.TLSCertKey, corev1.TLSPrivateKeyKey}
+
+// ensureClusterTLS creates, stages renewal of, or retires the outgoing CA from kyq-database-tls.
+// On renewal of a still-valid leaf, the combined trust bundle [newCA, oldCA] is written to ca.crt
+// while tls.crt/tls.key stay on the outgoing leaf and the new leaf is staged in pending-tls.{crt,key}
+// until clusterTLSActivateStep promotes it after app pods roll out and become ready. On first
+// install or when the active leaf is already expired/invalid, the fresh leaf is written directly.
+func (s replicaSecretsStep) ensureClusterTLS(ctx context.Context) error {
+	host := clusterHost(s.a.Name)
+	now := clusterNow()
+	sec, found, err := getOwned(ctx, s.secrets(), "secret", clusterTLSSecret)
+	if err != nil {
+		return err
+	}
+	if found && !clusterCertNeedsRenewal(sec, host, now) {
+		prunedCA, retire := clusterCAShouldRetire(sec, host, now)
+		if !retire {
+			return nil
+		}
+		sec.Data[clusterCAKey] = prunedCA
+		delete(sec.Annotations, clusterActivatedAtAnnotation)
+		_, err = s.secrets().Update(ctx, sec, metav1.UpdateOptions{})
+		switch {
+		case apierrors.IsConflict(err):
+			return fmt.Errorf("secret %s: %w", clusterTLSSecret, engine.ErrTransient)
+		case err != nil:
+			return fmt.Errorf("secret %s: cluster refused CA retirement", clusterTLSSecret)
+		}
+		return nil
+	}
+	var prev *corev1.Secret
+	if found {
+		prev = sec
+	} else {
+		sec = &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: clusterTLSSecret, Namespace: namespaceOf(s.a.Name)},
+			Type:       corev1.SecretTypeTLS,
+		}
+	}
+	ca, cert, key, err := renewServerCertificate(host, prev, now)
+	if err != nil {
+		return errors.New("the database's server certificate could not be made")
+	}
+	sec.Labels = workloadLabels(s.a.ReleaseSet)
+	if sec.Annotations != nil {
+		delete(sec.Annotations, clusterReissueAnnotation)
+		delete(sec.Annotations, clusterActivatedAtAnnotation)
+	}
+	// If the outgoing leaf is still live, stage the new leaf until deployStep + healthStep confirm
+	// app pods have loaded the combined ca.crt bundle.
+	if found && clusterCertValid(prev.Data[clusterCAKey], prev.Data[corev1.TLSCertKey], prev.Data[corev1.TLSPrivateKeyKey], host, now) {
+		sec.Data = map[string][]byte{
+			clusterCAKey:            ca,
+			corev1.TLSCertKey:       prev.Data[corev1.TLSCertKey],
+			corev1.TLSPrivateKeyKey: prev.Data[corev1.TLSPrivateKeyKey],
+			clusterPendingCertKey:   cert,
+			clusterPendingKeyKey:    key,
+		}
+	} else {
+		sec.Data = map[string][]byte{
+			clusterCAKey:            ca,
+			corev1.TLSCertKey:       cert,
+			corev1.TLSPrivateKeyKey: key,
+		}
+	}
+	for _, v := range sec.Data {
+		s.a.Redact.Add(string(v))
+	}
+	if found {
+		_, err = s.secrets().Update(ctx, sec, metav1.UpdateOptions{})
+	} else {
+		_, err = s.secrets().Create(ctx, sec, metav1.CreateOptions{})
+	}
+	switch {
+	case apierrors.IsConflict(err) || apierrors.IsAlreadyExists(err):
+		return fmt.Errorf("secret %s: %w", clusterTLSSecret, engine.ErrTransient)
+	case err != nil:
+		return fmt.Errorf("secret %s: cluster refused credential publication", clusterTLSSecret)
+	}
+	return nil
+}
 
 // fill writes name once every one of keys has a value, leaving a complete Secret alone. The
 // four keys are generated together, so a Secret holds all of them or none.

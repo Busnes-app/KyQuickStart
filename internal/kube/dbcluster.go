@@ -1,12 +1,16 @@
 package kube
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -14,6 +18,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/Busnes-app/kyquickstart/internal/engine"
 	"github.com/Busnes-app/kyquickstart/internal/managed"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -32,22 +37,43 @@ import (
 // primary, every commit confirmed by a standby before it is acknowledged. The operator fails
 // over to a standby when the primary's node is lost.
 const (
-	clusterGroup     = "postgresql.cnpg.io"
-	clusterTLSSecret = "kyq-database-tls"
-	clusterCADir     = "/run/kyq-database-ca"
-	clusterCAKey     = "ca.crt"
-	clusterLabel     = "cnpg.io/cluster" // the operator's, on every pod of the Cluster
-	hibernation      = "cnpg.io/hibernation"
-	clusterHealthy   = "Cluster in healthy state"
-	clusterStatus    = 8000 // each instance's status port, which the operator polls
-	usernameKey      = "username"
-	// clusterCertificateYears is the life of the server certificate, which nothing renews.
+	clusterGroup          = "postgresql.cnpg.io"
+	clusterTLSSecret      = "kyq-database-tls"
+	clusterCADir          = "/run/kyq-database-ca"
+	clusterCAKey          = "ca.crt"
+	clusterPendingCertKey = "pending-tls.crt"
+	clusterPendingKeyKey  = "pending-tls.key"
+	clusterLabel          = "cnpg.io/cluster" // the operator's, on every pod of the Cluster
+	hibernation           = "cnpg.io/hibernation"
+	clusterHealthy        = "Cluster in healthy state"
+	clusterStatus         = 8000 // each instance's status port, which the operator polls
+	usernameKey           = "username"
+	// clusterCertificateYears is the life of the Cluster's database server certificate.
+	// Renewed automatically on apply once within clusterCertificateRenewBefore of expiry,
+	// or on demand via clusterReissueAnnotation.
 	clusterCertificateYears = 10
+	// clusterCertificateRenewBefore is how far before expiry apply re-issues kyq-database-tls.
+	clusterCertificateRenewBefore = 180 * 24 * time.Hour
+	// clusterCARetireAfter is the grace window after activating a renewed database leaf before
+	// retiring the outgoing CA from ca.crt, giving CloudNativePG time to reload tls.crt.
+	clusterCARetireAfter = 10 * time.Minute
+	// clusterReissueAnnotation, when set to "true" on kyq-database-tls, forces a fresh CA and
+	// server certificate on the next apply (and is cleared once re-issued).
+	clusterReissueAnnotation = "kyquickstart.busnes.app/reissue"
+	// clusterCAAnnotation records the SHA-256 digest of kyq-database-tls's ca.crt on the app
+	// Deployments' pod templates so a CA renewal rolls the pods that read ca.crt at startup.
+	clusterCAAnnotation = "kyquickstart.busnes.app/database-ca-sha256"
+	// clusterActivatedAtAnnotation records when a staged database leaf was promoted to tls.crt
+	// so the outgoing CA can be retired from ca.crt separately after clusterCARetireAfter.
+	clusterActivatedAtAnnotation = "kyquickstart.busnes.app/database-tls-activated-at"
 	// clusterSSLGroups is PostgreSQL 18's TLS key-exchange group list: hybrid post-quantum
 	// X25519MLKEM768 first (needs OpenSSL 3.5+ in the operand image; Debian trixie ships 3.5),
 	// keeping classical X25519 and P-256 fallback and refusing other groups.
 	clusterSSLGroups = "X25519MLKEM768:X25519:prime256v1"
 )
+
+// clusterNow returns the current time for database certificate issuance and renewal checks.
+var clusterNow = time.Now
 
 // clusterTimeout bounds a Cluster's first start: one instance at a time, each pulling the
 // image on its node and copying the instance before it.
@@ -200,6 +226,272 @@ func serverCertificate(host string, now time.Time) (ca, cert, key []byte, err er
 	}
 	block := func(kind string, der []byte) []byte { return pem.EncodeToMemory(&pem.Block{Type: kind, Bytes: der}) }
 	return block("CERTIFICATE", caDER), block("CERTIFICATE", certDER), block("EC PRIVATE KEY", keyDER), nil
+}
+
+// parsePEMCertificates decodes all CERTIFICATE PEM blocks in raw.
+func parsePEMCertificates(raw []byte) []*x509.Certificate {
+	var out []*x509.Certificate
+	for rest := raw; len(rest) > 0; {
+		block, next := pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		rest = next
+		if block.Type != "CERTIFICATE" {
+			continue
+		}
+		if cert, err := x509.ParseCertificate(block.Bytes); err == nil {
+			out = append(out, cert)
+		}
+	}
+	return out
+}
+
+// clusterCertValid reports whether (certPEM, keyPEM) is a valid key pair matching host and
+// chaining to caPEM at time at.
+func clusterCertValid(caPEM, certPEM, keyPEM []byte, host string, at time.Time) bool {
+	if len(caPEM) == 0 || len(certPEM) == 0 || len(keyPEM) == 0 {
+		return false
+	}
+	if _, err := tls.X509KeyPair(certPEM, keyPEM); err != nil {
+		return false
+	}
+	leaves := parsePEMCertificates(certPEM)
+	if len(leaves) == 0 {
+		return false
+	}
+	leaf := leaves[0]
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(caPEM) {
+		return false
+	}
+	for _, dnsName := range []string{host, host + ".cluster.local"} {
+		if _, err := leaf.Verify(x509.VerifyOptions{
+			Roots:       roots,
+			DNSName:     dnsName,
+			CurrentTime: at,
+		}); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// clusterCertFresh reports whether (certPEM, keyPEM) is valid both now and throughout the
+// renewal horizon (now + clusterCertificateRenewBefore).
+func clusterCertFresh(caPEM, certPEM, keyPEM []byte, host string, now time.Time) bool {
+	return clusterCertValid(caPEM, certPEM, keyPEM, host, now) &&
+		clusterCertValid(caPEM, certPEM, keyPEM, host, now.Add(clusterCertificateRenewBefore))
+}
+
+// clusterHasPendingCert reports whether sec carries a staged renewal leaf waiting for
+// clusterTLSActivateStep after app pods finish loading the combined CA bundle.
+func clusterHasPendingCert(sec *corev1.Secret) bool {
+	return sec != nil && (len(sec.Data[clusterPendingCertKey]) > 0 || len(sec.Data[clusterPendingKeyKey]) > 0)
+}
+
+// clusterCertNeedsRenewal reports whether sec lacks a healthy, non-expiring database server
+// certificate for host (or was explicitly marked for re-issue via clusterReissueAnnotation).
+// When a fresh renewal leaf is already staged in pending-tls.{crt,key} alongside a still-valid
+// active leaf, renewal is already staged and waiting for activation.
+func clusterCertNeedsRenewal(sec *corev1.Secret, host string, now time.Time) bool {
+	if sec == nil {
+		return true
+	}
+	if sec.Annotations[clusterReissueAnnotation] == "true" {
+		return true
+	}
+	caPEM := sec.Data[clusterCAKey]
+	if clusterHasPendingCert(sec) {
+		return !(clusterCertValid(caPEM, sec.Data[corev1.TLSCertKey], sec.Data[corev1.TLSPrivateKeyKey], host, now) &&
+			clusterCertFresh(caPEM, sec.Data[clusterPendingCertKey], sec.Data[clusterPendingKeyKey], host, now))
+	}
+	return !clusterCertFresh(caPEM, sec.Data[corev1.TLSCertKey], sec.Data[corev1.TLSPrivateKeyKey], host, now)
+}
+
+// clusterCAShouldRetire reports whether ca.crt contains an outgoing CA that can now be retired
+// separately from the leaf switch. Retirement waits until no pending leaf is staged, the active
+// leaf is fresh, and either clusterCARetireAfter has elapsed since activation or an extra CA is
+// already expired. When true, it returns the pruned ca.crt bundle containing only the CA(s)
+// signing the active tls.crt.
+func clusterCAShouldRetire(sec *corev1.Secret, host string, now time.Time) ([]byte, bool) {
+	if sec == nil || clusterHasPendingCert(sec) {
+		return nil, false
+	}
+	cas := parsePEMCertificates(sec.Data[clusterCAKey])
+	if len(cas) <= 1 {
+		return nil, false
+	}
+	if !clusterCertFresh(sec.Data[clusterCAKey], sec.Data[corev1.TLSCertKey], sec.Data[corev1.TLSPrivateKeyKey], host, now) {
+		return nil, false
+	}
+	leaves := parsePEMCertificates(sec.Data[corev1.TLSCertKey])
+	if len(leaves) == 0 {
+		return nil, false
+	}
+	activeLeaf := leaves[0]
+
+	readyToRetire := false
+	if raw := sec.Annotations[clusterActivatedAtAnnotation]; raw != "" {
+		if activatedAt, err := time.Parse(time.RFC3339, raw); err == nil && !now.Before(activatedAt.Add(clusterCARetireAfter)) {
+			readyToRetire = true
+		}
+	}
+	var kept []byte
+	var dropped int
+	for _, ca := range cas {
+		pool := x509.NewCertPool()
+		pool.AddCert(ca)
+		_, verifies := activeLeaf.Verify(x509.VerifyOptions{
+			Roots:       pool,
+			DNSName:     host,
+			CurrentTime: now,
+		})
+		expired := !now.Before(ca.NotAfter) || now.Before(ca.NotBefore)
+		if verifies == nil {
+			kept = append(kept, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ca.Raw})...)
+			continue
+		}
+		if readyToRetire || expired {
+			dropped++
+			continue
+		}
+		kept = append(kept, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ca.Raw})...)
+	}
+	if dropped == 0 || !clusterCertFresh(kept, sec.Data[corev1.TLSCertKey], sec.Data[corev1.TLSPrivateKeyKey], host, now) {
+		return nil, false
+	}
+	return kept, true
+}
+
+// renewServerCertificate mints a fresh CA and server certificate for host. When prev holds a
+// currently valid leaf signed by a still-valid CA in prev[ca.crt], that signing CA is appended
+// after the new CA in the returned ca.crt bundle so app pods reloading ca.crt trust both the
+// outgoing and incoming database leaves during staged rollout. Expired or unrelated CAs are
+// dropped, bounding ca.crt to at most two certificates.
+func renewServerCertificate(host string, prev *corev1.Secret, now time.Time) (caBundle, cert, key []byte, err error) {
+	newCA, cert, key, err := serverCertificate(host, now)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if prev == nil {
+		return newCA, cert, key, nil
+	}
+	leaves := parsePEMCertificates(prev.Data[corev1.TLSCertKey])
+	if len(leaves) == 0 {
+		return newCA, cert, key, nil
+	}
+	oldLeaf := leaves[0]
+	newCAs := parsePEMCertificates(newCA)
+	for _, oldCA := range parsePEMCertificates(prev.Data[clusterCAKey]) {
+		if !oldCA.IsCA || !now.Before(oldCA.NotAfter) || now.Before(oldCA.NotBefore) {
+			continue
+		}
+		if len(newCAs) > 0 && bytes.Equal(oldCA.Raw, newCAs[0].Raw) {
+			continue
+		}
+		pool := x509.NewCertPool()
+		pool.AddCert(oldCA)
+		if _, err := oldLeaf.Verify(x509.VerifyOptions{
+			Roots:       pool,
+			DNSName:     host,
+			CurrentTime: now,
+		}); err != nil {
+			continue
+		}
+		oldPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: oldCA.Raw})
+		return append(newCA, oldPEM...), cert, key, nil
+	}
+	return newCA, cert, key, nil
+}
+
+// clusterCAHash returns the SHA-256 hex digest of a ca.crt bundle.
+func clusterCAHash(ca []byte) string {
+	sum := sha256.Sum256(ca)
+	return hex.EncodeToString(sum[:])
+}
+
+// clusterTLSActivateStep runs after deployStep and healthStep for clustered apps. When
+// replicaSecretsStep staged a renewed database certificate (pending-tls.{crt,key}) alongside a
+// combined trust bundle in ca.crt, this step verifies that every app Deployment has rolled out
+// with that ca.crt digest and is ready before switching tls.crt/tls.key to the new leaf.
+// The outgoing CA remains in ca.crt for clusterCARetireAfter and is retired separately on a
+// subsequent run so CloudNativePG has time to reload tls.crt without breaking pod connections.
+type clusterTLSActivateStep struct{ a App }
+
+func (s clusterTLSActivateStep) ID() string { return s.a.Name + ".database-tls-activate" }
+func (s clusterTLSActivateStep) InputHash() string {
+	return hashOf("database-tls-activate", s.a.Name)
+}
+
+func (s clusterTLSActivateStep) Inspect(ctx context.Context) (bool, error) {
+	sec, found, err := getOwned(ctx, s.a.Client.cs.CoreV1().Secrets(namespaceOf(s.a.Name)), "secret", clusterTLSSecret)
+	if err != nil {
+		return false, err
+	}
+	return !found || !clusterHasPendingCert(sec), nil
+}
+
+func (s clusterTLSActivateStep) Apply(ctx context.Context) error {
+	ns := namespaceOf(s.a.Name)
+	secrets := s.a.Client.cs.CoreV1().Secrets(ns)
+	sec, found, err := getOwned(ctx, secrets, "secret", clusterTLSSecret)
+	if err != nil || !found || !clusterHasPendingCert(sec) {
+		return err
+	}
+	host := clusterHost(s.a.Name)
+	now := clusterNow()
+	if !clusterCertValid(sec.Data[clusterCAKey], sec.Data[clusterPendingCertKey], sec.Data[clusterPendingKeyKey], host, now) {
+		return fmt.Errorf("secret %s: staged database certificate is invalid", clusterTLSSecret)
+	}
+	// Verify every app Deployment has rolled out with the combined CA bundle before switching
+	// CloudNativePG's active server leaf.
+	wantHash := clusterCAHash(sec.Data[clusterCAKey])
+	want := render(s.a)
+	deps := []*string{}
+	if want.Deployment != nil {
+		deps = append(deps, &want.Deployment.Name)
+	}
+	if want.Replica != nil {
+		deps = append(deps, &want.Replica.Name)
+	}
+	for _, name := range deps {
+		dep, ok, err := getOwned(ctx, s.a.Client.cs.AppsV1().Deployments(ns), "deployment", *name)
+		if err != nil {
+			return err
+		}
+		if !ok || dep.Spec.Template.Annotations[clusterCAAnnotation] != wantHash || !ready(dep) {
+			return fmt.Errorf("deployment %s has not rolled out the staged database CA bundle yet", *name)
+		}
+	}
+	sec.Data[corev1.TLSCertKey] = sec.Data[clusterPendingCertKey]
+	sec.Data[corev1.TLSPrivateKeyKey] = sec.Data[clusterPendingKeyKey]
+	delete(sec.Data, clusterPendingCertKey)
+	delete(sec.Data, clusterPendingKeyKey)
+	if sec.Annotations == nil {
+		sec.Annotations = map[string]string{}
+	}
+	sec.Annotations[clusterActivatedAtAnnotation] = now.UTC().Format(time.RFC3339)
+	s.a.Redact.Add(string(sec.Data[corev1.TLSPrivateKeyKey]))
+	_, err = secrets.Update(ctx, sec, metav1.UpdateOptions{})
+	switch {
+	case apierrors.IsConflict(err):
+		return fmt.Errorf("secret %s: %w", clusterTLSSecret, engine.ErrTransient)
+	case err != nil:
+		return fmt.Errorf("secret %s: cluster refused credential activation", clusterTLSSecret)
+	}
+	return nil
+}
+
+func (s clusterTLSActivateStep) Verify(ctx context.Context) error {
+	done, err := s.Inspect(ctx)
+	if err != nil {
+		return err
+	}
+	if !done {
+		return fmt.Errorf("secret %s still has a staged database certificate awaiting activation", clusterTLSSecret)
+	}
+	return nil
 }
 
 // clusterObject reads the app's Cluster; nil when absent, or when this cluster serves none.

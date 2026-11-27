@@ -86,6 +86,22 @@ func (d deployStep) check(ctx context.Context) (string, error) {
 		case have.GetAnnotations()[hibernation] == "on":
 			return "cluster " + databaseName + " is hibernated", nil
 		}
+		if caHash, err := d.clusterCAHash(ctx); err != nil {
+			return "", err
+		} else if caHash != "" {
+			if dep, ok := w.object.(*appsv1.Deployment); ok && dep.Spec.Template.Annotations[clusterCAAnnotation] != caHash {
+				return "deployment database CA differs", nil
+			}
+			for _, e := range want.extras() {
+				have, found, err := getOwned(ctx, cs.AppsV1().Deployments(ns), "deployment", e.Name)
+				if err != nil {
+					return "", err
+				}
+				if found && have.Spec.Template.Annotations[clusterCAAnnotation] != caHash {
+					return "deployment " + e.Name + " database CA differs", nil
+				}
+			}
+		}
 	}
 	if want.Config != nil {
 		have, found, err := getOwned(ctx, cs.CoreV1().ConfigMaps(ns), "config map", edgeConfig)
@@ -237,6 +253,7 @@ func (d deployStep) Apply(ctx context.Context) error {
 			return err
 		}
 	}
+	var caHash string
 	if o.Cluster != nil {
 		if err := d.a.Client.applyCluster(ctx, d.a, o.Cluster, d.hash); err != nil {
 			return err
@@ -244,6 +261,11 @@ func (d deployStep) Apply(ctx context.Context) error {
 		// Its instances start one after another, each copying the one before: the app's
 		// pods, which would only fail until then, start once it serves.
 		if err := d.a.Client.waitCluster(ctx, d.a.Name); err != nil {
+			return err
+		}
+		var err error
+		caHash, err = d.clusterCAHash(ctx)
+		if err != nil {
 			return err
 		}
 	}
@@ -254,11 +276,27 @@ func (d deployStep) Apply(ctx context.Context) error {
 			continue
 		}
 		dep.Annotations = map[string]string{hashAnnotation: d.hash}
+		if caHash != "" && dep != o.Database {
+			if dep.Spec.Template.Annotations == nil {
+				dep.Spec.Template.Annotations = map[string]string{}
+			}
+			dep.Spec.Template.Annotations[clusterCAAnnotation] = caHash
+		}
 		if err := upsert(ctx, cs.AppsV1().Deployments(ns), "deployment", dep, nil); err != nil {
 			return err
 		}
 	}
 	return d.a.ensureNamespace(ctx, true)
+}
+
+// clusterCAHash reads the current kyq-database-tls ca.crt digest, or "" if the Secret is absent.
+func (d deployStep) clusterCAHash(ctx context.Context) (string, error) {
+	ns := namespaceOf(d.a.Name)
+	tls, found, err := getOwned(ctx, d.a.Client.cs.CoreV1().Secrets(ns), "secret", clusterTLSSecret)
+	if err != nil || !found || len(tls.Data[clusterCAKey]) == 0 {
+		return "", err
+	}
+	return clusterCAHash(tls.Data[clusterCAKey]), nil
 }
 
 // stopOldReplicas stops the replicas before another release's image starts: "app" migrates the
