@@ -447,11 +447,32 @@ func TestDatabaseClusterCertificateRenewal(t *testing.T) {
 
 	a, cs, _, _ := clusteredApp(t, 3)
 	steps := Steps(a)
-	secretsStep, deploy := steps[1], steps[3]
+	secretsStep, deploy, activate := steps[1], steps[3], steps[5]
 	for _, s := range steps[:4] {
 		if err := s.Apply(ctx); err != nil {
 			t.Fatalf("%s: %v", s.ID(), err)
 		}
+	}
+	markReady := func() {
+		t.Helper()
+		for _, depName := range []string{appName, replicaName} {
+			dep, err := cs.AppsV1().Deployments("kyq-kyidentity").Get(ctx, depName, metav1.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			dep.Status.ObservedGeneration = dep.Generation
+			dep.Status.Replicas = *dep.Spec.Replicas
+			dep.Status.UpdatedReplicas = *dep.Spec.Replicas
+			dep.Status.ReadyReplicas = *dep.Spec.Replicas
+			dep.Status.AvailableReplicas = *dep.Spec.Replicas
+			if _, err := cs.AppsV1().Deployments("kyq-kyidentity").UpdateStatus(ctx, dep, metav1.UpdateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	markReady()
+	if ok, err := activate.Inspect(ctx); err != nil || !ok {
+		t.Fatalf("activate inspect on fresh install = (%v, %v), want (true, nil)", ok, err)
 	}
 
 	host := clusterHost(a.Name)
@@ -476,55 +497,100 @@ func TestDatabaseClusterCertificateRenewal(t *testing.T) {
 		t.Fatalf("deploy inspect before renewal = (%v, %v), want (true, nil)", ok, err)
 	}
 
-	// 2. Within clusterCertificateRenewBefore (9y8m), Inspect flags renewal; Apply re-issues
-	// with a 2-CA transition bundle (new CA + outgoing still-valid CA), and deploy detects CA drift.
+	// 2. Within clusterCertificateRenewBefore (9y8m), Inspect flags renewal; Apply STAGES the
+	// new leaf in pending-tls.{crt,key} and publishes [newCA, oldCA] in ca.crt while keeping
+	// tls.crt on the outgoing leaf so existing app pods never fail before rolling out.
 	now = time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC).AddDate(9, 8, 0)
 	if ok, err := secretsStep.Inspect(ctx); err != nil || ok {
 		t.Fatalf("expiring cert inspect = (%v, %v), want (false, nil)", ok, err)
 	}
 	if err := secretsStep.Apply(ctx); err != nil {
-		t.Fatalf("renewal apply: %v", err)
+		t.Fatalf("renewal stage apply: %v", err)
 	}
-	renewed := secretOf(t, cs, clusterTLSSecret)
-	if string(renewed[corev1.TLSCertKey]) == string(initial[corev1.TLSCertKey]) {
-		t.Fatal("expiring leaf certificate was not replaced")
+	staged := secretOf(t, cs, clusterTLSSecret)
+	if string(staged[corev1.TLSCertKey]) != string(initial[corev1.TLSCertKey]) {
+		t.Fatal("staging replaced active tls.crt before app pods rolled out the new CA bundle")
 	}
-	bundleCAs := parsePEMCertificates(renewed[clusterCAKey])
+	if len(staged[clusterPendingCertKey]) == 0 || len(staged[clusterPendingKeyKey]) == 0 {
+		t.Fatal("staging did not populate pending-tls.{crt,key}")
+	}
+	bundleCAs := parsePEMCertificates(staged[clusterCAKey])
 	if len(bundleCAs) != 2 {
-		t.Fatalf("renewed ca.crt has %d CAs, want 2 (new + outgoing)", len(bundleCAs))
+		t.Fatalf("staged ca.crt has %d CAs, want 2 (new + outgoing)", len(bundleCAs))
 	}
-	// Both the outgoing leaf and the newly issued leaf verify against the transition bundle.
 	bundleRoots := x509.NewCertPool()
-	bundleRoots.AppendCertsFromPEM(renewed[clusterCAKey])
-	for label, pemBytes := range map[string][]byte{"old": initial[corev1.TLSCertKey], "new": renewed[corev1.TLSCertKey]} {
+	bundleRoots.AppendCertsFromPEM(staged[clusterCAKey])
+	for label, pemBytes := range map[string][]byte{"old": staged[corev1.TLSCertKey], "pending": staged[clusterPendingCertKey]} {
 		leaf := parsePEMCertificates(pemBytes)[0]
 		if _, err := leaf.Verify(x509.VerifyOptions{Roots: bundleRoots, DNSName: host, CurrentTime: now}); err != nil {
 			t.Fatalf("%s leaf failed verification against transition bundle: %v", label, err)
 		}
 	}
+	// secretsStep is now satisfied while pending leaf awaits activation.
+	if ok, err := secretsStep.Inspect(ctx); err != nil || !ok {
+		t.Fatalf("secrets inspect while staged = (%v, %v), want (true, nil)", ok, err)
+	}
+	// Activation MUST refuse to switch tls.crt before app Deployments roll out with the combined CA.
+	if err := activate.Apply(ctx); err == nil {
+		t.Fatal("activate succeeded before app Deployments rolled out the combined CA bundle")
+	}
 	// Deploy detects the CA change and stamps the new CA digest onto both Deployments.
 	if ok, err := deploy.Inspect(ctx); err != nil || ok {
-		t.Fatalf("deploy inspect after CA renewal = (%v, %v), want (false, nil)", ok, err)
+		t.Fatalf("deploy inspect after CA stage = (%v, %v), want (false, nil)", ok, err)
 	}
 	if err := deploy.Apply(ctx); err != nil {
-		t.Fatalf("deploy apply after renewal: %v", err)
+		t.Fatalf("deploy apply after stage: %v", err)
 	}
-	renewedCAHash := clusterCAHash(renewed[clusterCAKey])
+	stagedCAHash := clusterCAHash(staged[clusterCAKey])
 	for _, depName := range []string{appName, replicaName} {
 		dep, err := cs.AppsV1().Deployments("kyq-kyidentity").Get(ctx, depName, metav1.GetOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := dep.Spec.Template.Annotations[clusterCAAnnotation]; got != renewedCAHash {
-			t.Fatalf("deployment %s CA hash after renewal = %q, want %q", depName, got, renewedCAHash)
+		if got := dep.Spec.Template.Annotations[clusterCAAnnotation]; got != stagedCAHash {
+			t.Fatalf("deployment %s CA hash after stage = %q, want %q", depName, got, stagedCAHash)
 		}
 	}
-	if ok, err := deploy.Inspect(ctx); err != nil || !ok {
-		t.Fatalf("deploy inspect after rollout = (%v, %v), want (true, nil)", ok, err)
+	// Once Deployments report ready with the combined CA bundle, activate promotes pending-tls.{crt,key}.
+	markReady()
+	if ok, err := activate.Inspect(ctx); err != nil || ok {
+		t.Fatalf("activate inspect before promotion = (%v, %v), want (false, nil)", ok, err)
 	}
+	if err := activate.Apply(ctx); err != nil {
+		t.Fatalf("activate apply: %v", err)
+	}
+	if err := activate.Verify(ctx); err != nil {
+		t.Fatalf("activate verify: %v", err)
+	}
+	activated := secretOf(t, cs, clusterTLSSecret)
+	if string(activated[corev1.TLSCertKey]) != string(staged[clusterPendingCertKey]) {
+		t.Fatal("activate did not promote pending-tls.crt to tls.crt")
+	}
+	if len(activated[clusterPendingCertKey]) != 0 || len(activated[clusterPendingKeyKey]) != 0 {
+		t.Fatal("activate did not clear pending-tls.{crt,key}")
+	}
+	// Immediately after activation (within clusterCARetireAfter), outgoing CA is retained for CNPG reload.
+	if ok, err := secretsStep.Inspect(ctx); err != nil || !ok {
+		t.Fatalf("secrets inspect right after activation = (%v, %v), want (true, nil)", ok, err)
+	}
+	// After clusterCARetireAfter elapses, outgoing CA is retired separately so ca.crt drops back to 1 CA.
+	now = now.Add(clusterCARetireAfter)
+	if ok, err := secretsStep.Inspect(ctx); err != nil || ok {
+		t.Fatalf("secrets inspect after retire window = (%v, %v), want (false, nil)", ok, err)
+	}
+	if err := secretsStep.Apply(ctx); err != nil {
+		t.Fatalf("CA retirement apply: %v", err)
+	}
+	retired := secretOf(t, cs, clusterTLSSecret)
+	if n := len(parsePEMCertificates(retired[clusterCAKey])); n != 1 {
+		t.Fatalf("ca.crt after outgoing CA retirement has %d CAs, want 1", n)
+	}
+	if err := deploy.Apply(ctx); err != nil {
+		t.Fatalf("deploy apply after CA retirement: %v", err)
+	}
+	markReady()
 
-	// 3. On-demand re-issue via annotation rotates immediately, clears the annotation,
-	// and bounds ca.crt to 2 CAs (dropping the oldest CA).
+	// 3. On-demand re-issue via annotation stages renewal, clears the annotation, and activates cleanly.
 	sec, err := cs.CoreV1().Secrets("kyq-kyidentity").Get(ctx, clusterTLSSecret, metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -546,14 +612,23 @@ func TestDatabaseClusterCertificateRenewal(t *testing.T) {
 	if sec.Annotations[clusterReissueAnnotation] != "" {
 		t.Fatalf("reissue annotation was not cleared: %v", sec.Annotations)
 	}
-	if string(sec.Data[corev1.TLSCertKey]) == string(renewed[corev1.TLSCertKey]) {
+	if n := len(parsePEMCertificates(sec.Data[clusterCAKey])); n != 2 {
+		t.Fatalf("ca.crt after annotated reissue stage has %d CAs, want 2", n)
+	}
+	if err := deploy.Apply(ctx); err != nil {
+		t.Fatalf("deploy apply for annotated reissue: %v", err)
+	}
+	markReady()
+	if err := activate.Apply(ctx); err != nil {
+		t.Fatalf("activate annotated reissue: %v", err)
+	}
+	reissued := secretOf(t, cs, clusterTLSSecret)
+	if string(reissued[corev1.TLSCertKey]) == string(activated[corev1.TLSCertKey]) {
 		t.Fatal("annotated reissue did not replace leaf certificate")
 	}
-	if n := len(parsePEMCertificates(sec.Data[clusterCAKey])); n != 2 {
-		t.Fatalf("ca.crt after second rotation has %d CAs, want 2 (bounded)", n)
-	}
 
-	// 4. After expiry, expired outgoing CAs are dropped (only the fresh CA remains).
+	// 4. After expiry, an expired active leaf is swapped immediately without staging, and
+	// expired outgoing CAs are dropped (only the fresh CA remains).
 	now = now.AddDate(11, 0, 0)
 	if err := secretsStep.Apply(ctx); err != nil {
 		t.Fatalf("post-expiry renewal apply: %v", err)
@@ -561,5 +636,8 @@ func TestDatabaseClusterCertificateRenewal(t *testing.T) {
 	postExpiry := secretOf(t, cs, clusterTLSSecret)
 	if n := len(parsePEMCertificates(postExpiry[clusterCAKey])); n != 1 {
 		t.Fatalf("ca.crt after expiry has %d CAs, want 1", n)
+	}
+	if len(postExpiry[clusterPendingCertKey]) != 0 || len(postExpiry[clusterPendingKeyKey]) != 0 {
+		t.Fatal("post-expiry renewal staged pending keys instead of swapping expired leaf immediately")
 	}
 }

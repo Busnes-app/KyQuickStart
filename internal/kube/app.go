@@ -62,6 +62,9 @@ func Steps(a App) []engine.Step {
 		steps = append(steps, clusterUpgradeStep{a: a, note: new(string)})
 	}
 	steps = append(steps, deployStep{a: a, hash: hash}, healthStep{a: a, hash: hash})
+	if a.clustered() {
+		steps = append(steps, clusterTLSActivateStep{a: a})
+	}
 	if a.Name == "npm" && a.Catalog.Category == "edge" {
 		steps = append(steps, npmBootstrapStep{a})
 	}

@@ -401,13 +401,20 @@ func (s replicaSecretsStep) check(ctx context.Context) (string, error) {
 			return "secret " + clusterTLSSecret + " missing", err
 		}
 		s.a.Redact.Add(string(tls.Data[corev1.TLSPrivateKeyKey]))
+		if len(tls.Data[clusterPendingKeyKey]) > 0 {
+			s.a.Redact.Add(string(tls.Data[clusterPendingKeyKey]))
+		}
 		for _, key := range clusterTLSKeys {
 			if len(tls.Data[key]) == 0 {
 				return "secret " + clusterTLSSecret + " is incomplete", nil
 			}
 		}
-		if clusterCertNeedsRenewal(tls, clusterHost(s.a.Name), clusterNow()) {
+		host, now := clusterHost(s.a.Name), clusterNow()
+		if clusterCertNeedsRenewal(tls, host, now) {
 			return "secret " + clusterTLSSecret + " needs renewal", nil
+		}
+		if _, retire := clusterCAShouldRetire(tls, host, now); retire {
+			return "secret " + clusterTLSSecret + " has outgoing CA to retire", nil
 		}
 		return "", nil
 	}
@@ -498,10 +505,11 @@ func (s replicaSecretsStep) Apply(ctx context.Context) error {
 
 var clusterTLSKeys = []string{clusterCAKey, corev1.TLSCertKey, corev1.TLSPrivateKeyKey}
 
-// ensureClusterTLS creates or renews kyq-database-tls when missing, incomplete, invalid,
-// within clusterCertificateRenewBefore of expiry, or annotated with clusterReissueAnnotation=true.
-// On renewal, any still-valid signing CA of the outgoing leaf is bundled into ca.crt so pods
-// trust both leaves during rollout.
+// ensureClusterTLS creates, stages renewal of, or retires the outgoing CA from kyq-database-tls.
+// On renewal of a still-valid leaf, the combined trust bundle [newCA, oldCA] is written to ca.crt
+// while tls.crt/tls.key stay on the outgoing leaf and the new leaf is staged in pending-tls.{crt,key}
+// until clusterTLSActivateStep promotes it after app pods roll out and become ready. On first
+// install or when the active leaf is already expired/invalid, the fresh leaf is written directly.
 func (s replicaSecretsStep) ensureClusterTLS(ctx context.Context) error {
 	host := clusterHost(s.a.Name)
 	now := clusterNow()
@@ -510,6 +518,19 @@ func (s replicaSecretsStep) ensureClusterTLS(ctx context.Context) error {
 		return err
 	}
 	if found && !clusterCertNeedsRenewal(sec, host, now) {
+		prunedCA, retire := clusterCAShouldRetire(sec, host, now)
+		if !retire {
+			return nil
+		}
+		sec.Data[clusterCAKey] = prunedCA
+		delete(sec.Annotations, clusterActivatedAtAnnotation)
+		_, err = s.secrets().Update(ctx, sec, metav1.UpdateOptions{})
+		switch {
+		case apierrors.IsConflict(err):
+			return fmt.Errorf("secret %s: %w", clusterTLSSecret, engine.ErrTransient)
+		case err != nil:
+			return fmt.Errorf("secret %s: cluster refused CA retirement", clusterTLSSecret)
+		}
 		return nil
 	}
 	var prev *corev1.Secret
@@ -528,10 +549,27 @@ func (s replicaSecretsStep) ensureClusterTLS(ctx context.Context) error {
 	sec.Labels = workloadLabels(s.a.ReleaseSet)
 	if sec.Annotations != nil {
 		delete(sec.Annotations, clusterReissueAnnotation)
+		delete(sec.Annotations, clusterActivatedAtAnnotation)
 	}
-	sec.Data = map[string][]byte{clusterCAKey: ca, corev1.TLSCertKey: cert, corev1.TLSPrivateKeyKey: key}
-	for _, k := range clusterTLSKeys {
-		s.a.Redact.Add(string(sec.Data[k]))
+	// If the outgoing leaf is still live, stage the new leaf until deployStep + healthStep confirm
+	// app pods have loaded the combined ca.crt bundle.
+	if found && clusterCertValid(prev.Data[clusterCAKey], prev.Data[corev1.TLSCertKey], prev.Data[corev1.TLSPrivateKeyKey], host, now) {
+		sec.Data = map[string][]byte{
+			clusterCAKey:            ca,
+			corev1.TLSCertKey:       prev.Data[corev1.TLSCertKey],
+			corev1.TLSPrivateKeyKey: prev.Data[corev1.TLSPrivateKeyKey],
+			clusterPendingCertKey:   cert,
+			clusterPendingKeyKey:    key,
+		}
+	} else {
+		sec.Data = map[string][]byte{
+			clusterCAKey:            ca,
+			corev1.TLSCertKey:       cert,
+			corev1.TLSPrivateKeyKey: key,
+		}
+	}
+	for _, v := range sec.Data {
+		s.a.Redact.Add(string(v))
 	}
 	if found {
 		_, err = s.secrets().Update(ctx, sec, metav1.UpdateOptions{})
